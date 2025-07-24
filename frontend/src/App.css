@@ -1,0 +1,181 @@
+.App {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.App-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 2rem;
+  border-radius: 10px;
+  margin-bottom: 2rem;
+}
+
+.App-header h1 {
+  margin: 0;
+  font-size: 2.5rem;
+}
+
+.App-header p {
+  margin: 0.5rem 0;
+  font-size: 1.2rem;
+  opacity: 0.9;
+}
+
+.status {
+  margin-top: 1rem;
+  padding: 0.5rem;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  font-weight: bold;
+  transition: all 0.3s ease;
+}
+
+.status.connecting,
+.status.reconnecting {
+  background: rgba(255, 193, 7, 0.2);
+  border: 1px solid rgba(255, 193, 7, 0.5);
+}
+
+.status.connected {
+  background: rgba(40, 167, 69, 0.2);
+  border: 1px solid rgba(40, 167, 69, 0.5);
+}
+
+.status.disconnected {
+  background: rgba(220, 53, 69, 0.2);
+  border: 1px solid rgba(220, 53, 69, 0.5);
+}
+
+.messages-container {
+  background: #f5f5f5;
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  text-align: left;
+}
+
+.messages-container h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.messages {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 1rem;
+  background: white;
+}
+
+.message {
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+  border-radius: 5px;
+  border-left: 4px solid #ccc;
+}
+
+.message.connected {
+  border-left-color: #4caf50;
+  background: #f1f8e9;
+}
+
+.message.greeting {
+  border-left-color: #2196f3;
+  background: #e3f2fd;
+}
+
+.message.info {
+  border-left-color: #ff9800;
+  background: #fff3e0;
+  font-style: italic;
+}
+
+.input-container {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  align-items: center;
+}
+
+.input-container input {
+  flex: 1;
+  max-width: 400px;
+  padding: 0.75rem;
+  border: 2px solid #ddd;
+  border-radius: 5px;
+  font-size: 1rem;
+}
+
+.input-container input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.input-container input:disabled {
+  background: #f5f5f5;
+  color: #999;
+}
+
+.input-container button {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.input-container button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.input-container button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.reconnect-controls {
+  margin-top: 1rem;
+}
+
+.reconnect-controls button {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: opacity 0.2s;
+}
+
+.reconnect-controls button:hover {
+  opacity: 0.9;
+}
+
+.connection-help {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 5px;
+  padding: 1rem;
+  margin-top: 1rem;
+  color: #495057;
+}
+
+.connection-help p {
+  margin: 0.5rem 0;
+}
+
+.connection-help p:first-child {
+  margin-top: 0;
+}
+
+.connection-help p:last-child {
+  margin-bottom: 0;
+}

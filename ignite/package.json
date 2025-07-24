@@ -1,0 +1,62 @@
+{
+  "name": "ignite-backend",
+  "version": "1.0.0",
+  "main": "dist/server.js",
+  "bin": "dist/server.js",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "NODE_ENV=development tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "build": "npm run clean && npm run build:frontend && npm run build:backend && npx @yao-pkg/pkg . --out-path dist-pkg",
+    "build:backend": "tsc",
+    "build:frontend": "cd ../frontend && npm run build",
+    "clean": "rm -rf dist dist-pkg",
+    "format": "prettier --write \"src/**/*.{ts,js,json}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,js,json}\"",
+    "lint": "eslint \"src/**/*.{ts,js}\"",
+    "lint:fix": "eslint \"src/**/*.{ts,js}\" --fix"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Ignite smart contract deployment tool",
+  "dependencies": {
+    "@fastify/static": "^8.0.2",
+    "@fastify/websocket": "^11.0.1",
+    "fastify": "^5.2.0"
+  },
+  "pkg": {
+    "scripts": [
+      "dist/server.js"
+    ],
+    "assets": [
+      "../frontend/dist/**/*"
+    ],
+    "targets": [
+      "node22-linux-x64",
+      "node22-macos-x64",
+      "node22-macos-arm64",
+      "node22-win-x64"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.38.0",
+    "@typescript-eslint/parser": "^8.38.0",
+    "@yao-pkg/pkg": "^6.6.0",
+    "eslint": "^9.32.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-security": "^3.0.1",
+    "nodemon": "^3.1.9",
+    "prettier": "^3.6.2",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}
