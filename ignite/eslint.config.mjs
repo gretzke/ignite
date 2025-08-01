@@ -8,6 +8,14 @@ export default [
   js.configs.recommended,
   {
     files: ['**/*.ts', '**/*.js'],
+    ignores: [
+      'jest.config.*',
+      'dist/**',
+      'node_modules/**',
+      '**/__tests__/**',
+      '**/*.test.*',
+      'vitest.config.*',
+    ],
     languageOptions: {
       parser: typescriptParser,
       parserOptions: {
