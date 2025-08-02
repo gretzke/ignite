@@ -74,10 +74,11 @@ public
 
 # Vite build output
 frontend/dist
-ignite/dist
+core/dist
+core/dist-assets
 
 # Built executables
-ignite/dist-pkg/
+core/dist-pkg/
 *.exe
 
 # Storybook build outputs

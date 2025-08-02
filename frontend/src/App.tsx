@@ -12,11 +12,15 @@ type ConnectionState =
   | 'disconnected'
   | 'reconnecting';
 
+type DetectionState = 'loading' | 'detected' | 'not-detected' | 'error';
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [connectionState, setConnectionState] =
     useState<ConnectionState>('connecting');
+  const [detectionState, setDetectionState] =
+    useState<DetectionState>('loading');
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -111,6 +115,32 @@ function App() {
     }
   }, [scheduleReconnect]);
 
+  const detectFoundry = useCallback(async () => {
+    setDetectionState('loading');
+    try {
+      const response = await fetch('/api/detect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}), // Use pre-mounted workspace from CLI startup
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const isFoundryDetected =
+        data.result?.success && data.result?.data === true;
+
+      setDetectionState(isFoundryDetected ? 'detected' : 'not-detected');
+    } catch (error) {
+      console.error('Failed to detect Foundry:', error);
+      setDetectionState('error');
+    }
+  }, []);
+
   // Keep connectRef up to date
   connectRef.current = connect;
 
@@ -125,6 +155,11 @@ function App() {
       }
     };
   }, [connect, clearReconnectTimeout]);
+
+  // Detect Foundry when app loads
+  useEffect(() => {
+    detectFoundry();
+  }, [detectFoundry]);
 
   const sendMessage = () => {
     if (wsRef.current?.readyState === WebSocket.OPEN && inputMessage.trim()) {
@@ -154,6 +189,21 @@ function App() {
     }
   };
 
+  const getDetectionDisplay = () => {
+    switch (detectionState) {
+      case 'loading':
+        return '🔄 Detecting project type...';
+      case 'detected':
+        return '⚒️ Foundry project detected';
+      case 'not-detected':
+        return '📁 No Foundry project detected';
+      case 'error':
+        return '❌ Detection failed';
+      default:
+        return '❓ Unknown';
+    }
+  };
+
   const canSendMessages = connectionState === 'connected';
 
   return (
@@ -163,6 +213,9 @@ function App() {
         <p>Smart Contract Deployment Tool</p>
         <div className={`status ${connectionState}`}>
           Status: {getStatusDisplay()}
+        </div>
+        <div className={`detection ${detectionState}`}>
+          Project: {getDetectionDisplay()}
         </div>
         {connectionState === 'disconnected' &&
           reconnectAttemptsRef.current >= maxReconnectAttempts && (

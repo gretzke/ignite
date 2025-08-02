@@ -17,6 +17,7 @@ export class FileSystem {
 
   constructor(customHome?: string) {
     if (customHome) {
+      // used for unit tests
       this.igniteHome = customHome;
     } else {
       // Cross-platform home directory handling
@@ -241,13 +242,13 @@ export class FileSystem {
 
     // Create default global config
     const defaultConfig: IgniteConfig = {
-      version: '1.0.0',
+      version: '1.0.0', // TODO: pull from package.json at compile time?
       currentProfile: 'default',
       lastStartup: new Date().toISOString(),
     };
     await this.writeJsonFile(configPath, defaultConfig);
 
-    getLogger().info('⚙️  Created global config');
+    getLogger().info('⚙️ Created global config');
 
     return defaultConfig;
   }

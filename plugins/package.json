@@ -1,0 +1,17 @@
+{
+  "name": "@ignite/plugins",
+  "version": "1.0.0",
+  "description": "Unified build system for all Ignite plugins",
+  "type": "module",
+  "scripts": {
+    "build": "npm run clean && node scripts/build-all.js",
+    "clean": "rm -rf dist && mkdir -p dist/js dist/compressed",
+    "postinstall": "node scripts/install-all.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
