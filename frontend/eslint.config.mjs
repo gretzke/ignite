@@ -45,7 +45,6 @@ export default [
       },
     },
     rules: {
-      // TypeScript Core (less strict than backend)
       ...typescript.configs.recommended.rules,
       '@typescript-eslint/no-unused-vars': [
         'error',

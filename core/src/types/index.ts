@@ -50,3 +50,21 @@ export interface IgniteConfig {
   currentProfile: string; // Profile name
   lastStartup: string; // ISO timestamp
 }
+
+// Repository volume management types
+export interface RepoVolumeInfo {
+  volumeName: string;
+  type: 'local' | 'cloned';
+  hostPath?: string; // Only for local repos
+  created: string; // ISO timestamp
+}
+
+export interface LocalRepoOptions {
+  hostPath: string;
+  name?: string; // Optional custom name
+}
+
+export interface ClonedRepoOptions {
+  gitUrl: string;
+  name?: string; // Optional custom name
+}
