@@ -1,30 +1,25 @@
 import fastify from 'fastify';
 import path from 'path';
-import { homedir } from 'os';
 import { Command } from 'commander';
 import websocket from '@fastify/websocket';
 import type { FastifyInstance } from 'fastify';
 import { FileSystem } from './filesystem/FileSystem.js';
 import { ProfileManager } from './filesystem/ProfileManager.js';
 import { PluginManager } from './filesystem/PluginManager.js';
-import { PluginOrchestrator } from './containers/PluginOrchestrator.js';
+import { PluginOrchestrator } from './plugins/containers/PluginOrchestrator.js';
 import { setGlobalLogger } from './utils/logger.js';
-import { openBrowser } from './utils/browser.js';
+import {
+  openBrowser,
+  getVersion,
+  isGitRepository,
+  checkDockerAvailability,
+} from './utils/startup.js';
 import { registerHealthRoutes } from './api/health.js';
 import { registerProfileRoutes } from './api/profiles.js';
 import { registerPluginRoutes } from './api/plugins.js';
 import { StaticAssetHandler } from './utils/StaticAssetHandler.js';
-import { readFileSync } from 'fs';
 
-// Get version from package.json
-const getVersion = (): string => {
-  const packagePath = path.join(__dirname, '..', 'package.json');
-  const packageContent = readFileSync(packagePath, 'utf-8');
-  const pkg = JSON.parse(packageContent);
-  return pkg.version;
-};
-
-async function ignite(): Promise<{
+async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
   fileSystem: FileSystem;
   profileManager: ProfileManager;
@@ -39,19 +34,12 @@ async function ignite(): Promise<{
   // Set up global logger
   setGlobalLogger(app.log);
 
-  // Log workspace path (now that logger is available)
-  if (process.env.IGNITE_WORKSPACE_PATH) {
-    app.log.info(
-      `🔍 Using workspace path: ${process.env.IGNITE_WORKSPACE_PATH}`
-    );
-  }
-
   // Initialize filesystem infrastructure
   app.log.info('🔧 Initializing Ignite...');
   const fileSystem = new FileSystem();
   const profileManager = new ProfileManager(fileSystem);
   const pluginManager = new PluginManager(fileSystem);
-  const pluginOrchestrator = new PluginOrchestrator();
+  const pluginOrchestrator = PluginOrchestrator.getInstance();
 
   // Initialize components (will auto-create files as needed)
   await profileManager.initialize();
@@ -60,27 +48,11 @@ async function ignite(): Promise<{
   app.log.info('🔌 Setting up plugin orchestrator...');
   await pluginOrchestrator.initialize();
 
-  // Auto-mount the workspace path (from commander --path argument)
-  const workspacePath = process.env.IGNITE_WORKSPACE_PATH || process.cwd();
+  // Auto-mount the workspace if it's a git repository
+  const isGitRepo = isGitRepository(workspacePath);
 
-  // Safety check: don't auto-mount sensitive system directories
-  const homePath = homedir();
-  const documentsPath = path.join(homePath, 'Documents');
-  const sensitiveDirectories = ['/', homePath, documentsPath];
-
-  const shouldSkipMount = sensitiveDirectories.some(
-    (dir) => path.resolve(workspacePath) === path.resolve(dir)
-  );
-
-  if (shouldSkipMount) {
-    app.log.info(
-      `⚠️ Skipping auto-mount for sensitive directory: ${workspacePath}`
-    );
-    app.log.info(
-      '💡 Use --path to specify a project directory, or run from within a project'
-    );
-  } else {
-    app.log.info(`📁 Auto-mounting workspace: ${workspacePath}`);
+  if (isGitRepo) {
+    app.log.info(`📁 Auto-mounting git repository: ${workspacePath}`);
 
     try {
       await pluginOrchestrator.executePlugin('local-repo', 'mount', {
@@ -147,7 +119,44 @@ async function ignite(): Promise<{
   };
 }
 
-const start = async (): Promise<void> => {
+// Parse CLI arguments and perform pre-startup checks
+async function main(): Promise<void> {
+  const program = new Command();
+
+  program
+    .name('ignite')
+    .description('Smart contract deployment tool')
+    .version(getVersion())
+    .option(
+      '-p, --path <path>',
+      'specify workspace path (defaults to current directory)',
+      process.cwd()
+    )
+    .parse();
+
+  const options = program.opts();
+
+  // Extract and validate workspace path
+  const workspacePath = path.resolve(options.path);
+  process.env.IGNITE_WORKSPACE_PATH = workspacePath;
+
+  // Pre-startup checks
+  process.stdout.write(`🔍 Workspace path: ${workspacePath}\n`);
+
+  // Check if workspace is a git repository
+  const isGitRepo = isGitRepository(workspacePath);
+  if (!isGitRepo) {
+    process.stdout.write(
+      `⚠️ Skipping auto-mount for non-git directory: ${workspacePath}\n`
+    );
+    process.stdout.write(
+      'Use --path to specify a git repository, or run from within a git repository\n\n'
+    );
+  }
+
+  // Check Docker availability
+  await checkDockerAvailability();
+
   try {
     // Initialize server with all components
     const {
@@ -156,13 +165,11 @@ const start = async (): Promise<void> => {
       profileManager,
       pluginManager: _pluginManager,
       pluginOrchestrator,
-    } = await ignite();
+    } = await ignite(workspacePath);
     const port = parseInt(process.env.PORT || '3000', 10);
 
     // Log the repository path we're working with
-    app.log.info(
-      `📁 Repository path: ${process.env.IGNITE_WORKSPACE_PATH || process.cwd()}`
-    );
+    app.log.info(`📁 Repository path: ${workspacePath}`);
 
     // Listen on localhost only for security
     await app.listen({ port, host: '127.0.0.1' });
@@ -208,30 +215,6 @@ const start = async (): Promise<void> => {
     process.stderr.write(`❌ Failed to start Ignite: ${err}\n`);
     process.exit(1);
   }
-};
-
-// Parse CLI arguments and start server
-async function main(): Promise<void> {
-  const program = new Command();
-
-  program
-    .name('ignite')
-    .description('Smart contract deployment tool')
-    .version(getVersion())
-    .option(
-      '-p, --path <path>',
-      'specify workspace path (defaults to current directory)',
-      process.cwd()
-    )
-    .parse();
-
-  const options = program.opts();
-
-  // Set the workspace path as an environment variable for the server to use
-  process.env.IGNITE_WORKSPACE_PATH = path.resolve(options.path);
-
-  // Start server
-  await start();
 }
 
 main().catch((error) => {
