@@ -5,5 +5,16 @@ export interface PluginResult<T> {
   error?: string;
 }
 
-// Compiler plugin types
-export type DetectionResult = boolean;
+// Plugin metadata and configuration
+export enum PluginType {
+  REPO_MANAGER = "repo-manager",
+  COMPILER = "compiler",
+}
+
+export interface PluginMetadata {
+  id: string;
+  type: PluginType;
+  name: string;
+  version: string;
+  baseImage: string;
+}

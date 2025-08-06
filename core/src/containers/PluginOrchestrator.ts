@@ -3,9 +3,10 @@ import { PluginExecutor } from './PluginExecutor.js';
 import type {
   PluginWorkflow,
   WorkflowStep,
-  StepResult,
   ExecutionContext,
+  StepResources,
 } from '../types/plugins.js';
+import type { PluginResult } from '@ignite/plugin-types/types';
 
 // Orchestrates plugin workflows with dependency resolution
 export class PluginOrchestrator {
@@ -23,8 +24,8 @@ export class PluginOrchestrator {
   async executePlugin(
     pluginId: string,
     operation: string,
-    options: any
-  ): Promise<StepResult> {
+    options: Record<string, unknown>
+  ): Promise<PluginResult<unknown>> {
     return this.executor.execute(pluginId, operation, options);
   }
 
@@ -36,6 +37,7 @@ export class PluginOrchestrator {
 
     const context: ExecutionContext = {
       stepResults: new Map(),
+      stepResources: new Map(),
       workflow,
     };
 
@@ -58,6 +60,27 @@ export class PluginOrchestrator {
 
         // Store result
         context.stepResults.set(step.id, result);
+
+        // Extract resources from plugin data for workflow orchestration
+        if (result.success && result.data) {
+          const resources: Partial<StepResources> = {};
+          const data = result.data as any;
+
+          // Extract container information if present
+          if (data.containerName) {
+            resources.repoContainerName = data.containerName;
+          }
+          if (data.workspacePath) {
+            resources.workspacePath = data.workspacePath;
+          }
+          if (data.artifacts) {
+            resources.artifacts = data.artifacts;
+          }
+
+          if (Object.keys(resources).length > 0) {
+            context.stepResources.set(step.id, resources);
+          }
+        }
 
         if (result.success) {
           getLogger().info(`✅ Step ${step.id} completed successfully`);
@@ -84,16 +107,17 @@ export class PluginOrchestrator {
   private resolveStepInputs(
     step: WorkflowStep,
     context: ExecutionContext
-  ): any {
-    let resolvedOptions = { ...step.options };
+  ): Record<string, unknown> {
+    let resolvedOptions = { ...step.options } as Record<string, unknown>;
 
     // Inject resources from dependency steps
     if (step.dependencies) {
       for (const depId of step.dependencies) {
         const depResult = context.stepResults.get(depId);
-        if (depResult?.success && depResult.resources) {
+        const depResources = context.stepResources.get(depId);
+        if (depResult?.success && depResources) {
           // Merge dependency resources into step options
-          resolvedOptions = { ...resolvedOptions, ...depResult.resources };
+          resolvedOptions = { ...resolvedOptions, ...depResources };
         }
       }
     }
@@ -105,7 +129,7 @@ export class PluginOrchestrator {
   getStepResult(
     context: ExecutionContext,
     stepId: string
-  ): StepResult | undefined {
+  ): PluginResult<unknown> | undefined {
     return context.stepResults.get(stepId);
   }
 

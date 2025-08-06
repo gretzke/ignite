@@ -1,15 +1,10 @@
-// Plugin orchestration types for MVP
-export interface PluginMetadata {
-  id: string;
-  type: 'repo-manager' | 'compiler';
-  baseImage: string;
-}
+import { PluginResult } from '@ignite/plugin-types/types';
 
 export interface WorkflowStep {
   id: string;
   plugin: string;
   operation: string;
-  options?: any;
+  options?: Record<string, unknown>;
   dependencies?: string[]; // IDs of previous steps
 }
 
@@ -17,20 +12,16 @@ export interface PluginWorkflow {
   steps: WorkflowStep[];
 }
 
-export interface StepResult {
-  success: boolean;
-  data?: any;
-  error?: string;
-  resources?: StepResources; // Resources produced by this step
-}
-
 export interface StepResources {
   volumeId?: string;
-  artifacts?: any;
-  [key: string]: any; // Flexible resource passing
+  repoContainerName?: string;
+  workspacePath?: string;
+  artifacts?: Record<string, unknown>;
+  [key: string]: unknown; // Flexible resource passing
 }
 
 export interface ExecutionContext {
-  stepResults: Map<string, StepResult>;
+  stepResults: Map<string, PluginResult<unknown>>;
+  stepResources: Map<string, StepResources>; // Track workflow resources separately
   workflow: PluginWorkflow;
 }

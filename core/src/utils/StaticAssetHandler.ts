@@ -41,19 +41,11 @@ export class StaticAssetHandler {
     const url = request.url;
     let assetPath: string;
 
-    // Check if we're in pkg bundled mode to use correct paths
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pkg property not in Node.js types
-    const isPkgBundled = typeof (process as any).pkg !== 'undefined';
-
     if (url === '/') {
-      assetPath = isPkgBundled
-        ? 'frontend/index.html'
-        : 'frontend/dist/index.html';
-    } else if (url.startsWith('/assets/')) {
-      assetPath = isPkgBundled ? `frontend${url}` : `frontend/dist${url}`;
+      assetPath = 'frontend/dist/index.html';
     } else {
       // Root level files like favicon.ico, robots.txt
-      assetPath = isPkgBundled ? `frontend${url}` : `frontend/dist${url}`;
+      assetPath = `frontend/dist${url}`;
     }
 
     try {
@@ -97,11 +89,7 @@ export class StaticAssetHandler {
 
     // For SPA routing, serve index.html
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pkg property not in Node.js types
-      const isPkgBundled = typeof (process as any).pkg !== 'undefined';
-      const assetPath = isPkgBundled
-        ? 'frontend/index.html'
-        : 'frontend/dist/index.html';
+      const assetPath = 'frontend/dist/index.html';
 
       if (this.assetManager.exists(assetPath)) {
         const content = this.assetManager.getAsset(assetPath);

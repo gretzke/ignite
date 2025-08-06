@@ -130,9 +130,9 @@ function App() {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const data = await response.json();
-      const isFoundryDetected =
-        data.result?.success && data.result?.data === true;
+      const result = await response.json();
+      console.log('🔍 Detection response:', result);
+      const isFoundryDetected = result.success && result.data.detected === true;
 
       setDetectionState(isFoundryDetected ? 'detected' : 'not-detected');
     } catch (error) {

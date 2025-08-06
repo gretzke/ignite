@@ -2,19 +2,24 @@ import Docker from 'dockerode';
 import { promises as fs } from 'fs';
 import { getLogger } from '../utils/logger.js';
 import { PluginAssetLoader } from '../utils/PluginAssetLoader.js';
-import type { PluginMetadata, StepResult } from '../types/plugins.js';
+import type { PluginMetadata, PluginResult } from '@ignite/plugin-types/types';
+import { PluginType } from '@ignite/plugin-types/types';
 import type { LocalRepoOptions } from '../types/index.js';
 
 // Minimal plugin metadata for MVP
 const PLUGIN_METADATA: Record<string, PluginMetadata> = {
   'local-repo': {
     id: 'local-repo',
-    type: 'repo-manager',
+    type: PluginType.REPO_MANAGER,
+    name: 'Local Repository Manager',
+    version: '1.0.0',
     baseImage: 'ignite/shared-repo-manager:latest',
   },
   foundry: {
     id: 'foundry',
-    type: 'compiler',
+    type: PluginType.COMPILER,
+    name: 'Foundry Compiler',
+    version: '1.0.0',
     baseImage: 'ignite/shared-compiler:latest',
   },
 };
@@ -43,8 +48,8 @@ export class PluginExecutor {
   async execute(
     pluginId: string,
     operation: string,
-    options: any
-  ): Promise<StepResult> {
+    options: Record<string, unknown>
+  ): Promise<PluginResult<unknown>> {
     const plugin = PLUGIN_METADATA[pluginId];
     if (!plugin) {
       throw new Error(`Unknown plugin: ${pluginId}`);
@@ -67,7 +72,7 @@ export class PluginExecutor {
     plugin: PluginMetadata,
     operation: string,
     options: any
-  ): Promise<StepResult> {
+  ): Promise<PluginResult<unknown>> {
     switch (operation) {
       case 'mount':
         return this.createLocalRepoVolume(options as LocalRepoOptions);
@@ -81,7 +86,7 @@ export class PluginExecutor {
     plugin: PluginMetadata,
     operation: string,
     options: any
-  ): Promise<StepResult> {
+  ): Promise<PluginResult<unknown>> {
     switch (operation) {
       case 'detect':
       case 'compile':
@@ -94,7 +99,7 @@ export class PluginExecutor {
   // Create local repo container with volume mount
   private async createLocalRepoVolume(
     options: LocalRepoOptions
-  ): Promise<StepResult> {
+  ): Promise<PluginResult<unknown>> {
     const containerName = this.generateVolumeName('local', options.name);
 
     getLogger().info(
@@ -138,11 +143,7 @@ export class PluginExecutor {
 
     return {
       success: true,
-      data: { containerName },
-      resources: {
-        repoContainerName: containerName,
-        workspacePath: '/workspace', // Path inside containers
-      },
+      data: { containerName, workspacePath: '/workspace' },
     };
   }
 
@@ -151,7 +152,7 @@ export class PluginExecutor {
     plugin: PluginMetadata,
     operation: string,
     options: any
-  ): Promise<StepResult> {
+  ): Promise<PluginResult<unknown>> {
     const { repoContainerName, workspacePath } = options;
 
     // Create container with volume mounted from repo container
@@ -197,7 +198,7 @@ export class PluginExecutor {
       stream.on('end', async () => {
         try {
           // Clean and parse output
-          let output = rawOutput
+          const output = rawOutput
             .replace(/[\x00-\x1F]/g, '')
             .replace(/'/g, '')
             .trim();
@@ -206,12 +207,7 @@ export class PluginExecutor {
           if (jsonMatch) {
             const result = JSON.parse(jsonMatch[0]);
             getLogger().info(`✅ Plugin ${plugin.id}.${operation} completed`);
-
-            resolve({
-              success: true,
-              data: result,
-              resources: { artifacts: result },
-            });
+            resolve(result);
           } else {
             resolve({
               success: false,
@@ -251,7 +247,7 @@ export class PluginExecutor {
       getLogger().info('🐳 Checking Docker availability...');
 
       // Try to ping Docker daemon
-      const info = await this.docker.ping();
+      await this.docker.ping();
 
       getLogger().info('✅ Docker is available and running');
     } catch (error) {

@@ -9,12 +9,11 @@
   "scripts": {
     "dev": "tsc --noEmit && NODE_ENV=development tsx watch src/index.ts --",
     "start": "node dist/index.js",
-    "build": "npm run clean && npm run build:frontend && npm run build:plugins && npm run copy:assets && npm run build:core && npx @yao-pkg/pkg . --out-path dist-pkg",
+    "build": "npm run clean && npm run build:frontend && npm run build:plugins && npm run build:core && npx @yao-pkg/pkg . --out-path dist-pkg",
     "build:core": "tsc",
     "build:frontend": "cd ../frontend && npm run build",
     "build:plugins": "cd ../plugins && npm run build",
-    "copy:assets": "mkdir -p dist-assets/frontend dist-assets/plugins && cp -r ../frontend/dist/* dist-assets/frontend/ && cp -r ../plugins/dist/compressed/* dist-assets/plugins/",
-    "clean": "rm -rf dist dist-pkg dist-assets",
+    "clean": "rm -rf dist dist-pkg",
     "format": "prettier --write \"src/**/*.{ts,js,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,json}\"",
     "lint": "eslint \"src/**/*.{ts,js}\"",
@@ -29,6 +28,7 @@
   "description": "Ignite smart contract deployment tool",
   "dependencies": {
     "@fastify/websocket": "^11.0.1",
+    "@ignite/plugin-types": "file:../plugins/src/shared/dist/",
     "commander": "^12.1.0",
     "dockerode": "^4.0.7",
     "fastify": "^5.2.0"
@@ -38,9 +38,9 @@
       "dist/index.js"
     ],
     "assets": [
-      "dist-assets/frontend/index.html",
-      "dist-assets/frontend/**/*.gz",
-      "dist-assets/plugins/**/*.gz"
+      "../frontend/dist/index.html",
+      "../frontend/dist/**/*.gz",
+      "../plugins/dist/compressed/**/*.gz"
     ],
     "targets": [
       "node22-linux-x64",

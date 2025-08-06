@@ -1,33 +1,22 @@
 // Local Repository Manager Plugin
 import { RepoManagerPlugin } from "../../shared/index.ts";
-import type { PluginResult } from "../../shared/index.ts";
+import { PluginType } from "../../shared/index.ts";
 
 export class LocalRepoPlugin extends RepoManagerPlugin {
+  public readonly type = PluginType.REPO_MANAGER as const;
+
   constructor() {
-    super("local-repo");
+    super({
+      id: "local-repo",
+      type: PluginType.REPO_MANAGER,
+      name: "Local Repository Manager",
+      version: "1.0.0",
+      baseImage: "ignite/shared-repo-manager:latest",
+    });
   }
 
-  getInfo() {
-    return { name: "Local Repository Manager", version: "1.0.0" };
-  }
-
-  async mount(hostPath: string): Promise<PluginResult<{ mounted: boolean }>> {
-    try {
-      // The actual mounting is handled by the CLI orchestrator
-      // This container just needs to keep the volume alive
-      console.log(`🏠 Local repo mounted from: ${hostPath}`);
-
-      return {
-        success: true,
-        data: { mounted: true },
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: `Failed to mount local repo: ${error}`,
-      };
-    }
-  }
+  // No plugin-side operations - CLI handles all operations directly
+  // This container just maintains the volume and stays alive
 }
 
 export const plugin = new LocalRepoPlugin();
