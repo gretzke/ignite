@@ -28,6 +28,8 @@ export default [
         clearTimeout: 'readonly',
         setInterval: 'readonly',
         clearInterval: 'readonly',
+        fetch: 'readonly',
+        WebSocket: 'readonly',
         // React globals
         React: 'readonly',
         JSX: 'readonly',

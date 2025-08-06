@@ -1,9 +1,9 @@
 import type { IRepoManagerPlugin } from '@ignite/plugin-types/base/repo-manager';
 import type { PluginResult } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
-import type { LocalRepoOptions } from '../types/index.js';
-import { getLogger } from '../utils/logger.js';
 import Docker from 'dockerode';
+import { getLogger } from '../../utils/logger.js';
+import type { LocalRepoOptions } from '../../types/index.js';
 
 export class RepoManagerHandler implements IRepoManagerPlugin {
   public readonly type = PluginType.REPO_MANAGER as const;

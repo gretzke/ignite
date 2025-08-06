@@ -26,17 +26,6 @@ const WORKSPACE_PATH = process.env.WORKSPACE_PATH || "/workspace";
 
 async function main() {
   console.log(`📁 Local repo container ready at: ${WORKSPACE_PATH}`);
-
-  // Keep container alive - this maintains the volume mount
-  process.on("SIGTERM", () => {
-    console.log("📁 Local repo container shutting down");
-    process.exit(0);
-  });
-
-  // Keep process alive
-  setInterval(() => {
-    // Heartbeat to keep container running
-  }, 30000);
 }
 
 main().catch(console.error);

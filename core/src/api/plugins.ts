@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { PluginManager, PluginType } from '../filesystem/PluginManager.js';
-import type { PluginOrchestrator } from '../containers/PluginOrchestrator.js';
+import type { PluginOrchestrator } from '../plugins/containers/PluginOrchestrator.js';
 
 // Plugin management and execution API routes
 export async function registerPluginRoutes(

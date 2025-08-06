@@ -1,10 +1,11 @@
 import Docker from 'dockerode';
 import { promises as fs } from 'fs';
-import { getLogger } from '../utils/logger.js';
-import { PluginAssetLoader } from '../utils/PluginAssetLoader.js';
+import { getLogger } from '../../utils/logger.js';
+import { PluginAssetLoader } from '../../utils/PluginAssetLoader.js';
+import { ContainerTracker } from './ContainerTracker.js';
 import type { PluginMetadata, PluginResult } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
-import type { LocalRepoOptions } from '../types/index.js';
+import type { LocalRepoOptions } from '../../types/index.js';
 
 // Minimal plugin metadata for MVP
 const PLUGIN_METADATA: Record<string, PluginMetadata> = {
@@ -26,21 +27,33 @@ const PLUGIN_METADATA: Record<string, PluginMetadata> = {
 
 // Unified plugin executor - handles both volumes and containers
 export class PluginExecutor {
+  private static instance: PluginExecutor;
   private docker = new Docker();
-  private volumes = new Map<string, any>();
-  private containers = new Map<string, Docker.Container>();
-  private readonly volumePrefix = 'ignite-repo';
+  private containerTracker = new ContainerTracker();
   private pluginLoader = PluginAssetLoader.getInstance();
+  private initialized = false;
+
+  private constructor() {}
+
+  /**
+   * Get singleton instance of PluginExecutor
+   */
+  static getInstance(): PluginExecutor {
+    if (!PluginExecutor.instance) {
+      PluginExecutor.instance = new PluginExecutor();
+    }
+    return PluginExecutor.instance;
+  }
 
   async initialize(): Promise<void> {
+    if (this.initialized) {
+      getLogger().debug('Plugin Executor already initialized');
+      return;
+    }
+
     getLogger().info('🔧 Initializing Plugin Executor...');
 
-    // Check if Docker is available
-    await this.checkDockerAvailability();
-
-    // Clean up orphaned volumes
-    await this.cleanupOrphanedVolumes();
-
+    this.initialized = true;
     getLogger().info('✅ Plugin Executor initialized');
   }
 
@@ -71,11 +84,26 @@ export class PluginExecutor {
   private async executeRepoManager(
     plugin: PluginMetadata,
     operation: string,
-    options: any
+    options: Record<string, unknown>
   ): Promise<PluginResult<unknown>> {
     switch (operation) {
       case 'mount':
-        return this.createLocalRepoVolume(options as LocalRepoOptions);
+        // Type check options for LocalRepoOptions
+        if (
+          !options.hostPath ||
+          typeof options.hostPath !== 'string' ||
+          !options.name ||
+          typeof options.name !== 'string'
+        ) {
+          return {
+            success: false,
+            error:
+              'Invalid options: hostPath and name are required for local repo mount',
+          };
+        }
+        return this.createLocalRepoVolume(
+          options as unknown as LocalRepoOptions
+        );
       default:
         throw new Error(`Unknown repo manager operation: ${operation}`);
     }
@@ -85,7 +113,7 @@ export class PluginExecutor {
   private async executeCompiler(
     plugin: PluginMetadata,
     operation: string,
-    options: any
+    options: Record<string, unknown>
   ): Promise<PluginResult<unknown>> {
     switch (operation) {
       case 'detect':
@@ -100,7 +128,7 @@ export class PluginExecutor {
   private async createLocalRepoVolume(
     options: LocalRepoOptions
   ): Promise<PluginResult<unknown>> {
-    const containerName = this.generateVolumeName('local', options.name);
+    const containerName = `ignite-repo-local-${options.name}`;
 
     getLogger().info(
       `📁 Creating local repo container: ${containerName} -> ${options.hostPath}`
@@ -109,7 +137,7 @@ export class PluginExecutor {
     // Verify the host path exists
     try {
       await fs.access(options.hostPath);
-    } catch (error) {
+    } catch {
       return {
         success: false,
         error: `Local path does not exist: ${options.hostPath}`,
@@ -131,13 +159,8 @@ export class PluginExecutor {
 
     await container.start();
 
-    // Track the container
-    this.volumes.set(containerName, {
-      volumeName: containerName,
-      type: 'local',
-      hostPath: options.hostPath,
-      created: new Date().toISOString(),
-    });
+    // Track the container for lifecycle management
+    this.containerTracker.track(container.id);
 
     getLogger().info(`✅ Local repo container created: ${containerName}`);
 
@@ -151,7 +174,7 @@ export class PluginExecutor {
   private async runCompilerInContainer(
     plugin: PluginMetadata,
     operation: string,
-    options: any
+    options: Record<string, unknown>
   ): Promise<PluginResult<unknown>> {
     const { repoContainerName, workspacePath } = options;
 
@@ -159,7 +182,7 @@ export class PluginExecutor {
     const container = await this.docker.createContainer({
       Image: plugin.baseImage,
       HostConfig: {
-        AutoRemove: true,
+        AutoRemove: false, // Keep container for reuse, stop instead of remove
         VolumesFrom: repoContainerName ? [repoContainerName] : [],
       },
       WorkingDir: '/plugin',
@@ -167,6 +190,9 @@ export class PluginExecutor {
     });
 
     await container.start();
+
+    // Track the container for lifecycle management
+    this.containerTracker.track(container.id);
 
     // Get plugin JS and inject it
     const pluginJS = await this.getPluginCode(plugin.id);
@@ -197,11 +223,17 @@ export class PluginExecutor {
 
       stream.on('end', async () => {
         try {
-          // Clean and parse output
-          const output = rawOutput
-            .replace(/[\x00-\x1F]/g, '')
+          // Clean and parse output - remove control characters and quotes
+          const cleanOutput = rawOutput
+            .split('')
+            .filter((char) => {
+              const code = char.charCodeAt(0);
+              return code >= 32 && code <= 126; // Keep only printable ASCII characters
+            })
+            .join('')
             .replace(/'/g, '')
             .trim();
+          const output = cleanOutput;
 
           const jsonMatch = output.match(/\{.*\}/s);
           if (jsonMatch) {
@@ -241,95 +273,14 @@ export class PluginExecutor {
     }
   }
 
-  // Check if Docker is available and running
-  private async checkDockerAvailability(): Promise<void> {
-    try {
-      getLogger().info('🐳 Checking Docker availability...');
-
-      // Try to ping Docker daemon
-      await this.docker.ping();
-
-      getLogger().info('✅ Docker is available and running');
-    } catch (error) {
-      const errorMessage = `
-🚨 Docker Error: Docker is not available or not running!
-
-Please ensure Docker is installed and running:
-  • Start Docker Desktop (if using macOS/Windows)
-  • Or start Docker daemon (if using Linux)
-  • Run 'docker ps' to verify Docker is working
-
-Error details: ${error instanceof Error ? error.message : String(error)}
-      `.trim();
-
-      // Write error to stderr for better visibility
-      process.stderr.write(errorMessage);
-      throw new Error(
-        'Docker is not available. Please start Docker and try again.'
-      );
-    }
-  }
-
-  // Helper methods
-  private generateVolumeName(
-    type: 'local' | 'cloned',
-    customName?: string
-  ): string {
-    const timestamp = Date.now();
-    const suffix = customName || `${timestamp}`;
-    return `${this.volumePrefix}-${type}-${suffix}`;
-  }
-
-  private async cleanupOrphanedVolumes(): Promise<void> {
-    try {
-      const volumes = await this.docker.listVolumes();
-
-      const igniteVolumes =
-        volumes.Volumes?.filter(
-          (vol) =>
-            vol.Name.startsWith(this.volumePrefix) &&
-            vol.Labels?.['ignite.type'] === 'repo'
-        ) || [];
-
-      if (igniteVolumes.length > 0) {
-        getLogger().info(
-          `🧹 Found ${igniteVolumes.length} orphaned repo volumes, cleaning up...`
-        );
-
-        for (const vol of igniteVolumes) {
-          try {
-            const volume = this.docker.getVolume(vol.Name);
-            await volume.remove();
-            getLogger().info(`🗑️  Removed orphaned volume: ${vol.Name}`);
-          } catch (error) {
-            getLogger().warn(
-              `Failed to remove orphaned volume ${vol.Name}:`,
-              error
-            );
-          }
-        }
-      }
-    } catch (error) {
-      getLogger().warn('Failed to clean up orphaned volumes:', error);
-    }
-  }
-
   // Cleanup
   async cleanup(): Promise<void> {
     getLogger().info('🧹 Cleaning up Plugin Executor...');
 
-    // Clean up volumes
-    const volumeNames = Array.from(this.volumes.keys());
-    for (const volumeName of volumeNames) {
-      try {
-        const volume = this.docker.getVolume(volumeName);
-        await volume.remove();
-        this.volumes.delete(volumeName);
-      } catch (error) {
-        getLogger().error(`Failed to remove volume ${volumeName}:`, error);
-      }
-    }
+    // Stop tracked containers (but don't remove them)
+    await this.containerTracker.cleanup();
 
+    this.initialized = false;
     getLogger().info('✅ Plugin Executor cleanup completed');
   }
 }

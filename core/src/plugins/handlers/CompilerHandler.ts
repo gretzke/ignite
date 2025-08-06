@@ -5,9 +5,9 @@ import type {
 } from '@ignite/plugin-types/base/compiler';
 import type { PluginResult } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
-import { getLogger } from '../utils/logger.js';
-import { PluginAssetLoader } from '../utils/PluginAssetLoader.js';
 import Docker from 'dockerode';
+import { getLogger } from '../../utils/logger.js';
+import { PluginAssetLoader } from '../../utils/PluginAssetLoader.js';
 
 export class CompilerHandler implements ICompilerPlugin {
   public readonly type = PluginType.COMPILER as const;

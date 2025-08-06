@@ -1,19 +1,30 @@
-import { getLogger } from '../utils/logger.js';
+import { getLogger } from '../../utils/logger.js';
 import { PluginExecutor } from './PluginExecutor.js';
 import type {
   PluginWorkflow,
   WorkflowStep,
   ExecutionContext,
   StepResources,
-} from '../types/plugins.js';
+} from '../../types/plugins.js';
 import type { PluginResult } from '@ignite/plugin-types/types';
 
 // Orchestrates plugin workflows with dependency resolution
 export class PluginOrchestrator {
+  private static instance: PluginOrchestrator;
   private executor: PluginExecutor;
 
-  constructor() {
-    this.executor = new PluginExecutor();
+  private constructor() {
+    this.executor = PluginExecutor.getInstance();
+  }
+
+  /**
+   * Get singleton instance of PluginOrchestrator
+   */
+  static getInstance(): PluginOrchestrator {
+    if (!PluginOrchestrator.instance) {
+      PluginOrchestrator.instance = new PluginOrchestrator();
+    }
+    return PluginOrchestrator.instance;
   }
 
   async initialize(): Promise<void> {
@@ -64,17 +75,21 @@ export class PluginOrchestrator {
         // Extract resources from plugin data for workflow orchestration
         if (result.success && result.data) {
           const resources: Partial<StepResources> = {};
-          const data = result.data as any;
+          const data = result.data as Record<string, unknown>;
 
           // Extract container information if present
-          if (data.containerName) {
+          if (data.containerName && typeof data.containerName === 'string') {
             resources.repoContainerName = data.containerName;
           }
-          if (data.workspacePath) {
+          if (data.workspacePath && typeof data.workspacePath === 'string') {
             resources.workspacePath = data.workspacePath;
           }
-          if (data.artifacts) {
-            resources.artifacts = data.artifacts;
+          if (
+            data.artifacts &&
+            typeof data.artifacts === 'object' &&
+            data.artifacts !== null
+          ) {
+            resources.artifacts = data.artifacts as Record<string, unknown>;
           }
 
           if (Object.keys(resources).length > 0) {
