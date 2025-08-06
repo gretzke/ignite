@@ -13,8 +13,9 @@ export class AssetManager {
     this.isPkgBundled = typeof (process as any).pkg !== 'undefined';
 
     if (this.isPkgBundled) {
-      // In pkg bundled mode, assets are in snapshot filesystem under core/dist-assets
-      this.basePath = '/snapshot/core/dist-assets';
+      // In pkg bundled mode, assets are in snapshot filesystem under ignite
+      // Note: The parent directory where the project was cloned to must be named ignite when building the pkg
+      this.basePath = '/snapshot/ignite';
     } else {
       // In development, assets are relative to project root
       this.basePath = resolve(__dirname, '../../..');
@@ -48,6 +49,10 @@ export class AssetManager {
   getAsset(assetPath: string): Buffer {
     const fullPath = this.resolveAssetPath(assetPath);
 
+    getLogger().info(
+      `🔍 AssetManager: Trying to load asset: ${assetPath} -> ${fullPath}`
+    );
+
     try {
       // If the request already includes .gz extension, decompress it directly
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- Path traversal protection in resolveAssetPath
@@ -72,6 +77,9 @@ export class AssetManager {
         return readFileSync(fullPath);
       }
 
+      getLogger().error(
+        `❌ Asset not found: ${assetPath} (tried ${fullPath} and ${fullPath}.gz)`
+      );
       throw new Error(`Asset not found: ${assetPath}`);
     } catch (error) {
       getLogger().error(`Failed to load asset ${assetPath}:`, error);

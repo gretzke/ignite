@@ -1,10 +1,5 @@
 import { FileSystem } from './FileSystem.js';
-import {
-  PluginRegistry,
-  PluginRegistryEntry,
-  TrustDatabase,
-  PluginTrust,
-} from '../types/index.js';
+import { PluginRegistryEntry, PluginTrust } from '../types/index.js';
 import { PluginError, ErrorCodes } from '../types/errors.js';
 import { getLogger } from '../utils/logger.js';
 

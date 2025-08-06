@@ -25,22 +25,16 @@ export async function registerPluginRoutes(
   });
 
   // Plugin detection endpoint (MVP: foundry detection)
-  app.post('/api/detect', async (request) => {
+  app.post('/api/detect', async () => {
     try {
       // Use the pre-mounted default workspace (mounted at CLI startup)
-      const stepResult = await pluginOrchestrator.executePlugin(
+      const result = await pluginOrchestrator.executePlugin(
         'foundry',
         'detect',
         { repoContainerName: 'ignite-repo-local-default-workspace' }
       );
 
-      // Extract the actual plugin response from the StepResult wrapper
-      const result = {
-        success: stepResult.success,
-        data: stepResult.data?.data, // Extract the inner data from plugin response
-      };
-
-      return { result };
+      return result;
     } catch (error) {
       return { error: String(error) };
     }

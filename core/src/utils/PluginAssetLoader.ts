@@ -27,18 +27,7 @@ export class PluginAssetLoader {
    * @returns The plugin JavaScript code as a string
    */
   async loadPlugin(pluginType: string, pluginId: string): Promise<string> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pkg property not in Node.js types
-    const isPkgBundled = typeof (process as any).pkg !== 'undefined';
-
-    let assetPath: string;
-
-    if (isPkgBundled) {
-      // In production: plugins are compressed in dist-assets/plugins/
-      assetPath = `plugins/${pluginType}_${pluginId}.js.gz`;
-    } else {
-      // In development: plugins are in the workspace
-      assetPath = `plugins/dist/compressed/${pluginType}_${pluginId}.js.gz`;
-    }
+    const assetPath = `plugins/dist/compressed/${pluginType}_${pluginId}.js.gz`;
 
     try {
       getLogger().info(
@@ -87,7 +76,7 @@ export class PluginAssetLoader {
    * @param pluginType - The plugin type to search for
    * @returns Array of available plugin IDs
    */
-  listPlugins(pluginType: string): string[] {
+  listPlugins(_: string): string[] {
     // This would require AssetManager to support directory listing
     // For now, we'll return the known plugins from metadata
     // TODO: Implement when AssetManager supports directory operations
