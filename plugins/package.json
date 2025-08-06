@@ -4,7 +4,8 @@
   "description": "Unified build system for all Ignite plugins",
   "type": "module",
   "scripts": {
-    "build": "npm run clean && node scripts/build-all.js",
+    "build": "npm run clean && node scripts/build-all.js && npm run build:docker",
+    "build:docker": "node scripts/build-docker.js",
     "clean": "rm -rf dist && mkdir -p dist/js dist/compressed",
     "postinstall": "node scripts/install-all.js"
   },

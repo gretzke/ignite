@@ -50,9 +50,9 @@ export class ContainerTracker {
     for (const containerId of this.runningContainers) {
       try {
         const container = this.docker.getContainer(containerId);
-        await container.stop({ t: 10 }); // 10 second grace period
+        await container.kill();
         getLogger().info(
-          `⏸️  Stopped container: ${containerId.substring(0, 12)}`
+          `⚡ Force killed container: ${containerId.substring(0, 12)}`
         );
       } catch (error) {
         getLogger().warn(

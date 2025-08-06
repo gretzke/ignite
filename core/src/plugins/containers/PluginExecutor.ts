@@ -14,14 +14,14 @@ const PLUGIN_METADATA: Record<string, PluginMetadata> = {
     type: PluginType.REPO_MANAGER,
     name: 'Local Repository Manager',
     version: '1.0.0',
-    baseImage: 'ignite/shared-repo-manager:latest',
+    baseImage: 'ignite/base_repo-manager:latest',
   },
   foundry: {
     id: 'foundry',
     type: PluginType.COMPILER,
     name: 'Foundry Compiler',
     version: '1.0.0',
-    baseImage: 'ignite/shared-compiler:latest',
+    baseImage: 'ignite/compiler_foundry:latest',
   },
 };
 
@@ -146,7 +146,7 @@ export class PluginExecutor {
 
     // Create local repo container with bind mount
     const container = await this.docker.createContainer({
-      Image: 'ignite/local-repo:latest',
+      Image: 'ignite/base_repo-manager:latest',
       name: containerName,
       HostConfig: {
         Binds: [`${options.hostPath}:/workspace`],

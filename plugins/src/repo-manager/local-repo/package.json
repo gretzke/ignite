@@ -5,8 +5,7 @@
   "main": "index.ts",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit && mkdir -p dist && esbuild index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/index.js",
-    "docker:build": "docker build -t ignite/local-repo:latest ."
+    "build": "tsc --noEmit && mkdir -p dist && esbuild index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/index.js --define:PLUGIN_VERSION='\"'$(node -p \"require('./package.json').version\")'\"'"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

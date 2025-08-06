@@ -1,13 +1,16 @@
 // MVP Foundry Detection Plugin
 import { promises as fs } from "fs";
 import { join } from "path";
-import { CompilerPlugin } from "../../shared/index.ts";
-import type {
-  DetectOptions,
-  DetectionResult,
-  PluginResult,
+import {
+  CompilerPlugin,
+  PluginType,
+  type DetectOptions,
+  type DetectionResult,
+  type PluginResult,
 } from "../../shared/index.ts";
-import { PluginType } from "../../shared/index.ts";
+
+// PLUGIN_VERSION is injected at build time via --define:PLUGIN_VERSION
+declare const PLUGIN_VERSION: string;
 
 export class FoundryPlugin extends CompilerPlugin {
   constructor() {
@@ -15,8 +18,8 @@ export class FoundryPlugin extends CompilerPlugin {
       id: "foundry",
       type: PluginType.COMPILER,
       name: "Foundry Compiler",
-      version: "1.0.0",
-      baseImage: "ignite/shared-compiler:latest",
+      version: PLUGIN_VERSION,
+      baseImage: "ignite/compiler_foundry:latest",
     });
   }
 

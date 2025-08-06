@@ -51,6 +51,8 @@ async function ignite(workspacePath: string): Promise<{
   // Auto-mount the workspace if it's a git repository
   const isGitRepo = isGitRepository(workspacePath);
 
+  // Pre-startup checks
+  app.log.info(`🔍 Workspace path: ${workspacePath}`);
   if (isGitRepo) {
     app.log.info(`📁 Auto-mounting git repository: ${workspacePath}`);
 
@@ -140,9 +142,6 @@ async function main(): Promise<void> {
   const workspacePath = path.resolve(options.path);
   process.env.IGNITE_WORKSPACE_PATH = workspacePath;
 
-  // Pre-startup checks
-  process.stdout.write(`🔍 Workspace path: ${workspacePath}\n`);
-
   // Check if workspace is a git repository
   const isGitRepo = isGitRepository(workspacePath);
   if (!isGitRepo) {
@@ -166,7 +165,7 @@ async function main(): Promise<void> {
       pluginManager: _pluginManager,
       pluginOrchestrator,
     } = await ignite(workspacePath);
-    const port = parseInt(process.env.PORT || '3000', 10);
+    const port = parseInt(process.env.PORT || '1301', 10);
 
     // Log the repository path we're working with
     app.log.info(`📁 Repository path: ${workspacePath}`);

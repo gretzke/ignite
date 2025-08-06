@@ -14,7 +14,7 @@
     "dev": "concurrently --kill-others --kill-others-on-fail --kill-signal SIGTERM --names \"core,frontend,browser\" --prefix-colors \"blue,green,magenta\" \"npm run dev:core\" \"npm run dev:frontend\" \"npm run dev:browser\"",
     "dev:core": "cd core && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
-    "dev:browser": "wait-on http://localhost:3001 && node -e \"import('open').then(m => m.default('http://localhost:3001')); setInterval(() => {}, 1000)\"",
+    "dev:browser": "wait-on http://localhost:1302 && node -e \"import('open').then(m => m.default('http://localhost:1302')); setInterval(() => {}, 1000)\"",
     "build": "cd core && npm run build",
     "start": "cd core && npm start",
     "format": "npm run format:core && npm run format:frontend",
@@ -29,7 +29,7 @@
     "lint:fix": "npm run lint:fix:core && npm run lint:fix:frontend",
     "lint:fix:core": "cd core && npm run lint:fix",
     "lint:fix:frontend": "cd frontend && npm run lint:fix",
-    "docker:build:base-images": "cd plugins/shared && npm run docker:build:all"
+    "docker:build": "cd plugins && npm run build:docker"
   },
   "keywords": [
     "ethereum",

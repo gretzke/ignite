@@ -1,6 +1,9 @@
 # Ignite Repo Manager Base - For repository management plugins (local, cloned, etc.)
 FROM ignite/shared:latest
 
+# Set working directory where the host directory will be mounted
+WORKDIR /workspace
+
 # Switch back to root to install repo management tools
 USER root
 
@@ -10,8 +13,8 @@ RUN apt-get update && apt-get install -y \
     openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js utilities for file operations
-RUN npm install -g fs-extra glob
+# Ensure workspace directory exists with correct permissions
+RUN mkdir -p /workspace && chown plugin:plugin /workspace
 
 # Switch back to plugin user  
 USER plugin

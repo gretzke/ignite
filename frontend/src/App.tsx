@@ -72,7 +72,7 @@ function App() {
     setConnectionState('connecting');
 
     try {
-      const ws = new WebSocket(`ws://localhost:3000/ws`);
+      const ws = new WebSocket(`ws://localhost:1301/ws`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -271,7 +271,7 @@ function App() {
           <div className="connection-help">
             <p>
               💡 <strong>Connection lost:</strong> Make sure the backend is
-              running on port 3000
+              running on port 1301
             </p>
             <p>
               🔄 The app will automatically reconnect when the backend is

@@ -50,8 +50,8 @@ npm run dev
 
 This will start:
 
-- Backend server on `http://localhost:3000`
-- Frontend dev server on `http://localhost:3001` (which proxies to backend)
+- Backend server on `http://localhost:1301`
+- Frontend dev server on `http://localhost:1302` (which proxies to backend)
 
 ## 🏗️ Production Build
 
@@ -119,7 +119,7 @@ cd core/dist-pkg
 ```bash
 # In a foundry project directory
 ./ignite-core-macos-x64
-# Open http://localhost:3000 → should detect foundry automatically
+# Open http://localhost:1301 → should detect foundry automatically
 
 # Or specify path
 ./ignite-core-macos-x64 --path /path/to/foundry/project
@@ -129,7 +129,7 @@ cd core/dist-pkg
 
 ```bash
 npm run dev
-# Open http://localhost:3001 → hot reload enabled
+# Open http://localhost:1302 → hot reload enabled
 ```
 
 ## ✅ Current Capabilities

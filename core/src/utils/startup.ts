@@ -45,12 +45,8 @@ export async function checkDockerAvailability(): Promise<void> {
   const docker = new Docker();
 
   try {
-    process.stdout.write('🐳 Checking Docker availability...\n');
-
     // Try to ping Docker daemon
     await docker.ping();
-
-    process.stdout.write('✅ Docker is available and running\n');
   } catch (error) {
     const errorMessage = `
 🚨 Docker Error: Docker is not available or not running!
