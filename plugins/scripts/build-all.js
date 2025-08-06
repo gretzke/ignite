@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Auto-discovery build script for all plugins
-import { readdir, stat, mkdir } from "fs/promises";
+import { readdir, stat, mkdir, writeFile } from "fs/promises";
 import { join, basename } from "path";
 import { execSync } from "child_process";
 import { existsSync } from "fs";
@@ -129,10 +129,55 @@ async function compressFiles() {
   }
 }
 
+// Build shared plugin types first
+async function buildShared() {
+  log("🔧 Building shared plugin types...", "blue");
+
+  try {
+    const sharedPath = join(SRC_DIR, "shared");
+
+    // Build TypeScript
+    execSync("npm run build", {
+      cwd: sharedPath,
+      stdio: "pipe",
+    });
+
+    // Copy package.json to dist folder for pkg compatibility
+    const distPath = join(sharedPath, "dist");
+    const packageJsonContent = {
+      name: "@ignite/plugin-types",
+      version: "1.0.0",
+      type: "module",
+      main: "index.js",
+      types: "index.d.ts",
+      exports: {
+        ".": "./index.js",
+        "./types": "./types.js",
+        "./base/*": "./base/*.js",
+      },
+      files: ["*.js", "*.d.ts", "base/**"],
+    };
+
+    const packageJsonPath = join(distPath, "package.json");
+    await writeFile(
+      packageJsonPath,
+      JSON.stringify(packageJsonContent, null, 2),
+    );
+
+    log("✅ Shared plugin types built successfully", "green");
+  } catch (error) {
+    log(`❌ Failed to build shared: ${error.message}`, "red");
+    throw error;
+  }
+}
+
 // Main build function
 async function buildAll() {
   try {
     log("🚀 Starting auto-discovery plugin build...", "blue");
+
+    // Build shared plugin types first
+    await buildShared();
 
     // Ensure output directories exist
     await ensureDirectories();

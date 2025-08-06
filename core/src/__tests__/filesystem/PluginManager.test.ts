@@ -266,51 +266,6 @@ describe('PluginManager', () => {
     });
   });
 
-  describe('Native Plugin Registration', () => {
-    it('should register native plugins automatically', async () => {
-      await pluginManager.registerNativePlugins();
-
-      // Check that native plugins were registered
-      const foundry = await pluginManager.getPlugin('foundry');
-      expect(foundry.name).toBe('Foundry Compiler');
-      expect(foundry.type).toBe('compiler');
-
-      const hardhat = await pluginManager.getPlugin('hardhat');
-      expect(hardhat.name).toBe('Hardhat Compiler');
-      expect(hardhat.type).toBe('compiler');
-
-      const metamask = await pluginManager.getPlugin('metamask');
-      expect(metamask.name).toBe('MetaMask Wallet');
-      expect(metamask.type).toBe('signer');
-    });
-
-    it('should set native trust for built-in plugins', async () => {
-      await pluginManager.registerNativePlugins();
-
-      const foundryTrust = await pluginManager.getTrust('foundry');
-      expect(foundryTrust!.trust).toBe('native');
-      expect(foundryTrust!.permissions.canReadFiles).toBe(true);
-      expect(foundryTrust!.permissions.canWriteFiles).toBe(true);
-
-      const metamaskTrust = await pluginManager.getTrust('metamask');
-      expect(metamaskTrust!.trust).toBe('native');
-      expect(metamaskTrust!.permissions.canAccessBrowserAPI).toBe(true);
-    });
-
-    it('should not duplicate native plugins on multiple calls', async () => {
-      await pluginManager.registerNativePlugins();
-      await pluginManager.registerNativePlugins(); // Call again
-
-      const plugins = await pluginManager.listPlugins();
-
-      // Should only have one instance of each native plugin
-      const foundryInstances = Object.entries(plugins).filter(
-        ([id, plugin]) => plugin.name === 'Foundry Compiler'
-      );
-      expect(foundryInstances).toHaveLength(1);
-    });
-  });
-
   describe('Combined Operations', () => {
     it('should get plugin with trust information', async () => {
       const pluginId = 'combined-test';

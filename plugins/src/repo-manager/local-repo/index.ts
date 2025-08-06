@@ -1,6 +1,8 @@
 // Local Repository Manager Plugin
-import { RepoManagerPlugin } from "../../shared/index.ts";
-import { PluginType } from "../../shared/index.ts";
+import { RepoManagerPlugin, PluginType } from "../../shared/index.ts";
+
+// PLUGIN_VERSION is injected at build time via --define:PLUGIN_VERSION
+declare const PLUGIN_VERSION: string;
 
 export class LocalRepoPlugin extends RepoManagerPlugin {
   public readonly type = PluginType.REPO_MANAGER as const;
@@ -10,8 +12,8 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
       id: "local-repo",
       type: PluginType.REPO_MANAGER,
       name: "Local Repository Manager",
-      version: "1.0.0",
-      baseImage: "ignite/shared-repo-manager:latest",
+      version: PLUGIN_VERSION,
+      baseImage: "ignite/base_repo-manager:latest",
     });
   }
 

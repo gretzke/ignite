@@ -86,7 +86,7 @@ export async function registerPluginRoutes(
   });
 
   // TODO: SECURITY - Add authentication middleware to prevent plugins from self-elevating trust
-  // Plugin containers should NOT be able to call localhost:3000 to grant themselves permissions
+  // Plugin containers should NOT be able to call localhost:1301 to grant themselves permissions
   // Need to implement: network isolation, UI-only trust modification, user confirmation flow
   app.post('/api/plugins/:pluginId/trust', async (request) => {
     const { pluginId } = request.params as { pluginId: string };

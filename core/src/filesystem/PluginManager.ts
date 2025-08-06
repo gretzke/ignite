@@ -238,68 +238,6 @@ export class PluginManager {
     return trust ? trust.permissions : null;
   }
 
-  // Native Plugin Auto-Registration
-  async registerNativePlugins(): Promise<void> {
-    getLogger().info('🔧 Registering native plugins...');
-
-    const nativePlugins = [
-      {
-        id: 'foundry',
-        plugin: {
-          name: 'Foundry Compiler',
-          version: '1.0.0',
-          dockerImage: 'ignite/foundry:latest',
-          type: 'compiler' as PluginType,
-          source: 'native',
-        },
-        permissions: this.getFullPermissions(),
-      },
-      {
-        id: 'hardhat',
-        plugin: {
-          name: 'Hardhat Compiler',
-          version: '1.0.0',
-          dockerImage: 'ignite/hardhat:latest',
-          type: 'compiler' as PluginType,
-          source: 'native',
-        },
-        permissions: this.getFullPermissions(),
-      },
-      {
-        id: 'metamask',
-        plugin: {
-          name: 'MetaMask Wallet',
-          version: '1.0.0',
-          dockerImage: 'ignite/metamask:latest',
-          type: 'signer' as PluginType,
-          source: 'native',
-        },
-        permissions: {
-          ...this.getFullPermissions(),
-          canAccessBrowserAPI: true,
-        },
-      },
-    ];
-
-    for (const { id, plugin, permissions } of nativePlugins) {
-      try {
-        // Check if plugin already exists
-        const existing = await this.getPlugin(id).catch(() => null);
-
-        if (!existing) {
-          await this.addPlugin(id, plugin);
-        }
-
-        // Ensure native trust is set
-        await this.trustPlugin(id, 'native', permissions);
-      } catch (error) {
-        getLogger().error(`Failed to register native plugin '${id}': ${error}`);
-      }
-    }
-
-    getLogger().info('✅ Native plugins registered');
-  }
-
   // Utility Methods
   private getFullPermissions(): PluginPermissions {
     return {
