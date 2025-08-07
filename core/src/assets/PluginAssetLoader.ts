@@ -1,10 +1,8 @@
 import { AssetManager } from './AssetManager.js';
-import { getLogger } from './logger.js';
+import { getLogger } from '../utils/logger.js';
 
-/**
- * PluginAssetLoader - Loads plugin bundles using the unified AssetManager
- * Handles both development and production (pkg bundled) modes consistently
- */
+// PluginAssetLoader - Loads plugin bundles using the unified AssetManager
+// Handles both development and production (pkg bundled) modes consistently
 export class PluginAssetLoader {
   private static instance: PluginAssetLoader;
   private assetManager: AssetManager;
@@ -20,12 +18,10 @@ export class PluginAssetLoader {
     return PluginAssetLoader.instance;
   }
 
-  /**
-   * Load a plugin's JavaScript code
-   * @param pluginType - The plugin type (e.g., 'compiler', 'repo-manager')
-   * @param pluginId - The plugin ID (e.g., 'foundry', 'local-repo')
-   * @returns The plugin JavaScript code as a string
-   */
+  // Load a plugin's JavaScript code
+  // @param pluginType - The plugin type (e.g., 'compiler', 'repo-manager')
+  // @param pluginId - The plugin ID (e.g., 'foundry', 'local-repo')
+  // @returns The plugin JavaScript code as a string
   async loadPlugin(pluginType: string, pluginId: string): Promise<string> {
     const assetPath = `plugins/dist/compressed/${pluginType}_${pluginId}.js.gz`;
 
@@ -54,12 +50,10 @@ export class PluginAssetLoader {
     }
   }
 
-  /**
-   * Check if a plugin exists
-   * @param pluginType - The plugin type
-   * @param pluginId - The plugin ID
-   * @returns True if the plugin exists
-   */
+  // Check if a plugin exists
+  // @param pluginType - The plugin type
+  // @param pluginId - The plugin ID
+  // @returns True if the plugin exists
   pluginExists(pluginType: string, pluginId: string): boolean {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pkg property not in Node.js types
     const isPkgBundled = typeof (process as any).pkg !== 'undefined';
@@ -71,11 +65,9 @@ export class PluginAssetLoader {
     return this.assetManager.exists(assetPath);
   }
 
-  /**
-   * List available plugins by type
-   * @param pluginType - The plugin type to search for
-   * @returns Array of available plugin IDs
-   */
+  // List available plugins by type
+  // @param pluginType - The plugin type to search for
+  // @returns Array of available plugin IDs
   listPlugins(_: string): string[] {
     // This would require AssetManager to support directory listing
     // For now, we'll return the known plugins from metadata

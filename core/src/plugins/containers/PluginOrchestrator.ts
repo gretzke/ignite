@@ -17,18 +17,12 @@ export class PluginOrchestrator {
     this.executor = PluginExecutor.getInstance();
   }
 
-  /**
-   * Get singleton instance of PluginOrchestrator
-   */
+  // Get singleton instance of PluginOrchestrator
   static getInstance(): PluginOrchestrator {
     if (!PluginOrchestrator.instance) {
       PluginOrchestrator.instance = new PluginOrchestrator();
     }
     return PluginOrchestrator.instance;
-  }
-
-  async initialize(): Promise<void> {
-    await this.executor.initialize();
   }
 
   // Execute a single plugin (simple case)
@@ -38,6 +32,29 @@ export class PluginOrchestrator {
     options: Record<string, unknown>
   ): Promise<PluginResult<unknown>> {
     return this.executor.execute(pluginId, operation, options);
+  }
+
+  // Set up default workspace - high-level orchestration for CLI startup
+  async setupDefaultWorkspace(
+    workspacePath: string
+  ): Promise<PluginResult<{ containerName: string; workspacePath: string }>> {
+    getLogger().info(`📁 Setting up default workspace: ${workspacePath}`);
+
+    const result = await this.executePlugin('local-repo', 'mount', {
+      hostPath: workspacePath,
+      name: 'default-workspace',
+    });
+
+    if (result.success) {
+      getLogger().info('✅ Default workspace setup completed');
+    } else {
+      getLogger().warn(`⚠️ Default workspace setup failed: ${result.error}`);
+    }
+
+    return result as PluginResult<{
+      containerName: string;
+      workspacePath: string;
+    }>;
   }
 
   // Execute a complete workflow with dependency resolution

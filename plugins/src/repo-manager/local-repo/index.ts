@@ -1,5 +1,9 @@
 // Local Repository Manager Plugin
-import { RepoManagerPlugin, PluginType } from "../../shared/index.ts";
+import {
+  RepoManagerPlugin,
+  PluginType,
+  type PluginMetadata,
+} from "../../shared/index.ts";
 
 // PLUGIN_VERSION is injected at build time via --define:PLUGIN_VERSION
 declare const PLUGIN_VERSION: string;
@@ -7,27 +11,28 @@ declare const PLUGIN_VERSION: string;
 export class LocalRepoPlugin extends RepoManagerPlugin {
   public readonly type = PluginType.REPO_MANAGER as const;
 
-  constructor() {
-    super({
+  // Static metadata for registry generation (no instantiation needed)
+  protected static getMetadata(): PluginMetadata {
+    return {
       id: "local-repo",
       type: PluginType.REPO_MANAGER,
       name: "Local Repository Manager",
       version: PLUGIN_VERSION,
       baseImage: "ignite/base_repo-manager:latest",
-    });
+    };
   }
 
   // No plugin-side operations - CLI handles all operations directly
-  // This container just maintains the volume and stays alive
+  // This container just maintains the volume
 }
 
-export const plugin = new LocalRepoPlugin();
+const plugin = new LocalRepoPlugin();
 
-// CLI entrypoint - keep container alive to maintain volume
-const WORKSPACE_PATH = process.env.WORKSPACE_PATH || "/workspace";
+// Export plugin instance as default for registry generation
+export default plugin;
 
-async function main() {
+// CLI entrypoint - repo managers keep container alive (no operations)
+if (process.argv.length > 2) {
+  const WORKSPACE_PATH = process.env.WORKSPACE_PATH || "/workspace";
   console.log(`📁 Local repo container ready at: ${WORKSPACE_PATH}`);
 }
-
-main().catch(console.error);

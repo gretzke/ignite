@@ -2,34 +2,34 @@ import { PluginResult, PluginMetadata, PluginType } from "./types.js";
 
 // Base class for all Ignite plugins
 export abstract class BasePlugin<T extends PluginType = PluginType> {
-  public readonly metadata: PluginMetadata;
-
-  constructor(metadata: PluginMetadata) {
-    this.metadata = metadata;
-  }
-
-  // Core plugin information
-  getInfo(): PluginResult<{ name: string; version: string; type: T }> {
+  // Static method for metadata - wraps getMetadata in PluginResult
+  static getInfo(): PluginResult<PluginMetadata> {
     return {
       success: true,
-      data: {
-        name: this.metadata.name,
-        version: this.metadata.version,
-        type: this.metadata.type as T,
-      },
+      data: this.getMetadata(),
     };
+  }
+
+  // Abstract static method that must be implemented by inheriting classes
+  protected static getMetadata(): PluginMetadata {
+    throw new Error("getMetadata() must be implemented by plugin class");
+  }
+
+  // Instance method delegates to static for backwards compatibility
+  getInfo(): PluginResult<PluginMetadata> {
+    return (this.constructor as typeof BasePlugin).getInfo();
   }
 
   // Plugin metadata access
   getId(): string {
-    return this.metadata.id;
+    return BasePlugin.getMetadata().id;
   }
 
   getType(): T {
-    return this.metadata.type as T;
+    return BasePlugin.getMetadata().type as T;
   }
 
   getBaseImage(): string {
-    return this.metadata.baseImage;
+    return BasePlugin.getMetadata().baseImage;
   }
 }

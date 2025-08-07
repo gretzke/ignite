@@ -4,23 +4,26 @@ import { join } from "path";
 import {
   CompilerPlugin,
   PluginType,
+  type PluginMetadata,
   type DetectOptions,
   type DetectionResult,
   type PluginResult,
 } from "../../shared/index.ts";
+import { runPluginCLI } from "../../shared/plugin-runner.js";
 
 // PLUGIN_VERSION is injected at build time via --define:PLUGIN_VERSION
 declare const PLUGIN_VERSION: string;
 
 export class FoundryPlugin extends CompilerPlugin {
-  constructor() {
-    super({
+  // Static metadata for registry generation (no instantiation needed)
+  protected static getMetadata(): PluginMetadata {
+    return {
       id: "foundry",
       type: PluginType.COMPILER,
       name: "Foundry Compiler",
       version: PLUGIN_VERSION,
       baseImage: "ignite/compiler_foundry:latest",
-    });
+    };
   }
 
   async detect(options: DetectOptions): Promise<PluginResult<DetectionResult>> {
@@ -46,17 +49,13 @@ export class FoundryPlugin extends CompilerPlugin {
   }
 }
 
-export const plugin = new FoundryPlugin();
+const plugin = new FoundryPlugin();
 
-// CLI entrypoint - always run when container starts
-const WORKSPACE_PATH = process.env.WORKSPACE_PATH || "/workspace";
+// Export plugin instance as default for registry generation
+export default plugin;
 
-async function main() {
-  const result = await plugin.detect({
-    repoContainerName: "ignite-repo-local-default-workspace",
-    workspacePath: WORKSPACE_PATH,
-  });
-  console.log(JSON.stringify(result, null, 2));
+// CLI entrypoint - type-safe generic plugin execution
+// Always run CLI when args are provided (for container execution)
+if (process.argv.length > 1) {
+  runPluginCLI(plugin);
 }
-
-main().catch(console.error);
