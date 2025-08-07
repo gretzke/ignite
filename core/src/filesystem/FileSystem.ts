@@ -242,7 +242,7 @@ export class FileSystem {
 
     // Create default global config
     const defaultConfig: IgniteConfig = {
-      version: '1.0.0', // TODO: pull from package.json at compile time?
+      version: '1.0.0', // TODO: pull from package.json at compile time? Is this even needed?
       currentProfile: 'default',
       lastStartup: new Date().toISOString(),
     };

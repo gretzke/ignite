@@ -44,21 +44,8 @@ async function ignite(workspacePath: string): Promise<{
   // Initialize components (will auto-create files as needed)
   await profileManager.initialize();
 
-  // Auto-mount the workspace if it's a git repository
-  const isGitRepo = isGitRepository(workspacePath);
-
   // Pre-startup checks
   app.log.info(`🔍 Workspace path: ${workspacePath}`);
-  if (isGitRepo) {
-    app.log.info(`📁 Auto-mounting git repository: ${workspacePath}`);
-
-    try {
-      // Clean, high-level workspace setup - tracking handled automatically
-      await pluginOrchestrator.setupDefaultWorkspace(workspacePath);
-    } catch (error) {
-      app.log.warn(`⚠️ Failed to setup default workspace: ${error}`);
-    }
-  }
 
   // Register WebSocket plugin
   await app.register(websocket);

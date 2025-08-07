@@ -27,59 +27,17 @@ export async function registerPluginRoutes(
   // Plugin detection endpoint (MVP: foundry detection)
   app.post('/api/detect', async () => {
     try {
-      // Use the pre-mounted default workspace (mounted at CLI startup)
+      // Determine host path from CLI or CWD
+      const hostPath = process.env.IGNITE_WORKSPACE_PATH || process.cwd();
+
+      // Delegate to handler; it will perform any necessary checks and orchestration
       const result = await pluginOrchestrator.executePlugin(
         'foundry',
         'detect',
-        { repoContainerName: 'ignite-repo-local-default-workspace' }
+        { hostPath }
       );
 
       return result;
-    } catch (error) {
-      return { error: String(error) };
-    }
-  });
-
-  // Workflow execution endpoint (MVP: repo -> foundry workflow)
-  app.post('/api/workflows/foundry', async (request) => {
-    const { hostPath: requestPath } = request.body as { hostPath?: string };
-
-    // Use provided path or fall back to CLI-provided workspace path
-    const hostPath =
-      requestPath || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
-
-    try {
-      // Execute foundry workflow: local-repo -> foundry detection -> compilation
-      const workflow = {
-        steps: [
-          {
-            id: 'repo',
-            plugin: 'local-repo',
-            operation: 'mount',
-            options: { hostPath },
-          },
-          {
-            id: 'detect',
-            plugin: 'foundry',
-            operation: 'detect',
-            dependencies: ['repo'],
-          },
-          {
-            id: 'compile',
-            plugin: 'foundry',
-            operation: 'compile',
-            dependencies: ['repo'],
-          },
-        ],
-      };
-
-      const context = await pluginOrchestrator.executeWorkflow(workflow);
-
-      return {
-        success: pluginOrchestrator.isWorkflowSuccessful(context),
-        steps: Object.fromEntries(context.stepResults),
-        workflow,
-      };
     } catch (error) {
       return { error: String(error) };
     }

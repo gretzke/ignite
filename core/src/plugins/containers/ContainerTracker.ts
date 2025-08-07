@@ -36,7 +36,7 @@ export class ContainerTracker {
     return Array.from(this.runningContainers);
   }
 
-  // Stop all tracked containers (but don't remove them)
+  // Stop all tracked containers (persistent: stop; ephemeral: they should be AutoRemove and already gone)
   async cleanup(): Promise<void> {
     if (this.runningContainers.size === 0) {
       getLogger().info('🧹 No containers to clean up');
@@ -50,9 +50,9 @@ export class ContainerTracker {
     for (const containerId of this.runningContainers) {
       try {
         const container = this.docker.getContainer(containerId);
-        await container.remove({ force: true }); // TODO: removing for now, shutdown later
+        await container.stop({ t: 0 });
         getLogger().info(
-          `⚡ Force killed container: ${containerId.substring(0, 12)}`
+          `🛑 Stopped container: ${containerId.substring(0, 12)}`
         );
       } catch (error) {
         getLogger().warn(
@@ -63,6 +63,6 @@ export class ContainerTracker {
     }
 
     this.runningContainers.clear();
-    getLogger().info('✅ Container cleanup completed');
+    getLogger().info('✅ Container stop completed');
   }
 }
