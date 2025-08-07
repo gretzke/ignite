@@ -4,7 +4,6 @@
 import { readdir } from "fs/promises";
 import { join, dirname, basename } from "path";
 import { execSync } from "child_process";
-import { existsSync } from "fs";
 
 const SRC_DIR = "src";
 
@@ -153,9 +152,4 @@ async function buildAllDockerImages() {
   }
 }
 
-// Run if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  buildAllDockerImages();
-}
-
-export { buildAllDockerImages };
+buildAllDockerImages();

@@ -1,25 +1,29 @@
 import Docker from 'dockerode';
 import { getLogger } from '../../utils/logger.js';
 
-/**
- * Simple container tracker for lifecycle management
- * Tracks running containers and provides cleanup functionality
- */
+// Simple container tracker for lifecycle management
+// Tracks running containers and provides cleanup functionality
 export class ContainerTracker {
+  private static instance: ContainerTracker;
   private docker = new Docker();
   private runningContainers = new Set<string>(); // Container IDs
 
-  /**
-   * Track a running container
-   */
+  private constructor() {}
+
+  static getInstance(): ContainerTracker {
+    if (!ContainerTracker.instance) {
+      ContainerTracker.instance = new ContainerTracker();
+    }
+    return ContainerTracker.instance;
+  }
+
+  // Track a running container
   track(containerId: string): void {
     this.runningContainers.add(containerId);
     getLogger().debug(`📝 Tracking container: ${containerId.substring(0, 12)}`);
   }
 
-  /**
-   * Stop tracking a container
-   */
+  // Stop tracking a container
   untrack(containerId: string): void {
     this.runningContainers.delete(containerId);
     getLogger().debug(
@@ -27,16 +31,12 @@ export class ContainerTracker {
     );
   }
 
-  /**
-   * Get all tracked container IDs
-   */
+  // Get all tracked container IDs
   getTracked(): string[] {
     return Array.from(this.runningContainers);
   }
 
-  /**
-   * Stop all tracked containers (but don't remove them)
-   */
+  // Stop all tracked containers (but don't remove them)
   async cleanup(): Promise<void> {
     if (this.runningContainers.size === 0) {
       getLogger().info('🧹 No containers to clean up');
@@ -50,7 +50,7 @@ export class ContainerTracker {
     for (const containerId of this.runningContainers) {
       try {
         const container = this.docker.getContainer(containerId);
-        await container.kill();
+        await container.remove({ force: true }); // TODO: removing for now, shutdown later
         getLogger().info(
           `⚡ Force killed container: ${containerId.substring(0, 12)}`
         );

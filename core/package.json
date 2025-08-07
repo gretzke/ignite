@@ -40,7 +40,8 @@
     "assets": [
       "../frontend/dist/index.html",
       "../frontend/dist/**/*.gz",
-      "../plugins/dist/compressed/**/*.gz"
+      "../plugins/dist/compressed/**/*.gz",
+      "../plugins/dist/plugin-registry.json"
     ],
     "targets": [
       "node22-linux-x64",

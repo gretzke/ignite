@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { gunzipSync } from 'zlib';
-import { getLogger } from './logger.js';
+import { getLogger } from '../utils/logger.js';
 
 export class AssetManager {
   private static instance: AssetManager;

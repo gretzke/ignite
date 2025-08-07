@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { AssetManager } from './AssetManager.js';
-import { getLogger } from './logger.js';
+import { getLogger } from '../utils/logger.js';
 
 export class StaticAssetHandler {
   private static instance: StaticAssetHandler;

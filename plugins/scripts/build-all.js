@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 // Auto-discovery build script for all plugins
-import { readdir, stat, mkdir, writeFile } from "fs/promises";
-import { join, basename } from "path";
+import { readdir, mkdir, writeFile } from "fs/promises";
+import { join, resolve } from "path";
 import { execSync } from "child_process";
 import { existsSync } from "fs";
+import { pathToFileURL } from "url";
 
 const SRC_DIR = "src";
 const DIST_DIR = "dist";
@@ -94,7 +95,7 @@ async function buildPlugin(plugin) {
     if (existsSync(builtFile)) {
       execSync(`cp "${builtFile}" "${targetFile}"`);
       log(`✅ Built: ${outputName}`, "green");
-      return targetFile;
+      return { filePath: targetFile, plugin };
     } else {
       throw new Error(`Built file not found: ${builtFile}`);
     }
@@ -127,6 +128,78 @@ async function compressFiles() {
   } catch (error) {
     log(`❌ Compression failed: ${error.message}`, "red");
   }
+}
+
+// Extract plugin metadata by executing the built plugin
+async function extractPluginMetadata(plugin, builtFilePath) {
+  try {
+    // Import the built plugin module using cross-platform file URL
+    const absolutePath = resolve(builtFilePath);
+    const fileUrl = pathToFileURL(absolutePath).href;
+    const pluginModule = await import(fileUrl);
+
+    // Try to get the plugin class from the module
+    let PluginClass = null;
+
+    // Look for exported plugin classes
+    for (const [exportName, exportValue] of Object.entries(pluginModule)) {
+      if (
+        exportValue &&
+        typeof exportValue === "function" &&
+        typeof exportValue.getInfo === "function"
+      ) {
+        PluginClass = exportValue;
+        break;
+      }
+    }
+
+    if (!PluginClass) {
+      throw new Error(
+        "Plugin does not export a class with static getInfo() method",
+      );
+    }
+
+    // Call static getInfo() to get the plugin's metadata
+    const infoResult = PluginClass.getInfo();
+
+    if (!infoResult.success || !infoResult.data) {
+      throw new Error("Plugin getInfo() returned unsuccessful result");
+    }
+
+    // Use whatever the plugin returns as its metadata
+    return infoResult.data;
+  } catch (error) {
+    log(
+      `❌ Failed to extract metadata from ${builtFilePath}: ${error.message}`,
+      "red",
+    );
+    return null;
+  }
+}
+
+// Generate plugin registry from built plugins
+async function generatePluginRegistry(builtResults) {
+  log("📋 Generating plugin registry...", "blue");
+
+  const registry = {};
+
+  for (const result of builtResults) {
+    const { plugin, filePath } = result;
+    const metadata = await extractPluginMetadata(plugin, filePath);
+    if (metadata) {
+      registry[metadata.id] = metadata;
+      log(`✅ Added to registry: ${metadata.id} (${metadata.name})`, "green");
+    }
+  }
+
+  // Write registry to dist directory
+  const registryPath = join(DIST_DIR, "plugin-registry.json");
+  await writeFile(registryPath, JSON.stringify(registry, null, 2));
+
+  log(`📝 Plugin registry written to: ${registryPath}`, "green");
+  log(`📊 Total plugins registered: ${Object.keys(registry).length}`, "blue");
+
+  return registry;
 }
 
 // Build shared plugin types first
@@ -202,11 +275,18 @@ async function buildAll() {
     }
 
     // Build each plugin
+    const builtResults = [];
     for (const plugin of allPlugins) {
-      const builtFile = await buildPlugin(plugin);
-      if (builtFile) {
-        builtFiles.push(builtFile);
+      const result = await buildPlugin(plugin);
+      if (result) {
+        builtFiles.push(result.filePath);
+        builtResults.push(result);
       }
+    }
+
+    // Generate plugin registry from built plugins
+    if (builtResults.length > 0) {
+      await generatePluginRegistry(builtResults);
     }
 
     // Compress all built files
@@ -223,7 +303,4 @@ async function buildAll() {
   }
 }
 
-// Run if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  buildAll();
-}
+buildAll();

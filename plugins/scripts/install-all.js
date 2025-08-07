@@ -126,7 +126,4 @@ async function installAll() {
   }
 }
 
-// Run if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  installAll();
-}
+installAll();

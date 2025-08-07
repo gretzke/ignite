@@ -17,7 +17,7 @@ import {
 import { registerHealthRoutes } from './api/health.js';
 import { registerProfileRoutes } from './api/profiles.js';
 import { registerPluginRoutes } from './api/plugins.js';
-import { StaticAssetHandler } from './utils/StaticAssetHandler.js';
+import { StaticAssetHandler } from './assets/StaticAssetHandler.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -44,10 +44,6 @@ async function ignite(workspacePath: string): Promise<{
   // Initialize components (will auto-create files as needed)
   await profileManager.initialize();
 
-  // Initialize plugin orchestrator
-  app.log.info('🔌 Setting up plugin orchestrator...');
-  await pluginOrchestrator.initialize();
-
   // Auto-mount the workspace if it's a git repository
   const isGitRepo = isGitRepository(workspacePath);
 
@@ -57,13 +53,10 @@ async function ignite(workspacePath: string): Promise<{
     app.log.info(`📁 Auto-mounting git repository: ${workspacePath}`);
 
     try {
-      await pluginOrchestrator.executePlugin('local-repo', 'mount', {
-        hostPath: workspacePath,
-        name: 'default-workspace',
-      });
-      app.log.info('✅ Default workspace mounted successfully');
+      // Clean, high-level workspace setup - tracking handled automatically
+      await pluginOrchestrator.setupDefaultWorkspace(workspacePath);
     } catch (error) {
-      app.log.warn(`⚠️ Failed to mount default workspace: ${error}`);
+      app.log.warn(`⚠️ Failed to setup default workspace: ${error}`);
     }
   }
 

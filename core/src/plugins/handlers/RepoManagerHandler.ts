@@ -1,18 +1,20 @@
 import type { IRepoManagerPlugin } from '@ignite/plugin-types/base/repo-manager';
 import type { PluginResult } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
-import Docker from 'dockerode';
+import type { RepoManagerOperations } from '@ignite/plugin-types/base/repo-manager';
 import { getLogger } from '../../utils/logger.js';
 import type { LocalRepoOptions } from '../../types/index.js';
+import { BaseHandler } from './BaseHandler.js';
 
-export class RepoManagerHandler implements IRepoManagerPlugin {
+export class RepoManagerHandler
+  extends BaseHandler<RepoManagerOperations>
+  implements IRepoManagerPlugin
+{
   public readonly type = PluginType.REPO_MANAGER as const;
-  private docker = new Docker();
   private readonly volumePrefix = 'ignite-repo';
-  private readonly pluginId: string;
 
   constructor(pluginId: string) {
-    this.pluginId = pluginId;
+    super(pluginId);
   }
 
   async mount(
@@ -26,7 +28,7 @@ export class RepoManagerHandler implements IRepoManagerPlugin {
       );
 
       const container = await this.docker.createContainer({
-        Image: 'ignite/shared-repo-manager:latest',
+        Image: 'ignite/base_repo-manager:latest',
         name: containerName,
         HostConfig: {
           Binds: [`${options.hostPath}:/workspace`],
