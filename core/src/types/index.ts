@@ -51,17 +51,10 @@ export interface IgniteConfig {
   lastStartup: string; // ISO timestamp
 }
 
-// Repository volume management types
-export interface RepoVolumeInfo {
-  volumeName: string;
-  type: 'local' | 'cloned';
-  hostPath?: string; // Only for local repos // TODO: /workspace for cloned repos later on, do not make this optional in the future
-  created: string; // ISO timestamp
-}
-
 export interface LocalRepoOptions {
   hostPath: string;
   name: string;
+  persistent?: boolean;
 }
 
 export interface ClonedRepoOptions {

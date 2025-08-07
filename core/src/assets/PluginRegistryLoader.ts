@@ -54,11 +54,13 @@ export class PluginRegistryLoader {
     }
   }
 
-  async getPluginMetadata(
-    pluginId: string
-  ): Promise<PluginMetadata | undefined> {
+  async getPluginMetadata(pluginId: string): Promise<PluginMetadata> {
     const registry = await this.loadRegistry();
-    return registry[pluginId];
+    const meta = registry[pluginId];
+    if (!meta) {
+      throw new Error(`Unknown plugin: ${pluginId}`);
+    }
+    return meta;
   }
 
   async getAllPlugins(): Promise<Record<string, PluginMetadata>> {

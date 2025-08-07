@@ -27,6 +27,7 @@ export type ICompilerPlugin = {
 export interface DetectOptions {
   repoContainerName: string;
   workspacePath?: string;
+  hostPath?: string; // Optional: allows handler to ensure repo container when not provided
 }
 
 export interface DetectionResult {

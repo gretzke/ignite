@@ -64,14 +64,4 @@ export class PluginAssetLoader {
 
     return this.assetManager.exists(assetPath);
   }
-
-  // List available plugins by type
-  // @param pluginType - The plugin type to search for
-  // @returns Array of available plugin IDs
-  listPlugins(_: string): string[] {
-    // This would require AssetManager to support directory listing
-    // For now, we'll return the known plugins from metadata
-    // TODO: Implement when AssetManager supports directory operations
-    return [];
-  }
 }

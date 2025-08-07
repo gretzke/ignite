@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { readFileSync, existsSync, statSync } from 'fs';
 import path from 'path';
 import Docker from 'dockerode';
+import crypto from 'crypto';
 
 // Cross-platform browser opening function
 export function openBrowser(url: string): void {
@@ -65,4 +66,14 @@ Error details: ${error instanceof Error ? error.message : String(error)}
       'Docker is not available. Please start Docker and try again.'
     );
   }
+}
+
+// Stable short hash for workspace paths (sha256 → 10 hex chars)
+export function hashWorkspacePath(absPath: string): string {
+  const normalized = path.resolve(absPath);
+  return crypto
+    .createHash('sha256')
+    .update(normalized)
+    .digest('hex')
+    .slice(0, 10);
 }

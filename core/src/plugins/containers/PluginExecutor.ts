@@ -29,11 +29,6 @@ export class PluginExecutor {
     operation: string,
     options: Record<string, unknown>
   ): Promise<PluginResult<unknown>> {
-    const plugin = await this.registryLoader.getPluginMetadata(pluginId);
-    if (!plugin) {
-      throw new Error(`Unknown plugin: ${pluginId}`);
-    }
-
     getLogger().info(`🔌 Executing ${pluginId}.${operation}`);
 
     try {
@@ -67,10 +62,6 @@ export class PluginExecutor {
   >(pluginId: string): Promise<BaseHandler<T>> {
     const pluginMetadata =
       await this.registryLoader.getPluginMetadata(pluginId);
-
-    if (!pluginMetadata) {
-      throw new Error(`No metadata found for plugin: ${pluginId}`);
-    }
 
     // Create handler based on plugin type (exhaustive checking)
     switch (pluginMetadata.type) {

@@ -4,6 +4,7 @@ import { PluginType } from '@ignite/plugin-types/types';
 import type { RepoManagerOperations } from '@ignite/plugin-types/base/repo-manager';
 import { getLogger } from '../../utils/logger.js';
 import type { LocalRepoOptions } from '../../types/index.js';
+import { hashWorkspacePath } from '../../utils/startup.js';
 import { BaseHandler } from './BaseHandler.js';
 
 export class RepoManagerHandler
@@ -11,7 +12,6 @@ export class RepoManagerHandler
   implements IRepoManagerPlugin
 {
   public readonly type = PluginType.REPO_MANAGER as const;
-  private readonly volumePrefix = 'ignite-repo';
 
   constructor(pluginId: string) {
     super(pluginId);
@@ -21,22 +21,59 @@ export class RepoManagerHandler
     options: LocalRepoOptions
   ): Promise<PluginResult<{ containerName: string; workspacePath: string }>> {
     try {
-      const containerName = this.generateVolumeName('local', options.name);
+      // Determine container naming strategy
+      const baseImage = 'ignite/base_repo-manager:latest';
+      const isPersistent = Boolean(options.persistent);
+      const hash = hashWorkspacePath(options.hostPath);
+      const containerName = isPersistent
+        ? `ignite-base_repo-manager-${this.pluginId}-${hash}`
+        : `ignite-base_repo-manager-session-${hash}`;
+
+      // If a container with this deterministic name already exists, ensure it is running and reuse it
+      try {
+        const existing = this.docker.getContainer(containerName);
+        const info = await existing.inspect();
+        if (info?.State?.Running) {
+          getLogger().info(
+            `♻️  ${this.pluginId}: Reusing running repo container: ${containerName}`
+          );
+        } else {
+          getLogger().info(
+            `▶️  ${this.pluginId}: Starting existing repo container: ${containerName}`
+          );
+          await existing.start();
+        }
+
+        return {
+          success: true,
+          data: {
+            containerName,
+            workspacePath: '/workspace',
+          },
+        };
+      } catch {
+        // Not found → create below
+      }
 
       getLogger().info(
         `📁 ${this.pluginId}: Creating local repo container: ${containerName} -> ${options.hostPath}`
       );
 
       const container = await this.docker.createContainer({
-        Image: 'ignite/base_repo-manager:latest',
+        Image: baseImage,
         name: containerName,
         HostConfig: {
           Binds: [`${options.hostPath}:/workspace`],
-          AutoRemove: false, // Keep container alive for volume sharing
+          // Ephemeral (cwd): removed on stop; Persistent: kept across sessions
+          AutoRemove: !isPersistent,
         },
         Cmd: ['sleep', 'infinity'], // Keep container running
         Labels: {
           'ignite.type': 'local-repo',
+          'ignite.plugin': this.pluginId,
+          'ignite.image': baseImage,
+          'ignite.workspace': options.hostPath,
+          'ignite.workspaceHash': hash,
           'ignite.hostPath': options.hostPath,
           created: new Date().toISOString(),
         },
@@ -143,9 +180,5 @@ export class RepoManagerHandler
         error: String(error),
       };
     }
-  }
-
-  private generateVolumeName(type: string, id: string): string {
-    return `${this.volumePrefix}-${type}-${id}`;
   }
 }

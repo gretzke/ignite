@@ -3,6 +3,7 @@ import { PluginAssetLoader } from '../../assets/PluginAssetLoader.js';
 import type { PluginResult } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import { getLogger } from '../../utils/logger.js';
+import { isGitRepository } from '../../utils/startup.js';
 
 // Generic base handler for all plugin types
 export abstract class BaseHandler<
@@ -17,42 +18,6 @@ export abstract class BaseHandler<
 
   constructor(pluginId: string) {
     this.pluginId = pluginId;
-  }
-
-  // Get the name of the currently executing method for use as operation name
-  // This allows method names to automatically match operation names
-  protected getCurrentMethodName(): string {
-    const stack = new Error().stack;
-    if (!stack) return 'unknown';
-
-    // Look through stack frames to find the handler method
-    const lines = stack.split('\n');
-    for (let i = 2; i < lines.length; i++) {
-      const line = lines[i];
-      // Look for handler class methods (not BaseHandler, PluginExecutor, etc.)
-      if (line.includes('Handler.') && !line.includes('BaseHandler.')) {
-        const match = line.match(/at \w*Handler\.(\w+)/);
-        if (match && match[1] !== 'getCurrentMethodName') {
-          return match[1];
-        }
-      }
-    }
-
-    // Fallback: look for any method that's not our utility methods
-    for (let i = 2; i < lines.length; i++) {
-      const line = lines[i];
-      const match = line.match(/at (\w+)/);
-      if (
-        match &&
-        !['getCurrentMethodName', 'executeOperation', 'execute'].includes(
-          match[1]
-        )
-      ) {
-        return match[1];
-      }
-    }
-
-    return 'unknown';
   }
 
   // Generic method to execute any operation in container
@@ -133,5 +98,59 @@ export abstract class BaseHandler<
         });
       });
     });
+  }
+
+  // Ensure a repo container exists and is running for a given host path.
+  // Returns the container name. Centralized here to avoid duplication across routes.
+  protected async ensureRepoContainer(
+    hostPath: string,
+    options?: { persistent?: boolean; nameHint?: string }
+  ): Promise<string> {
+    if (!isGitRepository(hostPath)) {
+      throw new Error(`Not a git repository: ${hostPath}`);
+    }
+
+    const persistent = Boolean(options?.persistent);
+
+    // Use the local-repo handler via docker directly to avoid circular deps
+    // Deterministic name matches RepoManagerHandler
+    const baseImage = 'ignite/base_repo-manager:latest';
+    const hash = await import('../../utils/startup.js').then((m) =>
+      m.hashWorkspacePath(hostPath)
+    );
+    const containerName = persistent
+      ? `ignite-base_repo-manager-local-repo-${hash}`
+      : `ignite-base_repo-manager-session-${hash}`;
+
+    try {
+      const existing = this.docker.getContainer(containerName);
+      const info = await existing.inspect();
+      if (info?.State?.Running) {
+        return containerName;
+      }
+      await existing.start();
+      return containerName;
+    } catch {
+      // Create if it doesn't exist
+      const container = await this.docker.createContainer({
+        Image: baseImage,
+        name: containerName,
+        HostConfig: {
+          Binds: [`${hostPath}:/workspace`],
+          AutoRemove: !persistent,
+        },
+        Cmd: ['sleep', 'infinity'],
+        Labels: {
+          'ignite.type': 'local-repo',
+          'ignite.plugin': 'local-repo',
+          'ignite.image': baseImage,
+          'ignite.workspace': hostPath,
+          'ignite.workspaceHash': hash,
+          created: new Date().toISOString(),
+        },
+      });
+      await container.start();
+      return containerName;
+    }
   }
 }
