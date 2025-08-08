@@ -1,287 +1,218 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import './App.css';
+import React, { useEffect, useRef, useState } from 'react';
+import TopBar from './ui/TopBar';
+import Sidebar from './ui/Sidebar';
+import { Outlet } from 'react-router-dom';
 
-interface Message {
-  type: string;
-  message: string;
-}
+const COLOR_SWATCHES = [
+  '#0d6efd', // blue-500
+  '#6610f2', // indigo-500
+  '#6f42c1', // purple-500
+  '#0dcaf0', // cyan-500
+  '#20c997', // teal-500
+  '#FF007A', // uniswap-pink
+  '#ffc107', // yellow-500
+  '#fd7e14', // orange-500
+  '#dc3545', // red-500
+] as const;
 
-type ConnectionState =
-  | 'connecting'
-  | 'connected'
-  | 'disconnected'
-  | 'reconnecting';
+type CSSVars = React.CSSProperties & { ['--profile-color']?: string };
 
-type DetectionState = 'loading' | 'detected' | 'not-detected' | 'error';
-
-function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputMessage, setInputMessage] = useState('');
-  const [connectionState, setConnectionState] =
-    useState<ConnectionState>('connecting');
-  const [detectionState, setDetectionState] =
-    useState<DetectionState>('loading');
+export default function App() {
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('ignite:theme') === 'dark';
+    } catch {
+      return false;
+    }
+  });
+  const [animOn, setAnimOn] = useState(true);
+  const [shapesOn, setShapesOn] = useState(true);
+  const [color, setColor] = useState<string>('#ec4899');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      const v = window.localStorage.getItem('ignite:sidebar-collapsed');
+      return v === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [status, setStatus] = useState<
+    'connecting' | 'connected' | 'reconnecting' | 'disconnected'
+  >('connecting');
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
-  const connectRef = useRef<(() => void) | null>(null);
   const maxReconnectAttempts = 10;
-  const baseReconnectDelay = 1000; // 1 second
+  const [attemptsLeft, setAttemptsLeft] = useState(maxReconnectAttempts);
+  const [reconnectNonce, setReconnectNonce] = useState(0);
 
-  const clearReconnectTimeout = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-  }, []);
+  const themeClass = darkMode ? 'theme-dark' : 'theme-light';
 
-  const scheduleReconnect = useCallback(() => {
-    if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-      console.log('❌ Max reconnection attempts reached');
-      return;
-    }
-
-    clearReconnectTimeout();
-
-    const delay = Math.min(
-      baseReconnectDelay * Math.pow(2, reconnectAttemptsRef.current),
-      30000 // Max 30 seconds
-    );
-
-    setConnectionState('reconnecting');
-    reconnectAttemptsRef.current += 1;
-
-    console.log(
-      `🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`
-    );
-
-    reconnectTimeoutRef.current = setTimeout(() => {
-      connectRef.current?.();
-    }, delay);
-  }, [clearReconnectTimeout]);
-
-  const connect = useCallback(() => {
-    // Don't create multiple connections
-    if (
-      wsRef.current?.readyState === WebSocket.CONNECTING ||
-      wsRef.current?.readyState === WebSocket.OPEN
-    ) {
-      return;
-    }
-
-    setConnectionState('connecting');
-
-    try {
-      const ws = new WebSocket(`ws://localhost:1301/ws`);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setConnectionState('connected');
-        reconnectAttemptsRef.current = 0;
-        console.log('✅ Connected to WebSocket');
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data: Message = JSON.parse(event.data);
-          setMessages((prev) => [...prev, data]);
-        } catch (err) {
-          console.error('Failed to parse message:', err);
-        }
-      };
-
-      ws.onclose = (event) => {
-        setConnectionState('disconnected');
-        console.log(
-          '❌ WebSocket connection closed:',
-          event.code,
-          event.reason
-        );
-
-        // Attempt to reconnect unless it was a manual close
-        if (event.code !== 1000) {
-          scheduleReconnect();
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error('❌ WebSocket error:', error);
-        setConnectionState('disconnected');
-      };
-    } catch (err) {
-      console.error('❌ Failed to create WebSocket:', err);
-      setConnectionState('disconnected');
-      scheduleReconnect();
-    }
-  }, [scheduleReconnect]);
-
-  const detectFoundry = useCallback(async () => {
-    setDetectionState('loading');
-    try {
-      const response = await fetch('/api/detect', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({}), // Use pre-mounted workspace from CLI startup
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-      console.log('🔍 Detection response:', result);
-      const isFoundryDetected = result.success && result.data.detected === true;
-
-      setDetectionState(isFoundryDetected ? 'detected' : 'not-detected');
-    } catch (error) {
-      console.error('Failed to detect Foundry:', error);
-      setDetectionState('error');
-    }
-  }, []);
-
-  // Keep connectRef up to date
-  connectRef.current = connect;
-
-  // Initial connection and cleanup
+  // Reflect theme on <html> so portalled elements (tooltips) inherit tokens
   useEffect(() => {
-    connect();
+    const rootEl = document.documentElement;
+    rootEl.classList.toggle('theme-dark', darkMode);
+    rootEl.classList.toggle('theme-light', !darkMode);
+  }, [darkMode]);
 
-    return () => {
-      clearReconnectTimeout();
-      if (wsRef.current) {
-        wsRef.current.close(1000, 'Component unmounting');
+  // Minimal CLI connection indicator (WebSocket to backend on 1301)
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+
+    const delaysMs = [
+      1000, 1000, 1000, 2000, 2000, 5000, 10000, 10000, 30000, 30000,
+    ];
+
+    const connect = () => {
+      if (
+        ws &&
+        (ws.readyState === WebSocket.OPEN ||
+          ws.readyState === WebSocket.CONNECTING)
+      )
+        return;
+      setStatus((prev) =>
+        prev === 'disconnected' ? 'reconnecting' : 'connecting'
+      );
+      try {
+        ws = new WebSocket('ws://localhost:1301/ws');
+        wsRef.current = ws;
+        ws.onopen = () => {
+          setStatus('connected');
+          reconnectAttemptsRef.current = 0;
+          setAttemptsLeft(maxReconnectAttempts);
+        };
+        ws.onclose = () => {
+          setStatus('disconnected');
+          if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+            reconnectAttemptsRef.current += 1;
+            const delay =
+              delaysMs[
+                Math.min(reconnectAttemptsRef.current - 1, delaysMs.length - 1)
+              ];
+            setStatus('reconnecting');
+            setAttemptsLeft(
+              maxReconnectAttempts - reconnectAttemptsRef.current
+            );
+            reconnectTimer = window.setTimeout(connect, delay);
+          }
+        };
+        ws.onerror = () => {
+          try {
+            ws?.close();
+          } catch {
+            // ignore
+          }
+        };
+      } catch {
+        setStatus('disconnected');
       }
     };
-  }, [connect, clearReconnectTimeout]);
 
-  // Detect Foundry when app loads
+    connect();
+    return () => {
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      try {
+        ws?.close();
+      } catch {
+        // ignore
+      }
+    };
+  }, [reconnectNonce]);
+
+  // Persist theme & sidebar state
   useEffect(() => {
-    detectFoundry();
-  }, [detectFoundry]);
-
-  const sendMessage = () => {
-    if (wsRef.current?.readyState === WebSocket.OPEN && inputMessage.trim()) {
-      wsRef.current.send(inputMessage);
-      setInputMessage('');
+    try {
+      window.localStorage.setItem('ignite:theme', darkMode ? 'dark' : 'light');
+    } catch {
+      // ignore
     }
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      sendMessage();
+  }, [darkMode]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        'ignite:sidebar-collapsed',
+        sidebarCollapsed ? '1' : '0'
+      );
+    } catch {
+      // ignore
     }
-  };
-
-  const getStatusDisplay = () => {
-    switch (connectionState) {
-      case 'connecting':
-        return '🟡 Connecting to backend...';
-      case 'connected':
-        return '🟢 Connected';
-      case 'disconnected':
-        return '🔴 Disconnected';
-      case 'reconnecting':
-        return `🟡 Reconnecting... (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`;
-      default:
-        return '❓ Unknown';
+  }, [sidebarCollapsed]);
+  useEffect(() => {
+    try {
+      const t = window.localStorage.getItem('ignite:theme');
+      if (t === 'dark') setDarkMode(true);
+      if (t === 'light') setDarkMode(false);
+    } catch {
+      // ignore
     }
-  };
-
-  const getDetectionDisplay = () => {
-    switch (detectionState) {
-      case 'loading':
-        return '🔄 Detecting project type...';
-      case 'detected':
-        return '⚒️ Foundry project detected';
-      case 'not-detected':
-        return '📁 No Foundry project detected';
-      case 'error':
-        return '❌ Detection failed';
-      default:
-        return '❓ Unknown';
-    }
-  };
-
-  const canSendMessages = connectionState === 'connected';
+  }, []);
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>🚀 Ignite</h1>
-        <p>Smart Contract Deployment Tool</p>
-        <div className={`status ${connectionState}`}>
-          Status: {getStatusDisplay()}
-        </div>
-        <div className={`detection ${detectionState}`}>
-          Project: {getDetectionDisplay()}
-        </div>
-        {connectionState === 'disconnected' &&
-          reconnectAttemptsRef.current >= maxReconnectAttempts && (
-            <div className="reconnect-controls">
-              <button
-                onClick={() => {
-                  reconnectAttemptsRef.current = 0;
-                  connect();
-                }}
-              >
-                Retry Connection
-              </button>
-            </div>
-          )}
-      </header>
+    <div
+      className={themeClass}
+      data-anim={animOn ? 'on' : 'off'}
+      data-shapes={shapesOn ? 'on' : 'off'}
+      style={
+        {
+          backgroundColor: 'var(--bg-base)',
+          minHeight: '100vh',
+          ['--profile-color']: color,
+        } as CSSVars
+      }
+    >
+      {/* Floating top bar */}
+      <TopBar
+        status={status}
+        attemptsLeft={attemptsLeft}
+        maxAttempts={maxReconnectAttempts}
+        onReconnect={() => {
+          // reset counters and trigger a fresh connection cycle
+          reconnectAttemptsRef.current = 0;
+          setAttemptsLeft(maxReconnectAttempts);
+          setStatus('reconnecting');
+          try {
+            wsRef.current?.close();
+          } catch {
+            // ignore
+          }
+          // bump nonce so the websocket effect restarts immediately
+          setReconnectNonce((n) => n + 1);
+        }}
+      />
 
-      <main>
-        <div className="messages-container">
-          <h3>Messages:</h3>
-          <div className="messages">
-            {messages.length === 0 && connectionState === 'connecting' && (
-              <div className="message info">
-                <strong>Info:</strong> Waiting for backend to start...
-              </div>
-            )}
-            {messages.map((msg, index) => (
-              <div key={index} className={`message ${msg.type}`}>
-                <strong>{msg.type}:</strong> {msg.message}
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Sidebar */}
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed((s) => !s)}
+      />
 
-        <div className="input-container">
-          <input
-            type="text"
-            value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder={
-              canSendMessages
-                ? 'Type a message...'
-                : 'Waiting for connection...'
-            }
-            disabled={!canSendMessages}
-          />
-          <button onClick={sendMessage} disabled={!canSendMessages}>
-            Send
-          </button>
-        </div>
+      {/* Ambient background layers */}
+      <div className="ambient-gradient" aria-hidden="true" />
+      <div className="ambient-shapes" aria-hidden="true">
+        <div data-blob="a" />
+        <div data-blob="b" />
+        <div data-blob="c" />
+      </div>
 
-        {connectionState === 'disconnected' && (
-          <div className="connection-help">
-            <p>
-              💡 <strong>Connection lost:</strong> Make sure the backend is
-              running on port 1301
-            </p>
-            <p>
-              🔄 The app will automatically reconnect when the backend is
-              available
-            </p>
-          </div>
-        )}
-      </main>
+      {/* Main view card fills remaining space */}
+      <div
+        className="glass-surface glass-main"
+        style={{ left: sidebarCollapsed ? 56 + 24 : 220 + 24 }}
+      >
+        <Outlet
+          context={{
+            color,
+            setColor,
+            animOn,
+            setAnimOn,
+            shapesOn,
+            setShapesOn,
+            darkMode,
+            setDarkMode,
+            swatches: COLOR_SWATCHES,
+          }}
+        />
+      </div>
     </div>
   );
 }
-
-export default App;

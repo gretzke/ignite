@@ -1,69 +1,414 @@
-:root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
+@layer theme {
   :root {
-    color: #213547;
-    background-color: #ffffff;
+    /* Typography */
+    --font-sans: Manrope, ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+      Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji',
+      'Segoe UI Emoji';
+    /* Global radius token for surfaces & controls */
+    --radius: 14px;
+    /* User-selected primary profile color (placeholder default) */
+    --profile-color: oklch(0.69 0.17 260);
+
+    /* Base gradient strengths (prominent by default; tweakable) */
+    --grad-strength-1: 30%;
+    --grad-strength-2: 30%;
+
+    /* Shape appearance and sizes */
+    --shape-fill-strength: 15%;
+    --shape-glow-1: 10%;
+    --shape-glow-2: 5%;
+    --blob-size-lg: 52rem; /* ~832px */
+    --blob-size-md: 42rem; /* ~672px */
+    --blob-size-sm: 32rem; /* ~512px */
+    /* Glass tokens */
+    --radius: 14px;
+    --glass-milk: 14%;
   }
-  a:hover {
-    color: #747bff;
+
+  .theme-light {
+    --bg-base: #ffffff;
+    --text: #0a0a0a;
   }
-  button {
-    background-color: #f9f9f9;
+  .theme-dark {
+    --bg-base: #000000;
+    --text: #ffffff;
+  }
+}
+
+@layer components {
+  /* Global font application */
+  html,
+  body,
+  button,
+  input,
+  select,
+  textarea {
+    font-family: var(--font-sans);
+  }
+  /* Milky glass card */
+  .card-milky {
+    border-radius: var(--radius);
+    border: 1px solid color-mix(in oklch, #fff 28%, transparent);
+    background: color-mix(
+      in oklch,
+      var(--bg-base) calc(var(--glass-milk) + 40%),
+      transparent
+    );
+    backdrop-filter: blur(40px) saturate(110%);
+    -webkit-backdrop-filter: blur(20px) saturate(110%);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  }
+  .pill-white {
+    background: #ffffff;
+    color: #0a0a0a;
+    border: 1px solid color-mix(in oklch, #000 8%, transparent);
+  }
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.7rem 1rem;
+    font-size: 0.875rem;
+    line-height: 1;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: opacity 120ms ease, transform 80ms ease, box-shadow 150ms ease;
+  }
+  .btn-block {
+    width: 100%;
+  }
+  .btn:active {
+    transform: translateY(0.5px);
+  }
+
+  .btn-primary {
+    background: var(--profile-color);
+    color: #ffffff;
+    border-color: color-mix(in oklch, #fff 35%, transparent);
+    box-shadow: 0 6px 20px
+      color-mix(in oklch, var(--profile-color) 35%, transparent);
+  }
+  .btn-primary:hover {
+    opacity: 0.96;
+    box-shadow: 0 8px 22px
+      color-mix(in oklch, var(--profile-color) 45%, transparent);
+  }
+
+  .btn-secondary {
+    /* Milky glass: translucent white layer + blur for refraction */
+    background: color-mix(
+      in oklch,
+      var(--bg-base) var(--glass-milk),
+      transparent
+    );
+    color: var(--text);
+    border-color: color-mix(in oklch, #fff 30%, transparent);
+    backdrop-filter: blur(14px) saturate(110%);
+    -webkit-backdrop-filter: blur(14px) saturate(110%);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  }
+  .btn-secondary:hover {
+    opacity: 0.98;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
+  }
+
+  /* Borderless variant for secondary buttons */
+  .btn-secondary-borderless {
+    border-color: transparent;
+  }
+
+  /* Generic floating glass surface: transparent, blurred, white border, shadow */
+  .glass-surface {
+    background: color-mix(in oklch, #fff 6%, transparent);
+    border: 1px solid color-mix(in oklch, #fff 28%, transparent);
+    backdrop-filter: blur(14px) saturate(110%);
+    -webkit-backdrop-filter: blur(14px) saturate(110%);
+    border-radius: var(--radius);
+  }
+  .theme-light .glass-surface {
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  }
+  .theme-dark .glass-surface {
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  }
+
+  /* Top bar layout helper (use together with .glass-surface) */
+  .glass-topbar {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    height: 56px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-inline: 16px;
+    color: var(--text);
+  }
+
+  /* Sidebar layout helper (use together with .glass-surface) */
+  .glass-sidebar {
+    position: fixed;
+    top: 80px; /* below topbar */
+    bottom: 12px;
+    left: 12px;
+    width: 220px;
+    z-index: 15;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 10px;
+    color: var(--text);
+  }
+  .glass-sidebar .nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .glass-sidebar .nav-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .glass-sidebar .nav-item-center {
+    justify-content: center;
+    text-align: center;
+  }
+  .glass-sidebar .nav-emoji {
+    font-size: 16px;
+    line-height: 1;
+  }
+  .glass-sidebar .nav-label {
+    font-size: 0.9rem;
+  }
+
+  /* Collapsed state */
+  .glass-sidebar.collapsed {
+    width: 56px;
+    padding: 8px;
+  }
+  .glass-sidebar.collapsed .nav-label {
+    display: none;
+  }
+  .glass-sidebar.collapsed .btn {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .glass-sidebar.collapsed .btn.btn-block {
+    width: auto;
+  }
+
+  /* Main view card (use together with .glass-surface) */
+  .glass-main {
+    position: fixed;
+    top: 80px; /* below topbar */
+    right: 12px;
+    bottom: 12px;
+    /* left is set inline from React based on collapse state */
+    padding: 16px;
+    color: var(--text);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+  }
+  /* Radix Tooltip styling (glass, theme-aware) */
+  .tooltip-content {
+    /* Unified background token so arrow matches exactly */
+    --tooltip-bg: color-mix(in oklch, var(--bg-base) 50%, transparent);
+    background: var(--tooltip-bg);
+    color: var(--text);
+    border: 1px solid color-mix(in oklch, #fff 40%, transparent);
+    backdrop-filter: blur(14px) saturate(110%);
+    -webkit-backdrop-filter: blur(14px) saturate(110%);
+    padding: 6px 10px;
+    font-size: 12px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    z-index: 9999;
+  }
+  .tooltip-arrow {
+    fill: color-mix(in oklch, var(--bg-base) 50%, transparent) !important;
+    stroke: color-mix(in oklch, #fff 40%, transparent) !important;
+    stroke-width: 1px;
+    filter: none;
+  }
+  /* Connection status dot (with subtle glow) */
+  .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in oklch, #fff 40%, transparent);
+  }
+  .status-dot.connected {
+    background: #22c55e;
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.6);
+  }
+  .status-dot.reconnecting,
+  .status-dot.connecting {
+    background: #facc15;
+    box-shadow: 0 0 10px rgba(250, 204, 21, 0.5);
+  }
+  .status-dot.disconnected {
+    background: #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+  }
+  /*
+    Ambient base gradient (very faint). Usage later:
+    <div class="ambient-gradient" aria-hidden="true" />
+    Not applied by default to keep page blank during technical prep.
+  */
+  .ambient-gradient {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background: radial-gradient(
+        100vw 100vh at 0% 0%,
+        color-mix(
+          in oklch,
+          var(--profile-color) var(--grad-strength-1),
+          transparent
+        ),
+        transparent 72%
+      ),
+      radial-gradient(
+        100vw 100vh at 100% 100%,
+        color-mix(
+          in oklch,
+          var(--profile-color) var(--grad-strength-2),
+          transparent
+        ),
+        transparent 72%
+      );
+  }
+
+  /* Container for animated/floating blobs (shapes) */
+  .ambient-shapes {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    display: grid;
+    /* grid to keep DOM order independent if needed later */
+  }
+  .ambient-shapes [data-blob] {
+    position: absolute;
+    border-radius: 9999px;
+    /* Faint fill with soft blurred edge via outer glow (no ring color band) */
+    background: radial-gradient(
+      closest-side,
+      color-mix(
+          in oklch,
+          var(--profile-color) var(--shape-fill-strength),
+          transparent
+        )
+        0 50%,
+      var(--bg-base) 150%
+    );
+    box-shadow: 0 0 60px 20px
+        color-mix(
+          in oklch,
+          var(--profile-color) var(--shape-glow-1),
+          transparent
+        ),
+      0 0 140px 40px
+        color-mix(
+          in oklch,
+          var(--profile-color) var(--shape-glow-2),
+          transparent
+        );
+    will-change: transform;
+    transform: translate3d(0, 0, 0);
+  }
+  /* Suggested base placements; fine-tuned later in UI assembly */
+  .ambient-shapes [data-blob='a'] {
+    width: var(--blob-size-lg);
+    height: var(--blob-size-lg);
+    left: -10%;
+    top: -10%;
+  }
+  .ambient-shapes [data-blob='b'] {
+    width: var(--blob-size-md);
+    height: var(--blob-size-md);
+    right: -12%;
+    top: 25%;
+  }
+  .ambient-shapes [data-blob='c'] {
+    width: var(--blob-size-sm);
+    height: var(--blob-size-sm);
+    left: 20%;
+    bottom: -10%;
+  }
+
+  /* Animation controls (toggleable) */
+  @keyframes blob-drift-a {
+    0% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(8%, 6%, 0) scale(1.02);
+    }
+    100% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+  }
+  @keyframes blob-drift-b {
+    0% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(-6%, 4%, 0) scale(0.99);
+    }
+    100% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+  }
+  @keyframes blob-drift-c {
+    0% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(4%, -6%, 0) scale(1.01);
+    }
+    100% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+  }
+
+  /* Attach animations only when [data-anim="on"] is present on a parent */
+  [data-anim='on'] .ambient-shapes [data-blob='a'] {
+    animation: blob-drift-a 60s ease-in-out infinite;
+  }
+  [data-anim='on'] .ambient-shapes [data-blob='b'] {
+    animation: blob-drift-b 90s ease-in-out infinite;
+  }
+  [data-anim='on'] .ambient-shapes [data-blob='c'] {
+    animation: blob-drift-c 120s ease-in-out infinite;
+  }
+
+  /* Shapes visibility toggle. Default in app will be ON, but keeping switch for settings */
+  [data-shapes='off'] .ambient-shapes {
+    display: none;
+  }
+
+  /* Respect reduced motion at the OS level */
+  @media (prefers-reduced-motion: reduce) {
+    [data-anim='on'] .ambient-shapes [data-blob] {
+      animation: none !important;
+    }
   }
 }
