@@ -7,10 +7,11 @@
   },
   "scripts": {
     "postinstall": "npm run setup:all",
-    "setup:all": "npm run setup:core && npm run setup:frontend && npm run setup:plugins",
+    "setup:all": "npm run setup:shared && npm run setup:plugins && npm run setup:frontend && npm run setup:core",
     "setup:core": "cd core && npm install",
     "setup:frontend": "cd frontend && npm install",
     "setup:plugins": "cd plugins && npm install",
+    "setup:shared": "cd shared/api && npm install",
     "dev": "concurrently --kill-others --kill-others-on-fail --kill-signal SIGTERM --names \"core,frontend,browser\" --prefix-colors \"blue,green,magenta\" \"npm run dev:core\" \"npm run dev:frontend\" \"npm run dev:browser\"",
     "dev:core": "cd core && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",

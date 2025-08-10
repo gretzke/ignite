@@ -26,6 +26,9 @@
     /* Glass tokens */
     --radius: 14px;
     --glass-milk: 14%;
+    /* Backdrop blur tokens to avoid minifiers dropping standard property */
+    --bf-strong: blur(40px) saturate(110%);
+    --bf-medium: blur(14px) saturate(110%);
   }
 
   .theme-light {
@@ -57,8 +60,9 @@
       var(--bg-base) calc(var(--glass-milk) + 40%),
       transparent
     );
-    backdrop-filter: blur(40px) saturate(110%);
-    -webkit-backdrop-filter: blur(20px) saturate(110%);
+    /* Put prefixed first, standard last; use CSS var value */
+    -webkit-backdrop-filter: var(--bf-strong);
+    backdrop-filter: var(--bf-strong);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
   }
   .pill-white {
@@ -111,8 +115,8 @@
     );
     color: var(--text);
     border-color: color-mix(in oklch, #fff 30%, transparent);
-    backdrop-filter: blur(14px) saturate(110%);
-    -webkit-backdrop-filter: blur(14px) saturate(110%);
+    -webkit-backdrop-filter: var(--bf-medium);
+    backdrop-filter: var(--bf-medium);
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
   }
   .btn-secondary:hover {
@@ -129,8 +133,8 @@
   .glass-surface {
     background: color-mix(in oklch, #fff 6%, transparent);
     border: 1px solid color-mix(in oklch, #fff 28%, transparent);
-    backdrop-filter: blur(14px) saturate(110%);
-    -webkit-backdrop-filter: blur(14px) saturate(110%);
+    -webkit-backdrop-filter: var(--bf-medium);
+    backdrop-filter: var(--bf-medium);
     border-radius: var(--radius);
   }
   .theme-light .glass-surface {
@@ -231,8 +235,8 @@
     background: var(--tooltip-bg);
     color: var(--text);
     border: 1px solid color-mix(in oklch, #fff 40%, transparent);
-    backdrop-filter: blur(14px) saturate(110%);
-    -webkit-backdrop-filter: blur(14px) saturate(110%);
+    -webkit-backdrop-filter: var(--bf-medium);
+    backdrop-filter: var(--bf-medium);
     padding: 6px 10px;
     font-size: 12px;
     border-radius: var(--radius);

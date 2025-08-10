@@ -119,7 +119,8 @@ async function main(): Promise<void> {
   const options = program.opts();
 
   // Extract and validate workspace path
-  const workspacePath = path.resolve(options.path);
+  const currentEnv = process.env.IGNITE_WORKSPACE_PATH;
+  const workspacePath = path.resolve(currentEnv || options.path); // prefer env var if set
   process.env.IGNITE_WORKSPACE_PATH = workspacePath;
 
   // Check if workspace is a git repository
