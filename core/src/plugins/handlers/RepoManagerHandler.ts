@@ -96,7 +96,9 @@ export class RepoManagerHandler
       getLogger().error(`❌ ${this.pluginId}: Failed to mount repo:`, error);
       return {
         success: false,
-        error: String(error),
+        error: {
+          message: String(error),
+        },
       };
     }
   }
@@ -130,7 +132,9 @@ export class RepoManagerHandler
       getLogger().error(`❌ ${this.pluginId}: Failed to unmount repo:`, error);
       return {
         success: false,
-        error: String(error),
+        error: {
+          message: String(error),
+        },
       };
     }
   }
@@ -177,7 +181,9 @@ export class RepoManagerHandler
       getLogger().error(`❌ ${this.pluginId}: Cleanup failed:`, error);
       return {
         success: false,
-        error: String(error),
+        error: {
+          message: String(error),
+        },
       };
     }
   }

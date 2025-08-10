@@ -9,10 +9,11 @@
   "scripts": {
     "dev": "tsc --noEmit && NODE_ENV=development tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "npm run clean && npm run build:frontend && npm run build:plugins && npm run build:core && npx @yao-pkg/pkg . --out-path dist-pkg",
+    "build": "npm run clean && npm run build:plugins && npm run build:shared && npm run build:frontend && npm run build:core && npx @yao-pkg/pkg . --out-path dist-pkg",
     "build:core": "tsc",
-    "build:frontend": "cd ../frontend && npm run build",
     "build:plugins": "cd ../plugins && npm run build",
+    "build:shared": "cd ../shared/api && npm run build",
+    "build:frontend": "cd ../frontend && npm run build",
     "clean": "rm -rf dist dist-pkg",
     "format": "prettier --write \"src/**/*.{ts,js,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,json}\"",

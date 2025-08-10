@@ -17,7 +17,9 @@ export default [
         ecmaFeatures: {
           jsx: true,
         },
-        project: './tsconfig.json',
+        // Include both app code and Vite config/Node-only files
+        project: ['./tsconfig.json', './tsconfig.node.json'],
+        tsconfigRootDir: import.meta.dirname,
       },
       globals: {
         // Browser globals

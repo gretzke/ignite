@@ -31,7 +31,10 @@ export async function executePluginOperation<T extends keyof AllOperations>(
   if (typeof method !== "function") {
     return {
       success: false,
-      error: `Operation '${String(operation)}' not implemented by plugin`,
+      error: {
+        message: `Operation '${String(operation)}' not implemented by plugin`,
+        code: "OPERATION_NOT_IMPLEMENTED", // TODO: create enum enum and import in CLI for error handling
+      },
     };
   }
 
@@ -40,9 +43,12 @@ export async function executePluginOperation<T extends keyof AllOperations>(
   } catch (error) {
     return {
       success: false,
-      error: `Plugin execution failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      error: {
+        message: `Plugin execution failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        code: "PLUGIN_EXECUTION_ERROR",
+      },
     };
   }
 }

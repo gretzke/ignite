@@ -25,25 +25,22 @@ export class CompilerHandler
     try {
       // Centralized ensure: if hostPath provided but repo container not, create/reuse it
       const optAny = options as unknown as { hostPath?: string };
-      const repoContainerName = options.repoContainerName
-        ? options.repoContainerName
-        : optAny.hostPath
-          ? await this.ensureRepoContainer(optAny.hostPath, {
-              persistent: false,
-            })
-          : (() => {
-              throw new Error('repoContainerName or hostPath is required');
-            })();
+      const repoContainerName = optAny.hostPath
+        ? await this.ensureRepoContainer(optAny.hostPath, {
+            persistent: false,
+          })
+        : (() => {
+            throw new Error('hostPath is required');
+          })();
 
-      const createdRepoThisCall =
-        !options.repoContainerName && Boolean(optAny.hostPath);
+      const createdRepoThisCall = Boolean(optAny.hostPath);
 
       const result = await this.withCompilerContainer(
         repoContainerName,
         async (compilerContainerName) => {
           const result = await this.executeOperation(
             'detect',
-            { ...options, repoContainerName, workspacePath: '/workspace' },
+            { workspacePath: '/workspace' },
             compilerContainerName
           );
 
@@ -76,7 +73,9 @@ export class CompilerHandler
       getLogger().error(`❌ ${this.pluginId} detection failed:`, error);
       return {
         success: false,
-        error: String(error),
+        error: {
+          message: String(error),
+        },
       };
     }
   }

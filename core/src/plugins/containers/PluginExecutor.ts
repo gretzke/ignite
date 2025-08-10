@@ -51,7 +51,9 @@ export class PluginExecutor {
     } catch (error) {
       return {
         success: false,
-        error: `Plugin execution failed: ${error}`,
+        error: {
+          message: `Plugin execution failed: ${error}`,
+        },
       };
     }
   }
@@ -94,7 +96,9 @@ export class PluginExecutor {
     if (typeof method !== 'function') {
       return {
         success: false,
-        error: `Operation '${operation}' is not supported by this plugin type`,
+        error: {
+          message: `Operation '${operation}' is not supported by this plugin type`,
+        },
       };
     }
 
@@ -107,7 +111,9 @@ export class PluginExecutor {
     } catch (error) {
       return {
         success: false,
-        error: `Operation execution failed: ${error instanceof Error ? error.message : String(error)}`,
+        error: {
+          message: `Operation execution failed: ${error instanceof Error ? error.message : String(error)}`,
+        },
       };
     }
   }
