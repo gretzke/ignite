@@ -1,5 +1,5 @@
 import { PluginType } from "../../types.js";
-import type { PluginResult } from "../../types.js";
+import type { PluginResponse } from "../../types.js";
 
 export type RepoManagerOperations = {
   // Empty - CLI handles all operations directly
@@ -13,5 +13,5 @@ export type IRepoManagerPlugin = {
 } & {
   [K in keyof RepoManagerOperations]: (
     options: RepoManagerOperations[K]["params"],
-  ) => Promise<PluginResult<RepoManagerOperations[K]["result"]>>;
+  ) => Promise<PluginResponse<RepoManagerOperations[K]["result"]>>;
 };

@@ -6,21 +6,17 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc && npm run schemas:build",
-    "build:watch": "tsc -w",
-    "clean": "rm -rf dist",
-    "schemas:build": "mkdir -p dist && ts-json-schema-generator --path 'src/index.ts' --type '*' --expose all --out dist/schemas.json",
-    "schemas:watch": "nodemon -e ts -w src -x \"npm run schemas:build\"",
-    "dev": "concurrently --kill-others --names 'tsc,schemas' --prefix-colors 'cyan,magenta' \"npm run build:watch\" \"npm run schemas:watch\""
+    "dev": "nodemon --watch src --ext ts,tsx,js,json --ignore \"dist/**\" --exec \"npm run build\"",
+    "build": "tsc",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@ignite/plugin-types": "file:../../plugins/src/shared/dist/",
-    "zod": "^3.23.8"
+    "zod": "^4.0.17"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
     "nodemon": "^3.1.9",
-    "ts-json-schema-generator": "^2.3.0",
     "typescript": "^5.8.3"
   }
 }

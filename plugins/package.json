@@ -4,13 +4,15 @@
   "description": "Unified build system for all Ignite plugins",
   "type": "module",
   "scripts": {
+    "dev": "nodemon --watch src --ext ts,tsx,js,json --ignore 'src/**/dist/**' --ignore 'dist/**' --ignore 'node_modules/**' --exec \"npm run build\"",
     "build": "npm run clean && node scripts/build-all.js && npm run build:docker",
     "build:docker": "node scripts/build-docker.js",
     "clean": "rm -rf dist && mkdir -p dist/js dist/compressed",
     "postinstall": "node scripts/install-all.js"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "nodemon": "^3.1.10"
   },
   "engines": {
     "node": "22.x"

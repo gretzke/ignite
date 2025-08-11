@@ -4,7 +4,7 @@ import type {
   DetectOptions,
   DetectionResult,
 } from '@ignite/plugin-types/base/compiler';
-import type { PluginResult } from '@ignite/plugin-types/types';
+import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import { getLogger } from '../../utils/logger.js';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
@@ -21,7 +21,9 @@ export class CompilerHandler
     super(pluginId);
   }
 
-  async detect(options: DetectOptions): Promise<PluginResult<DetectionResult>> {
+  async detect(
+    options: DetectOptions
+  ): Promise<PluginResponse<DetectionResult>> {
     try {
       // Centralized ensure: if hostPath provided but repo container not, create/reuse it
       const optAny = options as unknown as { hostPath?: string };
@@ -74,6 +76,7 @@ export class CompilerHandler
       return {
         success: false,
         error: {
+          code: 'DETECTION_FAILED', // TODO: Define proper error codes
           message: String(error),
         },
       };

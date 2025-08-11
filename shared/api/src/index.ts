@@ -6,6 +6,5 @@ export * from "./v1/index.js";
 
 // For backwards compatibility and easy migration
 export { v1Routes as apiRoutes } from "./v1/index.js";
-
 // Future versions can be added here
 // export * from './v2/index.js';

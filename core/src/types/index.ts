@@ -14,37 +14,6 @@ export interface ProfileConfig {
   };
 }
 
-export interface PluginTrust {
-  trust: 'native' | 'trusted' | 'untrusted';
-  timestamp: string; // ISO timestamp when decision was made
-  permissions: {
-    canReadFiles: boolean;
-    canWriteFiles: boolean;
-    canExecute: boolean;
-    canNetwork: boolean;
-    canAccessBrowserAPI: boolean;
-  };
-}
-
-export interface TrustDatabase {
-  [pluginId: string]: PluginTrust;
-}
-
-export interface PluginRegistryEntry {
-  name: string;
-  version: string;
-  dockerImage: string;
-  type: 'compiler' | 'signer' | 'rpc' | 'explorer';
-  installed: string; // ISO timestamp
-  lastUsed?: string; // ISO timestamp
-}
-
-export interface PluginRegistry {
-  plugins: {
-    [pluginId: string]: PluginRegistryEntry;
-  };
-}
-
 export interface IgniteConfig {
   version: string;
   currentProfile: string; // Profile name

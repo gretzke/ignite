@@ -1,6 +1,6 @@
 import { getLogger } from '../../utils/logger.js';
 import { PluginExecutor } from './PluginExecutor.js';
-import type { PluginResult } from '@ignite/plugin-types/types';
+import type { PluginResponse } from '@ignite/plugin-types/types';
 
 // Orchestrates plugin workflows with dependency resolution
 export class PluginOrchestrator {
@@ -24,14 +24,14 @@ export class PluginOrchestrator {
     pluginId: string,
     operation: string,
     options: Record<string, unknown>
-  ): Promise<PluginResult<unknown>> {
+  ): Promise<PluginResponse<unknown>> {
     return this.executor.execute(pluginId, operation, options);
   }
 
   // Set up default workspace - high-level orchestration for CLI startup
   async setupDefaultWorkspace(
     workspacePath: string
-  ): Promise<PluginResult<{ containerName: string; workspacePath: string }>> {
+  ): Promise<PluginResponse<{ containerName: string; workspacePath: string }>> {
     getLogger().info(`📁 Setting up default workspace: ${workspacePath}`);
 
     const result = await this.executePlugin('local-repo', 'mount', {
@@ -45,7 +45,7 @@ export class PluginOrchestrator {
       getLogger().warn(`⚠️ Default workspace setup failed: ${result.error}`);
     }
 
-    return result as PluginResult<{
+    return result as PluginResponse<{
       containerName: string;
       workspacePath: string;
     }>;

@@ -12,6 +12,8 @@ const DIST_DIR = "dist";
 const JS_DIR = join(DIST_DIR, "js");
 const COMPRESSED_DIR = join(DIST_DIR, "compressed");
 
+process.env.IGNITE_PLUGIN_BUILD = "true";
+
 // Colors for console output
 const colors = {
   blue: "\x1b[34m",

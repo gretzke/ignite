@@ -7,10 +7,12 @@
     "node": "22.x"
   },
   "scripts": {
-    "dev": "tsc --noEmit && NODE_ENV=development tsx watch src/index.ts",
+    "dev": "NODE_ENV=development nodemon --watch src --ext ts,tsx,js,json --ignore \"../plugins/dist\" --ignore \"../plugins/**/dist\" --ignore \"../frontend/dist\" --exec \"npm run type-check && tsx src/index.ts\"",
     "start": "node dist/index.js",
-    "build": "npm run clean && npm run build:plugins && npm run build:shared && npm run build:frontend && npm run build:core && npx @yao-pkg/pkg . --out-path dist-pkg",
     "build:core": "tsc",
+    "type-check": "tsc --noEmit",
+    "build:all": "npm run build:plugins && npm run build:shared && npm run build:frontend && npm run build:core",
+    "build": "npm run clean && npm run build:all && npx @yao-pkg/pkg . --out-path dist-pkg",
     "build:plugins": "cd ../plugins && npm run build",
     "build:shared": "cd ../shared/api && npm run build",
     "build:frontend": "cd ../frontend && npm run build",
@@ -28,11 +30,16 @@
   "license": "ISC",
   "description": "Ignite smart contract deployment tool",
   "dependencies": {
+    "@fastify/swagger": "^9.0.3",
+    "@fastify/swagger-ui": "^5.0.0",
     "@fastify/websocket": "^11.0.1",
+    "@ignite/api": "file:../shared/api",
     "@ignite/plugin-types": "file:../plugins/src/shared/dist/",
     "commander": "^12.1.0",
     "dockerode": "^4.0.7",
-    "fastify": "^5.2.0"
+    "fastify": "^5.2.0",
+    "fastify-type-provider-zod": "^5.0.3",
+    "zod": "^4.0.17"
   },
   "pkg": {
     "scripts": [

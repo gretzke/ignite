@@ -1,5 +1,5 @@
 // Generic type-safe plugin execution system
-import type { PluginResult } from "./types.js";
+import type { PluginResponse } from "./types.js";
 import type { CompilerOperations } from "./base/compiler/types.js";
 import type { RepoManagerOperations } from "./base/repo-manager/types.js";
 
@@ -10,7 +10,7 @@ type AllOperations = CompilerOperations & RepoManagerOperations;
 export type IPluginExecutor<T extends keyof AllOperations> = {
   [K in T]: (
     options: AllOperations[K]["params"],
-  ) => Promise<PluginResult<AllOperations[K]["result"]>>;
+  ) => Promise<PluginResponse<AllOperations[K]["result"]>>;
 };
 
 // Plugin execution request structure
@@ -23,7 +23,7 @@ export interface PluginExecutionRequest<T extends keyof AllOperations> {
 export async function executePluginOperation<T extends keyof AllOperations>(
   plugin: IPluginExecutor<T>,
   request: PluginExecutionRequest<T>,
-): Promise<PluginResult<AllOperations[T]["result"]>> {
+): Promise<PluginResponse<AllOperations[T]["result"]>> {
   const { operation, options } = request;
 
   // Type assertion to access the method safely
@@ -48,6 +48,9 @@ export async function executePluginOperation<T extends keyof AllOperations>(
           error instanceof Error ? error.message : String(error)
         }`,
         code: "PLUGIN_EXECUTION_ERROR",
+        details: {
+          stack: error instanceof Error ? error.stack : undefined,
+        },
       },
     };
   }
@@ -57,6 +60,9 @@ export async function executePluginOperation<T extends keyof AllOperations>(
 export async function runPluginCLI<T extends keyof AllOperations>(
   plugin: IPluginExecutor<T>,
 ): Promise<void> {
+  if (process.env.IGNITE_PLUGIN_BUILD) {
+    return;
+  }
   try {
     // Parse command line arguments for container execution
     // From the debug output, we see: ["/usr/local/bin/node", "detect", "{\"repoContainerName\":...}"]
@@ -69,7 +75,13 @@ export async function runPluginCLI<T extends keyof AllOperations>(
         JSON.stringify(
           {
             success: false,
-            error: "No operation specified",
+            error: {
+              code: "NO_OPERATION_SPECIFIED",
+              message: "No operation specified",
+              details: {
+                instructions: process.argv,
+              },
+            },
           },
           null,
           2,
@@ -98,9 +110,15 @@ export async function runPluginCLI<T extends keyof AllOperations>(
       JSON.stringify(
         {
           success: false,
-          error: `CLI execution failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          error: {
+            code: "CLI_EXECUTION_FAILED",
+            message: `CLI execution failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            details: {
+              stack: error instanceof Error ? error.stack : undefined,
+            },
+          },
         },
         null,
         2,

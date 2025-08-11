@@ -33,11 +33,6 @@ describe('FileSystem', () => {
       const configPath = fileSystem.getGlobalConfigPath();
       expect(configPath).toBe(path.join(testDir, 'config.json'));
     });
-
-    it('should generate correct trust database path', () => {
-      const trustPath = fileSystem.getTrustPath();
-      expect(trustPath).toBe(path.join(testDir, 'plugins', 'trust.json'));
-    });
   });
 
   describe('Profile Management', () => {
@@ -111,13 +106,6 @@ describe('FileSystem', () => {
       expect(config.version).toBe('1.0.0');
       expect(config.currentProfile).toBe('default');
       expect(config.lastStartup).toBeDefined();
-    });
-
-    it('should create and read trust database', async () => {
-      const trustDb = await fileSystem.readTrustDatabase();
-
-      expect(trustDb).toEqual({});
-      expect(typeof trustDb).toBe('object');
     });
 
     it('should create and read plugin registry', async () => {

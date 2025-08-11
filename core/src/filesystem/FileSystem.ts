@@ -1,14 +1,18 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
-import type {
-  ProfileConfig,
-  TrustDatabase,
-  PluginRegistry,
-  IgniteConfig,
-} from '../types/index.js';
+import type { ProfileConfig, IgniteConfig } from '../types/index.js';
+import type { PluginMetadata } from '@ignite/plugin-types/types';
 import { FileSystemError, ErrorCodes } from '../types/errors.js';
+
 import { getLogger } from '../utils/logger.js';
+
+// Plugin registry type
+export interface PluginRegistry {
+  plugins: {
+    [pluginId: string]: PluginMetadata;
+  };
+}
 
 // Cross-platform filesystem management
 // Handles ~/.ignite directory structure, profile creation, and path handling
@@ -60,10 +64,6 @@ export class FileSystem {
   }
 
   // === Plugin Paths ===
-
-  getTrustPath(): string {
-    return path.join(this.getPluginsPath(), 'trust.json');
-  }
 
   getRegistryPath(): string {
     return path.join(this.getPluginsPath(), 'registry.json');
@@ -195,23 +195,6 @@ export class FileSystem {
   }
 
   // === Configuration File Management ===
-
-  // Read trust database, create default if doesn't exist
-  async readTrustDatabase(): Promise<TrustDatabase> {
-    const trustPath = this.getTrustPath();
-
-    if (await this.fileExists(trustPath)) {
-      return this.readJsonFile<TrustDatabase>(trustPath);
-    }
-
-    // Create default trust database
-    const emptyTrustDb: TrustDatabase = {};
-    await this.writeJsonFile(trustPath, emptyTrustDb);
-
-    getLogger().info('🔒 Created trust database');
-
-    return emptyTrustDb;
-  }
 
   // Read plugin registry, create default if doesn't exist
   async readPluginRegistry(): Promise<PluginRegistry> {

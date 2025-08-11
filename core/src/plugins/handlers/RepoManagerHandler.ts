@@ -1,5 +1,5 @@
 import type { IRepoManagerPlugin } from '@ignite/plugin-types/base/repo-manager';
-import type { PluginResult } from '@ignite/plugin-types/types';
+import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import type { RepoManagerOperations } from '@ignite/plugin-types/base/repo-manager';
 import { getLogger } from '../../utils/logger.js';
@@ -19,7 +19,7 @@ export class RepoManagerHandler
 
   async mount(
     options: LocalRepoOptions
-  ): Promise<PluginResult<{ containerName: string; workspacePath: string }>> {
+  ): Promise<PluginResponse<{ containerName: string; workspacePath: string }>> {
     try {
       // Determine container naming strategy
       const baseImage = 'ignite/base_repo-manager:latest';
@@ -97,6 +97,7 @@ export class RepoManagerHandler
       return {
         success: false,
         error: {
+          code: 'MOUNT_FAILED', // TODO: Define proper error codes
           message: String(error),
         },
       };
@@ -105,7 +106,7 @@ export class RepoManagerHandler
 
   async unmount(
     containerName: string
-  ): Promise<PluginResult<{ containerName: string; cleaned: boolean }>> {
+  ): Promise<PluginResponse<{ containerName: string; cleaned: boolean }>> {
     try {
       getLogger().info(
         `🗑️ ${this.pluginId}: Unmounting repo container: ${containerName}`
@@ -133,13 +134,14 @@ export class RepoManagerHandler
       return {
         success: false,
         error: {
+          code: 'UNMOUNT_FAILED', // TODO: Define proper error codes
           message: String(error),
         },
       };
     }
   }
 
-  async cleanup(): Promise<PluginResult<{ cleaned: number }>> {
+  async cleanup(): Promise<PluginResponse<{ cleaned: number }>> {
     try {
       getLogger().info(
         `🧹 ${this.pluginId}: Cleaning up orphaned repo containers...`
@@ -182,6 +184,7 @@ export class RepoManagerHandler
       return {
         success: false,
         error: {
+          code: 'CLEANUP_FAILED', // TODO: Define proper error codes
           message: String(error),
         },
       };

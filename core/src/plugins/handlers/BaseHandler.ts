@@ -1,6 +1,6 @@
 import Docker from 'dockerode';
 import { PluginAssetLoader } from '../../assets/PluginAssetLoader.js';
-import type { PluginResult } from '@ignite/plugin-types/types';
+import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import { getLogger } from '../../utils/logger.js';
 import { isGitRepository } from '../../utils/startup.js';
@@ -25,7 +25,7 @@ export abstract class BaseHandler<
     operation: K,
     options: TOperations[K]['params'],
     containerName: string
-  ): Promise<PluginResult<TOperations[K]['result']>> {
+  ): Promise<PluginResponse<TOperations[K]['result']>> {
     const container = this.docker.getContainer(containerName);
 
     // Load and inject plugin JavaScript
