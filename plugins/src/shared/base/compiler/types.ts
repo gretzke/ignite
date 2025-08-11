@@ -1,4 +1,5 @@
-import { PluginResult, PluginType } from "../../types.js";
+import { PluginType } from "../../types.js";
+import type { PluginResponse } from "../../types.js";
 
 export type CompilerOperations = {
   detect: {
@@ -21,11 +22,11 @@ export type ICompilerPlugin = {
 } & {
   [K in keyof CompilerOperations]: (
     options: CompilerOperations[K]["params"],
-  ) => Promise<PluginResult<CompilerOperations[K]["result"]>>;
+  ) => Promise<PluginResponse<CompilerOperations[K]["result"]>>;
 };
 
 export interface DetectOptions {
-  workspacePath?: string;
+  workspacePath: string;
 }
 
 export interface DetectionResult {

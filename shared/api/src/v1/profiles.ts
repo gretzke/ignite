@@ -1,8 +1,10 @@
 // Profile management routes
 import { z } from "zod";
-import type { ApiResponse } from "@ignite/plugin-types/types";
-import { V1_BASE_PATH } from "./index.js";
-import { createApiResponseSchema } from "../utils/schema.js";
+import { V1_BASE_PATH } from "./constants.js";
+import {
+  createApiResponseSchema,
+  createRequestSchema,
+} from "../utils/schema.js";
 
 // Interface definitions first
 export interface ListProfilesData {
@@ -30,46 +32,47 @@ export interface SwitchProfileData {
   message: string;
 }
 
-// API Response interfaces using the ApiResponse wrapper
-export interface ListProfilesResponse extends ApiResponse<ListProfilesData> {}
-export interface GetCurrentProfileResponse
-  extends ApiResponse<GetCurrentProfileData> {}
-export interface CreateProfileResponse extends ApiResponse<CreateProfileData> {}
-export interface SwitchProfileResponse extends ApiResponse<SwitchProfileData> {}
-
 // Type-safe ApiResponse schemas that enforce interface compliance
 export const ListProfilesResponseSchema =
-  createApiResponseSchema<ListProfilesData>()(
+  createApiResponseSchema<ListProfilesData>("ListProfilesResponseSchema")(
     z.object({
       profiles: z.array(z.string()),
     }),
   );
 
 export const GetCurrentProfileResponseSchema =
-  createApiResponseSchema<GetCurrentProfileData>()(
+  createApiResponseSchema<GetCurrentProfileData>(
+    "GetCurrentProfileResponseSchema",
+  )(
     z.object({
       name: z.string(),
       config: z.any().optional(), // TODO: Define proper profile config schema
     }),
   );
 
-export const CreateProfileRequestSchema = z.object({
-  name: z.string(),
-});
+export const CreateProfileRequestSchema =
+  createRequestSchema<CreateProfileRequest>("CreateProfileRequestSchema")(
+    z.object({
+      name: z.string(),
+    }),
+  );
 
 export const CreateProfileResponseSchema =
-  createApiResponseSchema<CreateProfileData>()(
+  createApiResponseSchema<CreateProfileData>("CreateProfileResponseSchema")(
     z.object({
       message: z.string(),
     }),
   );
 
-export const SwitchProfileRequestSchema = z.object({
-  name: z.string(),
-});
+export const SwitchProfileRequestSchema =
+  createRequestSchema<SwitchProfileRequest>("SwitchProfileRequestSchema")(
+    z.object({
+      name: z.string(),
+    }),
+  );
 
 export const SwitchProfileResponseSchema =
-  createApiResponseSchema<SwitchProfileData>()(
+  createApiResponseSchema<SwitchProfileData>("SwitchProfileResponseSchema")(
     z.object({
       message: z.string(),
     }),
@@ -81,6 +84,7 @@ export const profileRoutes = {
     method: "GET" as const,
     path: `${V1_BASE_PATH}/profiles`,
     schema: {
+      tags: ["profiles"],
       response: {
         200: ListProfilesResponseSchema,
       },
@@ -90,6 +94,7 @@ export const profileRoutes = {
     method: "GET" as const,
     path: `${V1_BASE_PATH}/profiles/current`,
     schema: {
+      tags: ["profiles"],
       response: {
         200: GetCurrentProfileResponseSchema,
       },
@@ -99,6 +104,7 @@ export const profileRoutes = {
     method: "POST" as const,
     path: `${V1_BASE_PATH}/profiles`,
     schema: {
+      tags: ["profiles"],
       body: CreateProfileRequestSchema,
       response: {
         200: CreateProfileResponseSchema,
@@ -109,6 +115,7 @@ export const profileRoutes = {
     method: "POST" as const,
     path: `${V1_BASE_PATH}/profiles/switch`,
     schema: {
+      tags: ["profiles"],
       body: SwitchProfileRequestSchema,
       response: {
         200: SwitchProfileResponseSchema,

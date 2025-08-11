@@ -62,7 +62,6 @@ describe('Integration Testing Approach', () => {
 
     it('should simulate global config management', async () => {
       const globalConfigPath = path.join(testDir, 'config.json');
-      const trustPath = path.join(testDir, 'trust.json');
       const registryPath = path.join(testDir, 'registry.json');
 
       // Create global config
@@ -76,10 +75,6 @@ describe('Integration Testing Approach', () => {
         JSON.stringify(globalConfig, null, 2)
       );
 
-      // Create trust database
-      const trustDb = {};
-      await fs.writeFile(trustPath, JSON.stringify(trustDb, null, 2));
-
       // Create plugin registry
       const registry = { plugins: {} };
       await fs.writeFile(registryPath, JSON.stringify(registry, null, 2));
@@ -90,9 +85,6 @@ describe('Integration Testing Approach', () => {
       );
       expect(readGlobalConfig.version).toBe('1.0.0');
       expect(readGlobalConfig.currentProfile).toBe('default');
-
-      const readTrustDb = JSON.parse(await fs.readFile(trustPath, 'utf-8'));
-      expect(readTrustDb).toEqual({});
 
       const readRegistry = JSON.parse(await fs.readFile(registryPath, 'utf-8'));
       expect(readRegistry.plugins).toEqual({});

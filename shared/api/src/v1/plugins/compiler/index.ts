@@ -1,8 +1,7 @@
 // Compiler plugin routes
 import { z } from "zod";
 import type { DetectOptions, DetectionResult } from "./types.js";
-import type { ApiResponse } from "../../index.js";
-import { V1_BASE_PATH } from "../../index.js";
+import { V1_BASE_PATH } from "../../constants.js";
 import {
   createRequestSchema,
   createApiResponseSchema,
@@ -10,17 +9,18 @@ import {
 
 export * from "./types.js";
 
-// API Response interface - uses plugin ApiResponse directly
-export interface DetectResponse extends ApiResponse<DetectionResult> {}
-
 // Type-safe schema that enforces DetectOptions interface compliance
-export const DetectRequestSchema = createRequestSchema<DetectOptions>()(
+export const DetectRequestSchema = createRequestSchema<DetectOptions>(
+  "DetectRequestSchema",
+)(
   z.object({
-    workspacePath: z.string().optional(),
+    workspacePath: z.string(),
   }),
 );
 
-export const DetectResponseSchema = createApiResponseSchema<DetectionResult>()(
+export const DetectResponseSchema = createApiResponseSchema<DetectionResult>(
+  "DetectResponseSchema",
+)(
   z.object({
     detected: z.boolean(),
   }),
@@ -32,6 +32,7 @@ export const compilerRoutes = {
     method: "POST" as const,
     path: `${V1_BASE_PATH}/detect`,
     schema: {
+      tags: ["compiler"],
       body: DetectRequestSchema,
       response: {
         200: DetectResponseSchema,

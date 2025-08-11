@@ -5,7 +5,7 @@ import { BaseHandler } from '../handlers/BaseHandler.js';
 import { CompilerHandler } from '../handlers/CompilerHandler.js';
 import { RepoManagerHandler } from '../handlers/RepoManagerHandler.js';
 import { PluginType } from '@ignite/plugin-types/types';
-import type { PluginResult } from '@ignite/plugin-types/types';
+import type { PluginResponse } from '@ignite/plugin-types/types';
 
 // Unified plugin executor - delegates to dynamic handlers
 export class PluginExecutor {
@@ -28,7 +28,7 @@ export class PluginExecutor {
     pluginId: string,
     operation: string,
     options: Record<string, unknown>
-  ): Promise<PluginResult<unknown>> {
+  ): Promise<PluginResponse<unknown>> {
     getLogger().info(`🔌 Executing ${pluginId}.${operation}`);
 
     try {
@@ -52,6 +52,7 @@ export class PluginExecutor {
       return {
         success: false,
         error: {
+          code: 'PLUGIN_EXECUTION_FAILED', // TODO: Define proper error codes
           message: `Plugin execution failed: ${error}`,
         },
       };
@@ -89,7 +90,7 @@ export class PluginExecutor {
     handler: BaseHandler<T>,
     operation: string,
     options: Record<string, unknown>
-  ): Promise<PluginResult<unknown>> {
+  ): Promise<PluginResponse<unknown>> {
     // Check if the handler has this operation method
     const method = (handler as unknown as Record<string, unknown>)[operation];
 
@@ -97,6 +98,7 @@ export class PluginExecutor {
       return {
         success: false,
         error: {
+          code: 'OPERATION_NOT_SUPPORTED', // TODO: Define proper error codes
           message: `Operation '${operation}' is not supported by this plugin type`,
         },
       };
@@ -105,14 +107,16 @@ export class PluginExecutor {
     try {
       // Call the method with proper context
       const result = await (
-        method as (...args: unknown[]) => Promise<PluginResult<unknown>>
+        method as (...args: unknown[]) => Promise<PluginResponse<unknown>>
       ).call(handler, options);
       return result;
     } catch (error) {
       return {
         success: false,
         error: {
+          code: 'OPERATION_EXECUTION_FAILED', // TODO: Define proper error codes
           message: `Operation execution failed: ${error instanceof Error ? error.message : String(error)}`,
+          // TODO: get stack trace
         },
       };
     }

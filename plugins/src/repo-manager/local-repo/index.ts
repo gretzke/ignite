@@ -31,8 +31,6 @@ const plugin = new LocalRepoPlugin();
 // Export plugin instance as default for registry generation
 export default plugin;
 
-// CLI entrypoint - repo managers keep container alive (no operations)
-if (process.argv.length > 2) {
-  const WORKSPACE_PATH = process.env.WORKSPACE_PATH || "/workspace";
-  console.log(`📁 Local repo container ready at: ${WORKSPACE_PATH}`);
-}
+// CLI entrypoint
+const WORKSPACE_PATH = process.env.WORKSPACE_PATH || "/workspace";
+console.log(`📁 Local repo container ready at: ${WORKSPACE_PATH}`);

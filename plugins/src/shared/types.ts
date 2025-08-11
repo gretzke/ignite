@@ -1,18 +1,18 @@
-// Core plugin types
 export interface ApiError {
-  message: string;
-  code?: string;
-  details?: Record<string, any>;
+  success: false;
+  error: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
 }
 
-export interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: ApiError;
-}
-
-// Legacy alias for backwards compatibility during migration
-export type PluginResult<T> = ApiResponse<T>;
+export type PluginResponse<T> =
+  | {
+      success: true;
+      data: T;
+    }
+  | ApiError;
 
 // Plugin metadata and configuration
 export enum PluginType {

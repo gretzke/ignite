@@ -7,7 +7,7 @@ import {
   type PluginMetadata,
   type DetectOptions,
   type DetectionResult,
-  type PluginResult,
+  type PluginResponse,
 } from "../../shared/index.ts";
 import { runPluginCLI } from "../../shared/plugin-runner.js";
 
@@ -26,7 +26,9 @@ export class FoundryPlugin extends CompilerPlugin {
     };
   }
 
-  async detect(options: DetectOptions): Promise<PluginResult<DetectionResult>> {
+  async detect(
+    options: DetectOptions,
+  ): Promise<PluginResponse<DetectionResult>> {
     try {
       const workspacePath = options.workspacePath || "/workspace";
       const foundryTomlPath = join(workspacePath, "foundry.toml");
@@ -55,7 +57,4 @@ const plugin = new FoundryPlugin();
 export default plugin;
 
 // CLI entrypoint - type-safe generic plugin execution
-// Always run CLI when args are provided (for container execution)
-if (process.argv.length > 1) {
-  runPluginCLI(plugin);
-}
+runPluginCLI(plugin);

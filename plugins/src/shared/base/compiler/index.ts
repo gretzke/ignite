@@ -6,7 +6,7 @@ import type {
   DetectOptions,
   DetectionResult,
 } from "./types.js";
-import type { PluginResult } from "../../types.js";
+import type { PluginResponse } from "../../types.js";
 
 export abstract class CompilerPlugin
   extends BasePlugin<PluginType.COMPILER>
@@ -16,7 +16,7 @@ export abstract class CompilerPlugin
 
   abstract detect(
     options: DetectOptions,
-  ): Promise<PluginResult<DetectionResult>>;
+  ): Promise<PluginResponse<DetectionResult>>;
   // TODO: Add compile() and getArtifacts() when needed
 }
 

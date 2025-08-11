@@ -1,9 +1,9 @@
-import { PluginResult, PluginMetadata, PluginType } from "./types.js";
+import { PluginMetadata, PluginResponse, PluginType } from "./types.js";
 
 // Base class for all Ignite plugins
 export abstract class BasePlugin<T extends PluginType = PluginType> {
-  // Static method for metadata - wraps getMetadata in PluginResult
-  static getInfo(): PluginResult<PluginMetadata> {
+  // Static method for metadata - wraps getMetadata in ApiResponse
+  static getInfo(): PluginResponse<PluginMetadata> {
     return {
       success: true,
       data: this.getMetadata(),
@@ -16,7 +16,7 @@ export abstract class BasePlugin<T extends PluginType = PluginType> {
   }
 
   // Instance method delegates to static for backwards compatibility
-  getInfo(): PluginResult<PluginMetadata> {
+  getInfo(): PluginResponse<PluginMetadata> {
     return (this.constructor as typeof BasePlugin).getInfo();
   }
 

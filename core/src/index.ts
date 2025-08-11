@@ -14,9 +14,7 @@ import {
   isGitRepository,
   checkDockerAvailability,
 } from './utils/startup.js';
-import { registerHealthRoutes } from './api/health.js';
-import { registerProfileRoutes } from './api/profiles.js';
-import { registerPluginRoutes } from './api/plugins.js';
+import { registerApi } from './api/index.js';
 import { StaticAssetHandler } from './assets/StaticAssetHandler.js';
 
 async function ignite(workspacePath: string): Promise<{
@@ -78,19 +76,8 @@ async function ignite(workspacePath: string): Promise<{
     });
   });
 
-  // Register API routes
-  await registerHealthRoutes(app);
-  await registerProfileRoutes(app, profileManager);
-  await registerPluginRoutes(app, pluginManager, pluginOrchestrator);
-
-  // Filesystem info routes
-  app.get('/api/system/info', async () => {
-    return {
-      igniteHome: fileSystem.getIgniteHome(),
-      currentProfile: profileManager.getCurrentProfile(),
-      profilePaths: profileManager.getCurrentProfilePaths(),
-    };
-  });
+  // Register API documentation and schemas
+  await registerApi(app);
 
   return {
     app,

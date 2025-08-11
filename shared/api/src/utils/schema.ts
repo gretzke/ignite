@@ -1,13 +1,6 @@
 // Schema utilities for type-safe Zod schema creation
 import { z } from "zod";
-import type { ApiError, ApiResponse } from "@ignite/plugin-types/types";
-
-// Type-safe ApiError schema that enforces interface compliance
-export const ApiErrorSchema = z.object({
-  message: z.string(),
-  code: z.string().optional(),
-  details: z.record(z.any()).optional(),
-}) satisfies z.ZodType<ApiError>;
+import type { ApiError, ApiResponse, SuccessResponse } from "../v1/index.js";
 
 /**
  * Creates a type-safe request schema that enforces the schema matches the interface.
@@ -20,8 +13,11 @@ export const ApiErrorSchema = z.object({
  *   age: z.number(),
  * }));
  */
-export function createRequestSchema<T>() {
-  return <S extends z.ZodSchema<T>>(schema: S) => schema;
+export function createRequestSchema<T>(id: string) {
+  return <S extends z.ZodSchema<T>>(schema: S) => {
+    z.globalRegistry.add(schema, { id });
+    return schema;
+  };
 }
 
 /**
@@ -35,12 +31,41 @@ export function createRequestSchema<T>() {
  *   age: z.number(),
  * }));
  */
-export function createApiResponseSchema<T>() {
+// Error schema aligned with ApiError
+const StatusCodeSchema = z.union([
+  z.literal(400),
+  z.literal(401),
+  z.literal(403),
+  z.literal(404),
+  z.literal(409),
+  z.literal(422),
+  z.literal(500),
+]);
+
+export const ApiErrorSchema = z.object({
+  statusCode: StatusCodeSchema,
+  code: z.string(),
+  error: z.string(),
+  message: z.string(),
+  details: z.record(z.string(), z.unknown()).optional(),
+}) satisfies z.ZodType<ApiError>;
+
+// Register a stable id for the error schema so it appears in components
+z.globalRegistry.add(ApiErrorSchema, { id: "ApiError" });
+
+export function createApiResponseSchema<T>(id: string) {
   return <S extends z.ZodSchema<T>>(dataSchema: S) => {
-    return z.object({
-      success: z.boolean(),
-      data: dataSchema.optional(),
-      error: ApiErrorSchema.optional(),
-    }) satisfies z.ZodType<ApiResponse<T>>;
+    const successSchema = z.object({
+      data: dataSchema,
+    }) as unknown as z.ZodType<SuccessResponse<T>>;
+
+    const responseSchema = z.union([
+      successSchema,
+      ApiErrorSchema,
+    ]) satisfies z.ZodType<ApiResponse<T>>;
+
+    z.globalRegistry.add(responseSchema, { id });
+
+    return responseSchema as unknown as z.ZodType<ApiResponse<T>>;
   };
 }

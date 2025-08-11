@@ -5,9 +5,9 @@
     "rootDir": "src",
     "declaration": true,
     "emitDeclarationOnly": false,
-    "module": "ESNext",
+    "module": "CommonJS",
     "target": "ES2022",
-    "moduleResolution": "Bundler",
+    "moduleResolution": "node",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true
