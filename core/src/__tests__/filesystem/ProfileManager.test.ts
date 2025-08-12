@@ -1,7 +1,7 @@
 // Tests for ProfileManager class
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createTestDirectory, cleanupTestDirectory } from '../setup';
+import { createTestDirectory, cleanupTestDirectory } from '../setup.js';
 import { FileSystem } from '../../filesystem/FileSystem.js';
 import { ProfileManager } from '../../filesystem/ProfileManager.js';
 

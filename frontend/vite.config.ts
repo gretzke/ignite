@@ -16,6 +16,11 @@ export default defineConfig({
   ],
   server: {
     port: 1302,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:1301',
+      },
+    },
   },
   build: {
     outDir: 'dist',

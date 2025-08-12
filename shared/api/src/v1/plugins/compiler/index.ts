@@ -14,7 +14,7 @@ export const DetectRequestSchema = createRequestSchema<DetectOptions>(
   "DetectRequestSchema",
 )(
   z.object({
-    workspacePath: z.string(),
+    workspacePath: z.string().optional(),
   }),
 );
 

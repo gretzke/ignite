@@ -18,7 +18,12 @@ export class AssetManager {
       this.basePath = '/snapshot/ignite';
     } else {
       // In development, assets are relative to project root
-      this.basePath = resolve(__dirname, '../../..');
+      if (typeof __dirname !== 'undefined') {
+        this.basePath = resolve(__dirname, '../../..');
+      } else {
+        // When running via tsx in `core`, cwd is .../ignite/core → project root is one level up
+        this.basePath = resolve(process.cwd(), '..');
+      }
     }
 
     getLogger().info(

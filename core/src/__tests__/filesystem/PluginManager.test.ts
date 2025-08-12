@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { PluginManager, PluginType } from '../../filesystem/PluginManager';
+import { PluginManager, PluginType } from '../../filesystem/PluginManager.js';
 import { PluginType as PluginTypeEnum } from '@ignite/plugin-types/types';
-import { createTestDirectory, cleanupTestDirectory } from '../setup';
-import { FileSystem } from '../../filesystem/FileSystem';
-import { PluginError, ErrorCodes } from '../../types/errors';
+import { createTestDirectory, cleanupTestDirectory } from '../setup.js';
+import { FileSystem } from '../../filesystem/FileSystem.js';
+import { PluginError, ErrorCodes } from '../../types/errors.js';
 
 describe('PluginManager', () => {
   let pluginManager: PluginManager;

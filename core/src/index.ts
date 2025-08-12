@@ -90,6 +90,12 @@ async function ignite(workspacePath: string): Promise<{
 
 // Parse CLI arguments and perform pre-startup checks
 async function main(): Promise<void> {
+  // Initialize a logger early so utilities (like getVersion) don't print to console
+  const bootstrapLoggerApp: FastifyInstance = fastify({
+    logger: process.env.NODE_ENV === 'development',
+  });
+  setGlobalLogger(bootstrapLoggerApp.log);
+
   const program = new Command();
 
   program
