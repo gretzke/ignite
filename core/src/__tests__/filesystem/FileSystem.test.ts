@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'path';
 import fs from 'fs/promises';
-import { createTestDirectory, cleanupTestDirectory } from '../setup';
+import { createTestDirectory, cleanupTestDirectory } from '../setup.js';
 import { FileSystem } from '../../filesystem/FileSystem.js';
 
 describe('FileSystem', () => {

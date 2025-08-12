@@ -2,7 +2,7 @@
 // This tests our conceptual approach without dealing with Jest ESM import issues
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createTestDirectory, cleanupTestDirectory } from './setup';
+import { createTestDirectory, cleanupTestDirectory } from './setup.js';
 import path from 'path';
 import fs from 'fs/promises';
 

@@ -26,7 +26,7 @@ export type ICompilerPlugin = {
 };
 
 export interface DetectOptions {
-  workspacePath: string;
+  workspacePath?: string;
 }
 
 export interface DetectionResult {

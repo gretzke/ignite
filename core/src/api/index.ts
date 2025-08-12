@@ -9,10 +9,10 @@ import {
   validatorCompiler,
 } from 'fastify-type-provider-zod';
 import { v1Routes } from '@ignite/api';
-import { systemHandlers } from './system';
-import { profileHandlers } from './profiles';
-import { pluginHandlers } from './plugins';
-import { compilerHandlers } from './plugins/compiler';
+import { systemHandlers } from './system.js';
+import { profileHandlers } from './profiles.js';
+import { pluginHandlers } from './plugins/index.js';
+import { compilerHandlers } from './plugins/compiler/index.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {

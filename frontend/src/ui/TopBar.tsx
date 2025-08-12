@@ -1,7 +1,8 @@
 import Tooltip from '../components/Tooltip';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
+import * as IgniteApiClient from '@ignite/api/client';
 
 type ConnectionStatus =
   | 'connecting'
@@ -32,6 +33,10 @@ export default function TopBar({
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const [serverProfiles, setServerProfiles] = useState<string[] | null>(null);
+  const [currentServerProfile, setCurrentServerProfile] = useState<
+    string | null
+  >(null);
   const [menuCoords, setMenuCoords] = useState<{
     top: number;
     right: number;
@@ -66,13 +71,48 @@ export default function TopBar({
       window.removeEventListener('scroll', update, true);
     };
   }, [open]);
+  // Fetch profiles from API
+  const api = useMemo(
+    () => (IgniteApiClient as any).createClient({ baseUrl: '' }),
+    []
+  );
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api.request('listProfiles', {});
+        if (!cancelled && 'data' in list) {
+          setServerProfiles(list.data.profiles);
+        }
+      } catch {}
+      try {
+        const cur = await api.request('getCurrentProfile', {});
+        if (!cancelled && 'data' in cur) {
+          setCurrentServerProfile(cur.data.name);
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
   const defaultProfiles = [
     { id: 'default', name: 'Default', color: 'var(--profile-color)' },
     { id: 'work', name: 'Work', color: '#0ea5e9' },
     { id: 'personal', name: 'Personal', color: '#a78bfa' },
   ];
-  const list = profiles.length ? profiles : defaultProfiles;
-  const current = list.find((p) => p.id === currentProfileId) ?? list[0];
+  const mergedProfiles = (serverProfiles ?? []).map((name) => ({
+    id: name,
+    name,
+    color: 'var(--profile-color)',
+  }));
+  const list = mergedProfiles.length
+    ? mergedProfiles
+    : profiles.length
+    ? profiles
+    : defaultProfiles;
+  const selectedId = currentServerProfile ?? currentProfileId;
+  const current = list.find((p) => p.id === selectedId) ?? list[0];
   const profileColor = current?.color ?? 'var(--profile-color)';
   return (
     <div className="glass-surface glass-topbar">

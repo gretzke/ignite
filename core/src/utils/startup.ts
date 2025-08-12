@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
-import { readFileSync, existsSync, statSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import path from 'path';
+import { AssetManager } from '../assets/AssetManager.js';
 import Docker from 'dockerode';
 import crypto from 'crypto';
 
@@ -24,10 +25,10 @@ export function openBrowser(url: string): void {
 
 // Get version from package.json
 export function getVersion(): string {
-  const packagePath = path.join(__dirname, '..', '..', 'package.json');
-  const packageContent = readFileSync(packagePath, 'utf-8');
-  const pkg = JSON.parse(packageContent);
-  return pkg.version;
+  const text = AssetManager.getInstance().getAssetText('core/package.json');
+  const pkg = JSON.parse(text);
+  if (pkg?.version) return pkg.version as string;
+  throw new Error('Version not found');
 }
 
 // Check if a directory is a git repository

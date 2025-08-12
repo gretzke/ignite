@@ -4,4 +4,4 @@
 export type {
   DetectionResult,
   DetectOptions,
-} from "@ignite/plugin-types/base/compiler/types";
+} from "@ignite/plugin-types/base/compiler";

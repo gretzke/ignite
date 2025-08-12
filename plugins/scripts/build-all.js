@@ -226,9 +226,18 @@ async function buildShared() {
       main: "index.js",
       types: "index.d.ts",
       exports: {
-        ".": "./index.js",
-        "./types": "./types.js",
-        "./base/*": "./base/*.js",
+        ".": {
+          types: "./index.d.ts",
+          default: "./index.js",
+        },
+        "./types": {
+          types: "./types.d.ts",
+          default: "./types.js",
+        },
+        "./base/*": {
+          types: "./base/*/index.d.ts",
+          default: "./base/*/index.js",
+        },
       },
       files: ["*.js", "*.d.ts", "base/**"],
     };
