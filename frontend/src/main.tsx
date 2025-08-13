@@ -2,7 +2,9 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import App from './App.tsx';
-import SettingsPage from './routes/SettingsPage';
+import { Provider } from 'react-redux';
+import { store } from './store';
+import SettingsPage from './routes/settings/SettingsPage';
 import RepositoriesPage from './routes/RepositoriesPage';
 import WorkflowsPage from './routes/WorkflowsPage';
 import DeploymentsPage from './routes/DeploymentsPage';
@@ -24,6 +26,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <Provider store={store}>
+      <RouterProvider router={router} />
+    </Provider>
   </React.StrictMode>
 );

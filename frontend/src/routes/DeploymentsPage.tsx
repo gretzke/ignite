@@ -1,7 +1,7 @@
 export default function DeploymentsPage() {
   return (
     <div className="text-[var(--text)]">
-      <h3 className="text-sm opacity-70 mb-2">Deployments</h3>
+      <h2 className="page-title">Deployments</h2>
       <p className="opacity-80">This is the deployments page placeholder.</p>
     </div>
   );

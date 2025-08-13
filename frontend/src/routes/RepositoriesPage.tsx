@@ -38,7 +38,7 @@ export default function RepositoriesPage() {
   return (
     <div className="text-[var(--text)]">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Repositories</h2>
+        <h2 className="page-title">Repositories</h2>
         <Tooltip label="Add repository" placement="top">
           <button
             type="button"

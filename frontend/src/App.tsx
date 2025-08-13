@@ -1,49 +1,22 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect } from 'react';
 import TopBar from './ui/TopBar';
 import Sidebar from './ui/Sidebar';
 import { Outlet } from 'react-router-dom';
-
-const COLOR_SWATCHES = [
-  '#0d6efd', // blue-500
-  '#6610f2', // indigo-500
-  '#6f42c1', // purple-500
-  '#0dcaf0', // cyan-500
-  '#20c997', // teal-500
-  '#FF007A', // uniswap-pink
-  '#ffc107', // yellow-500
-  '#fd7e14', // orange-500
-  '#dc3545', // red-500
-] as const;
+import { useAppDispatch, useAppSelector } from './store';
+import { startConnect } from './store/features/connection/connectionSlice';
 
 type CSSVars = React.CSSProperties & { ['--profile-color']?: string };
 
 export default function App() {
-  const [darkMode, setDarkMode] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem('ignite:theme') === 'dark';
-    } catch {
-      return false;
-    }
-  });
-  const [animOn, setAnimOn] = useState(true);
-  const [shapesOn, setShapesOn] = useState(true);
-  const [color, setColor] = useState<string>('#ec4899');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
-    try {
-      const v = window.localStorage.getItem('ignite:sidebar-collapsed');
-      return v === '1';
-    } catch {
-      return false;
-    }
-  });
-  const [status, setStatus] = useState<
-    'connecting' | 'connected' | 'reconnecting' | 'disconnected'
-  >('connecting');
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 10;
-  const [attemptsLeft, setAttemptsLeft] = useState(maxReconnectAttempts);
-  const [reconnectNonce, setReconnectNonce] = useState(0);
+  // Read current theme from Redux and provide an explicit dispatcher
+  const dispatch = useAppDispatch();
+  const theme = useAppSelector((s) => s.app.theme);
+  const darkMode = theme === 'dark';
+  // Single Redux flag controls both animations and shapes
+  const showDetails = useAppSelector((s) => s.app.showDetails);
+  const colorHex = useAppSelector((s) => s.app.colorHex);
+  const sidebarCollapsed = useAppSelector((s) => s.app.sidebarCollapsed);
+  // Connection state used inside TopBar via its own selectors
 
   const themeClass = darkMode ? 'theme-dark' : 'theme-light';
 
@@ -54,137 +27,35 @@ export default function App() {
     rootEl.classList.toggle('theme-light', !darkMode);
   }, [darkMode]);
 
-  // Minimal CLI connection indicator (WebSocket to backend on 1301)
+  // Reflect profile color on <html> so portalled elements (dialogs/tooltips) inherit it
   useEffect(() => {
-    let ws: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
+    const rootEl = document.documentElement;
+    rootEl.style.setProperty('--profile-color', colorHex);
+  }, [colorHex]);
 
-    const delaysMs = [
-      1000, 1000, 1000, 2000, 2000, 5000, 10000, 10000, 30000, 30000,
-    ];
-
-    const connect = () => {
-      if (
-        ws &&
-        (ws.readyState === WebSocket.OPEN ||
-          ws.readyState === WebSocket.CONNECTING)
-      )
-        return;
-      setStatus((prev) =>
-        prev === 'disconnected' ? 'reconnecting' : 'connecting'
-      );
-      try {
-        ws = new WebSocket('ws://localhost:1301/ws');
-        wsRef.current = ws;
-        ws.onopen = () => {
-          setStatus('connected');
-          reconnectAttemptsRef.current = 0;
-          setAttemptsLeft(maxReconnectAttempts);
-        };
-        ws.onclose = () => {
-          setStatus('disconnected');
-          if (reconnectAttemptsRef.current < maxReconnectAttempts) {
-            reconnectAttemptsRef.current += 1;
-            const delay =
-              delaysMs[
-                Math.min(reconnectAttemptsRef.current - 1, delaysMs.length - 1)
-              ];
-            setStatus('reconnecting');
-            setAttemptsLeft(
-              maxReconnectAttempts - reconnectAttemptsRef.current
-            );
-            reconnectTimer = window.setTimeout(connect, delay);
-          }
-        };
-        ws.onerror = () => {
-          try {
-            ws?.close();
-          } catch {
-            // ignore
-          }
-        };
-      } catch {
-        setStatus('disconnected');
-      }
-    };
-
-    connect();
-    return () => {
-      if (reconnectTimer) window.clearTimeout(reconnectTimer);
-      try {
-        ws?.close();
-      } catch {
-        // ignore
-      }
-    };
-  }, [reconnectNonce]);
-
-  // Persist theme & sidebar state
+  // Kick off connection once on mount; middleware manages lifecycle
   useEffect(() => {
-    try {
-      window.localStorage.setItem('ignite:theme', darkMode ? 'dark' : 'light');
-    } catch {
-      // ignore
-    }
-  }, [darkMode]);
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        'ignite:sidebar-collapsed',
-        sidebarCollapsed ? '1' : '0'
-      );
-    } catch {
-      // ignore
-    }
-  }, [sidebarCollapsed]);
-  useEffect(() => {
-    try {
-      const t = window.localStorage.getItem('ignite:theme');
-      if (t === 'dark') setDarkMode(true);
-      if (t === 'light') setDarkMode(false);
-    } catch {
-      // ignore
-    }
-  }, []);
+    dispatch(startConnect());
+  }, [dispatch]);
 
   return (
     <div
       className={themeClass}
-      data-anim={animOn ? 'on' : 'off'}
-      data-shapes={shapesOn ? 'on' : 'off'}
+      data-anim={showDetails ? 'on' : 'off'}
+      data-shapes={showDetails ? 'on' : 'off'}
       style={
         {
           backgroundColor: 'var(--bg-base)',
           minHeight: '100vh',
-          ['--profile-color']: color,
+          ['--profile-color']: colorHex,
         } as CSSVars
       }
     >
       {/* Floating top bar */}
-      <TopBar
-        status={status}
-        attemptsLeft={attemptsLeft}
-        maxAttempts={maxReconnectAttempts}
-        onReconnect={() => {
-          // reset counters and trigger a fresh connection cycle
-          reconnectAttemptsRef.current = 0;
-          setAttemptsLeft(maxReconnectAttempts);
-          setStatus('reconnecting');
-          try {
-            wsRef.current?.close();
-          } catch {
-            // ignore
-          }
-          // bump nonce so the websocket effect restarts immediately
-          setReconnectNonce((n) => n + 1);
-        }}
-      />
+      <TopBar />
 
       {/* Sidebar */}
-      <Sidebar
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((s) => !s)}
-      />
+      <Sidebar />
 
       {/* Ambient background layers */}
       <div className="ambient-gradient" aria-hidden="true" />
@@ -199,19 +70,7 @@ export default function App() {
         className="glass-surface glass-main"
         style={{ left: sidebarCollapsed ? 56 + 24 : 220 + 24 }}
       >
-        <Outlet
-          context={{
-            color,
-            setColor,
-            animOn,
-            setAnimOn,
-            shapesOn,
-            setShapesOn,
-            darkMode,
-            setDarkMode,
-            swatches: COLOR_SWATCHES,
-          }}
-        />
+        <Outlet />
       </div>
     </div>
   );

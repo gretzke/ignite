@@ -42,6 +42,89 @@
 }
 
 @layer components {
+  /* Main content title style for pages */
+  .page-title {
+    font-size: 1.125rem; /* text-lg */
+    font-weight: 600; /* font-semibold */
+    margin-bottom: 1rem; /* mb-4 */
+    color: var(--text);
+  }
+
+  /* Radix Tabs styling (top underline indicator, minimal look) */
+  .tabs-list {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid color-mix(in oklch, var(--text) 16%, transparent);
+  }
+  .tabs-trigger {
+    position: relative;
+    background: transparent;
+    border: 0;
+    color: color-mix(in oklch, var(--text) 78%, transparent);
+    padding: 8px 12px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    outline: none;
+  }
+  .tabs-trigger:hover {
+    color: var(--text);
+  }
+  .tabs-trigger[data-state='active'] {
+    color: var(--text);
+  }
+  .tabs-trigger::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: -1px;
+    height: 2px;
+    width: 0;
+    background: var(--profile-color);
+    transition: width 160ms ease;
+  }
+  .tabs-trigger[data-state='active']::after {
+    width: 100%;
+  }
+
+  /* Radix Switch iOS-like styling */
+  .switch-root {
+    width: 42px;
+    height: 26px;
+    background-color: color-mix(in oklch, var(--text) 20%, transparent);
+    border-radius: 9999px;
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 120ms ease;
+  }
+  .switch-root[data-state='checked'] {
+    background-color: var(--profile-color);
+  }
+  .switch-thumb {
+    display: block;
+    width: 22px;
+    height: 22px;
+    background-color: #fff;
+    border-radius: 9999px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transform: translateX(2px);
+    transition: transform 120ms ease;
+  }
+  .switch-root[data-state='checked'] .switch-thumb {
+    transform: translateX(18px);
+  }
+
+  /* Dialog overlay/content layering */
+  .dialog-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+  }
+  .dialog-content {
+    position: fixed;
+    z-index: 1001;
+  }
   /* Global font application */
   html,
   body,
@@ -64,6 +147,7 @@
     -webkit-backdrop-filter: var(--bf-strong);
     backdrop-filter: var(--bf-strong);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    color: var(--text);
   }
   .pill-white {
     background: #ffffff;
@@ -136,6 +220,7 @@
     -webkit-backdrop-filter: var(--bf-medium);
     backdrop-filter: var(--bf-medium);
     border-radius: var(--radius);
+    color: var(--text);
   }
   .theme-light .glass-surface {
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
@@ -243,6 +328,25 @@
     white-space: nowrap;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     z-index: 9999;
+  }
+  /* Inputs: make focus outlines follow the primary profile color */
+  input,
+  select,
+  textarea {
+    caret-color: var(--profile-color);
+  }
+  input:focus,
+  input:focus-visible,
+  select:focus,
+  select:focus-visible,
+  textarea:focus,
+  textarea:focus-visible {
+    outline: 2px solid
+      color-mix(in oklch, var(--profile-color) 80%, transparent);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px
+      color-mix(in oklch, var(--profile-color) 25%, transparent);
+    border-color: color-mix(in oklch, var(--profile-color) 60%, #fff 30%);
   }
   .tooltip-arrow {
     fill: color-mix(in oklch, var(--bg-base) 50%, transparent) !important;
