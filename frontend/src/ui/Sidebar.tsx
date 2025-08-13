@@ -8,13 +8,13 @@ import {
   ChevronsRight,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useAppDispatch, useAppSelector } from '../store';
+import { setSidebarCollapsed } from '../store/features/app/appSlice';
 
-interface SidebarProps {
-  collapsed: boolean;
-  onToggle: () => void;
-}
-
-export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export default function Sidebar() {
+  const dispatch = useAppDispatch();
+  const collapsed = useAppSelector((s) => s.app.sidebarCollapsed);
+  const onToggle = () => dispatch(setSidebarCollapsed(!collapsed));
   return (
     <aside
       className={`glass-surface glass-sidebar ${collapsed ? 'collapsed' : ''}`}
