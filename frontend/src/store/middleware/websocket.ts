@@ -5,15 +5,16 @@ import {
   setStatus,
   startConnect,
   ConnectionStatus,
-} from './connectionSlice';
+} from '../features/connection/connectionSlice';
 
-// Reconnection backoff schedule
-const delaysMs = [1, 1000, 1000, 1000, 2000, 2000, 50000, 10000, 10000, 30000];
+// Reconnection policy: fixed interval attempts for a bounded window
+export const RECONNECT_INTERVAL_MS = 1000;
+export const RECONNECT_WINDOW_MS = 30000;
 
 export const websocketMiddleware: Middleware = (store) => {
   let ws: WebSocket | null = null;
   let reconnectTimer: number | null = null;
-  let attemptIndex = 0;
+  let reconnectStartTs: number | null = null;
 
   const cleanup = () => {
     if (reconnectTimer) {
@@ -29,12 +30,22 @@ export const websocketMiddleware: Middleware = (store) => {
   };
 
   const scheduleReconnect = () => {
-    const delay = delaysMs[Math.min(attemptIndex, delaysMs.length - 1)];
-    const remaining = delaysMs.length - attemptIndex - 1;
+    const now = Date.now();
+    if (reconnectStartTs === null) reconnectStartTs = now;
+    const elapsed = now - reconnectStartTs;
+    if (elapsed >= RECONNECT_WINDOW_MS) {
+      store.dispatch(setStatus(ConnectionStatus.DISCONNECTED));
+      store.dispatch(setAttemptsLeft(0));
+      return;
+    }
+    const totalAttempts = Math.ceil(
+      RECONNECT_WINDOW_MS / RECONNECT_INTERVAL_MS
+    );
+    const attemptsUsed = Math.floor(elapsed / RECONNECT_INTERVAL_MS);
+    const remaining = Math.max(totalAttempts - attemptsUsed - 1, 0);
     store.dispatch(setStatus(ConnectionStatus.RECONNECTING));
-    store.dispatch(setAttemptsLeft(Math.max(remaining, 0)));
-    reconnectTimer = window.setTimeout(connect, delay);
-    attemptIndex += 1;
+    store.dispatch(setAttemptsLeft(remaining));
+    reconnectTimer = window.setTimeout(connect, RECONNECT_INTERVAL_MS);
   };
 
   const connect = () => {
@@ -48,15 +59,15 @@ export const websocketMiddleware: Middleware = (store) => {
     try {
       ws = new WebSocket('ws://localhost:1301/ws');
       ws.onopen = () => {
-        attemptIndex = 0;
+        reconnectStartTs = null;
         store.dispatch(setStatus(ConnectionStatus.CONNECTED));
-        store.dispatch(setAttemptsLeft(delaysMs.length));
+        const totalAttempts = Math.ceil(
+          RECONNECT_WINDOW_MS / RECONNECT_INTERVAL_MS
+        );
+        store.dispatch(setAttemptsLeft(totalAttempts));
       };
       ws.onclose = () => {
-        store.dispatch(setStatus(ConnectionStatus.DISCONNECTED));
-        if (attemptIndex < delaysMs.length) {
-          scheduleReconnect();
-        }
+        scheduleReconnect();
       };
       ws.onerror = () => {
         try {
@@ -74,8 +85,11 @@ export const websocketMiddleware: Middleware = (store) => {
     // React to public intents
     if (startConnect.match(action) || reconnectRequested.match(action)) {
       cleanup();
-      attemptIndex = 0;
-      store.dispatch(setAttemptsLeft(delaysMs.length));
+      reconnectStartTs = Date.now();
+      const totalAttempts = Math.ceil(
+        RECONNECT_WINDOW_MS / RECONNECT_INTERVAL_MS
+      );
+      store.dispatch(setAttemptsLeft(totalAttempts));
       connect();
     }
     return next(action);

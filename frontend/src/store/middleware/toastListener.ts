@@ -1,8 +1,4 @@
 import { createAction, createListenerMiddleware } from '@reduxjs/toolkit';
-import { igniteApi } from '../services/igniteApi';
-import { setTheme } from '../features/app/appSlice';
-import { ConnectionStatus } from '../features/connection/connectionSlice';
-import type { RootState } from '../store';
 import { getToastApi } from '../../ui/toast/toastBus';
 import type { ToastVariant } from '../../ui/toast/ToastProvider';
 
@@ -120,41 +116,6 @@ toastListener.startListening({
       variant: base.variant ?? 'neutral',
       duration: base.duration,
       permanent: base.permanent,
-    });
-  },
-});
-
-// RTK Query: health check failure example
-toastListener.startListening({
-  matcher: igniteApi.endpoints.getHealth.matchRejected,
-  effect: async (_action) => {
-    const api = getToastApi();
-    api?.show({
-      title: 'Health check failed',
-      description: 'Unable to reach the Ignite API',
-      variant: 'error',
-    });
-  },
-});
-
-// Connection exhausted → show permanent warning
-toastListener.startListening({
-  predicate: (_action, currentState, previousState) => {
-    const prev = previousState as RootState;
-    const curr = currentState as RootState;
-    return (
-      prev.connection.status !== curr.connection.status &&
-      curr.connection.status === ConnectionStatus.DISCONNECTED &&
-      curr.connection.attemptsLeft === 0
-    );
-  },
-  effect: async () => {
-    const api = getToastApi();
-    api?.show({
-      title: 'Disconnected from CLI',
-      description: 'Click Reconnect in the top bar to retry',
-      variant: 'warning',
-      permanent: true,
     });
   },
 });

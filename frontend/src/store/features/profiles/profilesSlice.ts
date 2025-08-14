@@ -2,20 +2,15 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { ProfileConfig } from '@ignite/api';
 import { apiClient } from '../../api/client';
 
-export type LoadStatus = 'idle' | 'loading' | 'succeeded' | 'failed';
-
 export interface IProfilesState {
   profiles: ProfileConfig[];
   currentId: string | null;
-  status: LoadStatus;
-  error?: string;
   archivedProfiles: ProfileConfig[];
 }
 
 const initialState: IProfilesState = {
   profiles: [],
   currentId: null,
-  status: 'idle',
   archivedProfiles: [],
 };
 
@@ -23,23 +18,14 @@ const profilesSlice = createSlice({
   name: 'profiles',
   initialState,
   reducers: {
-    fetchProfilesRequested(state) {
-      state.status = 'loading';
-      state.error = undefined;
-    },
     fetchProfilesSucceeded(
       state,
       action: PayloadAction<{ profiles: ProfileConfig[]; currentId: string }>
     ) {
-      state.status = 'succeeded';
       state.profiles = action.payload.profiles;
       state.currentId = action.payload.currentId;
-      state.error = undefined;
     },
-    fetchProfilesFailed(state, action: PayloadAction<string>) {
-      state.status = 'failed';
-      state.error = action.payload;
-    },
+    fetchProfilesFailed(_state, _action: PayloadAction<string>) {},
     setCurrentProfile(state, action: PayloadAction<string>) {
       state.currentId = action.payload;
     },
@@ -49,14 +35,11 @@ const profilesSlice = createSlice({
     ) {
       state.archivedProfiles = action.payload.profiles;
     },
-    fetchArchivedFailed(state, action: PayloadAction<string>) {
-      state.error = action.payload;
-    },
+    fetchArchivedFailed(_state, _action: PayloadAction<string>) {},
   },
 });
 
 export const {
-  fetchProfilesRequested,
   fetchProfilesSucceeded,
   fetchProfilesFailed,
   setCurrentProfile,

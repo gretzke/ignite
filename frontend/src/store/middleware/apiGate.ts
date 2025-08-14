@@ -1,7 +1,9 @@
 import { createListenerMiddleware } from '@reduxjs/toolkit';
 import { createClient, type Client } from '@ignite/api/client';
-import { apiDispatchAction, isApiDispatchAction } from '../api/enhancedClient';
+import { apiDispatchAction, isApiDispatchAction } from '../api/client';
 import { getToastApi } from '../../ui/toast/toastBus';
+import type { RootState } from '../store';
+import { ConnectionStatus } from '../features/connection/connectionSlice';
 
 // Central API gating and execution middleware.
 // It defers API operations until the connection is CONNECTED, and aborts when DISCONNECTED.
@@ -100,7 +102,47 @@ apiGate.startListening({
       }
     };
 
-    // Temporary: execute API calls immediately to debug the issue
-    await executeApiCall();
+    // Wait for connection: proceed only when CONNECTED; abort on DISCONNECTED
+    const waitForConnection = async (): Promise<
+      'connected' | 'disconnected' | 'aborted'
+    > => {
+      const signal = api.signal;
+      while (!signal.aborted) {
+        const state = api.getState() as RootState;
+        const status = state.connection.status;
+        if (status === ConnectionStatus.CONNECTED) return 'connected';
+        if (status === ConnectionStatus.DISCONNECTED) return 'disconnected';
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      return 'aborted';
+    };
+
+    const gate = await waitForConnection();
+    if (gate === 'connected') {
+      await executeApiCall();
+      return;
+    }
+
+    // Aborted or disconnected → run onError if provided, else toast
+    const { onError } = action.payload;
+    const message =
+      gate === 'aborted' ? 'Request cancelled' : 'Offline: request aborted';
+    if (onError) {
+      const errorActions = onError({ message });
+      if (errorActions) {
+        const actions = Array.isArray(errorActions)
+          ? errorActions
+          : [errorActions];
+        actions.forEach((a) => api.dispatch(a));
+      }
+    } else {
+      const toast = getToastApi();
+      toast?.show({
+        title: 'Offline',
+        description: message,
+        variant: 'error',
+        duration: 4000,
+      });
+    }
   },
 });
