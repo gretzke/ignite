@@ -3,12 +3,13 @@
 // - Reconnect button dispatches a store action to trigger middleware reconnection
 // - Profile menu fetches server profiles and shows a simple list (no selection wiring yet)
 import Tooltip from '../components/Tooltip';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import * as IgniteApiClient from '@ignite/api/client';
+import type { ProfileConfig } from '@ignite/api';
 import { ConnectionStatus } from '../store/features/connection/connectionSlice';
 import { useAppDispatch, useAppSelector } from '../store';
 import { reconnectRequested } from '../store/features/connection/connectionSlice';
+import { profilesApi } from '../store/features/profiles/profilesSlice';
 import Dropdown from '../components/Dropdown';
 
 export default function TopBar() {
@@ -22,10 +23,13 @@ export default function TopBar() {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [serverProfiles, setServerProfiles] = useState<string[] | null>(null);
-  const [currentServerProfile, setCurrentServerProfile] = useState<
-    string | null
-  >(null);
+  // Subscribe to profiles from the store; TopBar is now a passive view
+  const serverProfiles = useAppSelector(
+    (s) => s.profiles.profiles
+  ) as ProfileConfig[];
+  const currentServerProfileId = useAppSelector((s) => s.profiles.currentId) as
+    | string
+    | null;
   // Close the profile menu when clicking outside
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -39,47 +43,13 @@ export default function TopBar() {
   }, [open]);
 
   // Dropdown handles its own positioning; no tracking logic needed here
-  // Fetch profiles from API (simple demo: list and current name)
-  const api = useMemo(
-    () =>
-      (
-        IgniteApiClient as unknown as {
-          createClient: (o: { baseUrl: string }) => any;
-        }
-      ).createClient({ baseUrl: '' }),
-    []
-  );
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await api.request('listProfiles', {});
-        if (!cancelled && 'data' in list) {
-          setServerProfiles(list.data.profiles);
-        }
-      } catch {
-        // ignore profile list errors in the top bar
-      }
-      try {
-        const cur = await api.request('getCurrentProfile', {});
-        if (!cancelled && 'data' in cur) {
-          setCurrentServerProfile(cur.data.name);
-        }
-      } catch {
-        // ignore current profile errors in the top bar
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [api]);
   // Use only server profiles; no local defaults
-  const list = (serverProfiles ?? []).map((name) => ({
-    id: name,
-    name,
-    color: 'var(--profile-color)',
-  }));
-  const selectedId = currentServerProfile ?? list[0]?.id;
+  const list = (serverProfiles ?? []).slice().sort((a, b) => {
+    const ta = a.lastUsed ? Date.parse(a.lastUsed as unknown as string) : 0;
+    const tb = b.lastUsed ? Date.parse(b.lastUsed as unknown as string) : 0;
+    return tb - ta; // newest first
+  });
+  const selectedId = currentServerProfileId ?? list[0]?.id;
   const current = selectedId
     ? list.find((p) => p.id === selectedId) ?? list[0]
     : undefined;
@@ -117,23 +87,46 @@ export default function TopBar() {
           </Tooltip>
         )}
         <Dropdown
-          renderTrigger={({ ref, toggle }) => (
-            <button
-              type="button"
-              ref={ref as React.MutableRefObject<HTMLButtonElement | null>}
-              onClick={toggle}
-              className="rounded-full border cursor-pointer flex items-center justify-center"
-              style={{
-                width: 32,
-                height: 32,
-                background: profileColor as string,
-                borderColor: 'color-mix(in oklch, #fff 40%, transparent)',
-              }}
-              aria-label="Profile menu"
-            >
-              <span aria-hidden>👤</span>
-            </button>
-          )}
+          renderTrigger={({ ref, toggle }) => {
+            const isEmpty = serverProfiles.length === 0;
+            const button = (
+              <button
+                type="button"
+                ref={ref as React.MutableRefObject<HTMLButtonElement | null>}
+                onClick={isEmpty ? undefined : toggle}
+                disabled={isEmpty}
+                className={`rounded-full border flex items-center justify-center ${
+                  isEmpty ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                }`}
+                style={{
+                  width: 32,
+                  height: 32,
+                  background: profileColor as string,
+                  borderColor: 'color-mix(in oklch, #fff 40%, transparent)',
+                }}
+                aria-label={isEmpty ? 'No profiles available' : 'Profile menu'}
+              >
+                <span
+                  aria-hidden
+                  className="profile-logo"
+                  style={{
+                    width: 32,
+                    height: 32,
+                    background: 'transparent',
+                    border: 'none',
+                  }}
+                >
+                  <span style={{ fontSize: 14 }}>{current?.icon || ''}</span>
+                </span>
+              </button>
+            );
+
+            return isEmpty ? (
+              <Tooltip label="No profiles available">{button}</Tooltip>
+            ) : (
+              button
+            );
+          }}
           menuClassName="tooltip-content"
           menuStyle={{
             padding: 12,
@@ -147,43 +140,47 @@ export default function TopBar() {
             <div>
               <div className="text-xs opacity-60 px-2 pb-1">Profiles</div>
               <div className="flex flex-col gap-3">
-                {list.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="btn btn-secondary nav-item justify-between"
-                    onClick={() => {
-                      close();
-                    }}
-                    style={{ padding: '1rem 1.2rem' }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span
-                        aria-hidden
-                        style={{
-                          background: p.color,
-                          width: 28,
-                          height: 28,
-                          borderRadius: 9999,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          border: '1px solid rgba(255,255,255,0.4)',
-                        }}
-                      >
-                        <span style={{ fontSize: 14 }}>
-                          {/* TODO: remove and load profile icon */}
-                          {p.id === 'work'
-                            ? '💼'
-                            : p.id === 'personal'
-                            ? '🙂'
-                            : '👤'}
+                {list.map((p) => {
+                  const isCurrent = p.id === currentServerProfileId;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={'btn nav-item justify-between btn-secondary'}
+                      onClick={() => {
+                        if (!isCurrent) {
+                          dispatch(profilesApi.switchProfile(p.id));
+                        }
+                        close();
+                      }}
+                      style={{ padding: '1rem 1.2rem' }}
+                      disabled={isCurrent}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span
+                          aria-hidden
+                          className="profile-logo"
+                          style={{
+                            background: p.color,
+                            width: 28,
+                            height: 28,
+                          }}
+                        >
+                          <span style={{ fontSize: 14 }}>{p.icon || ''}</span>
                         </span>
+                        <span className="nav-label">{p.name}</span>
                       </span>
-                      <span className="nav-label">{p.name}</span>
-                    </span>
-                  </button>
-                ))}
+                      {isCurrent && (
+                        <span
+                          className="text-xs opacity-75"
+                          style={{ fontSize: '0.75rem' }}
+                        >
+                          Current
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
               <div
                 className="h-px my-2"

@@ -1,6 +1,7 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
+import crypto from 'crypto';
 import type { ProfileConfig, IgniteConfig } from '../types/index.js';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 import { FileSystemError, ErrorCodes } from '../types/errors.js';
@@ -17,9 +18,10 @@ export interface PluginRegistry {
 // Cross-platform filesystem management
 // Handles ~/.ignite directory structure, profile creation, and path handling
 export class FileSystem {
+  private static instance: FileSystem;
   private readonly igniteHome: string;
 
-  constructor(customHome?: string) {
+  private constructor(customHome?: string) {
     if (customHome) {
       // used for unit tests
       this.igniteHome = customHome;
@@ -29,6 +31,13 @@ export class FileSystem {
       const suffix = process.env.NODE_ENV === 'development' ? '_dev' : '';
       this.igniteHome = path.join(os.homedir(), `.ignite${suffix}`);
     }
+  }
+
+  static getInstance(customHome?: string): FileSystem {
+    if (!FileSystem.instance) {
+      FileSystem.instance = new FileSystem(customHome);
+    }
+    return FileSystem.instance;
   }
 
   // === Core Path Getters ===
@@ -49,18 +58,28 @@ export class FileSystem {
     return path.join(this.igniteHome, 'cache');
   }
 
-  // === Profile Paths ===
+  // === Profile Paths (keyed by immutable profile id) ===
 
-  getProfilePath(profileName: string): string {
-    return path.join(this.getProfilesPath(), profileName);
+  getProfilePath(profileId: string): string {
+    return path.join(this.getProfilesPath(), profileId);
   }
 
-  getProfileConfigPath(profileName: string): string {
-    return path.join(this.getProfilePath(profileName), 'config.json');
+  getProfileConfigPath(profileId: string): string {
+    return path.join(this.getProfilePath(profileId), 'config.json');
   }
 
-  getProfileReposPath(profileName: string): string {
-    return path.join(this.getProfilePath(profileName), 'repos');
+  getProfileReposPath(profileId: string): string {
+    return path.join(this.getProfilePath(profileId), 'repos');
+  }
+
+  // === Archive Paths ===
+
+  getArchivedProfilesPath(): string {
+    return path.join(this.igniteHome, 'archive', 'profiles');
+  }
+
+  getArchivedProfilePath(profileId: string): string {
+    return path.join(this.getArchivedProfilesPath(), profileId);
   }
 
   // === Plugin Paths ===
@@ -87,45 +106,36 @@ export class FileSystem {
 
   // === Profile Management ===
 
-  // Get profile config, auto-create default profile if it doesn't exist
-  async getProfileConfig(profileName: string): Promise<ProfileConfig> {
-    const configPath = this.getProfileConfigPath(profileName);
-
-    // Try to read existing config
+  // Get profile config (throws if it doesn't exist). Key by profile id
+  async getProfileConfig(profileId: string): Promise<ProfileConfig> {
+    const configPath = this.getProfileConfigPath(profileId);
     if (await this.fileExists(configPath)) {
       return this.readJsonFile<ProfileConfig>(configPath);
     }
-
-    // Only auto-create default profile
-    if (profileName === 'default') {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: hardcoded 'default' profile path
-      await fs.mkdir(this.getProfilePath('default'), { recursive: true });
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: hardcoded 'default' profile path
-      await fs.mkdir(this.getProfileReposPath('default'), { recursive: true });
-
-      const defaultConfig: ProfileConfig = {
-        name: 'default',
-        created: new Date().toISOString(),
-        lastAccessed: new Date().toISOString(),
-      };
-
-      await this.writeJsonFile(configPath, defaultConfig);
-
-      getLogger().info('📁 Created default profile');
-
-      return defaultConfig;
-    }
-
-    // Non-default profile doesn't exist
     throw new FileSystemError(
-      `Profile '${profileName}' does not exist`,
+      `Profile '${profileId}' does not exist`,
       ErrorCodes.PROFILE_NOT_FOUND,
-      { profileName }
+      { profileId }
     );
   }
 
+  // Create and persist a profile config (ensures directories exist)
+  async createProfileConfig(
+    profileId: string,
+    config: ProfileConfig
+  ): Promise<void> {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: profileId path within ~/.ignite
+    await fs.mkdir(this.getProfilePath(profileId), { recursive: true });
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: profileId path within ~/.ignite
+    await fs.mkdir(this.getProfileReposPath(profileId), { recursive: true });
+    await this.writeJsonFile(this.getProfileConfigPath(profileId), config);
+  }
+
   // Create a new profile
-  async createProfile(profileName: string): Promise<void> {
+  async createProfile(
+    profileName: string,
+    options?: { color?: string; icon?: string }
+  ): Promise<ProfileConfig> {
     if (!this.isValidProfileName(profileName)) {
       throw new FileSystemError(
         `Invalid profile name: ${profileName}`,
@@ -134,36 +144,42 @@ export class FileSystem {
       );
     }
 
-    const profilePath = this.getProfilePath(profileName);
+    const profileId = crypto.randomUUID().slice(0, 8);
+    const profilePath = this.getProfilePath(profileId);
 
     // Check if profile already exists
     if (await this.fileExists(profilePath)) {
       throw new FileSystemError(
-        `Profile '${profileName}' already exists`,
+        `Profile with ID '${profileId}' already exists`,
         ErrorCodes.PROFILE_ALREADY_EXISTS,
-        { profileName }
+        { profileId }
       );
     }
 
-    // Create profile directories
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: profileName is validated, path is within ~/.ignite
+    // Create profile directories using the UUID
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: profileId is UUID, path is within ~/.ignite
     await fs.mkdir(profilePath, { recursive: true });
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: profileName is validated, path is within ~/.ignite
-    await fs.mkdir(this.getProfileReposPath(profileName), { recursive: true });
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: profileId is UUID, path is within ~/.ignite
+    await fs.mkdir(this.getProfileReposPath(profileId), { recursive: true });
 
     // Create profile config
+    const nowIso = new Date().toISOString();
     const config: ProfileConfig = {
+      id: profileId,
       name: profileName,
-      created: new Date().toISOString(),
-      lastAccessed: new Date().toISOString(),
+      color: options?.color ?? '#627eeb',
+      icon: options?.icon ?? '',
+      created: nowIso,
+      lastUsed: nowIso,
     };
 
-    await this.writeJsonFile(this.getProfileConfigPath(profileName), config);
+    await this.createProfileConfig(profileId, config);
 
-    getLogger().info(`📁 Created profile: ${profileName}`);
+    getLogger().info(`📁 Created profile: ${profileName} (ID: ${profileId})`);
+    return config;
   }
 
-  // List all profiles
+  // List all profiles (ids)
   async listProfiles(): Promise<string[]> {
     try {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: fixed profiles directory path
@@ -231,6 +247,17 @@ export class FileSystem {
     };
     await this.writeJsonFile(configPath, defaultConfig);
 
+    // Ensure default profile exists at first run
+    const nowIso = new Date().toISOString();
+    await this.createProfileConfig('default', {
+      id: 'default',
+      name: 'Default',
+      color: '#627eeb',
+      icon: '',
+      created: nowIso,
+      lastUsed: nowIso,
+    });
+
     getLogger().info('⚙️ Created global config');
 
     return defaultConfig;
@@ -270,5 +297,19 @@ export class FileSystem {
     } catch {
       return false;
     }
+  }
+
+  // Move a directory (rename)
+  async moveDirectory(srcPath: string, destPath: string): Promise<void> {
+    // Ensure destination parent exists
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: paths are constructed within ~/.ignite
+    await fs.mkdir(path.dirname(destPath), { recursive: true });
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: paths are constructed within ~/.ignite
+    await fs.rename(srcPath, destPath);
+  }
+
+  // Recursively delete a directory
+  async deleteDirectory(dirPath: string): Promise<void> {
+    await fs.rm(dirPath, { recursive: true, force: true });
   }
 }

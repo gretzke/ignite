@@ -12,7 +12,7 @@ describe('FileSystem', () => {
 
   beforeEach(async () => {
     testDir = await createTestDirectory();
-    fileSystem = new FileSystem(testDir);
+    fileSystem = FileSystem.getInstance(testDir);
   });
 
   afterEach(async () => {
@@ -39,9 +39,12 @@ describe('FileSystem', () => {
     it('should create default profile automatically', async () => {
       const config = await fileSystem.getProfileConfig('default');
 
-      expect(config.name).toBe('default');
+      expect(config.name).toBe('Default');
+      expect(config.color).toBe('#627eeb');
+      expect(config.icon).toBe('');
+      expect(config.id).toBe('default');
       expect(config.created).toBeDefined();
-      expect(config.lastAccessed).toBeDefined();
+      expect(config.lastUsed).toBeDefined();
       expect(new Date(config.created)).toBeInstanceOf(Date);
     });
 
@@ -50,6 +53,9 @@ describe('FileSystem', () => {
 
       const config = await fileSystem.getProfileConfig('test-profile');
       expect(config.name).toBe('test-profile');
+      expect(config.color).toBe('#627eeb');
+      expect(config.icon).toBe('');
+      expect(typeof config.id).toBe('string');
 
       // Check that directories were created
       const profilePath = fileSystem.getProfilePath('test-profile');

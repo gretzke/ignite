@@ -1,22 +1,10 @@
 // Core type definitions for Ignite
-
-export interface ProfileConfig {
-  name: string;
-  created: string; // ISO timestamp
-  lastAccessed: string; // ISO timestamp
-  vault?: {
-    encrypted: string; // Encrypted JSON containing keys, RPC endpoints, etc.
-    keyDerivation: {
-      algorithm: string; // e.g., 'PBKDF2'
-      iterations: number;
-      salt: string;
-    };
-  };
-}
+// NOTE: ProfileConfig is defined in shared API as single source of truth
+export type { ProfileConfig } from '@ignite/api';
 
 export interface IgniteConfig {
   version: string;
-  currentProfile: string; // Profile name
+  currentProfile: string; // Currently selected profile key (folder name)
   lastStartup: string; // ISO timestamp
 }
 

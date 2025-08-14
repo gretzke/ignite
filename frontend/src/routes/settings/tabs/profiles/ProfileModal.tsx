@@ -1,14 +1,19 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { HexColorPicker, HexColorInput } from 'react-colorful';
 import Tooltip from '../../../../components/Tooltip';
 import Switch from '../../../../components/Switch';
 import { COLOR_OPTIONS } from '../../../../store/features/app/appSlice';
+import { useAppDispatch } from '../../../../store';
+import { profilesApi } from '../../../../store/features/profiles/profilesSlice';
+import type { ProfileConfig } from '@ignite/api';
 
 interface ProfileModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  profile?: ProfileConfig; // Optional: if provided, we're editing; if not, we're creating
+  isCurrent?: boolean; // Whether the edited profile is the active one
   onSave: (data: {
     name: string;
     colorHex: string;
@@ -20,15 +25,19 @@ interface ProfileModalProps {
 export default function ProfileModal({
   open,
   onOpenChange,
+  profile,
+  isCurrent = false,
   onSave,
 }: ProfileModalProps) {
+  const dispatch = useAppDispatch();
   const [name, setName] = useState('');
   const defaultColor = useMemo(() => {
-    return COLOR_OPTIONS[0]?.hex ?? '#627eeb';
+    return COLOR_OPTIONS[0]?.hex;
   }, []);
   const [colorHex, setColorHex] = useState<string>(defaultColor);
   const [emoji, setEmoji] = useState<string | undefined>(undefined);
   const [letter, setLetter] = useState<string>('');
+  const [hydrated, setHydrated] = useState(false);
   const [pickerKey, setPickerKey] = useState(0);
   const [customOpen, setCustomOpen] = useState(false);
   const originalColorRef = useRef<string | null>(null);
@@ -41,6 +50,7 @@ export default function ProfileModal({
   const [darkPreview, setDarkPreview] = useState(false);
   const pickerOriginalColorRef = useRef<string | null>(null);
   const wasCustomOpenRef = useRef<boolean>(false);
+  const wasSavedRef = useRef<boolean>(false);
 
   // Color select helper: marks preview active and updates local color
   function handleSelectColor(hex: string) {
@@ -58,26 +68,23 @@ export default function ProfileModal({
 
   // Manage preview lifecycle: on open capture original and sync local state; on close revert
   useEffect(() => {
+    if (!open) return;
+
+    // Capture original persisted color
+    try {
+      const stored = window.localStorage.getItem('ignite:color');
+      originalColorRef.current =
+        typeof stored === 'string' && stored.trim().length > 0
+          ? stored
+          : defaultColor;
+    } catch {
+      originalColorRef.current = defaultColor;
+    }
+  }, [open, defaultColor]);
+
+  // Separate effect for theme setup
+  useEffect(() => {
     if (open) {
-      // Capture original persisted color
-      try {
-        const stored = window.localStorage.getItem('ignite:color');
-        originalColorRef.current =
-          typeof stored === 'string' && stored.trim().length > 0
-            ? stored
-            : defaultColor;
-      } catch {
-        originalColorRef.current = defaultColor;
-      }
-      // Immediately preview default color on open
-      previewActiveRef.current = true;
-      setColorHex(defaultColor);
-      if (rootElRef.current) {
-        rootElRef.current.style.setProperty('--profile-color', defaultColor);
-      }
-      if (docElRef.current) {
-        docElRef.current.style.setProperty('--profile-color', defaultColor);
-      }
       // Capture original theme on main modal open
       const isDark = document.documentElement.classList.contains('theme-dark');
       originalDarkRef.current = isDark;
@@ -85,15 +92,72 @@ export default function ProfileModal({
         ? rootElRef.current.classList.contains('theme-dark')
         : null;
       setDarkPreview(isDark);
+    }
+  }, [open]);
+
+  // Separate effect for form initialization to avoid timing issues
+  // Use layout effect so state is set before paint to avoid flashing defaults
+  useLayoutEffect(() => {
+    if (!open) return;
+
+    setHydrated(false);
+    wasSavedRef.current = false; // Reset save status when modal opens
+
+    // Initialize form fields based on mode (create vs edit)
+    if (profile) {
+      // Edit mode: populate fields from existing profile
+      setName(profile.name);
+      setColorHex(profile.color);
+      // Parse icon: could be emoji or single letter
+      const icon = profile.icon || '';
+      if (icon && icon.length === 1 && /^[a-zA-Z]$/.test(icon)) {
+        setLetter(icon);
+        setEmoji(undefined);
+      } else {
+        setEmoji(icon || undefined);
+        setLetter('');
+      }
+      // Preview the profile's color
+      previewActiveRef.current = true;
+      if (rootElRef.current) {
+        rootElRef.current.style.setProperty('--profile-color', profile.color);
+      }
+      if (docElRef.current) {
+        docElRef.current.style.setProperty('--profile-color', profile.color);
+      }
     } else {
-      // Revert preview when modal closes
-      const orig = originalColorRef.current;
-      if (orig) {
-        if (rootElRef.current) {
-          rootElRef.current.style.setProperty('--profile-color', orig);
-        }
-        if (docElRef.current) {
-          docElRef.current.style.setProperty('--profile-color', orig);
+      // Create mode: use default values
+      setName('');
+      setEmoji(undefined);
+      setLetter('');
+      setColorHex(defaultColor);
+      // Immediately preview default color on open
+      previewActiveRef.current = true;
+      if (rootElRef.current) {
+        rootElRef.current.style.setProperty('--profile-color', defaultColor);
+      }
+      if (docElRef.current) {
+        docElRef.current.style.setProperty('--profile-color', defaultColor);
+      }
+    }
+    setHydrated(true);
+  }, [open, profile, defaultColor]);
+
+  // Cleanup effect for when modal closes
+  useEffect(() => {
+    if (!open) {
+      setHydrated(false);
+      // Revert preview when modal closes, unless we're editing the current profile and saved
+      // The uiEffects middleware will handle updating the app color when the profile updates
+      if (!isCurrent || !wasSavedRef.current) {
+        const targetColor = originalColorRef.current;
+        if (targetColor) {
+          if (rootElRef.current) {
+            rootElRef.current.style.setProperty('--profile-color', targetColor);
+          }
+          if (docElRef.current) {
+            docElRef.current.style.setProperty('--profile-color', targetColor);
+          }
         }
       }
       // Revert theme if dark preview was applied
@@ -117,18 +181,10 @@ export default function ProfileModal({
       setColorHex(defaultColor);
       darkPreviewActiveRef.current = false;
       setDarkPreview(false);
+      wasSavedRef.current = false;
     }
-    // Also revert on unmount if needed
+    // Only handle theme cleanup on unmount - let uiEffects handle color persistence
     return () => {
-      if (!open && originalColorRef.current) {
-        const orig = originalColorRef.current;
-        if (rootElRef.current) {
-          rootElRef.current.style.setProperty('--profile-color', orig);
-        }
-        if (docElRef.current) {
-          docElRef.current.style.setProperty('--profile-color', orig);
-        }
-      }
       // Ensure theme is restored
       if (!open && docElRef.current && originalDarkRef.current !== null) {
         const isOrigDark = originalDarkRef.current;
@@ -142,7 +198,7 @@ export default function ProfileModal({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, profile]);
 
   // Apply live preview while the modal is open
   useEffect(() => {
@@ -201,7 +257,7 @@ export default function ProfileModal({
           }}
         >
           <Dialog.Title className="text-base font-semibold mb-3">
-            New Profile
+            {profile ? 'Edit Profile' : 'New Profile'}
           </Dialog.Title>
 
           {/* avatar + name */}
@@ -216,26 +272,21 @@ export default function ProfileModal({
               alignItems: 'center',
             }}
           >
-            <span
-              aria-hidden
-              style={{
-                background: colorHex,
-                width: 44,
-                height: 44,
-                borderRadius: 9999,
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: '1px solid rgba(255,255,255,0.4)',
-                fontSize: 18,
-                color: '#fff',
-                fontWeight: 700,
-                gridColumn: '1 / 2',
-                gridRow: '2 / 3',
-              }}
-            >
-              {letter || emoji || ''}
-            </span>
+            {hydrated && (
+              <span
+                aria-hidden
+                className="profile-logo"
+                style={{
+                  background: colorHex,
+                  width: 44,
+                  height: 44,
+                  gridColumn: '1 / 2',
+                  gridRow: '2 / 3',
+                }}
+              >
+                {letter || emoji || ''}
+              </span>
+            )}
             <input
               id="profile-name"
               type="text"
@@ -408,17 +459,43 @@ export default function ProfileModal({
               <button
                 type="button"
                 className="btn btn-primary"
-                onClick={() =>
+                onClick={() => {
+                  const icon =
+                    (emoji && emoji.trim()) || (letter && letter.trim()) || '';
+
+                  wasSavedRef.current = true; // Mark as saved
+
+                  if (profile) {
+                    // Edit mode: update existing profile
+                    dispatch(
+                      profilesApi.updateProfile({
+                        id: profile.id,
+                        name: name.trim(),
+                        color: colorHex,
+                        icon,
+                      })
+                    );
+                  } else {
+                    // Create mode: create new profile
+                    dispatch(
+                      profilesApi.createProfile({
+                        name: name.trim(),
+                        color: colorHex,
+                        icon,
+                      })
+                    );
+                  }
+
                   onSave({
                     name,
                     colorHex,
                     emoji,
                     letter: letter || undefined,
-                  })
-                }
+                  });
+                }}
                 disabled={!name.trim()}
               >
-                Save
+                {profile ? 'Update' : 'Save'}
               </button>
             </Dialog.Close>
           </div>

@@ -6,10 +6,18 @@ import { PluginError, ErrorCodes } from '../types/errors.js';
 export type { PluginType };
 
 export class PluginManager {
+  private static instance: PluginManager;
   private fileSystem: FileSystem;
 
-  constructor(fileSystem: FileSystem) {
-    this.fileSystem = fileSystem;
+  private constructor() {
+    this.fileSystem = FileSystem.getInstance();
+  }
+
+  static getInstance(): PluginManager {
+    if (!PluginManager.instance) {
+      PluginManager.instance = new PluginManager();
+    }
+    return PluginManager.instance;
   }
 
   async getPlugin(pluginId: string): Promise<PluginMetadata> {

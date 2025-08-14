@@ -6,22 +6,37 @@ import { getLogger } from '../utils/logger.js';
 // Manages profiles within the Ignite ecosystem
 // Handles profile switching, configuration, and lifecycle
 export class ProfileManager {
+  private static instance: ProfileManager;
   private fileSystem: FileSystem;
-  private currentProfile: string = 'default';
+  private currentProfile: string = 'default'; // stores profile id
 
-  constructor(fileSystem: FileSystem) {
-    this.fileSystem = fileSystem;
+  private constructor() {
+    this.fileSystem = FileSystem.getInstance();
+  }
+
+  static async getInstance(): Promise<ProfileManager> {
+    if (!ProfileManager.instance) {
+      ProfileManager.instance = new ProfileManager();
+      await this.instance.initialize();
+    }
+    return ProfileManager.instance;
   }
 
   // Initialize profile manager and load current profile
-  async initialize(): Promise<void> {
+  private async initialize(): Promise<void> {
     try {
       // Load global config (will auto-create if doesn't exist)
       const globalConfig = await this.fileSystem.readGlobalConfig();
       this.currentProfile = globalConfig.currentProfile || 'default';
 
-      // Ensure the current profile exists (will auto-create default if needed)
-      await this.fileSystem.getProfileConfig(this.currentProfile);
+      // Ensure the current profile exists; if not, create default
+      try {
+        await this.fileSystem.getProfileConfig(this.currentProfile);
+      } catch {
+        // create default profile
+        await this.fileSystem.getProfileConfig('default');
+        this.currentProfile = 'default';
+      }
 
       // Update last startup time
       await this.updateLastStartup();
@@ -34,7 +49,7 @@ export class ProfileManager {
     }
   }
 
-  // Get current profile name
+  // Get current profile id
   getCurrentProfile(): string {
     return this.currentProfile;
   }
@@ -44,118 +59,170 @@ export class ProfileManager {
     return this.getProfileConfig(this.currentProfile);
   }
 
-  // Get profile configuration by name
-  async getProfileConfig(profileName: string): Promise<ProfileConfig> {
+  // Get profile configuration by id
+  async getProfileConfig(profileId: string): Promise<ProfileConfig> {
     // Use FileSystem's smart getter that auto-creates default profile
-    const config = await this.fileSystem.getProfileConfig(profileName);
-
-    // Update last accessed time
-    config.lastAccessed = new Date().toISOString();
-    await this.fileSystem.writeJsonFile(
-      this.fileSystem.getProfileConfigPath(profileName),
-      config
-    );
-
+    const config = await this.fileSystem.getProfileConfig(profileId);
     return config;
   }
 
   // Switch to a different profile
-  async switchProfile(profileName: string): Promise<void> {
+  async switchProfile(profileId: string): Promise<void> {
     // Validate profile exists using FileSystem's smart getter
     // This will throw appropriate error if profile doesn't exist
-    await this.fileSystem.getProfileConfig(profileName);
+    await this.fileSystem.getProfileConfig(profileId);
 
     // Update current profile
-    this.currentProfile = profileName;
+    this.currentProfile = profileId;
 
     // Update global config
     const globalConfig = await this.getGlobalConfig();
-    globalConfig.currentProfile = profileName;
+    globalConfig.currentProfile = profileId;
     await this.fileSystem.writeJsonFile(
       this.fileSystem.getGlobalConfigPath(),
       globalConfig
     );
 
-    // Update profile's last accessed time
-    await this.getProfileConfig(profileName);
+    // Update profile's last used time
+    const config = await this.fileSystem.getProfileConfig(profileId);
+    const updated: ProfileConfig = {
+      ...config,
+      lastUsed: new Date().toISOString(),
+    };
+    await this.fileSystem.writeJsonFile(
+      this.fileSystem.getProfileConfigPath(profileId),
+      updated
+    );
 
-    getLogger().info(`🔄 Switched to profile: ${profileName}`);
+    getLogger().info(`🔄 Switched to profile: ${profileId}`);
   }
 
   // Create a new profile
-  async createProfile(profileName: string): Promise<void> {
-    await this.fileSystem.createProfile(profileName);
+  async createProfile(profileName: string): Promise<ProfileConfig> {
+    return await this.fileSystem.createProfile(profileName);
   }
 
   // List all available profiles
   async listProfiles(): Promise<ProfileConfig[]> {
-    const profileNames = await this.fileSystem.listProfiles();
+    const profileIds = await this.fileSystem.listProfiles();
     const profiles: ProfileConfig[] = [];
 
-    for (const name of profileNames) {
+    for (const id of profileIds) {
       try {
         // Use FileSystem's smart getter
-        const config = await this.fileSystem.getProfileConfig(name);
+        const config = await this.fileSystem.getProfileConfig(id);
         profiles.push(config);
       } catch (error) {
-        getLogger().warn(`Failed to load config for profile '${name}':`, error);
+        getLogger().warn(`Failed to load config for profile '${id}':`, error);
       }
     }
 
-    // Sort by last accessed (most recent first)
+    // Sort by last used (most recent first)
     profiles.sort(
-      (a, b) =>
-        new Date(b.lastAccessed).getTime() - new Date(a.lastAccessed).getTime()
+      (a, b) => new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime()
     );
 
     return profiles;
   }
 
-  // Archive and delete a profile (except default)
-  async deleteProfile(profileName: string): Promise<void> {
-    if (profileName === 'default') {
-      throw new ProfileError(
-        'Cannot delete the default profile',
-        ErrorCodes.CANNOT_DELETE_DEFAULT_PROFILE,
-        { profileName }
-      );
+  // Archive and delete a profile
+  async deleteProfile(profileId: string): Promise<void> {
+    // If archived profile with this id exists, delete it
+    const archivedPath = this.fileSystem.getArchivedProfilePath(profileId);
+    if (await this.fileSystem.fileExists(archivedPath)) {
+      await this.fileSystem.deleteDirectory(archivedPath);
+      getLogger().info(`🗑️  Deleted archived profile '${profileId}'`);
+      return;
     }
 
-    if (profileName === this.currentProfile) {
+    // Otherwise, handle live profile
+    if (profileId === this.currentProfile) {
       throw new ProfileError(
         'Cannot delete the currently active profile',
         ErrorCodes.CANNOT_DELETE_ACTIVE_PROFILE,
-        { profileName }
+        { profileId }
       );
     }
 
-    const profilePath = this.fileSystem.getProfilePath(profileName);
-
+    const profilePath = this.fileSystem.getProfilePath(profileId);
     if (!(await this.fileSystem.fileExists(profilePath))) {
       throw new ProfileError(
-        `Profile '${profileName}' does not exist`,
+        `Profile '${profileId}' does not exist`,
         ErrorCodes.PROFILE_NOT_FOUND,
-        { profileName }
+        { profileId }
       );
     }
 
-    // Archive profile before deletion
-    await this.archiveProfile(profileName);
-
-    // TODO: Implement actual profile deletion after archiving
-    getLogger().info(
-      `🗑️  Profile '${profileName}' archived and marked for deletion`
-    );
+    // Archive then permanently delete archived directory
+    const config = await this.fileSystem.getProfileConfig(profileId);
+    await this.archiveProfile(profileId);
+    const archivedPathAfter = this.fileSystem.getArchivedProfilePath(config.id);
+    await this.fileSystem.deleteDirectory(archivedPathAfter);
+    getLogger().info(`🗑️  Profile '${profileId}' deleted`);
   }
 
   // Archive a profile for safe deletion
-  private async archiveProfile(profileName: string): Promise<void> {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const archivePath =
-      this.fileSystem.getIgniteHome() + `/archive/${profileName}_${timestamp}`;
+  private async archiveProfile(profileId: string): Promise<void> {
+    // Validate
+    if (profileId === this.currentProfile) {
+      throw new ProfileError(
+        'Cannot delete the currently active profile',
+        ErrorCodes.CANNOT_DELETE_ACTIVE_PROFILE,
+        { profileId }
+      );
+    }
+    // Move dir to archive using profile id to prevent name collisions
+    const config = await this.fileSystem.getProfileConfig(profileId);
+    const srcPath = this.fileSystem.getProfilePath(profileId);
+    const destPath = this.fileSystem.getArchivedProfilePath(config.id);
+    await this.fileSystem.moveDirectory(srcPath, destPath);
+    getLogger().info(`📦 Archived profile '${profileId}' (${config.id})`);
+  }
 
-    // TODO: Implement profile archiving (copy to archive directory)
-    getLogger().info(`📦 Archiving profile '${profileName}' to ${archivePath}`);
+  // Restore an archived profile by id (no renaming here)
+  async restoreProfile(profileId: string): Promise<void> {
+    const archivedPath = this.fileSystem.getArchivedProfilePath(profileId);
+    if (!(await this.fileSystem.fileExists(archivedPath))) {
+      throw new ProfileError(
+        `Archived profile '${profileId}' does not exist`,
+        ErrorCodes.PROFILE_NOT_FOUND,
+        { profileId }
+      );
+    }
+    // Ensure no live profile with this id exists already
+    if (
+      await this.fileSystem.fileExists(
+        this.fileSystem.getProfilePath(profileId)
+      )
+    ) {
+      throw new ProfileError(
+        `Profile '${profileId}' already exists`,
+        ErrorCodes.PROFILE_ALREADY_EXISTS,
+        { profileId }
+      );
+    }
+    // Move archived dir back to live by id
+    const livePath = FileSystem.getInstance().getProfilePath(profileId);
+    await FileSystem.getInstance().moveDirectory(archivedPath, livePath);
+    getLogger().info(`♻️  Restored profile '${profileId}'`);
+  }
+
+  // Edit any live profile by id: overwrite config with provided data (id is enforced)
+  async editProfile(
+    profileId: string,
+    newConfig: ProfileConfig
+  ): Promise<void> {
+    const configPath = this.fileSystem.getProfileConfigPath(profileId);
+    if (!(await this.fileSystem.fileExists(configPath))) {
+      throw new ProfileError(
+        `Profile '${profileId}' does not exist`,
+        ErrorCodes.PROFILE_NOT_FOUND,
+        { profileId }
+      );
+    }
+    const sanitized: ProfileConfig = { ...newConfig, id: profileId };
+    await this.fileSystem.writeJsonFile(configPath, sanitized);
+    getLogger().info(`✏️  Edited profile '${profileId}'`);
   }
 
   // Get global configuration

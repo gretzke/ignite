@@ -12,11 +12,8 @@ describe('ProfileManager', () => {
 
   beforeEach(async () => {
     testDir = await createTestDirectory();
-    fileSystem = new FileSystem(testDir);
-    profileManager = new ProfileManager(fileSystem);
-
-    // Initialize the profile manager
-    await profileManager.initialize();
+    fileSystem = FileSystem.getInstance(testDir);
+    profileManager = await ProfileManager.getInstance();
   });
 
   afterEach(async () => {
@@ -30,9 +27,12 @@ describe('ProfileManager', () => {
 
     it('should create default profile on initialization', async () => {
       const config = await profileManager.getCurrentProfileConfig();
-      expect(config.name).toBe('default');
+      expect(config.name).toBe('Default');
+      expect(config.color).toBe('#627eeb');
+      expect(config.icon).toBe('');
+      expect(config.id).toBe('default');
       expect(config.created).toBeDefined();
-      expect(config.lastAccessed).toBeDefined();
+      expect(config.lastUsed).toBeDefined();
     });
   });
 
@@ -57,7 +57,7 @@ describe('ProfileManager', () => {
       expect(globalConfig.currentProfile).toBe('new-profile');
     });
 
-    it('should list profiles in last accessed order', async () => {
+    it('should list profiles in last used order', async () => {
       // Create profiles with delays to ensure different timestamps
       await profileManager.createProfile('profile1');
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -65,7 +65,7 @@ describe('ProfileManager', () => {
       await profileManager.createProfile('profile2');
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Switch to profile1 to update its lastAccessed
+      // Switch to profile1 to update its lastUsed
       await profileManager.switchProfile('profile1');
 
       const profiles = await profileManager.listProfiles();
@@ -73,7 +73,7 @@ describe('ProfileManager', () => {
       // profile1 should be first (most recent), then profile2, then default
       expect(profiles[0].name).toBe('profile1');
       expect(profiles[1].name).toBe('profile2');
-      expect(profiles[2].name).toBe('default');
+      expect(profiles[2].name).toBe('Default');
     });
 
     it('should get current profile paths', () => {
@@ -108,9 +108,11 @@ describe('ProfileManager', () => {
   });
 
   describe('Profile Deletion', () => {
-    it('should prevent deleting default profile', async () => {
+    // Deleting default is allowed as long as at least one other profile exists
+    it('should prevent deleting last remaining profile', async () => {
+      // Only default exists at this point
       await expect(profileManager.deleteProfile('default')).rejects.toThrow(
-        'Cannot delete the default profile'
+        'Cannot delete the last remaining profile'
       );
     });
 
@@ -140,7 +142,7 @@ describe('ProfileManager', () => {
   });
 
   describe('Configuration Updates', () => {
-    it('should update profile last accessed time on switch', async () => {
+    it('should update profile last used time on switch', async () => {
       await profileManager.createProfile('test-profile');
 
       const configBefore = await fileSystem.getProfileConfig('test-profile');
@@ -152,8 +154,8 @@ describe('ProfileManager', () => {
 
       const configAfter = await fileSystem.getProfileConfig('test-profile');
 
-      expect(new Date(configAfter.lastAccessed).getTime()).toBeGreaterThan(
-        new Date(configBefore.lastAccessed).getTime()
+      expect(new Date(configAfter.lastUsed).getTime()).toBeGreaterThan(
+        new Date(configBefore.lastUsed).getTime()
       );
     });
 

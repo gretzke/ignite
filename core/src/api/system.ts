@@ -37,8 +37,8 @@ export const systemHandlers = {
     reply: FastifyReply
   ): Promise<ApiResponse<SystemInfoData>> => {
     try {
-      const fileSystem = new FileSystem();
-      const profileManager = new ProfileManager(fileSystem);
+      const fileSystem = FileSystem.getInstance();
+      const profileManager = await ProfileManager.getInstance();
 
       const body: ApiResponse<SystemInfoData> = {
         data: {

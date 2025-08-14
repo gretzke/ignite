@@ -65,7 +65,7 @@ export default function RepositoriesPage() {
                 {mock.path} {mock.saved ? '' : '(unsaved)'}
               </div>
             </div>
-            <span className="text-xs rounded-full pill-white px-2 py-0.5 ml-2 shrink-0">
+            <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
               {mock.framework}
             </span>
           </div>
@@ -108,7 +108,7 @@ export default function RepositoriesPage() {
                     <div className="text-sm font-medium truncate">{r.name}</div>
                     <div className="text-xs opacity-70 truncate">{r.path}</div>
                   </div>
-                  <span className="text-xs rounded-full pill-white px-2 py-0.5 ml-2 shrink-0">
+                  <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
                     {r.framework}
                   </span>
                 </div>
@@ -151,7 +151,7 @@ export default function RepositoriesPage() {
                     <div className="text-sm font-medium truncate">{r.name}</div>
                     <div className="text-xs opacity-70 truncate">{r.path}</div>
                   </div>
-                  <span className="text-xs rounded-full pill-white px-2 py-0.5 ml-2 shrink-0">
+                  <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
                     {r.framework}
                   </span>
                 </div>

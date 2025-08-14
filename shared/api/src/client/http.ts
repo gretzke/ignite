@@ -52,13 +52,16 @@ export async function httpRequest<TBody, TResponse>(
   const init: RequestInit = {
     method,
     headers: {
-      "Content-Type": "application/json",
       ...(headers ?? {}),
     },
     signal,
   };
 
   if (body !== undefined) {
+    init.headers = {
+      "Content-Type": "application/json",
+      ...init.headers,
+    };
     init.body = JSON.stringify(body);
   }
 

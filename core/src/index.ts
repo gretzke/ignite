@@ -34,13 +34,10 @@ async function ignite(workspacePath: string): Promise<{
 
   // Initialize filesystem infrastructure
   app.log.info('🔧 Initializing Ignite...');
-  const fileSystem = new FileSystem();
-  const profileManager = new ProfileManager(fileSystem);
-  const pluginManager = new PluginManager(fileSystem);
+  const fileSystem = FileSystem.getInstance();
+  const profileManager = await ProfileManager.getInstance();
+  const pluginManager = PluginManager.getInstance();
   const pluginOrchestrator = PluginOrchestrator.getInstance();
-
-  // Initialize components (will auto-create files as needed)
-  await profileManager.initialize();
 
   // Pre-startup checks
   app.log.info(`🔍 Workspace path: ${workspacePath}`);
