@@ -12,6 +12,9 @@
     /* User-selected primary profile color (placeholder default) */
     --profile-color: oklch(0.69 0.17 260);
 
+    /* Semantic colors */
+    --color-error: #ef4444;
+
     /* Base gradient strengths (prominent by default; tweakable) */
     --grad-strength-1: 30%;
     --grad-strength-2: 30%;
@@ -149,10 +152,20 @@
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
     color: var(--text);
   }
-  .pill-white {
-    background: #ffffff;
-    color: #0a0a0a;
-    border: 1px solid color-mix(in oklch, #000 8%, transparent);
+  .pill {
+    background: color-mix(in oklch, var(--text) 8%, transparent);
+    color: var(--text);
+    border: 1px solid color-mix(in oklch, var(--text) 15%, transparent);
+  }
+  /* Shared profile logo avatar style */
+  .profile-logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    color: #ffffff;
+    font-weight: 700;
+    border: 1px solid rgba(255, 255, 255, 0.4);
   }
   /* Buttons */
   .btn {
@@ -211,6 +224,19 @@
   /* Borderless variant for secondary buttons */
   .btn-secondary-borderless {
     border-color: transparent;
+  }
+
+  .btn-danger {
+    background: var(--color-error);
+    color: #ffffff;
+    border-color: color-mix(in oklch, #fff 35%, transparent);
+    box-shadow: 0 6px 20px
+      color-mix(in oklch, var(--color-error) 35%, transparent);
+  }
+  .btn-danger:hover {
+    opacity: 0.96;
+    box-shadow: 0 8px 22px
+      color-mix(in oklch, var(--color-error) 45%, transparent);
   }
 
   /* Generic floating glass surface: transparent, blurred, white border, shadow */
@@ -354,6 +380,135 @@
     stroke-width: 1px;
     filter: none;
   }
+  /* Radix Toast viewport and glass toasts */
+  .toast-viewport {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 10px;
+    width: 360px;
+    max-width: calc(100vw - 24px);
+    z-index: 9999;
+  }
+  .toast-root {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: start;
+    padding: 12px 12px 16px 12px;
+    border-radius: var(--radius);
+    color: var(--text);
+    background: color-mix(in oklch, #fff 10%, transparent);
+    border: 1px solid color-mix(in oklch, #fff 28%, transparent);
+    -webkit-backdrop-filter: var(--bf-medium);
+    backdrop-filter: var(--bf-medium);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+  }
+
+  .toast-body {
+    padding-right: 8px;
+  }
+  .toast-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .toast-desc {
+    margin-top: 2px;
+    font-size: 0.85rem;
+    opacity: 0.9;
+  }
+  .toast-close {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: color-mix(in oklch, var(--text) 70%, transparent);
+    padding: 2px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .toast-close:hover {
+    color: var(--text);
+  }
+  /* Bottom progress bar */
+  .toast-progress-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 4px;
+    background: color-mix(
+      in oklch,
+      var(--toast-accent, var(--profile-color)) 50%,
+      transparent
+    );
+    pointer-events: none;
+  }
+  .toast-progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 4px;
+    background: var(--toast-accent, var(--profile-color));
+    overflow: hidden;
+  }
+  .toast-progress.determinate {
+    animation-name: toast-deplete;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+  }
+  @keyframes toast-deplete {
+    from {
+      width: 100%;
+    }
+    to {
+      width: 0%;
+    }
+  }
+  .toast-progress.indeterminate::before {
+    content: '';
+    position: absolute;
+    left: -40%;
+    top: 0;
+    height: 100%;
+    width: 40%;
+    background: color-mix(
+      in oklch,
+      var(--toast-accent, var(--profile-color)) 65%,
+      transparent
+    );
+    animation: toast-indeterminate 1.2s ease-in-out infinite;
+  }
+  @keyframes toast-indeterminate {
+    0% {
+      left: -40%;
+    }
+    50% {
+      left: 60%;
+    }
+    100% {
+      left: 110%;
+    }
+  }
+  .toast--neutral {
+    --toast-accent: color-mix(in oklch, var(--text) 40%, transparent);
+  }
+  .toast--info {
+    --toast-accent: var(--profile-color);
+  }
+  .toast--success {
+    --toast-accent: #22c55e;
+  }
+  .toast--warning {
+    --toast-accent: #f59e0b;
+  }
+  .toast--error {
+    --toast-accent: var(--color-error);
+  }
   /* Connection status dot (with subtle glow) */
   .status-dot {
     width: 10px;
@@ -371,7 +526,7 @@
     box-shadow: 0 0 10px rgba(250, 204, 21, 0.5);
   }
   .status-dot.disconnected {
-    background: #ef4444;
+    background: var(--color-error);
     box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
   }
   /*

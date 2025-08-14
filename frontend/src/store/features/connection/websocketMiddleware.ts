@@ -8,9 +8,7 @@ import {
 } from './connectionSlice';
 
 // Reconnection backoff schedule
-const delaysMs = [
-  1000, 1000, 1000, 2000, 2000, 5000, 10000, 10000, 30000, 30000,
-];
+const delaysMs = [1, 1000, 1000, 1000, 2000, 2000, 50000, 10000, 10000, 30000];
 
 export const websocketMiddleware: Middleware = (store) => {
   let ws: WebSocket | null = null;

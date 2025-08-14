@@ -6,8 +6,8 @@ import type {
   ListPluginsData,
   GetPluginData,
 } from '@ignite/api';
+import { PluginType } from '@ignite/plugin-types/types';
 import { PluginManager } from '../../filesystem/PluginManager.js';
-import { FileSystem } from '../../filesystem/FileSystem.js';
 
 // Plugin handlers object - matches shared API route structure
 export const pluginHandlers = {
@@ -17,10 +17,13 @@ export const pluginHandlers = {
   ): Promise<ApiResponse<ListPluginsData>> => {
     try {
       const { type } = request.query;
-      const fileSystem = new FileSystem();
-      const pluginManager = new PluginManager(fileSystem);
+      const pluginManager = PluginManager.getInstance();
 
-      const plugins = await pluginManager.listPlugins(type as any);
+      const validType =
+        type && Object.values(PluginType).includes(type as PluginType)
+          ? (type as PluginType)
+          : undefined;
+      const plugins = await pluginManager.listPlugins(validType);
 
       const body: ApiResponse<ListPluginsData> = { data: { plugins } };
       return reply.status(200).send(body);
@@ -45,8 +48,7 @@ export const pluginHandlers = {
   ): Promise<ApiResponse<GetPluginData>> => {
     try {
       const { pluginId } = request.params;
-      const fileSystem = new FileSystem();
-      const pluginManager = new PluginManager(fileSystem);
+      const pluginManager = PluginManager.getInstance();
 
       const plugin = await pluginManager.getPlugin(pluginId);
 

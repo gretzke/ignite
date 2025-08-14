@@ -13,8 +13,8 @@ describe('PluginManager', () => {
   beforeEach(async () => {
     // Create isolated test environment
     testDir = await createTestDirectory();
-    fileSystem = new FileSystem(testDir);
-    pluginManager = new PluginManager(fileSystem);
+    fileSystem = FileSystem.getInstance(testDir);
+    pluginManager = PluginManager.getInstance();
 
     // Mock logger to avoid console output during tests
     vi.mock('../../utils/logger', () => ({
