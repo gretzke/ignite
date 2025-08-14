@@ -1,10 +1,9 @@
 // Minimal Redux store configuration
 // - Adds only RTK Query reducer + middleware
 import { configureStore } from '@reduxjs/toolkit';
-import { igniteApi } from './services/igniteApi';
 import { appReducer } from './features/app/appSlice';
 import { connectionReducer } from './features/connection/connectionSlice';
-import { websocketMiddleware } from './features/connection/websocketMiddleware';
+import { websocketMiddleware } from './middleware/websocket';
 import { toastListener } from './middleware/toastListener';
 import {
   profilesReducer,
@@ -19,8 +18,6 @@ export const store = configureStore({
     app: appReducer,
     connection: connectionReducer,
     profiles: profilesReducer,
-    // Mount the RTK Query reducer at the path it expects
-    [igniteApi.reducerPath]: igniteApi.reducer,
   },
   middleware: (getDefaultMiddleware) =>
     // Add RTK Query middleware for caching, polling, and automatic refetching
@@ -30,7 +27,7 @@ export const store = configureStore({
         uiEffects.middleware,
         toastListener.middleware
       )
-      .concat(igniteApi.middleware, websocketMiddleware),
+      .concat(websocketMiddleware),
 });
 
 // Helpful types for typed hooks

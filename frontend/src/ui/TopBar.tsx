@@ -16,8 +16,6 @@ export default function TopBar() {
   // Redux wiring for connection state and reconnect intent
   const dispatch = useAppDispatch();
   const status = useAppSelector((s) => s.connection.status) as ConnectionStatus;
-  const attemptsLeft = useAppSelector((s) => s.connection.attemptsLeft);
-  const maxAttempts = useAppSelector((s) => s.connection.maxAttempts);
 
   // Local UI state for the profile menu popover (used to close on outside click)
   const [open, setOpen] = useState(false);
@@ -61,7 +59,7 @@ export default function TopBar() {
         <span className="font-semibold">Ignite</span>
       </div>
       <div className="flex items-center gap-3 relative" ref={anchorRef}>
-        {status !== ConnectionStatus.CONNECTED && attemptsLeft === 0 ? (
+        {status === ConnectionStatus.DISCONNECTED ? (
           <button
             type="button"
             onClick={() => dispatch(reconnectRequested())}
@@ -76,9 +74,7 @@ export default function TopBar() {
               status === ConnectionStatus.CONNECTED
                 ? 'CLI: Connected'
                 : status === ConnectionStatus.RECONNECTING
-                ? `CLI: Reconnecting… (${
-                    maxAttempts - attemptsLeft
-                  }/${maxAttempts})`
+                ? 'CLI: Reconnecting'
                 : 'CLI: Disconnected'
             }
             placement="left"

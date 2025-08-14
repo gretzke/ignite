@@ -59,18 +59,35 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const duration = opts.permanent
       ? PERMANENT_DURATION
       : opts.duration ?? DEFAULT_DURATION;
-    setToasts((prev) => [
-      ...prev,
-      {
-        id,
-        title: opts.title ?? '',
-        description: opts.description ?? '',
-        variant: opts.variant ?? 'neutral',
-        duration,
-        permanent: opts.permanent ?? false,
-        open: true,
-      },
-    ]);
+    setToasts((prev) => {
+      const exists = prev.some((t) => t.id === id);
+      if (exists) {
+        return prev.map((t) => {
+          if (t.id !== id) return t;
+          return {
+            ...t,
+            title: opts.title ?? t.title,
+            description: opts.description ?? t.description,
+            variant: opts.variant ?? t.variant,
+            permanent: opts.permanent ?? t.permanent,
+            duration,
+            open: true,
+          } as ToastItem;
+        });
+      }
+      return [
+        ...prev,
+        {
+          id,
+          title: opts.title ?? '',
+          description: opts.description ?? '',
+          variant: opts.variant ?? 'neutral',
+          duration,
+          permanent: opts.permanent ?? false,
+          open: true,
+        },
+      ];
+    });
     return id;
   }, []);
 
