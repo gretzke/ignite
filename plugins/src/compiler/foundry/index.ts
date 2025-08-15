@@ -8,6 +8,7 @@ import {
   type DetectOptions,
   type DetectionResult,
   type PluginResponse,
+  type CompilerOperation,
 } from "../../shared/index.ts";
 import { runPluginCLI } from "../../shared/plugin-runner.js";
 
@@ -57,4 +58,4 @@ const plugin = new FoundryPlugin();
 export default plugin;
 
 // CLI entrypoint - type-safe generic plugin execution
-runPluginCLI(plugin);
+runPluginCLI<CompilerOperation>(plugin);

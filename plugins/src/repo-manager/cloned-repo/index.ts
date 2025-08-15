@@ -1,4 +1,11 @@
-// Local Repository Manager Plugin
+// Cloned Repository Manager Plugin
+import {
+  PathOptions,
+  RepoCheckoutBranchOptions,
+  RepoCheckoutCommitOptions,
+  RepoGetBranchesResult,
+  RepoInfoResult,
+} from "../../shared/base/repo-manager/types.ts";
 import {
   RepoManagerPlugin,
   PluginType,
@@ -6,12 +13,10 @@ import {
   runPluginCLI,
   type RepoManagerOperation,
   PluginResponse,
-  RepoGetBranchesResult,
   NoResult,
   NoParams,
 } from "../../shared/index.ts";
 import {
-  ensureCleanRepo,
   ensureGitRepo,
   execGit,
   listAllRefs,
@@ -19,25 +24,19 @@ import {
   getCurrentCommit,
   isUpToDateWithRemote,
 } from "../../shared/utils/git.ts";
-import type {
-  PathOptions,
-  RepoCheckoutBranchOptions,
-  RepoCheckoutCommitOptions,
-  RepoInfoResult,
-} from "../../shared/base/repo-manager/types.js";
 
 // PLUGIN_VERSION is injected at build time via --define:PLUGIN_VERSION
 declare const PLUGIN_VERSION: string;
 
-export class LocalRepoPlugin extends RepoManagerPlugin {
+export class ClonedRepoPlugin extends RepoManagerPlugin {
   public readonly type = PluginType.REPO_MANAGER as const;
 
   // Static metadata for registry generation (no instantiation needed)
   protected static getMetadata(): PluginMetadata {
     return {
-      id: "local-repo",
+      id: "cloned-repo",
       type: PluginType.REPO_MANAGER,
-      name: "Local Repository Manager",
+      name: "Cloned Repository Manager",
       version: PLUGIN_VERSION,
       baseImage: "ignite/base_repo-manager:latest",
     };
@@ -45,19 +44,36 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
 
   // No plugin-side operations - CLI handles all operations directly
   // This container just maintains the volume
-  async init(_options: PathOptions): Promise<PluginResponse<NoResult>> {
-    const ensured = await ensureGitRepo();
-    if (!ensured.success) return ensured as any;
+  async init(options: PathOptions): Promise<PluginResponse<NoResult>> {
+    // path is a Git URL here
+    const hasRepo = await ensureGitRepo();
+    if (hasRepo.success) {
+      return { success: true, data: {} } as const;
+    }
+    const clone = await execGit([
+      "clone",
+      "--recursive",
+      options.pathOrUrl,
+      "/workspace",
+    ]);
+    if (!clone.success) {
+      return {
+        success: false,
+        error: { code: "CLONE_FAILED", message: "Failed to clone repository" },
+      } as const;
+    }
     return { success: true, data: {} } as const;
   }
 
   async checkoutBranch(
     options: RepoCheckoutBranchOptions,
   ): Promise<PluginResponse<NoResult>> {
-    const clean = await ensureCleanRepo();
-    if (!clean.success) return clean as any;
+    const ensured = await ensureGitRepo();
+    if (!ensured.success) return ensured as any;
     const fetchRes = await execGit(["fetch", "--all", "--prune"]);
     if (!fetchRes.success) return fetchRes as any;
+    const reset = await execGit(["reset", "--hard"]);
+    if (!reset.success) return reset as any;
     const co = await execGit(["checkout", options.branch]);
     if (!co.success) return co as any;
     return { success: true, data: {} } as const;
@@ -66,10 +82,12 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
   async checkoutCommit(
     options: RepoCheckoutCommitOptions,
   ): Promise<PluginResponse<NoResult>> {
-    const clean = await ensureCleanRepo();
-    if (!clean.success) return clean as any;
+    const ensured = await ensureGitRepo();
+    if (!ensured.success) return ensured as any;
     const fetchRes = await execGit(["fetch", "--all", "--prune"]);
     if (!fetchRes.success) return fetchRes as any;
+    const reset = await execGit(["reset", "--hard"]);
+    if (!reset.success) return reset as any;
     const co = await execGit(["checkout", "--detach", options.commit]);
     if (!co.success) return co as any;
     return { success: true, data: {} } as const;
@@ -86,10 +104,10 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
   }
 
   async pullChanges(_options: NoParams): Promise<PluginResponse<NoResult>> {
-    const clean = await ensureCleanRepo();
-    if (!clean.success) return clean as any;
-    const fetchRes = await execGit(["pull", "--ff-only"]);
-    if (!fetchRes.success) return fetchRes as any;
+    const ensured = await ensureGitRepo();
+    if (!ensured.success) return ensured as any;
+    const pull = await execGit(["pull", "--ff-only"]);
+    if (!pull.success) return pull as any;
     return { success: true, data: {} } as const;
   }
 
@@ -104,15 +122,6 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
     ]);
     if (!branch.success) return branch as any;
     if (!commit.success) return commit as any;
-
-    const res = await execGit([
-      "status",
-      "--porcelain",
-      "--untracked-files=no",
-    ]);
-    if (!res.success) return res as any;
-    const dirty = res.data.stdout.trim().length > 0;
-
     const up = await isUpToDateWithRemote();
     if (!up.success) return up as any;
 
@@ -121,18 +130,18 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
       data: {
         branch: branch.data,
         commit: commit.data,
-        dirty,
+        dirty: false,
         upToDate: up.data,
       },
     } as const;
   }
 }
 
-const plugin = new LocalRepoPlugin();
+const plugin = new ClonedRepoPlugin();
 
 // Export plugin instance as default for registry generation
 export default plugin;
 
 // CLI entrypoint
-console.log(`📁 Local repo container ready at: /workspace`);
+console.log(`📁 Cloned repo container ready at: /workspace`);
 runPluginCLI<RepoManagerOperation>(plugin);

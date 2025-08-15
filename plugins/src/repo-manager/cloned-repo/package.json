@@ -1,0 +1,15 @@
+{
+  "name": "@ignite/cloned-repo-plugin",
+  "version": "1.0.0",
+  "description": "Cloned repository manager plugin for Ignite",
+  "main": "index.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && mkdir -p dist && esbuild index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/index.js --define:PLUGIN_VERSION='\"'$(node -p \"require('./package.json').version\")'\"'"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.23.0"
+  }
+}
