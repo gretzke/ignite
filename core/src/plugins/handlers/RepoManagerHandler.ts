@@ -1,20 +1,167 @@
-import type { IRepoManagerPlugin } from '@ignite/plugin-types/base/repo-manager';
+// import type { IRepoManagerPlugin } from '@ignite/plugin-types/base/repo-manager';
 import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
-import type { RepoManagerOperations } from '@ignite/plugin-types/base/repo-manager';
 import { getLogger } from '../../utils/logger.js';
 import type { LocalRepoOptions } from '../../types/index.js';
 import { hashWorkspacePath } from '../../utils/startup.js';
 import { BaseHandler } from './BaseHandler.js';
+import {
+  type RepoManagerOperations,
+  RepoCheckoutBranchOptions,
+  RepoCheckoutCommitOptions,
+  RepoGetBranchesResult,
+  RepoInfoResult,
+  PathOptions,
+} from '@ignite/plugin-types/base/repo-manager';
+import { NoResult } from '@ignite/plugin-types/base/';
+
+// Core-only handler interface with per-op CLI params (pathOrUrl)
+type RepoHandlerCLIByOp = {
+  [K in keyof RepoManagerOperations]: PathOptions;
+};
+
+type HandlerParams<K extends keyof RepoManagerOperations> =
+  RepoManagerOperations[K]['params'] & RepoHandlerCLIByOp[K];
+
+export type IRepoManagerHandler = {
+  type: PluginType.REPO_MANAGER;
+} & {
+  [K in keyof RepoManagerOperations]: (
+    options: HandlerParams<K>
+  ) => Promise<PluginResponse<RepoManagerOperations[K]['result']>>;
+};
 
 export class RepoManagerHandler
   extends BaseHandler<RepoManagerOperations>
-  implements IRepoManagerPlugin
+  implements IRepoManagerHandler
 {
   public readonly type = PluginType.REPO_MANAGER as const;
 
   constructor(pluginId: string) {
     super(pluginId);
+  }
+
+  private async withRepoContainer<T>(
+    pathOrUrl: string,
+    allowCreateForCloned: boolean,
+    fn: (containerName: string) => Promise<T>
+  ): Promise<T> {
+    return this.withRepoManagerContainerAuto(
+      pathOrUrl,
+      allowCreateForCloned,
+      fn
+    );
+  }
+
+  // New operation methods delegating to plugin code
+  async init(options: PathOptions): Promise<PluginResponse<NoResult>> {
+    try {
+      return await this.withRepoContainer(
+        options.pathOrUrl,
+        true,
+        async (containerName) =>
+          this.executeOperation('init', options, containerName)
+      );
+    } catch (error) {
+      getLogger().error(`❌ ${this.pluginId}: init failed:`, error);
+      return {
+        success: false,
+        error: { code: 'INIT_FAILED', message: String(error) },
+      };
+    }
+  }
+
+  async checkoutBranch(
+    options: RepoCheckoutBranchOptions & PathOptions
+  ): Promise<PluginResponse<NoResult>> {
+    try {
+      return await this.withRepoContainer(
+        options.pathOrUrl,
+        false,
+        async (containerName) =>
+          this.executeOperation('checkoutBranch', options, containerName)
+      );
+    } catch (error) {
+      getLogger().error(`❌ ${this.pluginId}: checkoutBranch failed:`, error);
+      return {
+        success: false,
+        error: { code: 'CHECKOUT_BRANCH_FAILED', message: String(error) },
+      };
+    }
+  }
+
+  async checkoutCommit(
+    options: RepoCheckoutCommitOptions & PathOptions
+  ): Promise<PluginResponse<NoResult>> {
+    try {
+      return await this.withRepoContainer(
+        options.pathOrUrl,
+        false,
+        async (containerName) =>
+          this.executeOperation('checkoutCommit', options, containerName)
+      );
+    } catch (error) {
+      getLogger().error(`❌ ${this.pluginId}: checkoutCommit failed:`, error);
+      return {
+        success: false,
+        error: { code: 'CHECKOUT_COMMIT_FAILED', message: String(error) },
+      };
+    }
+  }
+
+  async getBranches(
+    options: PathOptions
+  ): Promise<PluginResponse<RepoGetBranchesResult>> {
+    try {
+      return await this.withRepoContainer(
+        options.pathOrUrl,
+        false,
+        async (containerName) =>
+          this.executeOperation('getBranches', {}, containerName)
+      );
+    } catch (error) {
+      getLogger().error(`❌ ${this.pluginId}: getBranches failed:`, error);
+      return {
+        success: false,
+        error: { code: 'GET_BRANCHES_FAILED', message: String(error) },
+      };
+    }
+  }
+
+  async pullChanges(options: PathOptions): Promise<PluginResponse<NoResult>> {
+    try {
+      return await this.withRepoContainer(
+        options.pathOrUrl,
+        false,
+        async (containerName) =>
+          this.executeOperation('pullChanges', {}, containerName)
+      );
+    } catch (error) {
+      getLogger().error(`❌ ${this.pluginId}: pullChanges failed:`, error);
+      return {
+        success: false,
+        error: { code: 'PULL_FAILED', message: String(error) },
+      };
+    }
+  }
+
+  async getRepoInfo(
+    options: PathOptions
+  ): Promise<PluginResponse<RepoInfoResult>> {
+    try {
+      return await this.withRepoContainer(
+        options.pathOrUrl,
+        false,
+        async (containerName) =>
+          this.executeOperation('getRepoInfo', {}, containerName)
+      );
+    } catch (error) {
+      getLogger().error(`❌ ${this.pluginId}: getRepoInfo failed:`, error);
+      return {
+        success: false,
+        error: { code: 'GET_INFO_FAILED', message: String(error) },
+      };
+    }
   }
 
   async mount(
@@ -135,56 +282,6 @@ export class RepoManagerHandler
         success: false,
         error: {
           code: 'UNMOUNT_FAILED', // TODO: Define proper error codes
-          message: String(error),
-        },
-      };
-    }
-  }
-
-  async cleanup(): Promise<PluginResponse<{ cleaned: number }>> {
-    try {
-      getLogger().info(
-        `🧹 ${this.pluginId}: Cleaning up orphaned repo containers...`
-      );
-
-      const containers = await this.docker.listContainers({
-        all: true,
-        filters: {
-          label: ['ignite.type=local-repo'],
-        },
-      });
-
-      let cleaned = 0;
-      for (const containerInfo of containers) {
-        try {
-          const container = this.docker.getContainer(containerInfo.Id);
-          await container.remove({ force: true });
-          cleaned++;
-          getLogger().info(
-            `🗑️ ${this.pluginId}: Cleaned container: ${containerInfo.Names[0]}`
-          );
-        } catch (error) {
-          getLogger().warn(
-            `⚠️ ${this.pluginId}: Failed to clean container ${containerInfo.Id}:`,
-            error
-          );
-        }
-      }
-
-      getLogger().info(
-        `✅ ${this.pluginId}: Cleanup complete: ${cleaned} containers removed`
-      );
-
-      return {
-        success: true,
-        data: { cleaned },
-      };
-    } catch (error) {
-      getLogger().error(`❌ ${this.pluginId}: Cleanup failed:`, error);
-      return {
-        success: false,
-        error: {
-          code: 'CLEANUP_FAILED', // TODO: Define proper error codes
           message: String(error),
         },
       };

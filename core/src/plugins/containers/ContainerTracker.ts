@@ -54,6 +54,19 @@ export class ContainerTracker {
         getLogger().info(
           `🛑 Stopped container: ${containerId.substring(0, 12)}`
         );
+        // Remove session lifecycle containers after stop
+        try {
+          const info = await container.inspect();
+          const labels = (info?.Config?.Labels ?? {}) as Record<string, string>;
+          if (labels['ignite.lifecycle'] === 'session') {
+            await container.remove({ force: true });
+            getLogger().info(
+              `🧽 Removed session container: ${containerId.substring(0, 12)}`
+            );
+          }
+        } catch (e) {
+          getLogger().warn('Failed to remove session container:', e);
+        }
       } catch (error) {
         getLogger().warn(
           `Failed to stop container ${containerId.substring(0, 12)}:`,
