@@ -292,10 +292,8 @@ export default function ProfileModal({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="card-milky"
+              className="input-glass"
               style={{
-                padding: '10px 12px',
-                width: '100%',
                 gridColumn: '2 / 3',
                 gridRow: '2 / 3',
               }}
@@ -440,8 +438,7 @@ export default function ProfileModal({
                       if (ch) setEmoji(undefined);
                       e.preventDefault();
                     }}
-                    className="card-milky"
-                    style={{ padding: '10px 12px', width: '100%' }}
+                    className="input-glass"
                     maxLength={1}
                   />
                 </div>

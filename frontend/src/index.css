@@ -32,6 +32,10 @@
     /* Backdrop blur tokens to avoid minifiers dropping standard property */
     --bf-strong: blur(40px) saturate(110%);
     --bf-medium: blur(14px) saturate(110%);
+
+    :focus-visible {
+      outline: none;
+    }
   }
 
   .theme-light {
@@ -355,6 +359,26 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     z-index: 9999;
   }
+  /* Text input styling with milky glass background */
+  .input-glass {
+    padding: 10px 12px;
+    width: 100%;
+    border-radius: var(--radius);
+    border: 1px solid color-mix(in oklch, #fff 28%, transparent);
+    background: color-mix(
+      in oklch,
+      var(--bg-base) calc(var(--glass-milk) + 40%),
+      transparent
+    );
+    -webkit-backdrop-filter: var(--bf-strong);
+    backdrop-filter: var(--bf-strong);
+    color: var(--text);
+    font-size: 0.875rem;
+  }
+  .input-glass::placeholder {
+    opacity: 0.5;
+  }
+
   /* Inputs: make focus outlines follow the primary profile color */
   input,
   select,
@@ -367,9 +391,9 @@
   select:focus-visible,
   textarea:focus,
   textarea:focus-visible {
-    outline: 2px solid
-      color-mix(in oklch, var(--profile-color) 80%, transparent);
-    outline-offset: 2px;
+    outline: 1px solid
+      color-mix(in oklch, var(--profile-color) 40%, transparent);
+    outline-offset: 0px;
     box-shadow: 0 0 0 3px
       color-mix(in oklch, var(--profile-color) 25%, transparent);
     border-color: color-mix(in oklch, var(--profile-color) 60%, #fff 30%);

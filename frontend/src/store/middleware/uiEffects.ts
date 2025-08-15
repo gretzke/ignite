@@ -59,8 +59,7 @@ uiEffects.startListening({
     const curr = currentState as RootState;
     return (
       prev.connection.status !== curr.connection.status &&
-      curr.connection.status === ConnectionStatus.DISCONNECTED &&
-      curr.connection.attemptsLeft === 0
+      curr.connection.status === ConnectionStatus.DISCONNECTED
     );
   },
   effect: async () => {
