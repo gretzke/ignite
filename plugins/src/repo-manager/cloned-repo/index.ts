@@ -52,14 +52,23 @@ export class ClonedRepoPlugin extends RepoManagerPlugin {
     }
     const clone = await execGit([
       "clone",
-      "--recursive",
+      "--depth",
+      "1",
+      "--recurse-submodules",
+      "--shallow-submodules",
       options.pathOrUrl,
       "/workspace",
     ]);
     if (!clone.success) {
       return {
         success: false,
-        error: { code: "CLONE_FAILED", message: "Failed to clone repository" },
+        error: {
+          code: "CLONE_FAILED",
+          message: `Failed to clone repository: ${
+            clone.error?.message || "Unknown error"
+          }`,
+          details: clone.error?.details,
+        },
       } as const;
     }
     return { success: true, data: {} } as const;
