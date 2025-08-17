@@ -116,6 +116,7 @@ async function main(): Promise<void> {
   // Check if workspace is a git repository
   const isGitRepo = isGitRepository(workspacePath);
   if (!isGitRepo) {
+    process.env.IGNITE_WORKSPACE_PATH = '';
     process.stdout.write(
       `⚠️ Skipping auto-mount for non-git directory: ${workspacePath}\n`
     );

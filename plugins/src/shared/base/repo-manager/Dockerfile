@@ -19,5 +19,8 @@ RUN mkdir -p /workspace && chown plugin:plugin /workspace
 # Switch back to plugin user  
 USER plugin
 
+# Configure git for bind-mounted workspaces
+RUN git config --global --add safe.directory /workspace
+
 # Container starts in idle mode, waiting for repo manager plugin JS
 CMD ["sleep", "infinity"]
