@@ -11,15 +11,6 @@ import { ProfileManager } from '../filesystem/ProfileManager.js';
 
 // System handlers object - matches shared API route structure
 export const systemHandlers = {
-  // health: async (
-  //   _request: FastifyRequest,
-  //   reply: FastifyReply
-  // ): Promise<{ message: string }> => {
-  //   const body: { message: string } = {
-  //     message: 'Ignite backend is healthy',
-  //   };
-  //   return reply.status(200).send(body);
-  // },
   health: async (
     _request: FastifyRequest,
     reply: FastifyReply

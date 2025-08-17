@@ -96,14 +96,14 @@ export class PluginExecutor {
     );
 
     // Extract pathOrUrl and resolve container for repo plugins
-    const { pathOrUrl, ...cleanOptions } = this.extractPathInfo(options);
+    const { pathOrUrl } = this.extractPathInfo(options);
     const containerName = await this.resolveRepoContainer(pluginId, pathOrUrl);
 
     // Execute directly using PluginExecutionUtils
     return this.executeOperationDirect(
       pluginConfig,
       operation,
-      cleanOptions,
+      options,
       containerName
     );
   }
