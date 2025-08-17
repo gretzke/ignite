@@ -299,7 +299,7 @@ export const profileRoutes = {
     path: `${V1_BASE_PATH}/profiles/:id/repos`,
     params: ProfileParamsSchema,
     schema: {
-      tags: ["repo-manager"],
+      tags: ["profiles"],
       response: { 200: GetReposResponseSchema },
     },
   },
@@ -308,7 +308,7 @@ export const profileRoutes = {
     path: `${V1_BASE_PATH}/profiles/:id/repos`,
     params: ProfileParamsSchema,
     schema: {
-      tags: ["repo-manager"],
+      tags: ["profiles"],
       body: PathRequestSchema,
       response: { 204: z.null() },
     },
@@ -319,7 +319,7 @@ export const profileRoutes = {
     params: ProfileParamsSchema,
     querystring: DeleteRepoQuerySchema,
     schema: {
-      tags: ["repo-manager"],
+      tags: ["profiles"],
       response: { 204: z.null() },
     },
   },

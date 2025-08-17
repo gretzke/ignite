@@ -13,6 +13,7 @@ import { systemHandlers } from './system.js';
 import { profileHandlers } from './profiles.js';
 import { pluginHandlers } from './plugins/index.js';
 import { compilerHandlers } from './plugins/compiler/index.js';
+import { repoManagerHandlers } from './plugins/repo-manager/index.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
@@ -71,6 +72,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...profileHandlers,
     ...pluginHandlers,
     ...compilerHandlers,
+    ...repoManagerHandlers,
   };
 
   checkHandlers(allHandlers);
@@ -85,10 +87,27 @@ async function registerRoutes(app: FastifyInstance) {
       continue;
     }
 
+    const composedSchema = {
+      ...(routeConfig.schema ?? {}),
+      ...('querystring' in routeConfig
+        ? {
+            querystring: (
+              routeConfig as typeof routeConfig & { querystring: unknown }
+            ).querystring,
+          }
+        : {}),
+      ...('params' in routeConfig
+        ? {
+            params: (routeConfig as typeof routeConfig & { params: unknown })
+              .params,
+          }
+        : {}),
+    } as Parameters<FastifyInstance['route']>[0]['schema'];
+
     app.route({
       method: routeConfig.method,
       url: routeConfig.path,
-      schema: routeConfig.schema,
+      schema: composedSchema,
       handler: handler as Parameters<FastifyInstance['route']>[0]['handler'],
     });
 

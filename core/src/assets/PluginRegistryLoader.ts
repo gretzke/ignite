@@ -1,11 +1,23 @@
-import type { PluginMetadata } from '@ignite/plugin-types/types';
+import { PluginMetadata, PluginType } from '@ignite/plugin-types/types';
 import { AssetManager } from './AssetManager.js';
 import { getLogger } from '../utils/logger.js';
+
+// Plugin lifecycle classification
+export enum PluginLifecycle {
+  PERSISTENT = 'persistent', // Repo plugins - long-lived containers with data storage
+  EPHEMERAL = 'ephemeral', // Processing plugins - short-lived, auto-cleanup containers
+}
+
+export interface PluginConfig {
+  metadata: PluginMetadata; // Core plugin metadata
+  lifecycle: PluginLifecycle;
+  requiresRepo: boolean; // Whether this plugin needs repo container access
+}
 
 // Plugin registry loader for dynamic plugin metadata
 export class PluginRegistryLoader {
   private static instance: PluginRegistryLoader;
-  private registry: Record<string, PluginMetadata> = {};
+  private registry: Record<string, PluginConfig> = {};
   private assetManager = AssetManager.getInstance();
 
   private constructor() {}
@@ -17,7 +29,7 @@ export class PluginRegistryLoader {
     return PluginRegistryLoader.instance;
   }
 
-  async loadRegistry(): Promise<Record<string, PluginMetadata>> {
+  async loadRegistry(): Promise<Record<string, PluginConfig>> {
     if (Object.keys(this.registry).length > 0) {
       return this.registry;
     }
@@ -37,7 +49,13 @@ export class PluginRegistryLoader {
         `📋 Registry content preview: ${registryContent.substring(0, 200)}...`
       );
 
-      this.registry = JSON.parse(registryContent);
+      const baseRegistry: Record<string, PluginMetadata> =
+        JSON.parse(registryContent);
+
+      // Transform base metadata into PluginConfig
+      for (const [pluginId, metadata] of Object.entries(baseRegistry)) {
+        this.registry[pluginId] = this.createPluginConfig(pluginId, metadata);
+      }
 
       const pluginCount = Object.keys(this.registry).length;
       getLogger().info(`✅ Plugin registry loaded: ${pluginCount} plugins`);
@@ -54,16 +72,56 @@ export class PluginRegistryLoader {
     }
   }
 
-  async getPluginMetadata(pluginId: string): Promise<PluginMetadata> {
+  async getPluginConfig(pluginId: string): Promise<PluginConfig> {
     const registry = await this.loadRegistry();
-    const meta = registry[pluginId];
-    if (!meta) {
+    const config = registry[pluginId];
+    if (!config) {
       throw new Error(`Unknown plugin: ${pluginId}`);
     }
-    return meta;
+    return config;
   }
 
-  async getAllPlugins(): Promise<Record<string, PluginMetadata>> {
+  async getAllPlugins(): Promise<Record<string, PluginConfig>> {
     return await this.loadRegistry();
+  }
+
+  private createPluginConfig(
+    pluginId: string,
+    metadata: PluginMetadata
+  ): PluginConfig {
+    // Persistent: Repo plugins (local-repo, cloned-repo)
+    if (metadata.type === PluginType.REPO_MANAGER) {
+      return {
+        metadata,
+        lifecycle: PluginLifecycle.PERSISTENT,
+        requiresRepo: false, // Repo plugins don't require other repos
+      };
+    }
+
+    // Ephemeral: All other plugins (foundry, hardhat, future encryption plugins, etc.)
+    const requiresRepo = this.determineRepoRequirement(pluginId, metadata);
+    return {
+      metadata,
+      lifecycle: PluginLifecycle.EPHEMERAL,
+      requiresRepo,
+    };
+  }
+
+  private determineRepoRequirement(
+    _pluginId: string,
+    metadata: PluginMetadata
+  ): boolean {
+    // Compiler plugins (foundry, hardhat) need repo access to analyze/compile code
+    if (metadata.type === PluginType.COMPILER) {
+      return true;
+    }
+
+    // Future plugin types that would NOT require repo access:
+    // - Encryption plugins (work with local data)
+    // - Utility plugins (formatters, validators)
+    // - Network plugins (RPC interactions)
+
+    // For now, assume most stateless plugins need repo access
+    return true;
   }
 }

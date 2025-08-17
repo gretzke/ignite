@@ -7,11 +7,13 @@ export * from "./system.js";
 export * from "./profiles.js";
 export * from "./plugins/index.js";
 export * from "./plugins/compiler/index.js";
+export * from "./plugins/repo-manager/index.js";
 
 import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
 import { pluginRoutes } from "./plugins/index.js";
 import { compilerRoutes } from "./plugins/compiler/index.js";
+import { repoManagerRoutes } from "./plugins/repo-manager/index.js";
 
 export interface ApiError {
   statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 500;
@@ -29,6 +31,7 @@ export const v1Routes = {
   ...profileRoutes,
   ...pluginRoutes,
   ...compilerRoutes,
+  ...repoManagerRoutes,
 } as const;
 // Route definition interface for type safety
 export interface ApiRoute {

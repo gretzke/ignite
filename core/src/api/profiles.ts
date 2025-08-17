@@ -17,9 +17,16 @@ import type {
   RestoreProfileData,
   DeleteProfileData,
   ProfileConfig,
+  ProfileParams,
 } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
+import {
+  RepoContainerUtils,
+  RepoContainerKind,
+} from '../plugins/utils/RepoContainerUtils.js';
+import { PathOptions } from '@ignite/plugin-types';
+import { isGitRepository } from '../utils/startup.js';
 
 // Profile handlers object - matches shared API route structure
 export const profileHandlers = {
@@ -132,7 +139,7 @@ export const profileHandlers = {
   },
 
   getProfile: async (
-    request: FastifyRequest<{ Params: { id: string } }>,
+    request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
   ): Promise<ApiResponse<GetProfileData>> => {
     try {
@@ -182,7 +189,7 @@ export const profileHandlers = {
   },
 
   switchProfile: async (
-    request: FastifyRequest<{ Params: { id: string } }>,
+    request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
   ): Promise<ApiResponse<SwitchProfileData>> => {
     try {
@@ -244,7 +251,7 @@ export const profileHandlers = {
   },
 
   archiveProfile: async (
-    request: FastifyRequest<{ Params: { id: string } }>,
+    request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
   ): Promise<ApiResponse<ArchiveProfileData>> => {
     try {
@@ -278,7 +285,7 @@ export const profileHandlers = {
   },
 
   restoreProfile: async (
-    request: FastifyRequest<{ Params: { id: string } }>,
+    request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
   ): Promise<ApiResponse<RestoreProfileData>> => {
     try {
@@ -307,7 +314,7 @@ export const profileHandlers = {
   },
 
   deleteProfile: async (
-    request: FastifyRequest<{ Params: { id: string } }>,
+    request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
   ): Promise<ApiResponse<DeleteProfileData>> => {
     try {
@@ -330,6 +337,158 @@ export const profileHandlers = {
         },
       };
       return reply.status(statusCode).send(body);
+    }
+  },
+
+  // === Repo registry endpoints (per profile) ===
+  listRepos: async (
+    request: FastifyRequest<{ Params: ProfileParams }>,
+    reply: FastifyReply
+  ): Promise<
+    ApiResponse<{ session: string | null; local: string[]; cloned: string[] }>
+  > => {
+    try {
+      const { id } = request.params;
+      const fileSystem = FileSystem.getInstance();
+      const reposDir = fileSystem.getProfileReposPath(id);
+
+      const localPath = path.join(reposDir, RepoContainerKind.LOCAL + '.json');
+      const clonedPath = path.join(
+        reposDir,
+        RepoContainerKind.CLONED + '.json'
+      );
+      let local: string[] = [];
+      let cloned: string[] = [];
+      try {
+        if (await fileSystem.fileExists(localPath)) {
+          local = await fileSystem.readJsonFile<string[]>(localPath);
+        }
+      } catch {
+        local = [];
+      }
+      try {
+        if (await fileSystem.fileExists(clonedPath)) {
+          cloned = await fileSystem.readJsonFile<string[]>(clonedPath);
+        }
+      } catch {
+        cloned = [];
+      }
+
+      const session = process.env.IGNITE_WORKSPACE_PATH || null;
+
+      const body: ApiResponse<{
+        session: string | null;
+        local: string[];
+        cloned: string[];
+      }> = {
+        data: { session, local, cloned },
+      };
+      return reply.status(200).send(body);
+    } catch (error) {
+      const statusCode = 500 as const;
+      const body: ApiError = {
+        statusCode,
+        error: 'Internal Server Error',
+        code: 'PROFILE_REPOS_LIST_ERROR',
+        message: 'Failed to list profile repositories',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+      return reply.status(statusCode).send(body);
+    }
+  },
+
+  saveRepo: async (
+    request: FastifyRequest<{
+      Params: ProfileParams;
+      Body: PathOptions;
+    }>,
+    reply: FastifyReply
+  ): Promise<null> => {
+    try {
+      const { id } = request.params;
+      const { pathOrUrl } = request.body;
+      const kind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
+      const fileSystem = FileSystem.getInstance();
+      const reposDir = fileSystem.getProfileReposPath(id);
+      const targetPath = path.join(reposDir, `${kind}.json`);
+
+      if (kind === RepoContainerKind.LOCAL) {
+        if (pathOrUrl.startsWith('./') || pathOrUrl.startsWith('..')) {
+          throw new Error(
+            `Local repository path must be absolute: ${pathOrUrl}`
+          );
+        }
+        if (!isGitRepository(pathOrUrl)) {
+          throw new Error(
+            `Local repository path must be a git repository: ${pathOrUrl}`
+          );
+        }
+      }
+
+      let list: string[] = [];
+      if (await fileSystem.fileExists(targetPath)) {
+        list = await fileSystem.readJsonFile<string[]>(targetPath);
+      }
+      if (!list.includes(pathOrUrl)) {
+        list.push(pathOrUrl);
+      } else {
+        throw new Error(`Repository ${pathOrUrl} already exists`);
+      }
+      await fileSystem.writeJsonFile(targetPath, list);
+
+      return reply.status(204).send(null);
+    } catch (error) {
+      const statusCode = 500 as const;
+      const body: ApiError = {
+        statusCode,
+        error: 'Internal Server Error',
+        code: 'PROFILE_REPO_SAVE_ERROR',
+        message: 'Failed to save repository to profile',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+      return reply.status(statusCode).send(body as unknown as null);
+    }
+  },
+
+  deleteRepo: async (
+    request: FastifyRequest<{
+      Params: ProfileParams;
+      Querystring: PathOptions;
+    }>,
+    reply: FastifyReply
+  ): Promise<null> => {
+    try {
+      const { id } = request.params;
+      const { pathOrUrl } = request.query;
+      const kind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
+      const fileSystem = FileSystem.getInstance();
+      const reposDir = fileSystem.getProfileReposPath(id);
+      const repoPath = path.join(reposDir, kind + '.json');
+
+      if (!(await fileSystem.fileExists(repoPath))) {
+        throw new Error(`Repository ${pathOrUrl} not found`);
+      }
+      const arr = await fileSystem.readJsonFile<string[]>(repoPath);
+      const next = arr.filter((x) => x !== pathOrUrl);
+      await fileSystem.writeJsonFile(repoPath, next);
+
+      return reply.status(204).send(null);
+    } catch (error) {
+      const statusCode = 500 as const;
+      const body: ApiError = {
+        statusCode,
+        error: 'Internal Server Error',
+        code: 'PROFILE_REPO_DELETE_ERROR',
+        message: 'Failed to delete repository from profile',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+      return reply.status(statusCode).send(body as unknown as null);
     }
   },
 } as const;
