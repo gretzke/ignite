@@ -378,6 +378,12 @@
   .input-glass::placeholder {
     opacity: 0.5;
   }
+  .theme-light .input-glass {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+  .theme-dark .input-glass {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+  }
 
   /* Inputs: make focus outlines follow the primary profile color */
   input,

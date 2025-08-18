@@ -1,0 +1,4 @@
+- Fix toast progress bar on hover
+- Add profile id to repo list to identify containers per profile
+- Shutdown repo containers when they are not used
+- Delete cloned repo container when repo is removed

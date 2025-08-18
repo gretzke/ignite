@@ -1,7 +1,8 @@
 import Tooltip from '../components/Tooltip';
 import Dropdown from '../components/Dropdown';
+import Select from '../components/Select';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Bookmark, Plus, X, Folder, GitBranch } from 'lucide-react';
+import { Bookmark, Plus, X, Folder, GitBranch, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { repositoriesApi } from '../store/features/repositories/repositoriesSlice';
@@ -23,8 +24,90 @@ export default function RepositoriesPage() {
 
   // Store hooks
   const dispatch = useAppDispatch();
-  const { repositories } = useAppSelector((state) => state.repositories);
+  const { repositories, repositoriesData, failedRepositories } = useAppSelector(
+    (state) => state.repositories
+  );
   const { currentId } = useAppSelector((state) => state.profiles);
+
+  // Helper to get repository initialization status
+  const getRepoInitStatus = (path: string) => {
+    const repoData = repositoriesData[path];
+    if (!repoData) return 'unknown';
+    if (repoData.initialized === undefined) return 'loading';
+    if (repoData.initialized === true) return 'success';
+    if (repoData.initialized === false) return 'error';
+    return 'unknown';
+  };
+
+  // Status indicator component
+  const StatusIndicator = ({ path }: { path: string }) => {
+    const status = getRepoInitStatus(path);
+
+    switch (status) {
+      case 'loading':
+        return (
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+            <span className="text-xs text-blue-500">Initializing...</span>
+          </div>
+        );
+      case 'success':
+        return (
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 bg-green-500 rounded-full" />
+            <span className="text-xs text-green-500">Ready</span>
+          </div>
+        );
+      case 'error':
+        return (
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 bg-red-500 rounded-full" />
+            <span className="text-xs text-red-500">Failed</span>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  // Branch selector component
+  const BranchSelector = ({ path }: { path: string }) => {
+    const repoData = repositoriesData[path];
+    const status = getRepoInitStatus(path);
+
+    // Don't show branch selector if not successfully initialized
+    if (status !== 'success' || !repoData) {
+      return null;
+    }
+
+    const currentBranch = repoData.info?.branch;
+    const branches = repoData.branches || [];
+
+    // Don't show if no branches available
+    if (branches.length === 0) {
+      return null;
+    }
+
+    // Convert branches to Select options
+    const branchOptions = branches.map((branch) => ({
+      value: branch,
+      label: branch,
+    }));
+
+    return (
+      <Select
+        options={branchOptions}
+        value={currentBranch || undefined}
+        placeholder="Select branch..."
+        defaultPriority={['main', 'master', 'develop']}
+        onValueChange={(_branch) => {
+          // TODO: Implement branch switching functionality
+          // Will switch to selected branch when implemented
+        }}
+        className="text-xs w-full"
+      />
+    );
+  };
 
   const resetCloneState = () => {
     setCloneUrl('');
@@ -204,9 +287,11 @@ export default function RepositoriesPage() {
 
   const hasMatchingLocalRepo = matchingLocalRepoIndex !== -1;
 
-  // Current workspace (only show if it doesn't match a local repo)
+  // Current workspace (only show if it doesn't match a local repo and is not failed)
   const currentWorkspace =
-    sessionPath && !hasMatchingLocalRepo
+    sessionPath &&
+    !hasMatchingLocalRepo &&
+    !failedRepositories.includes(sessionPath)
       ? {
           name: 'Current Workspace',
           path: sessionPath,
@@ -215,19 +300,21 @@ export default function RepositoriesPage() {
         }
       : null;
 
-  // Transform local repos and handle current workspace matching
-  const localRepos = localRepoPaths.map((path, index) => {
-    const isCurrentWorkspace = path === sessionPath;
-    return {
-      name: isCurrentWorkspace
-        ? `${getRepoName(path)} (Current Workspace)`
-        : getRepoName(path),
-      path,
-      framework: 'Unknown', // We'd need to detect this
-      isCurrentWorkspace,
-      originalIndex: index,
-    };
-  });
+  // Transform local repos and handle current workspace matching, filter out failed ones
+  const localRepos = localRepoPaths
+    .filter((path) => !failedRepositories.includes(path))
+    .map((path, index) => {
+      const isCurrentWorkspace = path === sessionPath;
+      return {
+        name: isCurrentWorkspace
+          ? `${getRepoName(path)} (Current Workspace)`
+          : getRepoName(path),
+        path,
+        framework: 'Unknown', // We'd need to detect this
+        isCurrentWorkspace,
+        originalIndex: index,
+      };
+    });
 
   // Sort local repos to put current workspace match at the top
   localRepos.sort((a, b) => {
@@ -237,11 +324,13 @@ export default function RepositoriesPage() {
   });
 
   const clonedRepos =
-    repositories?.cloned.map((path) => ({
-      name: getRepoName(path),
-      path,
-      framework: 'Unknown', // We'd need to detect this
-    })) || [];
+    repositories?.cloned
+      .filter((path) => !failedRepositories.includes(path))
+      .map((path) => ({
+        name: getRepoName(path),
+        path,
+        framework: 'Unknown', // We'd need to detect this
+      })) || [];
 
   return (
     <div className="text-[var(--text)]">
@@ -320,13 +409,17 @@ export default function RepositoriesPage() {
                   {currentWorkspace.path}{' '}
                   {currentWorkspace.saved ? '' : '(unsaved)'}
                 </div>
+                <StatusIndicator path={currentWorkspace.path} />
               </div>
               <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
                 {currentWorkspace.framework}
               </span>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="w-32">
+                <BranchSelector path={currentWorkspace.path} />
+              </div>
               {!currentWorkspace.saved && (
                 <Tooltip label="Save" placement="top">
                   <button
@@ -375,12 +468,16 @@ export default function RepositoriesPage() {
                         <div className="text-xs opacity-70 truncate">
                           {r.path}
                         </div>
+                        <StatusIndicator path={r.path} />
                       </div>
                       <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
                         {r.framework}
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="w-32">
+                        <BranchSelector path={r.path} />
+                      </div>
                       <Tooltip label="Remove" placement="top">
                         <button
                           type="button"
@@ -431,12 +528,16 @@ export default function RepositoriesPage() {
                         <div className="text-xs opacity-70 truncate">
                           {r.path}
                         </div>
+                        <StatusIndicator path={r.path} />
                       </div>
                       <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
                         {r.framework}
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="w-32">
+                        <BranchSelector path={r.path} />
+                      </div>
                       <Tooltip label="Remove" placement="top">
                         <button
                           type="button"
@@ -459,6 +560,87 @@ export default function RepositoriesPage() {
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Failed Repositories */}
+      {failedRepositories.length > 0 && (
+        <div className="mt-4">
+          <div className="text-xs opacity-70 mb-2 text-red-500">
+            Failed to Initialize
+          </div>
+          <div className="flex flex-col gap-2">
+            {failedRepositories.map((path, index) => {
+              const repoName = path.split('/').pop() || path;
+              return (
+                <div
+                  key={`failed-${index}`}
+                  className="card-milky p-4 border-l-4 border-red-500"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="size-8 rounded-[var(--radius)] border border-red-500/20 bg-red-500/10 backdrop-blur-sm flex items-center justify-center text-sm">
+                        ❌
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate text-red-500">
+                          {repoName}
+                        </div>
+                        <div className="text-xs opacity-70 truncate">
+                          {path}
+                        </div>
+                        <div className="text-xs text-red-500">
+                          Initialization failed
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Tooltip label="Retry Initialization" placement="top">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-secondary-borderless"
+                          style={{
+                            width: 40,
+                            height: 36,
+                            paddingLeft: 0,
+                            paddingRight: 0,
+                          }}
+                          aria-label="Retry initialization"
+                          title="Retry"
+                          onClick={() => {
+                            if (currentId) {
+                              const actions =
+                                repositoriesApi.initializeRepository(path);
+                              actions.forEach((action) => dispatch(action));
+                            }
+                          }}
+                        >
+                          <RotateCcw size={16} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip label="Remove" placement="top">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-secondary-borderless"
+                          style={{
+                            width: 40,
+                            height: 36,
+                            paddingLeft: 0,
+                            paddingRight: 0,
+                          }}
+                          aria-label="Remove repository"
+                          title="Remove"
+                          onClick={() => handleRemoveRepo(repoName, path)}
+                        >
+                          <X size={16} />
+                        </button>
+                      </Tooltip>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

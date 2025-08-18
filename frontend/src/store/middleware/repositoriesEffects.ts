@@ -3,8 +3,12 @@ import {
   fetchProfilesSucceeded,
   setCurrentProfile,
 } from '../features/profiles/profilesSlice';
-import { repositoriesApi } from '../features/repositories/repositoriesSlice';
-import type { AppDispatch } from '../store';
+import {
+  repositoriesApi,
+  setRepositories,
+  addRepository,
+} from '../features/repositories/repositoriesSlice';
+import type { AppDispatch, RootState } from '../store';
 
 // Create a listener middleware for repositories effects
 export const repositoriesEffects = createListenerMiddleware();
@@ -38,5 +42,42 @@ repositoriesEffects.startListening({
       // No profile selected, clear repositories
       dispatch(repositoriesApi.clearRepositories());
     }
+  },
+});
+
+// Listen for setRepositories action and initialize repos that need initialization
+repositoriesEffects.startListening({
+  actionCreator: setRepositories,
+  effect: async (action, listenerApi) => {
+    const dispatch = listenerApi.dispatch as AppDispatch;
+    const state = listenerApi.getState() as RootState;
+
+    // Get current repositories data and the new repo list
+    const { repositoriesData } = state.repositories;
+    const repoList = action.payload;
+
+    // Initialize repositories that need initialization
+    const initActions = repositoriesApi.initializeRepositoriesIfNeeded(
+      repositoriesData,
+      repoList
+    );
+
+    // Dispatch all initialization actions
+    initActions.forEach((actionToDispatch) => dispatch(actionToDispatch));
+  },
+});
+
+// Listen for addRepository action and initialize only the new repository
+repositoriesEffects.startListening({
+  actionCreator: addRepository,
+  effect: async (action, listenerApi) => {
+    const dispatch = listenerApi.dispatch as AppDispatch;
+
+    // Initialize only the newly added repository
+    const { pathOrUrl } = action.payload;
+    const initActions = repositoriesApi.initializeRepository(pathOrUrl);
+
+    // Dispatch all initialization actions for the new repo
+    initActions.forEach((actionToDispatch) => dispatch(actionToDispatch));
   },
 });
