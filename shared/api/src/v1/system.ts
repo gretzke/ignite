@@ -18,7 +18,7 @@ export interface SystemInfoData {
   };
 }
 
-// Type-safe ApiResponse schemas that enforce interface compliance
+// Type-safe IApiResponse schemas that enforce interface compliance
 export const HealthResponseSchema = createApiResponseSchema<HealthData>(
   "HealthResponseSchema",
 )(

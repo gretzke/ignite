@@ -1,6 +1,6 @@
 import { createAction } from '@reduxjs/toolkit';
 import type { UnknownAction } from '@reduxjs/toolkit';
-import { createClient, type Client } from '@ignite/api/client';
+import { createClient, type Client, ApiError } from '@ignite/api/client';
 import { v1Routes } from '@ignite/api';
 import { z } from 'zod';
 
@@ -41,11 +41,7 @@ type DispatchClient = {
     onSuccess?: (
       data: ExtractResponseData<InferResponseSchema<(typeof v1Routes)[K]>>
     ) => UnknownAction | UnknownAction[] | void;
-    onError?: (error: {
-      message: string;
-      status?: number;
-      body?: unknown;
-    }) => UnknownAction | UnknownAction[] | void;
+    onError?: (error: ApiError) => UnknownAction | UnknownAction[] | void;
     meta?: Record<string, unknown>;
   }) => UnknownAction;
 };
@@ -57,11 +53,7 @@ export const apiDispatchAction = createAction<{
   query?: unknown;
   body?: unknown;
   onSuccess?: (data: unknown) => UnknownAction | UnknownAction[] | void;
-  onError?: (error: {
-    message: string;
-    status?: number;
-    body?: unknown;
-  }) => UnknownAction | UnknownAction[] | void;
+  onError?: (error: ApiError) => UnknownAction | UnknownAction[] | void;
   meta?: Record<string, unknown>;
 }>('api/dispatch');
 
@@ -88,11 +80,7 @@ export function createEnhancedClient(
           | ((data: unknown) => UnknownAction | UnknownAction[] | void)
           | undefined,
         onError: args.onError as
-          | ((error: {
-              message: string;
-              status?: number;
-              body?: unknown;
-            }) => UnknownAction | UnknownAction[] | void)
+          | ((error: ApiError) => UnknownAction | UnknownAction[] | void)
           | undefined,
       };
 

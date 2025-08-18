@@ -1,8 +1,8 @@
 // System API route handlers
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type {
-  ApiError,
-  ApiResponse,
+  IApiError,
+  IApiResponse,
   HealthData,
   SystemInfoData,
 } from '@ignite/api';
@@ -14,8 +14,8 @@ export const systemHandlers = {
   health: async (
     _request: FastifyRequest,
     reply: FastifyReply
-  ): Promise<ApiResponse<HealthData>> => {
-    const body: ApiResponse<HealthData> = {
+  ): Promise<IApiResponse<HealthData>> => {
+    const body: IApiResponse<HealthData> = {
       data: {
         message: 'Ignite backend is healthy',
       },
@@ -26,12 +26,12 @@ export const systemHandlers = {
   systemInfo: async (
     _request: FastifyRequest,
     reply: FastifyReply
-  ): Promise<ApiResponse<SystemInfoData>> => {
+  ): Promise<IApiResponse<SystemInfoData>> => {
     try {
       const fileSystem = FileSystem.getInstance();
       const profileManager = await ProfileManager.getInstance();
 
-      const body: ApiResponse<SystemInfoData> = {
+      const body: IApiResponse<SystemInfoData> = {
         data: {
           igniteHome: fileSystem.getIgniteHome(),
           currentProfile: profileManager.getCurrentProfile(),
@@ -46,7 +46,7 @@ export const systemHandlers = {
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'SYSTEM_INFO_ERROR',

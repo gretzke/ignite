@@ -2,6 +2,7 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RepoList } from '@ignite/api';
 import { apiClient } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
+import { formatApiError } from '../../middleware/apiGate';
 
 export interface IRepositoriesState {
   repositories: RepoList | null;
@@ -42,10 +43,10 @@ export const repositoriesApi = {
         return setRepositories(data);
       },
       onError: (error) => {
-        const errorMessage = error.message || 'Unknown error';
+        const { title, description } = formatApiError(error);
         return triggerToast({
-          title: 'Failed to load repositories',
-          description: `Could not load repositories: ${errorMessage}`,
+          title,
+          description,
           variant: 'error',
           duration: 5000,
         });
@@ -75,10 +76,10 @@ export const repositoriesApi = {
         ];
       },
       onError: (error) => {
-        const errorMessage = error.message || 'Unknown error';
+        const { title, description } = formatApiError(error);
         return triggerToast({
-          title: 'Failed to save repository',
-          description: `Could not save repository: ${errorMessage}`,
+          title,
+          description,
           variant: 'error',
           duration: 5000,
         });
@@ -105,10 +106,10 @@ export const repositoriesApi = {
         ];
       },
       onError: (error) => {
-        const errorMessage = error.message || 'Unknown error';
+        const { title, description } = formatApiError(error);
         return triggerToast({
-          title: 'Failed to remove repository',
-          description: `Could not remove repository: ${errorMessage}`,
+          title,
+          description,
           variant: 'error',
           duration: 5000,
         });

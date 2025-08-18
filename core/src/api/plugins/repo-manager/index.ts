@@ -6,7 +6,7 @@ import {
   RepoGetBranchesResult,
   RepoInfoResult,
 } from '@ignite/plugin-types/base/repo-manager';
-import type { ApiError, ApiResponse } from '@ignite/api';
+import type { IApiError, IApiResponse } from '@ignite/api';
 import { z } from 'zod';
 import { PluginOrchestrator } from '../../../plugins/containers/PluginOrchestrator.js';
 import {
@@ -32,7 +32,7 @@ export const repoManagerHandlers = {
     });
     if (!result.success) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: result.error?.code || 'INIT_ERROR',
@@ -47,7 +47,7 @@ export const repoManagerHandlers = {
   getBranches: async (
     request: FastifyRequest<{ Body: PathOptions }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<RepoGetBranchesResult>> => {
+  ): Promise<IApiResponse<RepoGetBranchesResult>> => {
     const orchestrator = PluginOrchestrator.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
     const result = await orchestrator.executePlugin(pluginId, 'getBranches', {
@@ -55,7 +55,7 @@ export const repoManagerHandlers = {
     });
     if (!result.success) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: result.error?.code || 'GET_BRANCHES_ERROR',
@@ -64,7 +64,7 @@ export const repoManagerHandlers = {
       };
       return reply.status(statusCode).send(body);
     }
-    const body: ApiResponse<RepoGetBranchesResult> = {
+    const body: IApiResponse<RepoGetBranchesResult> = {
       data: result.data as RepoGetBranchesResult,
     };
     return reply.status(200).send(body);
@@ -86,7 +86,7 @@ export const repoManagerHandlers = {
     );
     if (!result.success) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: result.error?.code || 'CHECKOUT_BRANCH_ERROR',
@@ -114,7 +114,7 @@ export const repoManagerHandlers = {
     );
     if (!result.success) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: result.error?.code || 'CHECKOUT_COMMIT_ERROR',
@@ -137,7 +137,7 @@ export const repoManagerHandlers = {
     });
     if (!result.success) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: result.error?.code || 'PULL_ERROR',
@@ -152,7 +152,7 @@ export const repoManagerHandlers = {
   getRepoInfo: async (
     request: FastifyRequest<{ Body: PathOptions }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<RepoInfoResult>> => {
+  ): Promise<IApiResponse<RepoInfoResult>> => {
     const orchestrator = PluginOrchestrator.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
     const result = await orchestrator.executePlugin(pluginId, 'getRepoInfo', {
@@ -160,7 +160,7 @@ export const repoManagerHandlers = {
     });
     if (!result.success) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: result.error?.code || 'INFO_ERROR',
@@ -169,7 +169,7 @@ export const repoManagerHandlers = {
       };
       return reply.status(statusCode).send(body);
     }
-    const body: ApiResponse<RepoInfoResult> = {
+    const body: IApiResponse<RepoInfoResult> = {
       data: result.data as RepoInfoResult,
     };
     return reply.status(200).send(body);

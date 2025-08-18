@@ -1,5 +1,5 @@
 import { createListenerMiddleware } from '@reduxjs/toolkit';
-import { createClient, type Client } from '@ignite/api/client';
+import { createClient, type Client, ApiError } from '@ignite/api/client';
 import { apiDispatchAction, isApiDispatchAction } from '../api/client';
 import { getToastApi } from '../../ui/toast/toastBus';
 import type { RootState } from '../store';
@@ -61,25 +61,27 @@ apiGate.startListening({
           }
         }
       } catch (err: unknown) {
-        // Handle error callback
+        // Handle error callback with type-safe ApiError
         const { onError } = action.payload;
         if (onError) {
-          const errorMessage =
-            err instanceof Error ? err.message : 'API call failed';
-          const errorStatus =
-            err && typeof err === 'object' && 'status' in err
-              ? (err as { status?: number }).status
-              : undefined;
-          const errorBody =
-            err && typeof err === 'object' && 'body' in err
-              ? (err as { body?: unknown }).body
-              : undefined;
+          let errorActions;
 
-          const errorActions = onError({
-            message: errorMessage,
-            status: errorStatus,
-            body: errorBody,
-          });
+          // Pass the full ApiError instance for maximum type safety
+          if (err instanceof ApiError) {
+            errorActions = onError(err);
+          } else {
+            // For non-ApiError instances, create an ApiError wrapper
+            const fallbackMessage =
+              err instanceof Error ? err.message : 'API call failed';
+            const fallbackError = new ApiError(fallbackMessage, 500, {
+              code: 'API_CALL_FAILED',
+              message: fallbackMessage,
+              statusCode: 500,
+              error: 'API call failed',
+            });
+            errorActions = onError(fallbackError);
+          }
+
           if (errorActions) {
             const actions = Array.isArray(errorActions)
               ? errorActions
@@ -91,8 +93,8 @@ apiGate.startListening({
         } else {
           // Default error handling if no callback provided
           const toast = getToastApi();
-          const errorMessage =
-            err instanceof Error ? err.message : 'API call failed';
+          const errorMessage = (err as Error).message;
+
           toast?.show({
             title: 'Error',
             description: errorMessage,
@@ -131,7 +133,17 @@ apiGate.startListening({
     const message =
       gate === 'aborted' ? 'Request cancelled' : 'Offline: request aborted';
     if (onError) {
-      const errorActions = onError({ message });
+      const offlineError = new ApiError(
+        message,
+        gate === 'aborted' ? 499 : 503,
+        {
+          code: gate === 'aborted' ? 'REQUEST_CANCELLED' : 'OFFLINE',
+          message,
+          statusCode: gate === 'aborted' ? 499 : 503,
+          error: gate === 'aborted' ? 'Request cancelled' : 'Offline',
+        }
+      );
+      const errorActions = onError(offlineError);
       if (errorActions) {
         const actions = Array.isArray(errorActions)
           ? errorActions
@@ -149,3 +161,19 @@ apiGate.startListening({
     }
   },
 });
+
+export function formatApiError(error: ApiError): {
+  title: string;
+  description: string;
+} {
+  if (error.body.details?.error) {
+    return {
+      title: error.body.message,
+      description: error.body.details.error as string,
+    };
+  }
+  return {
+    title: 'Request failed',
+    description: error.body.message,
+  };
+}

@@ -3,8 +3,8 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import fs from 'fs/promises';
 import path from 'path';
 import type {
-  ApiError,
-  ApiResponse,
+  IApiError,
+  IApiResponse,
   ListProfilesData,
   GetCurrentProfileData,
   CreateProfileRequest,
@@ -33,7 +33,7 @@ export const profileHandlers = {
   listProfiles: async (
     _request: FastifyRequest,
     reply: FastifyReply
-  ): Promise<ApiResponse<ListProfilesData>> => {
+  ): Promise<IApiResponse<ListProfilesData>> => {
     try {
       const profileManager = await ProfileManager.getInstance();
       const currentId = profileManager.getCurrentProfile();
@@ -48,13 +48,13 @@ export const profileHandlers = {
           // Ignore profiles that are not found
         }
       }
-      const body: ApiResponse<ListProfilesData> = {
+      const body: IApiResponse<ListProfilesData> = {
         data: { currentId, profiles },
       };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_LIST_ERROR',
@@ -70,7 +70,7 @@ export const profileHandlers = {
   listArchivedProfiles: async (
     _request: FastifyRequest,
     reply: FastifyReply
-  ): Promise<ApiResponse<{ profiles: ProfileConfig[] }>> => {
+  ): Promise<IApiResponse<{ profiles: ProfileConfig[] }>> => {
     try {
       const fileSystem = FileSystem.getInstance();
       const archivedRoot = fileSystem.getArchivedProfilesPath();
@@ -91,13 +91,13 @@ export const profileHandlers = {
       } catch {
         profiles = [];
       }
-      const body: ApiResponse<{ profiles: ProfileConfig[] }> = {
+      const body: IApiResponse<{ profiles: ProfileConfig[] }> = {
         data: { profiles },
       };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_ARCHIVE_LIST_ERROR',
@@ -113,19 +113,19 @@ export const profileHandlers = {
   getCurrentProfile: async (
     _request: FastifyRequest,
     reply: FastifyReply
-  ): Promise<ApiResponse<GetCurrentProfileData>> => {
+  ): Promise<IApiResponse<GetCurrentProfileData>> => {
     try {
       const profileManager = await ProfileManager.getInstance();
       const name = profileManager.getCurrentProfile();
       const config = await profileManager.getCurrentProfileConfig();
 
-      const body: ApiResponse<GetCurrentProfileData> = {
+      const body: IApiResponse<GetCurrentProfileData> = {
         data: { name, config },
       };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_GET_ERROR',
@@ -141,16 +141,16 @@ export const profileHandlers = {
   getProfile: async (
     request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<GetProfileData>> => {
+  ): Promise<IApiResponse<GetProfileData>> => {
     try {
       const { id } = request.params;
       const fileSystem = FileSystem.getInstance();
       const profile = await fileSystem.getProfileConfig(id);
-      const body: ApiResponse<GetProfileData> = { data: { profile } };
+      const body: IApiResponse<GetProfileData> = { data: { profile } };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_GET_ERROR',
@@ -166,16 +166,16 @@ export const profileHandlers = {
   createProfile: async (
     request: FastifyRequest<{ Body: CreateProfileRequest }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<CreateProfileData>> => {
+  ): Promise<IApiResponse<CreateProfileData>> => {
     try {
       const { name, color, icon } = request.body;
       const fileSystem = FileSystem.getInstance();
       const profile = await fileSystem.createProfile(name, { color, icon });
-      const body: ApiResponse<CreateProfileData> = { data: { profile } };
+      const body: IApiResponse<CreateProfileData> = { data: { profile } };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_CREATE_ERROR',
@@ -191,18 +191,18 @@ export const profileHandlers = {
   switchProfile: async (
     request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<SwitchProfileData>> => {
+  ): Promise<IApiResponse<SwitchProfileData>> => {
     try {
       const { id } = request.params;
       const profileManager = await ProfileManager.getInstance();
       await profileManager.switchProfile(id);
-      const body: ApiResponse<SwitchProfileData> = {
+      const body: IApiResponse<SwitchProfileData> = {
         data: { message: `Switched to profile '${id}'` },
       };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_SWITCH_ERROR',
@@ -218,7 +218,7 @@ export const profileHandlers = {
   updateProfile: async (
     request: FastifyRequest<{ Body: UpdateProfileRequest }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<UpdateProfileData>> => {
+  ): Promise<IApiResponse<UpdateProfileData>> => {
     try {
       const { id, ...updates } = request.body;
       const fileSystem = FileSystem.getInstance();
@@ -231,13 +231,13 @@ export const profileHandlers = {
         icon: updates.icon ?? current.icon,
       };
       await profileManager.editProfile(id, updated);
-      const body: ApiResponse<UpdateProfileData> = {
+      const body: IApiResponse<UpdateProfileData> = {
         data: { profile: updated },
       };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_UPDATE_ERROR',
@@ -253,7 +253,7 @@ export const profileHandlers = {
   archiveProfile: async (
     request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<ArchiveProfileData>> => {
+  ): Promise<IApiResponse<ArchiveProfileData>> => {
     try {
       const { id } = request.params;
       const fileSystem = FileSystem.getInstance();
@@ -265,13 +265,13 @@ export const profileHandlers = {
       const src = fileSystem.getProfilePath(id);
       const dest = fileSystem.getArchivedProfilePath(cfg.id);
       await fileSystem.moveDirectory(src, dest);
-      const body: ApiResponse<ArchiveProfileData> = {
+      const body: IApiResponse<ArchiveProfileData> = {
         data: { message: `Archived profile '${id}'` },
       };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_ARCHIVE_ERROR',
@@ -287,20 +287,20 @@ export const profileHandlers = {
   restoreProfile: async (
     request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<RestoreProfileData>> => {
+  ): Promise<IApiResponse<RestoreProfileData>> => {
     try {
       const { id } = request.params;
       const fileSystem = FileSystem.getInstance();
       const profileManager = await ProfileManager.getInstance();
       await profileManager.restoreProfile(id);
       const profile = await fileSystem.getProfileConfig(id);
-      const body: ApiResponse<RestoreProfileData> = {
+      const body: IApiResponse<RestoreProfileData> = {
         data: { profile },
       };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_RESTORE_ERROR',
@@ -316,18 +316,18 @@ export const profileHandlers = {
   deleteProfile: async (
     request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<DeleteProfileData>> => {
+  ): Promise<IApiResponse<DeleteProfileData>> => {
     try {
       const { id } = request.params;
       const profileManager = await ProfileManager.getInstance();
       await profileManager.deleteProfile(id);
-      const body: ApiResponse<DeleteProfileData> = {
+      const body: IApiResponse<DeleteProfileData> = {
         data: { message: `Deleted profile '${id}'` },
       };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_DELETE_ERROR',
@@ -345,7 +345,7 @@ export const profileHandlers = {
     request: FastifyRequest<{ Params: ProfileParams }>,
     reply: FastifyReply
   ): Promise<
-    ApiResponse<{ session: string | null; local: string[]; cloned: string[] }>
+    IApiResponse<{ session: string | null; local: string[]; cloned: string[] }>
   > => {
     try {
       const { id } = request.params;
@@ -376,7 +376,7 @@ export const profileHandlers = {
 
       const session = process.env.IGNITE_WORKSPACE_PATH || null;
 
-      const body: ApiResponse<{
+      const body: IApiResponse<{
         session: string | null;
         local: string[];
         cloned: string[];
@@ -386,7 +386,7 @@ export const profileHandlers = {
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_REPOS_LIST_ERROR',
@@ -441,7 +441,7 @@ export const profileHandlers = {
       return reply.status(204).send(null);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_REPO_SAVE_ERROR',
@@ -479,7 +479,7 @@ export const profileHandlers = {
       return reply.status(204).send(null);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PROFILE_REPO_DELETE_ERROR',

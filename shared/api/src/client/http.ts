@@ -3,6 +3,20 @@ export interface IApiClientOptions {
   headers?: Record<string, string>;
 }
 
+import { IApiError } from "../v1/index.js";
+
+export class ApiError extends Error {
+  public readonly status: number;
+  public readonly body: IApiError;
+
+  constructor(message: string, status: number, body: IApiError) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
 export interface IRequestOptions {
   signal?: AbortSignal;
 }
@@ -78,16 +92,7 @@ export async function httpRequest<TBody, TResponse>(
   }
 
   if (!response.ok) {
-    const error = new Error(
-      typeof parsed === "string"
-        ? parsed
-        : (parsed as any)?.message ?? "Request failed",
-    );
-    // @ts-expect-error attach meta for callers if needed
-    error.status = response.status;
-    // @ts-expect-error attach body
-    error.body = parsed;
-    throw error;
+    throw new ApiError("Request failed", response.status, parsed as IApiError);
   }
 
   return parsed as TResponse;

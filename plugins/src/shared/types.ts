@@ -1,4 +1,4 @@
-export interface ApiError {
+export interface IApiError {
   success: false;
   error: {
     code: string;
@@ -12,7 +12,7 @@ export type PluginResponse<T> =
       success: true;
       data: T;
     }
-  | ApiError;
+  | IApiError;
 
 // Plugin metadata and configuration
 export enum PluginType {
