@@ -9,8 +9,10 @@ import {
   profilesReducer,
   profilesApi,
 } from './features/profiles/profilesSlice';
+import { repositoriesReducer } from './features/repositories/repositoriesSlice';
 import { apiGate } from './middleware/apiGate';
 import { uiEffects } from './middleware/uiEffects';
+import { repositoriesEffects } from './middleware/repositoriesEffects';
 
 export const store = configureStore({
   reducer: {
@@ -18,14 +20,15 @@ export const store = configureStore({
     app: appReducer,
     connection: connectionReducer,
     profiles: profilesReducer,
+    repositories: repositoriesReducer,
   },
   middleware: (getDefaultMiddleware) =>
-    // Add RTK Query middleware for caching, polling, and automatic refetching
     getDefaultMiddleware({ serializableCheck: false })
       .prepend(
         apiGate.middleware,
         uiEffects.middleware,
-        toastListener.middleware
+        toastListener.middleware,
+        repositoriesEffects.middleware
       )
       .concat(websocketMiddleware),
 });

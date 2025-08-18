@@ -68,11 +68,20 @@ export async function httpRequest<TBody, TResponse>(
   const response = await fetch(fullUrl, init);
   const contentType = response.headers.get("content-type") || "";
   const isJson = contentType.includes("application/json");
-  const parsed = isJson ? await response.json() : await response.text();
+
+  let parsed: unknown;
+  if (response.status === 204) {
+    // 204 No Content should return null, not empty string
+    parsed = null;
+  } else {
+    parsed = isJson ? await response.json() : await response.text();
+  }
 
   if (!response.ok) {
     const error = new Error(
-      typeof parsed === "string" ? parsed : parsed?.message ?? "Request failed",
+      typeof parsed === "string"
+        ? parsed
+        : (parsed as any)?.message ?? "Request failed",
     );
     // @ts-expect-error attach meta for callers if needed
     error.status = response.status;

@@ -1,122 +1,133 @@
 import Tooltip from '../components/Tooltip';
 import Dropdown from '../components/Dropdown';
-import Select from '../components/Select';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Bookmark, Plus, X, Folder, GitBranch } from 'lucide-react';
-import { useRef, useState } from 'react';
-
-interface GitHubBranch {
-  name: string;
-  commit: {
-    sha: string;
-  };
-}
+import { useState } from 'react';
+import { useAppSelector, useAppDispatch } from '../store/hooks';
+import { repositoriesApi } from '../store/features/repositories/repositoriesSlice';
+import { triggerToast } from '../store/middleware/toastListener';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 export default function RepositoriesPage() {
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
   const [cloneUrl, setCloneUrl] = useState('');
-  const [branches, setBranches] = useState<GitHubBranch[]>([]);
-  const [selectedBranch, setSelectedBranch] = useState('');
-  const [loadingBranches, setLoadingBranches] = useState(false);
-  const [branchError, setBranchError] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [localRepoModalOpen, setLocalRepoModalOpen] = useState(false);
+  const [localRepoPath, setLocalRepoPath] = useState('');
+  const [localRepoError, setLocalRepoError] = useState('');
+  const [cloneUrlError, setCloneUrlError] = useState('');
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [repoToDelete, setRepoToDelete] = useState<{
+    name: string;
+    path: string;
+  } | null>(null);
+
+  // Store hooks
+  const dispatch = useAppDispatch();
+  const { repositories } = useAppSelector((state) => state.repositories);
+  const { currentId } = useAppSelector((state) => state.profiles);
 
   const resetCloneState = () => {
     setCloneUrl('');
-    setBranches([]);
-    setSelectedBranch('');
-    setBranchError('');
-    setLoadingBranches(false);
+    setCloneUrlError('');
   };
 
-  const handleLocalRepo = async () => {
+  const resetLocalRepoState = () => {
+    setLocalRepoPath('');
+    setLocalRepoError('');
+  };
+
+  // Validation helpers
+  const isValidUrl = (url: string): boolean => {
     try {
-      // Use modern File System Access API if available
-      if ('showDirectoryPicker' in window) {
-        // const _directoryHandle =
-        await (
-          window as unknown as {
-            showDirectoryPicker: () => Promise<{ name: string }>;
-          }
-        ).showDirectoryPicker();
-        // console.log('Selected directory:', _directoryHandle.name);
-        // TODO: Handle the directory path - _directoryHandle.name contains the folder name
-      } else {
-        // Fallback to traditional file input for older browsers
-        fileInputRef.current?.click();
-      }
+      new URL(url);
+      return true;
     } catch {
-      // User cancelled the picker or error occurred
-      // console.log('Directory selection cancelled or failed');
+      return false;
     }
   };
 
-  const handleFolderSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (files && files.length > 0) {
-      // Extract just the directory name from the first file's path
-      // const _directoryName = files[0].webkitRelativePath.split('/')[0];
-      // console.log('Selected folder (fallback):', _directoryName);
-      // TODO: Handle the directory path
-    }
+  const isValidAbsolutePath = (path: string): boolean => {
+    // Check if path is absolute (starts with / on Unix or C:\ on Windows)
+    const trimmedPath = path.trim();
+    return (
+      trimmedPath.startsWith('/') || // Unix/macOS absolute path
+      /^[A-Za-z]:[\\]/.test(trimmedPath) // Windows absolute path (C:\, D:\, etc.)
+    );
   };
 
-  const parseGitHubUrl = (
-    url: string
-  ): { owner: string; repo: string } | null => {
-    const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
-    if (match) {
-      return { owner: match[1], repo: match[2].replace(/\.git$/, '') };
-    }
-    return null;
-  };
-
-  const fetchBranches = async (url: string) => {
-    const parsed = parseGitHubUrl(url);
-    if (!parsed) return;
-
-    setLoadingBranches(true);
-    setBranchError('');
-
-    try {
-      const perPage = 100;
-      let page = 1;
-      const allBranches: GitHubBranch[] = [];
-      const headers: Record<string, string> = {
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      };
-
-      while (true) {
-        const response = await fetch(
-          `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/branches?per_page=${perPage}&page=${page}`,
-          { headers }
-        );
-        if (!response.ok) {
-          throw new Error('Repository not found or private');
-        }
-
-        const batch: GitHubBranch[] = await response.json();
-        allBranches.push(...batch);
-
-        const link = response.headers.get('Link');
-        const hasNext = !!(link && link.includes('rel="next"'));
-        if (!hasNext || batch.length < perPage) break;
-        page += 1;
-      }
-
-      setBranches(allBranches);
-
-      // Let the Select component handle default selection via defaultPriority
-      setSelectedBranch(''); // Clear to let Select component handle defaults
-    } catch {
-      setBranchError(
-        'Could not fetch branches. Please check the repository URL.'
+  // Input change handlers with validation
+  const handleLocalRepoPathChange = (value: string) => {
+    setLocalRepoPath(value);
+    if (value.trim() && !isValidAbsolutePath(value.trim())) {
+      setLocalRepoError(
+        'Please enter a valid absolute path (e.g., /Users/username/projects/repo)'
       );
-      setBranches([]);
-      setSelectedBranch('');
-    } finally {
-      setLoadingBranches(false);
+    } else {
+      setLocalRepoError('');
+    }
+  };
+
+  const handleCloneUrlChange = (value: string) => {
+    setCloneUrl(value);
+    if (value.trim() && !isValidUrl(value.trim())) {
+      setCloneUrlError(
+        'Please enter a valid URL (e.g., https://github.com/user/repo)'
+      );
+    } else {
+      setCloneUrlError('');
+    }
+  };
+
+  // Enter key handlers
+  const handleLocalRepoKeyDown = (e: React.KeyboardEvent) => {
+    if (
+      e.key === 'Enter' &&
+      localRepoPath.trim() &&
+      isValidAbsolutePath(localRepoPath.trim())
+    ) {
+      handleLocalRepoSubmit();
+    }
+  };
+
+  const handleCloneUrlKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && cloneUrl.trim() && isValidUrl(cloneUrl.trim())) {
+      handleCloneSubmit();
+    }
+  };
+
+  const handleLocalRepo = () => {
+    setLocalRepoModalOpen(true);
+  };
+
+  const handleLocalRepoSubmit = () => {
+    if (!currentId || !localRepoPath.trim()) return;
+
+    const trimmedPath = localRepoPath.trim();
+    if (!isValidAbsolutePath(trimmedPath)) {
+      dispatch(
+        triggerToast({
+          title: 'Invalid Path',
+          description:
+            'Please enter a valid absolute path (e.g., /Users/username/projects/repo)',
+          variant: 'error',
+          duration: 4000,
+        })
+      );
+      return;
+    }
+
+    // Save the local repository
+    dispatch(repositoriesApi.saveRepository(currentId, trimmedPath));
+
+    // Clear state and close modal
+    resetLocalRepoState();
+    setLocalRepoModalOpen(false);
+  };
+
+  const handleLocalRepoModalOpenChange = (open: boolean) => {
+    setLocalRepoModalOpen(open);
+    if (!open) {
+      resetLocalRepoState();
     }
   };
 
@@ -125,8 +136,27 @@ export default function RepositoriesPage() {
   };
 
   const handleCloneSubmit = () => {
-    // For now, just log the URL and branch
-    // console.log('Clone URL:', cloneUrl, 'Branch:', selectedBranch);
+    if (!currentId || !cloneUrl.trim()) return;
+
+    const trimmedUrl = cloneUrl.trim();
+    if (!isValidUrl(trimmedUrl)) {
+      dispatch(
+        triggerToast({
+          title: 'Invalid URL',
+          description:
+            'Please enter a valid URL (e.g., https://github.com/user/repo)',
+          variant: 'error',
+          duration: 4000,
+        })
+      );
+      return;
+    }
+
+    // Save the cloned repository
+    dispatch(repositoriesApi.saveRepository(currentId, trimmedUrl));
+
+    // Clear state and close modal
+    resetCloneState();
     setCloneModalOpen(false);
   };
 
@@ -137,49 +167,81 @@ export default function RepositoriesPage() {
     }
   };
 
-  const handleCloneUrlChange = (url: string) => {
-    setCloneUrl(url);
-    if (url && parseGitHubUrl(url)) {
-      fetchBranches(url);
-    } else {
-      setBranches([]);
-      setSelectedBranch('');
-      setBranchError('');
-    }
+  const handleSaveWorkspace = () => {
+    if (!currentId || !repositories?.session) return;
+
+    dispatch(repositoriesApi.saveRepository(currentId, repositories.session));
   };
 
-  const mock = {
-    name: 'Current Workspace',
-    path: '/path/to/project',
-    saved: false,
-    framework: 'Foundry',
-  } as const;
+  const handleRemoveRepo = (repoName: string, repoPath: string) => {
+    setRepoToDelete({ name: repoName, path: repoPath });
+    setConfirmDeleteOpen(true);
+  };
 
-  const localRepos = [
-    {
-      name: 'My DeFi Project',
-      path: '/Users/alice/projects/defi',
-      framework: 'Foundry',
-    },
-    {
-      name: 'NFT Marketplace',
-      path: '/Users/alice/projects/nft-market',
-      framework: 'Hardhat',
-    },
-  ] as const;
+  const confirmRemoveRepo = () => {
+    if (!currentId || !repoToDelete) return;
 
-  const clonedRepos = [
-    {
-      name: 'uniswap/v4-core',
-      path: 'github.com/uniswap/v4-core',
-      framework: 'Foundry',
-    },
-    {
-      name: 'openzeppelin/openzeppelin-contracts',
-      path: 'github.com/openzeppelin/openzeppelin-contracts',
-      framework: 'Hardhat',
-    },
-  ] as const;
+    dispatch(repositoriesApi.removeRepository(currentId, repoToDelete.path));
+    setRepoToDelete(null);
+  };
+
+  // Helper function to extract name from path
+  const getRepoName = (path: string) => {
+    if (path.includes('github.com/')) {
+      return path.split('/').slice(-2).join('/');
+    }
+    return path.split('/').pop() || path;
+  };
+
+  // Transform API data to display format and handle workspace matching
+  const sessionPath = repositories?.session;
+  const localRepoPaths = repositories?.local || [];
+
+  // Check if current workspace matches any local repo
+  const matchingLocalRepoIndex = sessionPath
+    ? localRepoPaths.findIndex((path) => path === sessionPath)
+    : -1;
+
+  const hasMatchingLocalRepo = matchingLocalRepoIndex !== -1;
+
+  // Current workspace (only show if it doesn't match a local repo)
+  const currentWorkspace =
+    sessionPath && !hasMatchingLocalRepo
+      ? {
+          name: 'Current Workspace',
+          path: sessionPath,
+          saved: false,
+          framework: 'Unknown', // We'd need to detect this
+        }
+      : null;
+
+  // Transform local repos and handle current workspace matching
+  const localRepos = localRepoPaths.map((path, index) => {
+    const isCurrentWorkspace = path === sessionPath;
+    return {
+      name: isCurrentWorkspace
+        ? `${getRepoName(path)} (Current Workspace)`
+        : getRepoName(path),
+      path,
+      framework: 'Unknown', // We'd need to detect this
+      isCurrentWorkspace,
+      originalIndex: index,
+    };
+  });
+
+  // Sort local repos to put current workspace match at the top
+  localRepos.sort((a, b) => {
+    if (a.isCurrentWorkspace && !b.isCurrentWorkspace) return -1;
+    if (!a.isCurrentWorkspace && b.isCurrentWorkspace) return 1;
+    return a.originalIndex - b.originalIndex; // Maintain original order for others
+  });
+
+  const clonedRepos =
+    repositories?.cloned.map((path) => ({
+      name: getRepoName(path),
+      path,
+      framework: 'Unknown', // We'd need to detect this
+    })) || [];
 
   return (
     <div className="text-[var(--text)]">
@@ -243,143 +305,247 @@ export default function RepositoriesPage() {
       </div>
 
       {/* Current workspace row */}
-      <div className="card-milky p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
-              📁
-            </div>
-            <div className="min-w-0">
-              <div className="text-sm font-medium truncate">{mock.name}</div>
-              <div className="text-xs opacity-70 truncate">
-                {mock.path} {mock.saved ? '' : '(unsaved)'}
+      {currentWorkspace && (
+        <div className="card-milky p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
+                📁
               </div>
+              <div className="min-w-0">
+                <div className="text-sm font-medium truncate">
+                  {currentWorkspace.name}
+                </div>
+                <div className="text-xs opacity-70 truncate">
+                  {currentWorkspace.path}{' '}
+                  {currentWorkspace.saved ? '' : '(unsaved)'}
+                </div>
+              </div>
+              <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
+                {currentWorkspace.framework}
+              </span>
             </div>
-            <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
-              {mock.framework}
-            </span>
-          </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {!mock.saved && (
-              <Tooltip label="Save" placement="top">
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{
-                    width: 40,
-                    height: 36,
-                    paddingLeft: 0,
-                    paddingRight: 0,
-                  }}
-                  aria-label="Save repository"
-                  title="Save"
-                >
-                  <Bookmark size={16} />
-                </button>
-              </Tooltip>
+            <div className="flex items-center gap-2 shrink-0">
+              {!currentWorkspace.saved && (
+                <Tooltip label="Save" placement="top">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{
+                      width: 40,
+                      height: 36,
+                      paddingLeft: 0,
+                      paddingRight: 0,
+                    }}
+                    aria-label="Save repository"
+                    title="Save"
+                    onClick={handleSaveWorkspace}
+                  >
+                    <Bookmark size={16} />
+                  </button>
+                </Tooltip>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Local repos */}
+      {repositories && (
+        <div className="mt-4">
+          <div className="text-xs opacity-70 mb-2">Local</div>
+          <div className="flex flex-col gap-2">
+            {localRepos.length === 0 ? (
+              <div className="card-milky p-4">
+                <div className="text-sm opacity-70">No local repositories</div>
+              </div>
+            ) : (
+              localRepos.map((r, index) => (
+                <div key={`local-${index}`} className="card-milky p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
+                        📁
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">
+                          {r.name}
+                        </div>
+                        <div className="text-xs opacity-70 truncate">
+                          {r.path}
+                        </div>
+                      </div>
+                      <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
+                        {r.framework}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Tooltip label="Remove" placement="top">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-secondary-borderless"
+                          style={{
+                            width: 40,
+                            height: 36,
+                            paddingLeft: 0,
+                            paddingRight: 0,
+                          }}
+                          aria-label="Remove repository"
+                          title="Remove"
+                          onClick={() => handleRemoveRepo(r.name, r.path)}
+                        >
+                          <X size={16} />
+                        </button>
+                      </Tooltip>
+                    </div>
+                  </div>
+                </div>
+              ))
             )}
           </div>
         </div>
-      </div>
-
-      {/* Local repos */}
-      <div className="mt-4">
-        <div className="text-xs opacity-70 mb-2">Local</div>
-        <div className="flex flex-col gap-2">
-          {localRepos.map((r) => (
-            <div key={r.name} className="card-milky p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
-                    📁
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate">{r.name}</div>
-                    <div className="text-xs opacity-70 truncate">{r.path}</div>
-                  </div>
-                  <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
-                    {r.framework}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Tooltip label="Remove" placement="top">
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-secondary-borderless"
-                      style={{
-                        width: 40,
-                        height: 36,
-                        paddingLeft: 0,
-                        paddingRight: 0,
-                      }}
-                      aria-label="Remove repository"
-                      title="Remove"
-                    >
-                      <X size={16} />
-                    </button>
-                  </Tooltip>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      )}
 
       {/* Cloned repos */}
-      <div className="mt-4">
-        <div className="text-xs opacity-70 mb-2">Cloned</div>
-        <div className="flex flex-col gap-2">
-          {clonedRepos.map((r) => (
-            <div key={r.name} className="card-milky p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
-                    📁
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate">{r.name}</div>
-                    <div className="text-xs opacity-70 truncate">{r.path}</div>
-                  </div>
-                  <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
-                    {r.framework}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Tooltip label="Remove" placement="top">
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-secondary-borderless"
-                      style={{
-                        width: 40,
-                        height: 36,
-                        paddingLeft: 0,
-                        paddingRight: 0,
-                      }}
-                      aria-label="Remove repository"
-                      title="Remove"
-                    >
-                      <X size={16} />
-                    </button>
-                  </Tooltip>
-                </div>
+      {repositories && (
+        <div className="mt-4">
+          <div className="text-xs opacity-70 mb-2">Cloned</div>
+          <div className="flex flex-col gap-2">
+            {clonedRepos.length === 0 ? (
+              <div className="card-milky p-4">
+                <div className="text-sm opacity-70">No cloned repositories</div>
               </div>
-            </div>
-          ))}
+            ) : (
+              clonedRepos.map((r, index) => (
+                <div key={`cloned-${index}`} className="card-milky p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
+                        📁
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">
+                          {r.name}
+                        </div>
+                        <div className="text-xs opacity-70 truncate">
+                          {r.path}
+                        </div>
+                      </div>
+                      <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
+                        {r.framework}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Tooltip label="Remove" placement="top">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-secondary-borderless"
+                          style={{
+                            width: 40,
+                            height: 36,
+                            paddingLeft: 0,
+                            paddingRight: 0,
+                          }}
+                          aria-label="Remove repository"
+                          title="Remove"
+                          onClick={() => handleRemoveRepo(r.name, r.path)}
+                        >
+                          <X size={16} />
+                        </button>
+                      </Tooltip>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Hidden file input for folder selection */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        style={{ display: 'none' }}
-        {...({
-          webkitdirectory: '',
-        } as React.InputHTMLAttributes<HTMLInputElement>)}
-        multiple
-        onChange={handleFolderSelect}
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onOpenChange={setConfirmDeleteOpen}
+        title="Remove Repository"
+        description={
+          repoToDelete
+            ? `Are you sure you want to remove "${repoToDelete.name}" from your repositories? This will not delete the actual files.`
+            : ''
+        }
+        confirmText="Remove"
+        variant="danger"
+        onConfirm={confirmRemoveRepo}
       />
+
+      {/* Local Repository Modal */}
+      <Dialog.Root
+        open={localRepoModalOpen}
+        onOpenChange={handleLocalRepoModalOpenChange}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay
+            className="dialog-overlay"
+            style={{ background: 'transparent' }}
+          />
+          <Dialog.Content
+            className="dialog-content glass-surface"
+            style={{
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              maxWidth: 460,
+              width: '90vw',
+              padding: 16,
+            }}
+          >
+            <Dialog.Title className="text-base font-semibold mb-2">
+              Add Local Repository
+            </Dialog.Title>
+            <div className="text-sm opacity-80 mb-4">
+              Enter the full path to your local repository directory.
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                Repository Path
+              </label>
+              <input
+                type="text"
+                placeholder="/Users/username/projects/my-repo"
+                value={localRepoPath}
+                onChange={(e) => handleLocalRepoPathChange(e.target.value)}
+                onKeyDown={handleLocalRepoKeyDown}
+                className="input-glass"
+                autoFocus
+              />
+              {localRepoError && (
+                <div className="text-xs text-red-400 mt-1">
+                  {localRepoError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 mt-2">
+              <Dialog.Close asChild>
+                <button type="button" className="btn btn-secondary">
+                  Cancel
+                </button>
+              </Dialog.Close>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleLocalRepoSubmit}
+                disabled={
+                  !localRepoPath.trim() ||
+                  !isValidAbsolutePath(localRepoPath.trim())
+                }
+              >
+                Add Repository
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Clone Repository Modal */}
       <Dialog.Root
@@ -417,39 +583,15 @@ export default function RepositoriesPage() {
                 placeholder="https://github.com/username/repository"
                 value={cloneUrl}
                 onChange={(e) => handleCloneUrlChange(e.target.value)}
+                onKeyDown={handleCloneUrlKeyDown}
                 className="input-glass"
                 autoFocus
               />
+              {cloneUrlError && (
+                <div className="text-xs text-red-400 mt-1">{cloneUrlError}</div>
+              )}
             </div>
 
-            {/* Branch Selection */}
-            {branches.length > 0 && (
-              <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">Branch</label>
-                <Select
-                  options={branches.map((branch) => ({
-                    value: branch.name,
-                    label: branch.name,
-                  }))}
-                  value={selectedBranch}
-                  onValueChange={setSelectedBranch}
-                  placeholder="Select branch..."
-                  defaultPriority={['main', 'master']}
-                />
-              </div>
-            )}
-
-            {/* Loading State */}
-            {loadingBranches && (
-              <div className="mb-4 text-sm opacity-70">
-                Fetching branches...
-              </div>
-            )}
-
-            {/* Error State */}
-            {branchError && (
-              <div className="mb-4 text-sm text-red-400">{branchError}</div>
-            )}
             <div className="flex items-center justify-end gap-2 mt-2">
               <Dialog.Close asChild>
                 <button type="button" className="btn btn-secondary">
@@ -460,11 +602,7 @@ export default function RepositoriesPage() {
                 type="button"
                 className="btn btn-primary"
                 onClick={handleCloneSubmit}
-                disabled={
-                  !cloneUrl.trim() ||
-                  (branches.length > 0 && !selectedBranch) ||
-                  loadingBranches
-                }
+                disabled={!cloneUrl.trim() || !isValidUrl(cloneUrl.trim())}
               >
                 Clone
               </button>

@@ -89,11 +89,23 @@ export function createClient(options: IApiClientOptions = {}): Client {
       signal,
     });
 
-    // Validate response using the declared 200 schema
-    const responseSchema = (route as any).schema
-      .response[200] as z.ZodSchema<TResp>;
-    const parsed = responseSchema.parse(raw) as TResp;
-    return parsed;
+    // Find the appropriate response schema (try 200, then 204)
+    const responseSchemas = (route as any).schema?.response;
+    let responseSchema: z.ZodSchema<TResp> | undefined;
+
+    // Try to find a response schema - prefer 200, fallback to 204
+    if (responseSchemas) {
+      responseSchema = responseSchemas[200] || responseSchemas[204];
+    }
+
+    // If we have a schema, validate the response
+    if (responseSchema) {
+      const parsed = responseSchema.parse(raw) as TResp;
+      return parsed;
+    }
+
+    // If no schema found, return raw response
+    return raw as TResp;
   }
 
   return { request } satisfies Client;
