@@ -2,7 +2,7 @@ import { PluginMetadata, PluginResponse, PluginType } from "./types.js";
 
 // Base class for all Ignite plugins
 export abstract class BasePlugin<T extends PluginType = PluginType> {
-  // Static method for metadata - wraps getMetadata in ApiResponse
+  // Static method for metadata - wraps getMetadata in IApiResponse
   static getInfo(): PluginResponse<PluginMetadata> {
     return {
       success: true,

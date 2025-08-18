@@ -112,5 +112,6 @@ export function createClient(options: IApiClientOptions = {}): Client {
 }
 
 export type { IApiClientOptions } from "./http.js";
+export { ApiError } from "./http.js";
 
 export default { createClient };

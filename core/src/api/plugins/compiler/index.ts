@@ -1,8 +1,8 @@
 // Compiler plugin route handlers
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type {
-  ApiError,
-  ApiResponse,
+  IApiError,
+  IApiResponse,
   DetectOptions,
   DetectionResult,
 } from '@ignite/api';
@@ -15,7 +15,7 @@ export const compilerHandlers = {
       Body: DetectOptions;
     }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<DetectionResult>> => {
+  ): Promise<IApiResponse<DetectionResult>> => {
     try {
       // Get hostPath from request body or fall back to environment/cwd
       const hostPath =
@@ -34,7 +34,7 @@ export const compilerHandlers = {
 
       if (!result.success) {
         const statusCode = 500 as const; // map code→status later if needed
-        const body: ApiError = {
+        const body: IApiError = {
           statusCode,
           error: 'Internal Server Error',
           code: result.error?.code || 'DETECT_ERROR',
@@ -44,13 +44,13 @@ export const compilerHandlers = {
         return reply.status(statusCode).send(body);
       }
 
-      const body: ApiResponse<DetectionResult> = {
+      const body: IApiResponse<DetectionResult> = {
         data: result.data as DetectionResult,
       };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'DETECT_ERROR',

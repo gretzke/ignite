@@ -1,8 +1,8 @@
 // Core plugin management route handlers
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type {
-  ApiError,
-  ApiResponse,
+  IApiError,
+  IApiResponse,
   ListPluginsData,
   GetPluginData,
 } from '@ignite/api';
@@ -14,7 +14,7 @@ export const pluginHandlers = {
   listPlugins: async (
     request: FastifyRequest<{ Querystring: { type?: string } }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<ListPluginsData>> => {
+  ): Promise<IApiResponse<ListPluginsData>> => {
     try {
       const { type } = request.query;
       const pluginManager = PluginManager.getInstance();
@@ -25,11 +25,11 @@ export const pluginHandlers = {
           : undefined;
       const plugins = await pluginManager.listPlugins(validType);
 
-      const body: ApiResponse<ListPluginsData> = { data: { plugins } };
+      const body: IApiResponse<ListPluginsData> = { data: { plugins } };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PLUGIN_LIST_ERROR',
@@ -45,18 +45,18 @@ export const pluginHandlers = {
   getPlugin: async (
     request: FastifyRequest<{ Params: { pluginId: string } }>,
     reply: FastifyReply
-  ): Promise<ApiResponse<GetPluginData>> => {
+  ): Promise<IApiResponse<GetPluginData>> => {
     try {
       const { pluginId } = request.params;
       const pluginManager = PluginManager.getInstance();
 
       const plugin = await pluginManager.getPlugin(pluginId);
 
-      const body: ApiResponse<GetPluginData> = { data: { plugin } };
+      const body: IApiResponse<GetPluginData> = { data: { plugin } };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;
-      const body: ApiError = {
+      const body: IApiError = {
         statusCode,
         error: 'Internal Server Error',
         code: 'PLUGIN_GET_ERROR',

@@ -27,7 +27,7 @@ const PluginMetadataSchema = z.object({
   baseImage: z.string(),
 }) satisfies z.ZodType<PluginMetadata>;
 
-// Type-safe ApiResponse schemas that enforce interface compliance
+// Type-safe IApiResponse schemas that enforce interface compliance
 export const ListPluginsResponseSchema =
   createApiResponseSchema<ListPluginsData>("ListPluginsResponseSchema")(
     z.object({

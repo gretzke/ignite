@@ -15,24 +15,41 @@ import { pluginRoutes } from "./plugins/index.js";
 import { compilerRoutes } from "./plugins/compiler/index.js";
 import { repoManagerRoutes } from "./plugins/repo-manager/index.js";
 
-export interface ApiError {
-  statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 500;
+export interface IApiError {
+  statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 499 | 500 | 503;
   code: string;
   error: string;
   message: string;
   details?: Record<string, unknown>;
 }
 export type SuccessResponse<T> = { data: T };
-export type ApiResponse<T> = SuccessResponse<T> | ApiError;
+export type IApiResponse<T> = SuccessResponse<T> | IApiError;
 
-// Central route registry combining all modules
-export const v1Routes = {
+// Type constraint: ensure all routes have a proper response schema
+// Routes can return either IApiResponse<T> (200) or null (204 No Content)
+type ValidateRoute<T> = T extends
+  | { schema: { response: { 200: any } } }
+  | { schema: { response: { 204: any } } }
+  ? T
+  : never;
+
+// Compile-time check that all routes have proper response schemas
+type ValidateRoutes<T> = {
+  [K in keyof T]: ValidateRoute<T[K]>;
+};
+
+// Central route registry with compile-time validation
+// All routes must use createApiResponseSchema() which guarantees IApiResponse<T> structure
+const allRoutes = {
   ...systemRoutes,
   ...profileRoutes,
   ...pluginRoutes,
   ...compilerRoutes,
   ...repoManagerRoutes,
 } as const;
+
+export const v1Routes = allRoutes satisfies ValidateRoutes<typeof allRoutes>;
+
 // Route definition interface for type safety
 export interface ApiRoute {
   method: "GET" | "POST" | "PUT" | "DELETE";

@@ -81,7 +81,7 @@ export const ProfileParamsSchema = createRequestSchema<ProfileParams>(
   "ProfileParamsSchema",
 )(z.object({ id: z.string() }));
 
-// Type-safe ApiResponse schemas that enforce interface compliance
+// Type-safe IApiResponse schemas that enforce interface compliance
 export const ProfileConfigSchema = z.object({
   id: z.string(),
   name: z.string(),

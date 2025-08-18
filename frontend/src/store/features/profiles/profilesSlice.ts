@@ -2,6 +2,8 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { ProfileConfig } from '@ignite/api';
 import { apiClient, apiDispatchAction } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
+import { ApiError } from '@ignite/api/client';
+import { formatApiError } from '../../middleware/apiGate';
 
 export interface IProfilesState {
   profiles: ProfileConfig[];
@@ -26,7 +28,7 @@ const profilesSlice = createSlice({
       state.profiles = action.payload.profiles;
       state.currentId = action.payload.currentId;
     },
-    fetchProfilesFailed(_state, _action: PayloadAction<string>) {},
+    fetchProfilesFailed() {},
     setCurrentProfile(state, action: PayloadAction<string>) {
       state.currentId = action.payload;
     },
@@ -36,7 +38,7 @@ const profilesSlice = createSlice({
     ) {
       state.archivedProfiles = action.payload.profiles;
     },
-    fetchArchivedFailed(_state, _action: PayloadAction<string>) {},
+    fetchArchivedFailed() {},
   },
 });
 
@@ -59,7 +61,7 @@ export const profilesApi = {
       onSuccess: (data) => {
         return fetchProfilesSucceeded(data);
       },
-      onError: (error) => fetchProfilesFailed(error.message),
+      onError: () => fetchProfilesFailed(),
     }),
 
   // Switch to a specific profile
@@ -72,12 +74,11 @@ export const profilesApi = {
           setCurrentProfile(profileId),
           apiClient.dispatch.listProfiles({
             onSuccess: (data) => fetchProfilesSucceeded(data),
-            onError: (error) => fetchProfilesFailed(error.message),
+            onError: () => fetchProfilesFailed(),
           }),
         ];
       },
-      onError: (error) =>
-        fetchProfilesFailed(`Failed to switch profile: ${error.message}`),
+      onError: () => fetchProfilesFailed(),
     });
 
     return triggerToast({
@@ -116,11 +117,10 @@ export const profilesApi = {
         // After successful creation, refetch profiles
         return apiClient.dispatch.listProfiles({
           onSuccess: (data) => fetchProfilesSucceeded(data),
-          onError: (error) => fetchProfilesFailed(error.message),
+          onError: () => fetchProfilesFailed(),
         });
       },
-      onError: (error) =>
-        fetchProfilesFailed(`Failed to create profile: ${error.message}`),
+      onError: () => fetchProfilesFailed(),
     });
 
     return triggerToast({
@@ -136,14 +136,15 @@ export const profilesApi = {
         variant: 'success',
         duration: 4000,
       }),
-      onError: (err: unknown) => ({
-        title: 'Failed to create profile',
-        description:
-          (err as { message?: string })?.message ||
-          'An unexpected error occurred',
-        variant: 'error',
-        duration: 6000,
-      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return {
+          title,
+          description,
+          variant: 'error',
+          duration: 6000,
+        };
+      },
     });
   },
 
@@ -162,11 +163,10 @@ export const profilesApi = {
         // Refresh list to reflect updated properties and sorting
         return apiClient.dispatch.listProfiles({
           onSuccess: (data) => fetchProfilesSucceeded(data),
-          onError: (error) => fetchProfilesFailed(error.message),
+          onError: () => fetchProfilesFailed(),
         });
       },
-      onError: (error) =>
-        fetchProfilesFailed(`Failed to update profile: ${error.message}`),
+      onError: () => [fetchProfilesFailed()],
     });
 
     return triggerToast({
@@ -182,14 +182,15 @@ export const profilesApi = {
         variant: 'success',
         duration: 4000,
       }),
-      onError: (err: unknown) => ({
-        title: 'Failed to update profile',
-        description:
-          (err as { message?: string })?.message ||
-          'An unexpected error occurred',
-        variant: 'error',
-        duration: 6000,
-      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return {
+          title,
+          description,
+          variant: 'error',
+          duration: 6000,
+        };
+      },
     });
   },
 
@@ -200,15 +201,14 @@ export const profilesApi = {
       onSuccess: () => [
         apiClient.dispatch.listProfiles({
           onSuccess: (data) => fetchProfilesSucceeded(data),
-          onError: (error) => fetchProfilesFailed(error.message),
+          onError: () => fetchProfilesFailed(),
         }),
         apiClient.dispatch.listArchivedProfiles({
           onSuccess: (data) => fetchArchivedSucceeded(data),
-          onError: (error) => fetchArchivedFailed(error.message),
+          onError: () => fetchArchivedFailed(),
         }),
       ],
-      onError: (error) =>
-        fetchProfilesFailed(`Failed to delete profile: ${error.message}`),
+      onError: () => fetchProfilesFailed(),
     });
 
     return triggerToast({
@@ -224,14 +224,15 @@ export const profilesApi = {
         variant: 'success',
         duration: 4000,
       }),
-      onError: (err: unknown) => ({
-        title: 'Failed to delete profile',
-        description:
-          (err as { message?: string })?.message ||
-          'An unexpected error occurred',
-        variant: 'error',
-        duration: 6000,
-      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return {
+          title,
+          description,
+          variant: 'error',
+          duration: 6000,
+        };
+      },
     });
   },
 
@@ -242,10 +243,9 @@ export const profilesApi = {
       onSuccess: () =>
         apiClient.dispatch.listProfiles({
           onSuccess: (data) => fetchProfilesSucceeded(data),
-          onError: (error) => fetchProfilesFailed(error.message),
+          onError: () => fetchProfilesFailed(),
         }),
-      onError: (error) =>
-        fetchProfilesFailed(`Failed to archive profile: ${error.message}`),
+      onError: () => fetchProfilesFailed(),
     });
 
     return triggerToast({
@@ -261,14 +261,15 @@ export const profilesApi = {
         variant: 'success',
         duration: 4000,
       }),
-      onError: (err: unknown) => ({
-        title: 'Failed to archive profile',
-        description:
-          (err as { message?: string })?.message ||
-          'An unexpected error occurred',
-        variant: 'error',
-        duration: 6000,
-      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return {
+          title,
+          description,
+          variant: 'error',
+          duration: 6000,
+        };
+      },
     });
   },
 
@@ -276,7 +277,7 @@ export const profilesApi = {
   fetchArchived: () =>
     apiClient.dispatch.listArchivedProfiles({
       onSuccess: (data) => fetchArchivedSucceeded(data),
-      onError: (error) => fetchArchivedFailed(error.message),
+      onError: () => fetchArchivedFailed(),
     }),
 
   // Restore an archived profile
@@ -286,14 +287,14 @@ export const profilesApi = {
       onSuccess: () => [
         apiClient.dispatch.listArchivedProfiles({
           onSuccess: (data) => fetchArchivedSucceeded(data),
-          onError: (error) => fetchArchivedFailed(error.message),
+          onError: () => fetchArchivedFailed(),
         }),
         apiClient.dispatch.listProfiles({
           onSuccess: (data) => fetchProfilesSucceeded(data),
-          onError: (error) => fetchProfilesFailed(error.message),
+          onError: () => fetchProfilesFailed(),
         }),
       ],
-      onError: (error) => fetchArchivedFailed(error.message),
+      onError: () => fetchArchivedFailed(),
     });
 
     return triggerToast({
@@ -309,14 +310,15 @@ export const profilesApi = {
         variant: 'success',
         duration: 4000,
       }),
-      onError: (err: unknown) => ({
-        title: 'Failed to restore profile',
-        description:
-          (err as { message?: string })?.message ||
-          'An unexpected error occurred',
-        variant: 'error',
-        duration: 6000,
-      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return {
+          title,
+          description,
+          variant: 'error',
+          duration: 6000,
+        };
+      },
     });
   },
 };
