@@ -272,11 +272,11 @@ export default function ProfilesTab() {
                 action cannot be undone.
               </>
             )
-          ) : null
+          ) : undefined
         }
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
-        confirmVariant="danger"
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
         onConfirm={() => {
           if (!confirmPayload) return;
           dispatch(profilesApi.deleteProfile(confirmPayload.id));

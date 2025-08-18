@@ -46,7 +46,10 @@ apiGate.startListening({
         // Handle success callback
         if (onSuccess) {
           // Extract data from the API response envelope
-          const data = 'data' in result ? result.data : result;
+          const data =
+            result && typeof result === 'object' && 'data' in result
+              ? result.data
+              : result;
           const successActions = onSuccess(data);
           if (successActions) {
             const actions = Array.isArray(successActions)
