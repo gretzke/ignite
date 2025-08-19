@@ -2,6 +2,7 @@ import { createAction, createListenerMiddleware } from '@reduxjs/toolkit';
 import { getToastApi } from '../../ui/toast/toastBus';
 import type { ToastVariant } from '../../ui/toast/ToastProvider';
 import { apiDispatchAction } from '../api/client';
+import { ApiError } from '@ignite/api/client';
 
 // Listener middleware that emits toasts for cross-cutting events
 export const toastListener = createListenerMiddleware();
@@ -126,7 +127,9 @@ toastListener.startListening({
               trackedApiPromises.delete(apiKey);
             }
             // Call original error callback if it exists
-            return originalOnError ? originalOnError(error) : undefined;
+            return originalOnError
+              ? originalOnError(error as ApiError)
+              : undefined;
           },
         },
       };

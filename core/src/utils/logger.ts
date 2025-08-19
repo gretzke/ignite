@@ -1,43 +1,75 @@
 // Global logger instance for Ignite
 
+import fastify, { type FastifyInstance } from 'fastify';
 import type { Logger } from '../types/logger.js';
 
-let globalLogger: Logger | null = null;
+// Enhanced logger interface that accepts multiple arguments
+interface EnhancedLogger {
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+  debug: (...args: unknown[]) => void;
+}
 
 export function setGlobalLogger(logger: Logger): void {
-  globalLogger = logger;
+  LoggerManager.setGlobalLogger(logger);
 }
 
-export function getLogger(): Logger {
-  if (!globalLogger) {
-    // Fallback to console if no logger is set
+export function getLogger(): EnhancedLogger {
+  return LoggerManager.getLogger();
+}
+
+class LoggerManager {
+  private static instance: LoggerManager;
+  private logger: Logger;
+  private enhancedLogger: EnhancedLogger;
+
+  private constructor() {
+    // Fallback if no logger is set
+    const bootstrapLoggerApp: FastifyInstance = fastify({
+      logger: process.env.NODE_ENV === 'development',
+    });
+    this.logger = bootstrapLoggerApp.log;
+    this.enhancedLogger = this.createEnhancedLogger();
+  }
+
+  private createEnhancedLogger(): EnhancedLogger {
+    const formatMessage = (...args: unknown[]): string => {
+      return args
+        .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg)))
+        .join(' ');
+    };
+
     return {
-      // eslint-disable-next-line no-console -- Fallback when no logger available
-      info: console.log,
-      // eslint-disable-next-line no-console -- Fallback when no logger available
-      warn: console.warn,
-      // eslint-disable-next-line no-console -- Fallback when no logger available
-      error: console.error,
-      // eslint-disable-next-line no-console -- Fallback when no logger available
-      debug: console.debug,
+      info: (...args: unknown[]) => {
+        this.logger.info(formatMessage(...args));
+      },
+      warn: (...args: unknown[]) => {
+        this.logger.warn(formatMessage(...args));
+      },
+      error: (...args: unknown[]) => {
+        this.logger.error(formatMessage(...args));
+      },
+      debug: (...args: unknown[]) => {
+        this.logger.debug(formatMessage(...args));
+      },
     };
   }
-  return globalLogger;
-}
 
-// Convenience functions
-export function logInfo(message: string, ...args: unknown[]): void {
-  getLogger().info(message, ...args);
-}
+  static getLogger(): EnhancedLogger {
+    if (!LoggerManager.instance) {
+      LoggerManager.instance = new LoggerManager();
+    }
+    return LoggerManager.instance.enhancedLogger;
+  }
 
-export function logWarn(message: string, ...args: unknown[]): void {
-  getLogger().warn(message, ...args);
-}
-
-export function logError(message: string, ...args: unknown[]): void {
-  getLogger().error(message, ...args);
-}
-
-export function logDebug(message: string, ...args: unknown[]): void {
-  getLogger().debug(message, ...args);
+  static setGlobalLogger(logger: Logger) {
+    if (!LoggerManager.instance) {
+      LoggerManager.instance = new LoggerManager();
+    }
+    LoggerManager.instance.logger = logger;
+    // Recreate enhanced logger with new underlying logger
+    LoggerManager.instance.enhancedLogger =
+      LoggerManager.instance.createEnhancedLogger();
+  }
 }
