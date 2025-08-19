@@ -7,7 +7,7 @@ import { FileSystem } from './filesystem/FileSystem.js';
 import { ProfileManager } from './filesystem/ProfileManager.js';
 import { PluginManager } from './filesystem/PluginManager.js';
 import { PluginOrchestrator } from './plugins/containers/PluginOrchestrator.js';
-import { setGlobalLogger } from './utils/logger.js';
+import { setGlobalLogger, getLogger } from './utils/logger.js';
 import {
   openBrowser,
   getVersion,
@@ -87,12 +87,6 @@ async function ignite(workspacePath: string): Promise<{
 
 // Parse CLI arguments and perform pre-startup checks
 async function main(): Promise<void> {
-  // Initialize a logger early so utilities (like getVersion) don't print to console
-  const bootstrapLoggerApp: FastifyInstance = fastify({
-    logger: process.env.NODE_ENV === 'development',
-  });
-  setGlobalLogger(bootstrapLoggerApp.log);
-
   const program = new Command();
 
   program
