@@ -25,6 +25,7 @@ export class ContainerOrchestrator {
   private static instance: ContainerOrchestrator;
   private docker = new Docker();
   private managedContainers = new Map<string, ContainerLifecycle>(); // containerName -> lifecycle
+  private containerRefCounts = new Map<string, number>(); // containerName -> reference count
 
   private constructor() {}
 
@@ -76,7 +77,10 @@ export class ContainerOrchestrator {
       // Track the container for lifecycle management
       this.managedContainers.set(name, lifecycle);
 
-      getLogger().info(`✅ ${lifecycle} container started: ${name}`);
+      // Initialize reference count
+      this.containerRefCounts.set(name, 1);
+
+      getLogger().info(`✅ ${lifecycle} container started: ${name} (refs: 1)`);
       return name;
     } catch (error) {
       getLogger().error(`❌ Failed to create container ${name}:`, error);
@@ -103,6 +107,14 @@ export class ContainerOrchestrator {
             );
           }
         }
+
+        // Increment reference count for existing running container
+        const currentCount = this.containerRefCounts.get(name) || 0;
+        this.containerRefCounts.set(name, currentCount + 1);
+        getLogger().info(
+          `📝 Using existing container: ${name} (refs: ${currentCount + 1})`
+        );
+
         return name;
       }
 
@@ -127,7 +139,13 @@ export class ContainerOrchestrator {
         this.managedContainers.set(name, lifecycle);
       }
 
-      getLogger().info(`🔄 Restarted container: ${name}`);
+      // Increment reference count
+      const currentCount = this.containerRefCounts.get(name) || 0;
+      this.containerRefCounts.set(name, currentCount + 1);
+
+      getLogger().info(
+        `🔄 Restarted container: ${name} (refs: ${currentCount + 1})`
+      );
       return name;
     } catch (error) {
       getLogger().error(`❌ Failed to start container ${name}:`, error);
@@ -138,18 +156,35 @@ export class ContainerOrchestrator {
   // Stop a container (but don't remove unless it's ephemeral with AutoRemove)
   async stopContainer(name: string): Promise<void> {
     try {
-      const container = this.docker.getContainer(name);
-      await container.stop({ t: 0 });
+      // Decrement reference count
+      const currentCount = this.containerRefCounts.get(name) || 0;
+      const newCount = Math.max(0, currentCount - 1);
+      this.containerRefCounts.set(name, newCount);
 
-      const lifecycle = this.managedContainers.get(name);
-      if (lifecycle === ContainerLifecycle.EPHEMERAL) {
-        // Ephemeral containers auto-remove, so untrack them
-        this.managedContainers.delete(name);
-        getLogger().info(
-          `🛑 Stopped ephemeral container (auto-removed): ${name}`
-        );
+      getLogger().info(
+        `📉 Container ${name} ref count: ${currentCount} -> ${newCount}`
+      );
+
+      // Only actually stop the container if reference count reaches zero
+      if (newCount === 0) {
+        const container = this.docker.getContainer(name);
+        await container.stop({ t: 0 });
+
+        const lifecycle = this.managedContainers.get(name);
+        if (lifecycle === ContainerLifecycle.EPHEMERAL) {
+          // Ephemeral containers auto-remove, so untrack them
+          this.managedContainers.delete(name);
+          this.containerRefCounts.delete(name);
+          getLogger().info(
+            `🛑 Stopped ephemeral container (auto-removed): ${name}`
+          );
+        } else {
+          getLogger().info(`🛑 Stopped ${lifecycle} container: ${name}`);
+        }
       } else {
-        getLogger().info(`🛑 Stopped ${lifecycle} container: ${name}`);
+        getLogger().info(
+          `⏸️ Container ${name} still in use (refs: ${newCount}), not stopping`
+        );
       }
     } catch (error) {
       getLogger().warn(`⚠️ Failed to stop container ${name}:`, error);
@@ -186,6 +221,7 @@ export class ContainerOrchestrator {
 
     await Promise.all(cleanupPromises);
     this.managedContainers.clear();
+    this.containerRefCounts.clear();
 
     getLogger().info('✅ Container cleanup completed');
   }

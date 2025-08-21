@@ -207,5 +207,4 @@ const plugin = new ClonedRepoPlugin();
 export default plugin;
 
 // CLI entrypoint
-console.log(`📁 Cloned repo container ready at: /workspace`);
 runPluginCLI<RepoManagerOperation>(plugin);

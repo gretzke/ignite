@@ -1,9 +1,3 @@
-- Fix toast progress bar on hover
-- Add profile id to repo list to identify containers per profile
-- Shutdown repo containers when they are not used
-- Delete cloned repo container when repo is removed
-- Copy error message when clicking an error toast
-
 Plugin security:
 
 - ensure plugins cannot call localhost

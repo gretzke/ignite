@@ -120,19 +120,17 @@ const repositoriesSlice = createSlice({
 
       const pathOrUrl = action.payload;
 
-      // Remove from all lists
+      // Remove from saved lists only (local and cloned)
       state.repositories.local = state.repositories.local.filter(
         (repo) => repo !== pathOrUrl
       );
       state.repositories.cloned = state.repositories.cloned.filter(
         (repo) => repo !== pathOrUrl
       );
-      if (state.repositories.session === pathOrUrl) {
-        state.repositories.session = null;
-      }
+      // Note: Don't remove from session - session is managed by backend API response
 
-      // Clean up repository data
-      delete state.repositoriesData[pathOrUrl];
+      // Don't clean up repository data - it might still be needed for session
+      // The session repo should remain initialized and functional
 
       // Remove from failed list
       state.failedRepositories = state.failedRepositories.filter(
@@ -214,14 +212,15 @@ export const repositoriesApi = {
     repositoriesData: Record<string, IRepository>,
     repoList: RepoList
   ) => {
-    const allRepos = [
+    // Create a Set of unique paths to avoid duplicate initialization
+    const uniquePaths = new Set([
       ...(repoList.local || []),
       ...(repoList.cloned || []),
       ...(repoList.session ? [repoList.session] : []),
-    ];
+    ]);
 
-    // Filter to only initialize repos that haven't been initialized yet
-    const reposToInitialize = allRepos.filter((pathOrUrl) => {
+    // Convert back to array and filter to only initialize repos that haven't been initialized yet
+    const reposToInitialize = Array.from(uniquePaths).filter((pathOrUrl) => {
       const repoData = repositoriesData[pathOrUrl];
       // Only initialize if repo data doesn't exist or is not successfully initialized
       return !repoData || repoData.initialized !== true;
