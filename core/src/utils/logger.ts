@@ -27,7 +27,8 @@ class LoggerManager {
   private constructor() {
     // Fallback if no logger is set
     const bootstrapLoggerApp: FastifyInstance = fastify({
-      logger: process.env.NODE_ENV === 'development',
+      logger:
+        process.env.NODE_ENV === 'development' ? { level: 'debug' } : false,
     });
     this.logger = bootstrapLoggerApp.log;
     this.enhancedLogger = this.createEnhancedLogger();

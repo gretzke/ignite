@@ -13,8 +13,10 @@ import {
   RepoContainerUtils,
 } from '../utils/RepoContainerUtils.js';
 import type { PluginResponse } from '@ignite/plugin-types/types';
+import { PluginType } from '@ignite/plugin-types/types';
 import { PluginExecutionUtils } from '../utils/PluginExecutionUtils.js';
 import { hashWorkspacePath } from '../../utils/startup.js';
+import { GitCredentialManager } from '../utils/GitCredentialManager.js';
 
 // Persistent Plugin Lifecycle (repo plugins):
 // - Long-lived containers (AutoRemove=false)
@@ -97,6 +99,12 @@ export class PluginExecutor {
 
     // Extract pathOrUrl and resolve container for repo plugins
     const { pathOrUrl } = this.extractPathInfo(options);
+
+    // Inject credentials for repo-manager plugins
+    if (pluginConfig.metadata.type === PluginType.REPO_MANAGER) {
+      options = await this.injectGitCredentials(options, pathOrUrl);
+    }
+
     const containerName = await this.resolveRepoContainer(pluginId, pathOrUrl);
 
     // Execute directly using PluginExecutionUtils
@@ -286,6 +294,48 @@ export class PluginExecutor {
         binds,
       });
     }
+  }
+
+  /**
+   * Inject Git credentials into repo-manager operation options
+   */
+  private async injectGitCredentials(
+    options: Record<string, unknown>,
+    pathOrUrl?: string
+  ): Promise<Record<string, unknown>> {
+    if (!pathOrUrl) {
+      getLogger().debug('No pathOrUrl provided, skipping credential injection');
+      return options;
+    }
+
+    const credentialManager = await GitCredentialManager.getInstance();
+
+    // Get SSH credentials for this repository (if available)
+    const sshCredentials =
+      await credentialManager.getSSHCredentialsForContainer(pathOrUrl);
+
+    if (!sshCredentials) {
+      getLogger().debug(
+        'Repo public or no SSH credentials available for repository:',
+        pathOrUrl
+      );
+      return options;
+    }
+
+    getLogger().debug('Injecting SSH credentials for repository:', pathOrUrl);
+
+    // Create credentials object matching the plugin interface
+    const gitCredentials = {
+      type: 'ssh' as const,
+      privateKey: sshCredentials.privateKey,
+      publicKey: sshCredentials.publicKey,
+    };
+
+    // Inject credentials into options
+    return {
+      ...options,
+      gitCredentials,
+    };
   }
 
   // Cleanup

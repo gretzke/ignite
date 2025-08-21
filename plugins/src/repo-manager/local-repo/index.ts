@@ -20,10 +20,11 @@ import {
   isUpToDateWithRemote,
 } from "../../shared/utils/git.ts";
 import type {
-  PathOptions,
+  PathOptionsWithCredentials,
   RepoCheckoutBranchOptions,
   RepoCheckoutCommitOptions,
   RepoInfoResult,
+  GitCredentialsParams,
 } from "../../shared/base/repo-manager/types.js";
 
 // PLUGIN_VERSION is injected at build time via --define:PLUGIN_VERSION
@@ -31,6 +32,17 @@ declare const PLUGIN_VERSION: string;
 
 export class LocalRepoPlugin extends RepoManagerPlugin {
   public readonly type = PluginType.REPO_MANAGER as const;
+
+  // Get repository URL for Git operations
+  // For local repos, always return the remote URL
+  protected async getRepoUrl(): Promise<string | null> {
+    try {
+      const result = await execGit(["remote", "get-url", "origin"]);
+      return result.success ? result.data.stdout.trim() : null;
+    } catch {
+      return null;
+    }
+  }
 
   // Static metadata for registry generation (no instantiation needed)
   protected static getMetadata(): PluginMetadata {
@@ -45,39 +57,48 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
 
   // No plugin-side operations - CLI handles all operations directly
   // This container just maintains the volume
-  async init(_options: PathOptions): Promise<PluginResponse<NoResult>> {
-    const ensured = await ensureGitRepo();
-    if (!ensured.success) return ensured as any;
-    return { success: true, data: {} } as const;
+  async init(
+    options: PathOptionsWithCredentials,
+  ): Promise<PluginResponse<NoResult>> {
+    return this.withGitCredentials(options.gitCredentials, async () => {
+      const ensured = await ensureGitRepo();
+      if (!ensured.success) return ensured as any;
+      return { success: true, data: {} } as const;
+    });
   }
 
   async checkoutBranch(
     options: RepoCheckoutBranchOptions,
   ): Promise<PluginResponse<NoResult>> {
-    const clean = await ensureCleanRepo();
-    if (!clean.success) return clean as any;
-    const fetchRes = await execGit(["fetch", "--all", "--prune"]);
-    if (!fetchRes.success) return fetchRes as any;
-    const co = await execGit(["checkout", options.branch]);
-    if (!co.success) return co as any;
-    return { success: true, data: {} } as const;
+    return this.withGitCredentials(options.gitCredentials, async () => {
+      const clean = await ensureCleanRepo();
+      if (!clean.success) return clean as any;
+      const fetchRes = await execGit(["fetch", "--all", "--prune"]);
+      if (!fetchRes.success) return fetchRes as any;
+      const co = await execGit(["checkout", options.branch]);
+      if (!co.success) return co as any;
+      return { success: true, data: {} } as const;
+    });
   }
 
   async checkoutCommit(
     options: RepoCheckoutCommitOptions,
   ): Promise<PluginResponse<NoResult>> {
-    const clean = await ensureCleanRepo();
-    if (!clean.success) return clean as any;
-    const fetchRes = await execGit(["fetch", "--all", "--prune"]);
-    if (!fetchRes.success) return fetchRes as any;
-    const co = await execGit(["checkout", "--detach", options.commit]);
-    if (!co.success) return co as any;
-    return { success: true, data: {} } as const;
+    return this.withGitCredentials(options.gitCredentials, async () => {
+      const clean = await ensureCleanRepo();
+      if (!clean.success) return clean as any;
+      const fetchRes = await execGit(["fetch", "--all", "--prune"]);
+      if (!fetchRes.success) return fetchRes as any;
+      const co = await execGit(["checkout", "--detach", options.commit]);
+      if (!co.success) return co as any;
+      return { success: true, data: {} } as const;
+    });
   }
 
   async getBranches(
     _options: NoParams,
   ): Promise<PluginResponse<RepoGetBranchesResult>> {
+    // getBranches doesn't need credentials - it's read-only local operation
     const ensured = await ensureGitRepo();
     if (!ensured.success) return ensured as any;
     const refs = await listAllRefs();
@@ -85,46 +106,52 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
     return { success: true, data: { branches: refs.data } } as const;
   }
 
-  async pullChanges(_options: NoParams): Promise<PluginResponse<NoResult>> {
-    const clean = await ensureCleanRepo();
-    if (!clean.success) return clean as any;
-    const fetchRes = await execGit(["pull", "--ff-only"]);
-    if (!fetchRes.success) return fetchRes as any;
-    return { success: true, data: {} } as const;
+  async pullChanges(
+    options: GitCredentialsParams,
+  ): Promise<PluginResponse<NoResult>> {
+    return this.withGitCredentials(options.gitCredentials, async () => {
+      const clean = await ensureCleanRepo();
+      if (!clean.success) return clean as any;
+      const fetchRes = await execGit(["pull", "--ff-only"]);
+      if (!fetchRes.success) return fetchRes as any;
+      return { success: true, data: {} } as const;
+    });
   }
 
   async getRepoInfo(
-    _options: NoParams,
+    options: GitCredentialsParams,
   ): Promise<PluginResponse<RepoInfoResult>> {
-    const ensured = await ensureGitRepo();
-    if (!ensured.success) return ensured as any;
-    const [branch, commit] = await Promise.all([
-      getCurrentBranch(),
-      getCurrentCommit(),
-    ]);
-    if (!branch.success) return branch as any;
-    if (!commit.success) return commit as any;
+    return this.withGitCredentials(options.gitCredentials, async () => {
+      const ensured = await ensureGitRepo();
+      if (!ensured.success) return ensured as any;
+      const [branch, commit] = await Promise.all([
+        getCurrentBranch(),
+        getCurrentCommit(),
+      ]);
+      if (!branch.success) return branch as any;
+      if (!commit.success) return commit as any;
 
-    const res = await execGit([
-      "status",
-      "--porcelain",
-      "--untracked-files=no",
-    ]);
-    if (!res.success) return res as any;
-    const dirty = res.data.stdout.trim().length > 0;
+      const res = await execGit([
+        "status",
+        "--porcelain",
+        "--untracked-files=no",
+      ]);
+      if (!res.success) return res as any;
+      const dirty = res.data.stdout.trim().length > 0;
 
-    const up = await isUpToDateWithRemote();
-    if (!up.success) return up as any;
+      const up = await isUpToDateWithRemote();
+      if (!up.success) return up as any;
 
-    return {
-      success: true,
-      data: {
-        branch: branch.data,
-        commit: commit.data,
-        dirty,
-        upToDate: up.data,
-      },
-    } as const;
+      return {
+        success: true,
+        data: {
+          branch: branch.data,
+          commit: commit.data,
+          dirty,
+          upToDate: up.data,
+        },
+      } as const;
+    });
   }
 }
 
