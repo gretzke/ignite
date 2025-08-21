@@ -39,7 +39,7 @@ export async function executePluginOperation<T extends keyof AllOperations>(
   }
 
   try {
-    return await method(options);
+    return await method.call(plugin, options);
   } catch (error) {
     return {
       success: false,

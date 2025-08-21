@@ -26,7 +26,7 @@ async function ignite(workspacePath: string): Promise<{
 }> {
   // Create Fastify instance - disable logger in production for clean output
   const app: FastifyInstance = fastify({
-    logger: process.env.NODE_ENV === 'development',
+    logger: process.env.NODE_ENV === 'development' ? { level: 'debug' } : false,
   });
 
   // Set up global logger

@@ -6,12 +6,30 @@ export interface PathOptions {
   pathOrUrl: string;
 }
 
+// SSH credentials for Git operations
+export interface GitCredentials {
+  type: "ssh";
+  privateKey: string;
+  publicKey: string;
+}
+
+export interface GitCredentialsParams {
+  gitCredentials?: GitCredentials; // For operations that might need authentication
+}
+
+// Extended path options that can include credentials (injected by CLI)
+export interface PathOptionsWithCredentials
+  extends PathOptions,
+    GitCredentialsParams {}
+
 export interface RepoCheckoutBranchOptions {
   branch: string;
+  gitCredentials?: GitCredentials; // For operations that might need authentication
 }
 
 export interface RepoCheckoutCommitOptions {
   commit: string;
+  gitCredentials?: GitCredentials; // For operations that might need authentication
 }
 
 export interface RepoGetBranchesResult {
@@ -27,7 +45,7 @@ export interface RepoInfoResult {
 
 export type RepoManagerOperations = {
   init: {
-    params: PathOptions;
+    params: PathOptionsWithCredentials;
     result: NoResult;
   };
   checkoutBranch: {
@@ -43,11 +61,11 @@ export type RepoManagerOperations = {
     result: RepoGetBranchesResult;
   };
   pullChanges: {
-    params: NoParams;
+    params: GitCredentialsParams;
     result: NoResult;
   };
   getRepoInfo: {
-    params: NoParams;
+    params: GitCredentialsParams;
     result: RepoInfoResult;
   };
 };
