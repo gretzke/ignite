@@ -1,6 +1,7 @@
 import path from 'path';
 import { URL } from 'node:url';
 import { hashWorkspacePath } from '../../utils/startup.js';
+import { ProfileManager } from '../../filesystem/ProfileManager.js';
 
 export enum RepoContainerKind {
   LOCAL = 'local',
@@ -35,17 +36,22 @@ export class RepoContainerUtils {
   }
 
   // Generate container name based on repo kind and path/URL
-  static deriveRepoContainerName(
+  static async deriveRepoContainerName(
     kind: RepoContainerKind,
-    pathOrUrl: string
-  ): string {
+    pathOrUrl: string,
+    isSession = false
+  ): Promise<string> {
+    // Get current profile ID
+    const profileManager = await ProfileManager.getInstance();
+    const profileId = profileManager.getCurrentProfile();
     if (kind === RepoContainerKind.LOCAL) {
+      const suffix = isSession ? '-session' : '';
       const hash = hashWorkspacePath(pathOrUrl);
       const repoName = path
         .basename(pathOrUrl)
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-');
-      return `ignite-repo-local-${repoName}-${hash}`;
+      return `ignite-repo-local-${repoName}-${hash}-${profileId}${suffix}`;
     }
     // cloned
     let owner = 'unknown';
@@ -71,7 +77,7 @@ export class RepoContainerUtils {
       repo = base.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     }
     const hash = hashWorkspacePath(pathOrUrl);
-    return `ignite-repo-cloned-${owner}-${repo}-${hash}`;
+    return `ignite-repo-cloned-${owner}-${repo}-${hash}-${profileId}`;
   }
 
   // Determine if a local path corresponds to the current CLI session workspace

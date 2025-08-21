@@ -34,7 +34,6 @@ export abstract class RepoManagerPlugin
     if (httpsMatch) {
       const [, host, repoPath] = httpsMatch;
       const sshUrl = `git@${host}:${repoPath}.git`;
-      console.log(`🔄 Converted HTTPS to SSH: ${url} → ${sshUrl}`);
       return sshUrl;
     }
 

@@ -161,5 +161,4 @@ const plugin = new LocalRepoPlugin();
 export default plugin;
 
 // CLI entrypoint
-console.log(`📁 Local repo container ready at: /workspace`);
 runPluginCLI<RepoManagerOperation>(plugin);

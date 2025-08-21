@@ -17,6 +17,7 @@ import { PluginType } from '@ignite/plugin-types/types';
 import { PluginExecutionUtils } from '../utils/PluginExecutionUtils.js';
 import { hashWorkspacePath } from '../../utils/startup.js';
 import { GitCredentialManager } from '../utils/GitCredentialManager.js';
+import { setTimeout } from 'node:timers/promises';
 
 // Persistent Plugin Lifecycle (repo plugins):
 // - Long-lived containers (AutoRemove=false)
@@ -52,37 +53,30 @@ export class PluginExecutor {
   ): Promise<PluginResponse<unknown>> {
     getLogger().info(`🔌 Executing ${pluginId}.${operation}`);
 
-    try {
-      // Get plugin config for type and lifecycle info
-      const pluginConfig = await this.registryLoader.getPluginConfig(pluginId);
-      const lifecycle = pluginConfig.lifecycle;
+    // Get plugin config for type and lifecycle info
+    const pluginConfig = await this.registryLoader.getPluginConfig(pluginId);
+    const lifecycle = pluginConfig.lifecycle;
 
-      getLogger().info(`🔄 Plugin ${pluginId} lifecycle: ${lifecycle}`);
+    getLogger().info(`🔄 Plugin ${pluginId} lifecycle: ${lifecycle}`);
 
-      // Execute based on plugin lifecycle from metadata
-      if (lifecycle === PluginLifecycle.PERSISTENT) {
+    // Execute based on plugin lifecycle from metadata
+    switch (lifecycle) {
+      case PluginLifecycle.PERSISTENT:
         return await this.executePersistentPlugin(
           pluginConfig,
           operation,
           options
         );
-      } else if (lifecycle === PluginLifecycle.EPHEMERAL) {
+      case PluginLifecycle.EPHEMERAL:
         return await this.executeEphemeralPlugin(
           pluginConfig,
           operation,
           options
         );
-      } else {
+      default: {
+        const _exhaustiveCheck: never = lifecycle;
         throw new Error(`Unsupported plugin lifecycle: ${lifecycle}`);
       }
-    } catch (error) {
-      return {
-        success: false,
-        error: {
-          code: 'PLUGIN_EXECUTION_FAILED',
-          message: `Plugin execution failed: ${error instanceof Error ? error.message : String(error)}`,
-        },
-      };
     }
   }
 
@@ -108,12 +102,16 @@ export class PluginExecutor {
     const containerName = await this.resolveRepoContainer(pluginId, pathOrUrl);
 
     // Execute directly using PluginExecutionUtils
-    return this.executeOperationDirect(
+    const result = await this.executeOperationDirect(
       pluginConfig,
       operation,
       options,
       containerName
     );
+
+    await this.containerOrchestrator.stopContainer(containerName);
+
+    return result;
   }
 
   // Execute ephemeral plugin - short-lived containers, auto-cleanup
@@ -131,28 +129,19 @@ export class PluginExecutor {
       options
     );
 
-    try {
-      // Execute with resolved ephemeral container
-      const { ...cleanOptions } = this.extractPathInfo(options);
-      const result = await this.executeOperationDirect(
-        pluginConfig,
-        operation,
-        cleanOptions,
-        ephemeralContainer
-      );
+    // Execute with resolved ephemeral container
+    const { ...cleanOptions } = this.extractPathInfo(options);
+    const result = await this.executeOperationDirect(
+      pluginConfig,
+      operation,
+      cleanOptions,
+      ephemeralContainer
+    );
 
-      getLogger().info(
-        `✅ Ephemeral plugin execution completed: ${pluginId}.${operation}`
-      );
+    // Stop ephemeral container after operation (it has AutoRemove=true so Docker will clean it up)
+    await this.containerOrchestrator.stopContainer(ephemeralContainer);
 
-      return result;
-    } catch (error) {
-      getLogger().error(
-        `❌ Ephemeral plugin execution failed: ${pluginId}.${operation} - ${error}`
-      );
-      throw error;
-    }
-    // Note: Container auto-removes due to AutoRemove=true, no manual cleanup needed
+    return result;
   }
 
   // Create ephemeral container with AutoRemove=true and VolumesFrom repo if needed
@@ -245,12 +234,61 @@ export class PluginExecutor {
 
     const kind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
     const isSession = RepoContainerUtils.isSessionLocal(kind, pathOrUrl);
-    const containerName = RepoContainerUtils.deriveRepoContainerName(
-      kind,
-      pathOrUrl
-    );
 
-    // Check if container already exists and is running
+    // Strategy: Prefer persistent over session containers
+    let containerName: string;
+    let preferredLifecycle: ContainerLifecycle;
+
+    if (isSession) {
+      // For session paths, check if persistent version exists first
+      const persistentName = await RepoContainerUtils.deriveRepoContainerName(
+        kind,
+        pathOrUrl,
+        false
+      );
+      const sessionName = await RepoContainerUtils.deriveRepoContainerName(
+        kind,
+        pathOrUrl,
+        true
+      );
+
+      // Try persistent first (user might have saved this workspace)
+      const persistentContainer =
+        await this.containerOrchestrator.getRunningContainer(persistentName);
+      if (persistentContainer) {
+        getLogger().info(
+          `🔄 Using existing persistent container for session path: ${persistentName}`
+        );
+        return persistentContainer;
+      }
+
+      // Try to start existing persistent container
+      try {
+        const startedPersistent =
+          await this.containerOrchestrator.startContainer(persistentName);
+        getLogger().info(
+          `🔄 Started existing persistent container: ${persistentName}`
+        );
+        return startedPersistent;
+      } catch {
+        // No persistent container exists, use session
+        containerName = sessionName;
+        preferredLifecycle = ContainerLifecycle.SESSION;
+        getLogger().info(
+          `📁 Using session container for temporary workspace: ${sessionName}`
+        );
+      }
+    } else {
+      // Non-session path - always use persistent
+      containerName = await RepoContainerUtils.deriveRepoContainerName(
+        kind,
+        pathOrUrl,
+        false
+      );
+      preferredLifecycle = ContainerLifecycle.PERSISTENT;
+    }
+
+    // Check if preferred container exists and is running
     const existingContainer =
       await this.containerOrchestrator.getRunningContainer(containerName);
     if (existingContainer) {
@@ -261,44 +299,81 @@ export class PluginExecutor {
     try {
       return await this.containerOrchestrator.startContainer(containerName);
     } catch {
-      // Container doesn't exist, create new one
-      const baseImage = 'ignite/base_repo-manager:latest';
-      const labels: Record<string, string> = {
-        'ignite.type': 'repo-manager',
-        'ignite.repoKind': kind,
-        'ignite.plugin': pluginId,
-        'ignite.image': baseImage,
-        'ignite.workspace': '/workspace',
-        'ignite.repoId': hashWorkspacePath(pathOrUrl),
-      };
-
-      if (kind === RepoContainerKind.LOCAL) {
-        labels['ignite.sourcePath'] = pathOrUrl;
-      } else {
-        labels['ignite.sourceUrl'] = pathOrUrl;
+      // Create new container with preferred lifecycle
+      try {
+        return await this.createRepoContainer(
+          kind,
+          pathOrUrl,
+          containerName,
+          preferredLifecycle,
+          pluginId
+        );
+      } catch (error: unknown) {
+        // Handle race condition - another request might have created the container
+        if (
+          (typeof error === 'object' &&
+            error !== null &&
+            'statusCode' in error &&
+            error.statusCode === 409) ||
+          (error instanceof Error && error.message?.includes('already in use'))
+        ) {
+          getLogger().info(
+            `🔄 Container ${containerName} created by concurrent request, attempting to use it`
+          );
+          // Wait a bit and try to get the running container
+          await setTimeout(100);
+          const runningContainer =
+            await this.containerOrchestrator.getRunningContainer(containerName);
+          if (runningContainer) {
+            return runningContainer;
+          }
+          // If still not available, try to start it
+          return await this.containerOrchestrator.startContainer(containerName);
+        }
+        throw error;
       }
-
-      const binds =
-        kind === RepoContainerKind.LOCAL
-          ? [`${pathOrUrl}:/workspace`]
-          : undefined;
-      const lifecycle = isSession
-        ? ContainerLifecycle.SESSION
-        : ContainerLifecycle.PERSISTENT;
-
-      return await this.containerOrchestrator.createContainer({
-        image: baseImage,
-        name: containerName,
-        lifecycle,
-        labels,
-        binds,
-      });
     }
   }
 
-  /**
-   * Inject Git credentials into repo-manager operation options
-   */
+  // Create a new repository container with the specified lifecycle
+  private async createRepoContainer(
+    kind: RepoContainerKind,
+    pathOrUrl: string,
+    containerName: string,
+    lifecycle: ContainerLifecycle,
+    pluginId: string
+  ): Promise<string> {
+    const baseImage = 'ignite/base_repo-manager:latest';
+    const labels: Record<string, string> = {
+      'ignite.type': 'repo-manager',
+      'ignite.repoKind': kind,
+      'ignite.plugin': pluginId,
+      'ignite.image': baseImage,
+      'ignite.workspace': '/workspace',
+      'ignite.repoId': hashWorkspacePath(pathOrUrl),
+    };
+
+    if (kind === RepoContainerKind.LOCAL) {
+      labels['ignite.sourcePath'] = pathOrUrl;
+    } else {
+      labels['ignite.sourceUrl'] = pathOrUrl;
+    }
+
+    const binds =
+      kind === RepoContainerKind.LOCAL
+        ? [`${pathOrUrl}:/workspace`]
+        : undefined;
+
+    return await this.containerOrchestrator.createContainer({
+      image: baseImage,
+      name: containerName,
+      lifecycle,
+      labels,
+      binds,
+    });
+  }
+
+  // Inject Git credentials into repo-manager operation options
   private async injectGitCredentials(
     options: Record<string, unknown>,
     pathOrUrl?: string

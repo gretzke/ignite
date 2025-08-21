@@ -1,6 +1,7 @@
 import * as React from 'react';
 import * as Toast from '@radix-ui/react-toast';
 import { setToastApi } from './toastBus';
+import Tooltip from '../../components/Tooltip';
 
 export type ToastVariant = 'info' | 'success' | 'warning' | 'error' | 'neutral';
 
@@ -51,6 +52,8 @@ export function useToast() {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastItem[]>([]);
+  const [isAnyToastHovered, setIsAnyToastHovered] = React.useState(false);
+  const [copiedToast, setCopiedToast] = React.useState<string | null>(null);
   const DEFAULT_DURATION = 5000;
   const PERMANENT_DURATION = 2147483647; // effectively infinite
 
@@ -120,6 +123,27 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) =>
       prev.map((t) => (t.id === id ? { ...t, open: false } : t))
     );
+  }, []);
+
+  const copyToastContent = React.useCallback(async (toast: ToastItem) => {
+    try {
+      const content = [
+        toast.title && `Title: ${toast.title}`,
+        toast.description && `Message: ${toast.description}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      if (typeof window !== 'undefined' && window.navigator?.clipboard) {
+        await window.navigator.clipboard.writeText(content);
+        setCopiedToast(toast.id);
+
+        // Reset copied state after 1 second
+        setTimeout(() => setCopiedToast(null), 1000);
+      }
+    } catch {
+      // Silently fail if clipboard is not available
+    }
   }, []);
 
   const promise = React.useCallback(
@@ -196,17 +220,29 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             }}
             duration={t.duration}
             className={`toast-root ${variantToClass(t.variant ?? 'neutral')}`}
+            onMouseEnter={() => setIsAnyToastHovered(true)}
+            onMouseLeave={() => setIsAnyToastHovered(false)}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              copyToastContent(t);
+            }}
+            style={{ cursor: 'pointer' }}
           >
-            <div className="toast-body">
-              {t.title ? (
-                <Toast.Title className="toast-title">{t.title}</Toast.Title>
-              ) : null}
-              {t.description ? (
-                <Toast.Description className="toast-desc">
-                  {t.description}
-                </Toast.Description>
-              ) : null}
-            </div>
+            <Tooltip
+              label={copiedToast === t.id ? 'Copied!' : 'Copy'}
+              placement="right"
+            >
+              <div className="toast-body">
+                {t.title ? (
+                  <Toast.Title className="toast-title">{t.title}</Toast.Title>
+                ) : null}
+                {t.description ? (
+                  <Toast.Description className="toast-desc">
+                    {t.description}
+                  </Toast.Description>
+                ) : null}
+              </div>
+            </Tooltip>
             <Toast.Close className="toast-close" aria-label="Close">
               ×
             </Toast.Close>
@@ -229,6 +265,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                           animationDuration: `${
                             t.duration ?? DEFAULT_DURATION
                           }ms`,
+                          animationPlayState: isAnyToastHovered
+                            ? 'paused'
+                            : 'running',
                         }
                       : undefined
                   }

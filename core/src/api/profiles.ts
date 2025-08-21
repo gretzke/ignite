@@ -25,8 +25,78 @@ import {
   RepoContainerUtils,
   RepoContainerKind,
 } from '../plugins/utils/RepoContainerUtils.js';
+import { ContainerOrchestrator } from '../plugins/containers/ContainerOrchestrator.js';
 import { PathOptions } from '@ignite/plugin-types';
 import { isGitRepository } from '../utils/startup.js';
+import { getLogger } from '../utils/logger.js';
+
+// Helper function to remove repository containers safely
+async function removeRepoContainers(
+  kind: RepoContainerKind,
+  pathOrUrl: string
+): Promise<void> {
+  try {
+    const containerOrchestrator = ContainerOrchestrator.getInstance();
+    const isCurrentSession = RepoContainerUtils.isSessionLocal(kind, pathOrUrl);
+
+    if (isCurrentSession) {
+      // For current session workspace: only remove persistent container, keep session container
+      getLogger().info(
+        `🗑️ Removing persistent container for session workspace: ${pathOrUrl}`
+      );
+      const persistentName = await RepoContainerUtils.deriveRepoContainerName(
+        kind,
+        pathOrUrl,
+        false
+      );
+
+      // Try to stop and remove persistent container if it exists
+      try {
+        await containerOrchestrator.stopContainer(persistentName);
+        const container = containerOrchestrator.getContainer(persistentName);
+        await container.remove();
+        getLogger().info(`✅ Removed persistent container: ${persistentName}`);
+      } catch (error) {
+        // Container might not exist or already be removed - that's OK
+        getLogger().debug(
+          `Container ${persistentName} not found or already removed:`,
+          error
+        );
+      }
+
+      getLogger().info(
+        `⏸️ Keeping session container active for current workspace`
+      );
+    } else {
+      // For non-session repositories: remove the persistent container
+      getLogger().info(`🗑️ Removing container for repository: ${pathOrUrl}`);
+      const containerName = await RepoContainerUtils.deriveRepoContainerName(
+        kind,
+        pathOrUrl,
+        false
+      );
+
+      try {
+        await containerOrchestrator.stopContainer(containerName);
+        const container = containerOrchestrator.getContainer(containerName);
+        await container.remove();
+        getLogger().info(`✅ Removed container: ${containerName}`);
+      } catch (error) {
+        // Container might not exist or already be removed - that's OK
+        getLogger().debug(
+          `Container ${containerName} not found or already removed:`,
+          error
+        );
+      }
+    }
+  } catch (error) {
+    getLogger().error(
+      `❌ Failed to remove containers for ${pathOrUrl}:`,
+      error
+    );
+    // Don't throw - we don't want container cleanup failure to prevent repo deletion
+  }
+}
 
 // Profile handlers object - matches shared API route structure
 export const profileHandlers = {
@@ -475,6 +545,9 @@ export const profileHandlers = {
       const arr = await fileSystem.readJsonFile<string[]>(repoPath);
       const next = arr.filter((x) => x !== pathOrUrl);
       await fileSystem.writeJsonFile(repoPath, next);
+
+      // Remove associated container(s) but be careful with session containers
+      await removeRepoContainers(kind, pathOrUrl);
 
       return reply.status(204).send(null);
     } catch (error) {
