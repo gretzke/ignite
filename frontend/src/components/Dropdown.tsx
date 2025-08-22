@@ -1,22 +1,35 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useMemo, useState } from 'react';
+import {
+  useFloating,
+  offset,
+  flip,
+  shift,
+  autoUpdate,
+  useDismiss,
+  useRole,
+  useInteractions,
+  FloatingPortal,
+  size,
+} from '@floating-ui/react';
 
-// Generic dropdown/popover anchored to a trigger element.
-// - Positions below the trigger, aligned to its right edge
-// - Closes on outside click, updates position on resize/scroll
+// Generic dropdown/popover anchored to a trigger element using Floating UI.
+// - Uses sophisticated positioning with flip, shift, and size constraints
+// - Closes on outside click, auto-updates position on resize/scroll
 // - Suitable for simple menus (profiles) or generic dropdowns
 export interface DropdownProps {
   renderTrigger: (args: {
-    ref: React.MutableRefObject<HTMLElement | null>;
+    ref: (node: HTMLElement | null) => void;
     open: boolean;
     toggle: () => void;
     setOpen: (v: boolean) => void;
+    getReferenceProps: () => Record<string, unknown>;
   }) => React.ReactNode;
   children:
     | React.ReactNode
     | ((args: { close: () => void }) => React.ReactNode);
-  offset?: number; // px between trigger and menu (default 8)
+  sideOffset?: number; // px between trigger and menu (default 8)
   portal?: boolean; // render in a portal (default true)
+  anchor?: 'left' | 'right'; // anchor position (default: 'right')
   menuClassName?: string;
   menuStyle?: React.CSSProperties; // extra styles merged into positioned container
 }
@@ -24,65 +37,61 @@ export interface DropdownProps {
 export default function Dropdown({
   renderTrigger,
   children,
-  offset = 8,
+  sideOffset = 8,
   portal = true,
+  anchor = 'right',
   menuClassName,
   menuStyle,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const [coords, setCoords] = useState<{ top: number; right: number } | null>(
-    null
-  );
 
   // Toggle helper
   const toggle = useMemo(() => () => setOpen((v) => !v), []);
 
-  // Close on outside click
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (menuRef.current && menuRef.current.contains(target)) return;
-      if (triggerRef.current && triggerRef.current.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  // Floating UI setup
+  const { refs, floatingStyles, context } = useFloating({
+    open,
+    onOpenChange: setOpen,
+    placement: anchor === 'left' ? 'bottom-start' : 'bottom-end',
+    middleware: [
+      offset(sideOffset),
+      flip({
+        fallbackPlacements:
+          anchor === 'left'
+            ? ['bottom-end', 'top-start', 'top-end']
+            : ['bottom-start', 'top-end', 'top-start'],
+      }),
+      shift({ padding: 6 }),
+      size({
+        apply({ availableHeight, elements }) {
+          // Constrain height to available space
+          Object.assign(elements.floating.style, {
+            maxHeight: `${Math.max(200, availableHeight - 20)}px`,
+          });
+        },
+      }),
+    ],
+    whileElementsMounted: autoUpdate,
+  });
 
-  // Compute and update position while open
-  useEffect(() => {
-    if (!open) return;
-    const update = () => {
-      const el = triggerRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      setCoords({
-        top: Math.round(rect.bottom + offset),
-        right: Math.round(window.innerWidth - rect.right),
-      });
-    };
-    update();
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    return () => {
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-    };
-  }, [open, offset]);
+  // Interaction hooks (excluding click since we handle it manually)
+  const dismiss = useDismiss(context);
+  const role = useRole(context);
+
+  const { getReferenceProps, getFloatingProps } = useInteractions([
+    dismiss,
+    role,
+  ]);
 
   const content = (
     <div
-      ref={menuRef}
+      ref={refs.setFloating}
       className={menuClassName}
       style={{
-        position: 'fixed',
-        top: coords?.top,
-        right: coords?.right,
+        ...floatingStyles,
         ...menuStyle,
       }}
+      {...getFloatingProps()}
     >
       {typeof children === 'function'
         ? (children as (args: { close: () => void }) => React.ReactNode)({
@@ -94,8 +103,14 @@ export default function Dropdown({
 
   return (
     <>
-      {renderTrigger({ ref: triggerRef, open, toggle, setOpen })}
-      {open && (portal ? createPortal(content, document.body) : content)}
+      {renderTrigger({
+        ref: refs.setReference,
+        open,
+        toggle,
+        setOpen,
+        getReferenceProps,
+      })}
+      {open && (portal ? <FloatingPortal>{content}</FloatingPortal> : content)}
     </>
   );
 }
