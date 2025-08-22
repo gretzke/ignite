@@ -704,4 +704,56 @@
       animation: none !important;
     }
   }
+
+  /* Global transparent scrollbar styling */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--text) 20%, transparent)
+      transparent;
+  }
+
+  /* WebKit scrollbar styling for Chrome/Safari/Edge */
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklch, var(--text) 20%, transparent);
+    border-radius: 4px;
+    border: none;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in oklch, var(--text) 30%, transparent);
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* Select option highlighting - theme-aware */
+  .select-option-highlighted {
+    background-color: color-mix(in oklch, var(--text) 8%, transparent);
+  }
+  .theme-light .select-option-highlighted {
+    background-color: color-mix(in oklch, var(--text) 6%, transparent);
+  }
+  .theme-dark .select-option-highlighted {
+    background-color: color-mix(in oklch, var(--text) 8%, transparent);
+  }
+
+  .select-option-selected {
+    background-color: color-mix(in oklch, var(--text) 15%, transparent);
+  }
+  .theme-light .select-option-selected {
+    background-color: color-mix(in oklch, var(--text) 10%, transparent);
+  }
+  .theme-dark .select-option-selected {
+    background-color: color-mix(in oklch, var(--text) 15%, transparent);
+  }
 }

@@ -70,7 +70,7 @@ export default function RepositoriesPage() {
     }
   };
 
-  // Branch selector component
+  // Branch selector component with custom trigger
   const BranchSelector = ({ path }: { path: string }) => {
     const repoData = repositoriesData[path];
     const status = getRepoInitStatus(path);
@@ -100,11 +100,38 @@ export default function RepositoriesPage() {
         value={currentBranch || undefined}
         placeholder="Select branch..."
         defaultPriority={['main', 'master', 'develop']}
+        anchor="left"
         onValueChange={(_branch) => {
           // TODO: Implement branch switching functionality
           // Will switch to selected branch when implemented
         }}
-        className="text-xs w-full"
+        renderTrigger={({ ref, toggle, displayLabel, getReferenceProps }) => (
+          <div
+            ref={ref}
+            className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={toggle}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggle();
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            title="Switch Branch"
+            aria-label={`Switch to branch: ${
+              displayLabel === 'Select branch...'
+                ? 'select branch'
+                : displayLabel
+            }`}
+            {...(getReferenceProps ? getReferenceProps() : {})}
+          >
+            <GitBranch size={12} className="text-blue-400" />
+            <span className="text-xs text-blue-400">
+              {displayLabel === 'Select branch...' ? 'branch' : displayLabel}
+            </span>
+          </div>
+        )}
       />
     );
   };
@@ -339,7 +366,7 @@ export default function RepositoriesPage() {
         <Dropdown
           renderTrigger={({ ref, toggle }) => (
             <button
-              ref={ref as React.MutableRefObject<HTMLButtonElement | null>}
+              ref={ref}
               type="button"
               className="btn btn-primary"
               style={{
@@ -409,7 +436,10 @@ export default function RepositoriesPage() {
                   {currentWorkspace.path}{' '}
                   {currentWorkspace.saved ? '' : '(unsaved)'}
                 </div>
-                <StatusIndicator path={currentWorkspace.path} />
+                <div className="flex items-center gap-3">
+                  <StatusIndicator path={currentWorkspace.path} />
+                  <BranchSelector path={currentWorkspace.path} />
+                </div>
               </div>
               <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
                 {currentWorkspace.framework}
@@ -417,9 +447,6 @@ export default function RepositoriesPage() {
             </div>
 
             <div className="flex items-center gap-3 shrink-0">
-              <div className="w-32">
-                <BranchSelector path={currentWorkspace.path} />
-              </div>
               {!currentWorkspace.saved && (
                 <Tooltip label="Save" placement="top">
                   <button
@@ -468,16 +495,16 @@ export default function RepositoriesPage() {
                         <div className="text-xs opacity-70 truncate">
                           {r.path}
                         </div>
-                        <StatusIndicator path={r.path} />
+                        <div className="flex items-center gap-3">
+                          <StatusIndicator path={r.path} />
+                          <BranchSelector path={r.path} />
+                        </div>
                       </div>
                       <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
                         {r.framework}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <div className="w-32">
-                        <BranchSelector path={r.path} />
-                      </div>
                       <Tooltip label="Remove" placement="top">
                         <button
                           type="button"
@@ -528,16 +555,16 @@ export default function RepositoriesPage() {
                         <div className="text-xs opacity-70 truncate">
                           {r.path}
                         </div>
-                        <StatusIndicator path={r.path} />
+                        <div className="flex items-center gap-3">
+                          <StatusIndicator path={r.path} />
+                          <BranchSelector path={r.path} />
+                        </div>
                       </div>
                       <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
                         {r.framework}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <div className="w-32">
-                        <BranchSelector path={r.path} />
-                      </div>
                       <Tooltip label="Remove" placement="top">
                         <button
                           type="button"
