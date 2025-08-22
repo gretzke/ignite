@@ -1,7 +1,8 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RepoList, RepoInfoResult } from '@ignite/api';
-import { apiClient } from '../../api/client';
+import { apiClient, apiDispatchAction } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
+import { ApiError } from '@ignite/api/client';
 import { formatApiError } from '../../middleware/apiGate';
 
 export interface IRepository {
@@ -231,6 +232,208 @@ export const repositoriesApi = {
     );
 
     return initActions;
+  },
+
+  // Checkout branch
+  checkoutBranch: (pathOrUrl: string, branch: string) => {
+    const getRepoName = (path: string) => {
+      if (path.includes('github.com/')) {
+        return path.split('/').slice(-2).join('/');
+      }
+      return path.split('/').pop() || path;
+    };
+
+    const repoName = getRepoName(pathOrUrl);
+
+    const apiAction = apiClient.dispatch.checkoutBranch({
+      body: { pathOrUrl, branch },
+      onSuccess: () => {
+        // After successful branch checkout, refresh repo info
+        const refreshInfoAction = apiClient.dispatch.getRepoInfo({
+          body: { pathOrUrl },
+          onSuccess: (repoInfo) => {
+            return setRepositoryInfo({
+              pathOrUrl,
+              info: repoInfo,
+            });
+          },
+          onError: (error) => {
+            const { description } = formatApiError(error);
+            return triggerToast({
+              title: 'Info Refresh Failed',
+              description: `Branch switched but failed to refresh info: ${description}`,
+              variant: 'warning',
+              duration: 5000,
+            });
+          },
+        });
+
+        return [refreshInfoAction];
+      },
+      onError: (error) => {
+        // Error handling will be done by the promise-based toast
+        throw error;
+      },
+    });
+
+    return triggerToast({
+      apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
+      loading: {
+        title: 'Switching Branch...',
+        description: `Switching ${repoName} to branch "${branch}"`,
+        variant: 'info',
+      },
+      onSuccess: () => ({
+        title: 'Branch Switched',
+        description: `Successfully switched ${repoName} to branch "${branch}"`,
+        variant: 'success',
+        duration: 4000,
+      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return {
+          title: title || 'Branch Switch Failed',
+          description,
+          variant: 'error',
+          duration: 5000,
+        };
+      },
+    });
+  },
+
+  // Checkout commit
+  checkoutCommit: (pathOrUrl: string, commit: string) => {
+    const getRepoName = (path: string) => {
+      if (path.includes('github.com/')) {
+        return path.split('/').slice(-2).join('/');
+      }
+      return path.split('/').pop() || path;
+    };
+
+    const repoName = getRepoName(pathOrUrl);
+    const shortCommit = commit.substring(0, 7);
+
+    const apiAction = apiClient.dispatch.checkoutCommit({
+      body: { pathOrUrl, commit },
+      onSuccess: () => {
+        // After successful commit checkout, refresh repo info
+        const refreshInfoAction = apiClient.dispatch.getRepoInfo({
+          body: { pathOrUrl },
+          onSuccess: (repoInfo) => {
+            return setRepositoryInfo({
+              pathOrUrl,
+              info: repoInfo,
+            });
+          },
+          onError: (error) => {
+            const { description } = formatApiError(error);
+            return triggerToast({
+              title: 'Info Refresh Failed',
+              description: `Commit checked out but failed to refresh info: ${description}`,
+              variant: 'warning',
+              duration: 5000,
+            });
+          },
+        });
+
+        return [refreshInfoAction];
+      },
+      onError: (error) => {
+        // Error handling will be done by the promise-based toast
+        throw error;
+      },
+    });
+
+    return triggerToast({
+      apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
+      loading: {
+        title: 'Checking Out Commit...',
+        description: `Checking out ${repoName} to commit "${shortCommit}"`,
+        variant: 'info',
+      },
+      onSuccess: () => ({
+        title: 'Commit Checked Out',
+        description: `Successfully checked out ${repoName} to commit "${shortCommit}"`,
+        variant: 'success',
+        duration: 4000,
+      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return {
+          title: title || 'Commit Checkout Failed',
+          description,
+          variant: 'error',
+          duration: 5000,
+        };
+      },
+    });
+  },
+
+  // Pull changes
+  pullChanges: (pathOrUrl: string) => {
+    const getRepoName = (path: string) => {
+      if (path.includes('github.com/')) {
+        return path.split('/').slice(-2).join('/');
+      }
+      return path.split('/').pop() || path;
+    };
+
+    const repoName = getRepoName(pathOrUrl);
+
+    const apiAction = apiClient.dispatch.pullChanges({
+      body: { pathOrUrl },
+      onSuccess: () => {
+        // After successful pull, refresh repo info
+        const refreshInfoAction = apiClient.dispatch.getRepoInfo({
+          body: { pathOrUrl },
+          onSuccess: (repoInfo) => {
+            return setRepositoryInfo({
+              pathOrUrl,
+              info: repoInfo,
+            });
+          },
+          onError: (error) => {
+            const { description } = formatApiError(error);
+            return triggerToast({
+              title: 'Info Refresh Failed',
+              description: `Changes pulled but failed to refresh info: ${description}`,
+              variant: 'warning',
+              duration: 5000,
+            });
+          },
+        });
+
+        return [refreshInfoAction];
+      },
+      onError: (error) => {
+        // Error handling will be done by the promise-based toast
+        throw error;
+      },
+    });
+
+    return triggerToast({
+      apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
+      loading: {
+        title: 'Pulling Changes...',
+        description: `Pulling latest changes for ${repoName}`,
+        variant: 'info',
+      },
+      onSuccess: () => ({
+        title: 'Changes Pulled',
+        description: `Successfully pulled latest changes for ${repoName}`,
+        variant: 'success',
+        duration: 4000,
+      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return {
+          title: title || 'Pull Failed',
+          description,
+          variant: 'error',
+          duration: 5000,
+        };
+      },
+    });
   },
 
   // Save current workspace as a repository

@@ -128,8 +128,39 @@ export class ClonedRepoPlugin extends RepoManagerPlugin {
       if (!fetchRes.success) return fetchRes as any;
       const reset = await execGit(["reset", "--hard"]);
       if (!reset.success) return reset as any;
-      const co = await execGit(["checkout", options.branch]);
-      if (!co.success) return co as any;
+
+      // Handle remote branch checkout by creating local tracking branch
+      if (options.branch.startsWith("origin/")) {
+        const localBranchName = options.branch.replace("origin/", "");
+
+        // Check if local branch already exists
+        const branchExists = await execGit([
+          "show-ref",
+          "--verify",
+          "--quiet",
+          `refs/heads/${localBranchName}`,
+        ]);
+
+        if (branchExists.success) {
+          // Local branch exists, just checkout
+          const co = await execGit(["checkout", localBranchName]);
+          if (!co.success) return co as any;
+        } else {
+          // Create new local tracking branch
+          const co = await execGit([
+            "checkout",
+            "-b",
+            localBranchName,
+            options.branch,
+          ]);
+          if (!co.success) return co as any;
+        }
+      } else {
+        // Regular branch checkout
+        const co = await execGit(["checkout", options.branch]);
+        if (!co.success) return co as any;
+      }
+
       return { success: true, data: {} } as const;
     });
   }

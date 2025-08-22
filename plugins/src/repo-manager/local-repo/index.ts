@@ -75,8 +75,39 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
       if (!clean.success) return clean as any;
       const fetchRes = await execGit(["fetch", "--all", "--prune"]);
       if (!fetchRes.success) return fetchRes as any;
-      const co = await execGit(["checkout", options.branch]);
-      if (!co.success) return co as any;
+
+      // Handle remote branch checkout by creating local tracking branch
+      if (options.branch.startsWith("origin/")) {
+        const localBranchName = options.branch.replace("origin/", "");
+
+        // Check if local branch already exists
+        const branchExists = await execGit([
+          "show-ref",
+          "--verify",
+          "--quiet",
+          `refs/heads/${localBranchName}`,
+        ]);
+
+        if (branchExists.success) {
+          // Local branch exists, just checkout
+          const co = await execGit(["checkout", localBranchName]);
+          if (!co.success) return co as any;
+        } else {
+          // Create new local tracking branch
+          const co = await execGit([
+            "checkout",
+            "-b",
+            localBranchName,
+            options.branch,
+          ]);
+          if (!co.success) return co as any;
+        }
+      } else {
+        // Regular branch checkout
+        const co = await execGit(["checkout", options.branch]);
+        if (!co.success) return co as any;
+      }
+
       return { success: true, data: {} } as const;
     });
   }
@@ -131,11 +162,7 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
       if (!branch.success) return branch as any;
       if (!commit.success) return commit as any;
 
-      const res = await execGit([
-        "status",
-        "--porcelain",
-        "--untracked-files=no",
-      ]);
+      const res = await execGit(["status", "--porcelain"]);
       if (!res.success) return res as any;
       const dirty = res.data.stdout.trim().length > 0;
 
