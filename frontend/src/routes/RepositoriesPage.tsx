@@ -2,7 +2,17 @@ import Tooltip from '../components/Tooltip';
 import Dropdown from '../components/Dropdown';
 import Select from '../components/Select';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Bookmark, Plus, X, Folder, GitBranch, RotateCcw } from 'lucide-react';
+import {
+  Bookmark,
+  Plus,
+  X,
+  Folder,
+  GitBranch,
+  RotateCcw,
+  GitCommit,
+  GitPullRequest,
+  FileEdit,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { repositoriesApi } from '../store/features/repositories/repositoriesSlice';
@@ -21,6 +31,10 @@ export default function RepositoriesPage() {
     name: string;
     path: string;
   } | null>(null);
+  const [commitHashModalOpen, setCommitHashModalOpen] = useState(false);
+  const [commitHash, setCommitHash] = useState('');
+  const [commitHashError, setCommitHashError] = useState('');
+  const [_selectedRepoPath, setSelectedRepoPath] = useState<string>('');
 
   // Store hooks
   const dispatch = useAppDispatch();
@@ -39,100 +53,318 @@ export default function RepositoriesPage() {
     return 'unknown';
   };
 
-  // Status indicator component
-  const StatusIndicator = ({ path }: { path: string }) => {
-    const status = getRepoInitStatus(path);
-
-    switch (status) {
-      case 'loading':
-        return (
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-            <span className="text-xs text-blue-500">Initializing...</span>
-          </div>
-        );
-      case 'success':
-        return (
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-green-500 rounded-full" />
-            <span className="text-xs text-green-500">Ready</span>
-          </div>
-        );
-      case 'error':
-        return (
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-red-500 rounded-full" />
-            <span className="text-xs text-red-500">Failed</span>
-          </div>
-        );
-      default:
-        return null;
-    }
-  };
-
-  // Branch selector component with custom trigger
-  const BranchSelector = ({ path }: { path: string }) => {
+  // Helper to determine if pull button should be shown
+  const shouldShowPullButton = (path: string) => {
     const repoData = repositoriesData[path];
     const status = getRepoInitStatus(path);
 
-    // Don't show branch selector if not successfully initialized
-    if (status !== 'success' || !repoData) {
-      return null;
+    // Only show for successfully initialized repos
+    if (status !== 'success' || !repoData?.info) {
+      return false;
     }
 
-    const currentBranch = repoData.info?.branch;
-    const branches = repoData.branches || [];
+    // Show if repo has changes (dirty) or is not up to date
+    return !repoData.info.upToDate;
+  };
 
-    // Don't show if no branches available
-    if (branches.length === 0) {
-      return null;
-    }
+  // RepoCard component props interface
+  interface RepoCardProps {
+    repo: {
+      name: string;
+      path: string;
+      framework: string;
+      saved?: boolean;
+    };
+    variant: 'current' | 'local' | 'cloned';
+    onSave?: () => void;
+    onRemove?: (name: string, path: string) => void;
+    onPull?: (path: string) => void;
+    showPullButton: boolean;
+  }
 
-    // Convert branches to Select options
-    const branchOptions = branches.map((branch) => ({
-      value: branch,
-      label: branch,
-    }));
+  // Consolidated RepoCard component
+  const RepoCard = ({
+    repo,
+    variant,
+    onSave,
+    onRemove,
+    onPull,
+    showPullButton,
+  }: RepoCardProps) => {
+    // Status indicator component
+    const StatusIndicator = ({ path }: { path: string }) => {
+      const status = getRepoInitStatus(path);
+
+      switch (status) {
+        case 'loading':
+          return (
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+              <span className="text-xs text-blue-500">Initializing...</span>
+            </div>
+          );
+        case 'success':
+          return (
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 bg-green-500 rounded-full" />
+              <span className="text-xs text-green-500">Ready</span>
+            </div>
+          );
+        case 'error':
+          return (
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 bg-red-500 rounded-full" />
+              <span className="text-xs text-red-500">Failed</span>
+            </div>
+          );
+        default:
+          return null;
+      }
+    };
+
+    // Dirty indicator component
+    const DirtyIndicator = ({ path }: { path: string }) => {
+      const repoData = repositoriesData[path];
+      const status = getRepoInitStatus(path);
+
+      if (status !== 'success' || !repoData?.info) {
+        return null;
+      }
+
+      // Only show if repo is dirty
+      if (!repoData.info.dirty) {
+        return null;
+      }
+
+      return (
+        <Tooltip label="There are uncommitted changes present" placement="top">
+          <div
+            className="flex items-center gap-1 cursor-default"
+            role="status"
+            aria-label="Repository has uncommitted changes"
+          >
+            <FileEdit size={12} className="text-orange-400" />
+            <span className="text-xs text-orange-400">dirty</span>
+          </div>
+        </Tooltip>
+      );
+    };
+
+    // Branch selector component with custom trigger
+    const BranchSelector = ({ path }: { path: string }) => {
+      const repoData = repositoriesData[path];
+      const status = getRepoInitStatus(path);
+
+      // Don't show branch selector if not successfully initialized
+      if (status !== 'success' || !repoData) {
+        return null;
+      }
+
+      const currentBranch = repoData.info?.branch;
+      const branches = repoData.branches || [];
+
+      // Don't show if no branches available
+      if (branches.length === 0) {
+        return null;
+      }
+
+      // Convert branches to Select options
+      const branchOptions = branches.map((branch) => ({
+        value: branch,
+        label: branch,
+      }));
+
+      // Handle detached HEAD state
+      const isDetachedHead = currentBranch === null;
+
+      return (
+        <Select
+          options={branchOptions}
+          value={currentBranch || undefined}
+          placeholder="Select branch..."
+          defaultPriority={['main', 'master', 'develop']}
+          anchor="left"
+          onValueChange={(branch) => {
+            dispatch(repositoriesApi.checkoutBranch(path, branch));
+          }}
+          renderTrigger={({ ref, toggle, displayLabel, getReferenceProps }) => {
+            // Override displayLabel for detached HEAD state
+            const finalDisplayLabel = isDetachedHead
+              ? 'detached HEAD'
+              : displayLabel;
+
+            return (
+              <div
+                ref={ref}
+                className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+                onClick={toggle}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggle();
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                title="Switch Branch"
+                aria-label={`Switch to branch: ${
+                  isDetachedHead
+                    ? 'detached HEAD'
+                    : finalDisplayLabel === 'Select branch...'
+                    ? 'select branch'
+                    : finalDisplayLabel
+                }`}
+                {...(getReferenceProps ? getReferenceProps() : {})}
+              >
+                <GitBranch size={12} className="text-blue-400" />
+                <span className="text-xs text-blue-400">
+                  {isDetachedHead
+                    ? 'detached HEAD'
+                    : finalDisplayLabel === 'Select branch...'
+                    ? currentBranch || 'branch'
+                    : finalDisplayLabel}
+                </span>
+              </div>
+            );
+          }}
+        />
+      );
+    };
+
+    // Commit hash selector component
+    const CommitHashSelector = ({ path }: { path: string }) => {
+      const repoData = repositoriesData[path];
+      const status = getRepoInitStatus(path);
+
+      // Don't show commit hash selector if not successfully initialized
+      if (status !== 'success' || !repoData) {
+        return null;
+      }
+
+      const currentCommit = repoData.info?.commit;
+      // Display short hash (first 7 characters) or 'commit' as fallback
+      const displayHash = currentCommit
+        ? currentCommit.substring(0, 7)
+        : 'commit';
+
+      const handleCommitHashClick = () => {
+        setSelectedRepoPath(path);
+        setCommitHash('');
+        setCommitHashError('');
+        setCommitHashModalOpen(true);
+      };
+
+      return (
+        <div
+          className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+          onClick={handleCommitHashClick}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleCommitHashClick();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          title="Checkout Commit"
+          aria-label={`Checkout commit: ${displayHash}`}
+        >
+          <GitCommit size={12} className="text-purple-400" />
+          <span className="text-xs text-purple-400">{displayHash}</span>
+        </div>
+      );
+    };
 
     return (
-      <Select
-        options={branchOptions}
-        value={currentBranch || undefined}
-        placeholder="Select branch..."
-        defaultPriority={['main', 'master', 'develop']}
-        anchor="left"
-        onValueChange={(_branch) => {
-          // TODO: Implement branch switching functionality
-          // Will switch to selected branch when implemented
-        }}
-        renderTrigger={({ ref, toggle, displayLabel, getReferenceProps }) => (
-          <div
-            ref={ref}
-            className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
-            onClick={toggle}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                toggle();
-              }
-            }}
-            role="button"
-            tabIndex={0}
-            title="Switch Branch"
-            aria-label={`Switch to branch: ${
-              displayLabel === 'Select branch...'
-                ? 'select branch'
-                : displayLabel
-            }`}
-            {...(getReferenceProps ? getReferenceProps() : {})}
-          >
-            <GitBranch size={12} className="text-blue-400" />
-            <span className="text-xs text-blue-400">
-              {displayLabel === 'Select branch...' ? 'branch' : displayLabel}
+      <div className="card-milky p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
+              📁
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-medium truncate">{repo.name}</div>
+              <div className="text-xs opacity-70 truncate">
+                {repo.path}{' '}
+                {variant === 'current' && repo.saved === false
+                  ? '(unsaved)'
+                  : ''}
+              </div>
+              <div className="flex items-center gap-3">
+                <StatusIndicator path={repo.path} />
+                <BranchSelector path={repo.path} />
+                <CommitHashSelector path={repo.path} />
+                <DirtyIndicator path={repo.path} />
+              </div>
+            </div>
+            <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
+              {repo.framework}
             </span>
           </div>
-        )}
-      />
+
+          <div className="flex items-center gap-3 shrink-0">
+            {showPullButton && onPull && (
+              <Tooltip label="Pull Changes" placement="top">
+                <button
+                  type="button"
+                  className={`btn btn-secondary ${
+                    variant !== 'current' ? 'btn-secondary-borderless' : ''
+                  }`}
+                  style={{
+                    width: 40,
+                    height: 36,
+                    paddingLeft: 0,
+                    paddingRight: 0,
+                  }}
+                  aria-label="Pull changes"
+                  title="Pull Changes"
+                  onClick={() => onPull(repo.path)}
+                >
+                  <GitPullRequest size={16} />
+                </button>
+              </Tooltip>
+            )}
+            {variant === 'current' && repo.saved === false && onSave && (
+              <Tooltip label="Save" placement="top">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{
+                    width: 40,
+                    height: 36,
+                    paddingLeft: 0,
+                    paddingRight: 0,
+                  }}
+                  aria-label="Save repository"
+                  title="Save"
+                  onClick={onSave}
+                >
+                  <Bookmark size={16} />
+                </button>
+              </Tooltip>
+            )}
+            {(variant === 'local' || variant === 'cloned') && onRemove && (
+              <Tooltip label="Remove" placement="top">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-secondary-borderless"
+                  style={{
+                    width: 40,
+                    height: 36,
+                    paddingLeft: 0,
+                    paddingRight: 0,
+                  }}
+                  aria-label="Remove repository"
+                  title="Remove"
+                  onClick={() => onRemove(repo.name, repo.path)}
+                >
+                  <X size={16} />
+                </button>
+              </Tooltip>
+            )}
+          </div>
+        </div>
+      </div>
     );
   };
 
@@ -202,6 +434,17 @@ export default function RepositoriesPage() {
   const handleCloneUrlKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && cloneUrl.trim() && isValidUrl(cloneUrl.trim())) {
       handleCloneSubmit();
+    }
+  };
+
+  const handleCommitHashKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && commitHash.trim() && !commitHashError) {
+      if (_selectedRepoPath) {
+        dispatch(
+          repositoriesApi.checkoutCommit(_selectedRepoPath, commitHash.trim())
+        );
+      }
+      setCommitHashModalOpen(false);
     }
   };
 
@@ -422,53 +665,13 @@ export default function RepositoriesPage() {
 
       {/* Current workspace row */}
       {currentWorkspace && (
-        <div className="card-milky p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
-                📁
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-medium truncate">
-                  {currentWorkspace.name}
-                </div>
-                <div className="text-xs opacity-70 truncate">
-                  {currentWorkspace.path}{' '}
-                  {currentWorkspace.saved ? '' : '(unsaved)'}
-                </div>
-                <div className="flex items-center gap-3">
-                  <StatusIndicator path={currentWorkspace.path} />
-                  <BranchSelector path={currentWorkspace.path} />
-                </div>
-              </div>
-              <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
-                {currentWorkspace.framework}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3 shrink-0">
-              {!currentWorkspace.saved && (
-                <Tooltip label="Save" placement="top">
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    style={{
-                      width: 40,
-                      height: 36,
-                      paddingLeft: 0,
-                      paddingRight: 0,
-                    }}
-                    aria-label="Save repository"
-                    title="Save"
-                    onClick={handleSaveWorkspace}
-                  >
-                    <Bookmark size={16} />
-                  </button>
-                </Tooltip>
-              )}
-            </div>
-          </div>
-        </div>
+        <RepoCard
+          repo={currentWorkspace}
+          variant="current"
+          onSave={handleSaveWorkspace}
+          onPull={(path) => dispatch(repositoriesApi.pullChanges(path))}
+          showPullButton={shouldShowPullButton(currentWorkspace.path)}
+        />
       )}
 
       {/* Local repos */}
@@ -482,49 +685,14 @@ export default function RepositoriesPage() {
               </div>
             ) : (
               localRepos.map((r, index) => (
-                <div key={`local-${index}`} className="card-milky p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
-                        📁
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">
-                          {r.name}
-                        </div>
-                        <div className="text-xs opacity-70 truncate">
-                          {r.path}
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <StatusIndicator path={r.path} />
-                          <BranchSelector path={r.path} />
-                        </div>
-                      </div>
-                      <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
-                        {r.framework}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <Tooltip label="Remove" placement="top">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-secondary-borderless"
-                          style={{
-                            width: 40,
-                            height: 36,
-                            paddingLeft: 0,
-                            paddingRight: 0,
-                          }}
-                          aria-label="Remove repository"
-                          title="Remove"
-                          onClick={() => handleRemoveRepo(r.name, r.path)}
-                        >
-                          <X size={16} />
-                        </button>
-                      </Tooltip>
-                    </div>
-                  </div>
-                </div>
+                <RepoCard
+                  key={`local-${index}`}
+                  repo={r}
+                  variant="local"
+                  onRemove={handleRemoveRepo}
+                  onPull={(path) => dispatch(repositoriesApi.pullChanges(path))}
+                  showPullButton={shouldShowPullButton(r.path)}
+                />
               ))
             )}
           </div>
@@ -542,49 +710,14 @@ export default function RepositoriesPage() {
               </div>
             ) : (
               clonedRepos.map((r, index) => (
-                <div key={`cloned-${index}`} className="card-milky p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
-                        📁
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">
-                          {r.name}
-                        </div>
-                        <div className="text-xs opacity-70 truncate">
-                          {r.path}
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <StatusIndicator path={r.path} />
-                          <BranchSelector path={r.path} />
-                        </div>
-                      </div>
-                      <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
-                        {r.framework}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <Tooltip label="Remove" placement="top">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-secondary-borderless"
-                          style={{
-                            width: 40,
-                            height: 36,
-                            paddingLeft: 0,
-                            paddingRight: 0,
-                          }}
-                          aria-label="Remove repository"
-                          title="Remove"
-                          onClick={() => handleRemoveRepo(r.name, r.path)}
-                        >
-                          <X size={16} />
-                        </button>
-                      </Tooltip>
-                    </div>
-                  </div>
-                </div>
+                <RepoCard
+                  key={`cloned-${index}`}
+                  repo={r}
+                  variant="cloned"
+                  onRemove={handleRemoveRepo}
+                  onPull={(path) => dispatch(repositoriesApi.pullChanges(path))}
+                  showPullButton={shouldShowPullButton(r.path)}
+                />
               ))
             )}
           </div>
@@ -814,6 +947,103 @@ export default function RepositoriesPage() {
                 disabled={!cloneUrl.trim() || !isValidUrl(cloneUrl.trim())}
               >
                 Clone
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      {/* Commit Hash Modal */}
+      <Dialog.Root
+        open={commitHashModalOpen}
+        onOpenChange={(open) => {
+          setCommitHashModalOpen(open);
+          if (!open) {
+            setCommitHash('');
+            setCommitHashError('');
+            setSelectedRepoPath('');
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay
+            className="dialog-overlay"
+            style={{ background: 'transparent' }}
+          />
+          <Dialog.Content
+            className="dialog-content glass-surface"
+            style={{
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              maxWidth: 460,
+              width: '90vw',
+              padding: 16,
+            }}
+          >
+            <Dialog.Title className="text-lg font-medium mb-3">
+              Checkout Commit
+            </Dialog.Title>
+
+            <div className="mb-3">
+              <label htmlFor="commitHash" className="label inline-block mb-2">
+                Commit Hash
+              </label>
+              <input
+                id="commitHash"
+                type="text"
+                placeholder="Enter full or partial commit hash..."
+                value={commitHash}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setCommitHash(value);
+                  setCommitHashError('');
+
+                  // Basic validation: commit hashes should be alphanumeric and at least 4 characters
+                  if (
+                    value.trim() &&
+                    (value.trim().length < 4 ||
+                      !/^[a-fA-F0-9]+$/.test(value.trim()))
+                  ) {
+                    setCommitHashError(
+                      'Commit hash should be at least 4 characters and contain only hexadecimal characters (0-9, a-f)'
+                    );
+                  }
+                }}
+                onKeyDown={handleCommitHashKeyDown}
+                className="input-glass w-full"
+                autoFocus
+              />
+              {commitHashError && (
+                <div className="text-xs text-red-400 mt-1">
+                  {commitHashError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 mt-2">
+              <Dialog.Close asChild>
+                <button type="button" className="btn btn-secondary">
+                  Cancel
+                </button>
+              </Dialog.Close>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  if (commitHash.trim() && _selectedRepoPath) {
+                    dispatch(
+                      repositoriesApi.checkoutCommit(
+                        _selectedRepoPath,
+                        commitHash.trim()
+                      )
+                    );
+                  }
+                  setCommitHashModalOpen(false);
+                }}
+                disabled={!commitHash.trim() || !!commitHashError}
+              >
+                Checkout
               </button>
             </div>
           </Dialog.Content>

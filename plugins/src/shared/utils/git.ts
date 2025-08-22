@@ -52,10 +52,7 @@ export async function ensureGitRepo(
 export async function hasTrackedChanges(
   cwd: string = WORKSPACE_PATH,
 ): Promise<PluginResponse<boolean>> {
-  const status = await execGit(
-    ["status", "--porcelain", "--untracked-files=no"],
-    cwd,
-  );
+  const status = await execGit(["status", "--porcelain"], cwd);
   if (!status.success) return status as any;
   const dirty = status.data.stdout.trim().length > 0;
   return { success: true, data: dirty } as const;
@@ -133,6 +130,18 @@ export async function isUpToDateWithRemote(
     // detached HEAD; can't compare to tracking branch—consider up to date
     return { success: true, data: true } as const;
   }
+
+  // Check if the branch has an upstream configured
+  const upstreamCheck = await execGit(
+    ["rev-parse", "--abbrev-ref", `${branch.data}@{u}`],
+    cwd,
+  );
+  if (!upstreamCheck.success) {
+    // No upstream configured for this branch (local-only branch)
+    // Consider it "up to date" since there's nothing to compare against
+    return { success: true, data: true } as const;
+  }
+
   const fetch = await fetchAll(cwd);
   if (!fetch.success) return fetch as any;
   // Compare local HEAD to upstream
