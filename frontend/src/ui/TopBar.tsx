@@ -88,7 +88,7 @@ export default function TopBar() {
             const button = (
               <button
                 type="button"
-                ref={ref as React.MutableRefObject<HTMLButtonElement | null>}
+                ref={ref}
                 onClick={isEmpty ? undefined : toggle}
                 disabled={isEmpty}
                 className={`rounded-full border flex items-center justify-center ${

@@ -15,6 +15,7 @@ export interface ContainerCreateOptions {
   lifecycle: ContainerLifecycle;
   labels?: Record<string, string>;
   binds?: string[];
+  volumes?: Record<string, object>; // Named volumes: { '/path': {} }
   volumesFrom?: string[];
   cmd?: string[];
 }
@@ -44,6 +45,7 @@ export class ContainerOrchestrator {
       lifecycle,
       labels = {},
       binds,
+      volumes,
       volumesFrom,
       cmd = ['sleep', 'infinity'],
     } = options;
@@ -62,6 +64,7 @@ export class ContainerOrchestrator {
       Image: image,
       name,
       Labels: allLabels,
+      Volumes: volumes,
       Cmd: cmd,
       HostConfig: {
         AutoRemove: lifecycle === ContainerLifecycle.EPHEMERAL, // Only ephemeral containers auto-remove
@@ -88,39 +91,14 @@ export class ContainerOrchestrator {
     }
   }
 
-  // Get an existing container if it's running, otherwise return null
-  async getRunningContainer(name: string): Promise<string | null> {
+  // Check if a container exists (regardless of running state)
+  async containerExists(name: string): Promise<boolean> {
     try {
       const container = this.docker.getContainer(name);
-      const info = await container.inspect();
-
-      if (info?.State?.Running) {
-        // Add to tracking if not already tracked
-        if (!this.managedContainers.has(name)) {
-          const lifecycle = info.Config?.Labels?.[
-            'ignite.lifecycle'
-          ] as ContainerLifecycle;
-          if (lifecycle) {
-            this.managedContainers.set(name, lifecycle);
-            getLogger().info(
-              `📝 Discovered existing ${lifecycle} container: ${name}`
-            );
-          }
-        }
-
-        // Increment reference count for existing running container
-        const currentCount = this.containerRefCounts.get(name) || 0;
-        this.containerRefCounts.set(name, currentCount + 1);
-        getLogger().info(
-          `📝 Using existing container: ${name} (refs: ${currentCount + 1})`
-        );
-
-        return name;
-      }
-
-      return null;
+      await container.inspect();
+      return true;
     } catch {
-      return null;
+      return false;
     }
   }
 

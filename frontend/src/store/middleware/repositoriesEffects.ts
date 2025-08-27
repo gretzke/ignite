@@ -13,6 +13,9 @@ import type { AppDispatch, RootState } from '../store';
 // Create a listener middleware for repositories effects
 export const repositoriesEffects = createListenerMiddleware();
 
+// Track the last profile ID that repositories were fetched for
+let lastFetchedProfileId: string | null = null;
+
 // Listen for profile changes and automatically load repositories
 repositoriesEffects.startListening({
   matcher: isAnyOf(
@@ -22,25 +25,29 @@ repositoriesEffects.startListening({
   effect: async (action, listenerApi) => {
     const dispatch = listenerApi.dispatch as AppDispatch;
 
-    // Get the current profile ID from the action
-    let currentProfileId: string | null = null;
+    // Get the new profile ID from the action
+    let newProfileId: string | null = null;
 
     if (fetchProfilesSucceeded.match(action)) {
       // When profiles are fetched, use the currentId from the payload
-      currentProfileId = action.payload.currentId;
+      newProfileId = action.payload.currentId;
     } else if (setCurrentProfile.match(action)) {
       // When profile is switched, use the new profile ID
-      currentProfileId = action.payload;
+      newProfileId = action.payload;
     }
 
-    // If we have a current profile ID, load its repositories
-    if (currentProfileId) {
-      const actions = repositoriesApi.fetchRepositories(currentProfileId);
-      // Dispatch all actions (start loading + API call)
-      actions.forEach((actionToDispatch) => dispatch(actionToDispatch));
-    } else {
-      // No profile selected, clear repositories
-      dispatch(repositoriesApi.clearRepositories());
+    // Only fetch repositories if the profile ID actually changed
+    if (newProfileId !== lastFetchedProfileId) {
+      lastFetchedProfileId = newProfileId;
+
+      if (newProfileId) {
+        const actions = repositoriesApi.fetchRepositories(newProfileId);
+        // Dispatch all actions (start loading + API call)
+        actions.forEach((actionToDispatch) => dispatch(actionToDispatch));
+      } else {
+        // No profile selected, clear repositories
+        dispatch(repositoriesApi.clearRepositories());
+      }
     }
   },
 });

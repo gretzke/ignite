@@ -15,7 +15,10 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
-import { repositoriesApi } from '../store/features/repositories/repositoriesSlice';
+import {
+  repositoriesApi,
+  type IFramework,
+} from '../store/features/repositories/repositoriesSlice';
 import { triggerToast } from '../store/middleware/toastListener';
 import ConfirmDialog from '../components/ConfirmDialog';
 
@@ -72,7 +75,7 @@ export default function RepositoriesPage() {
     repo: {
       name: string;
       path: string;
-      framework: string;
+      frameworks?: IFramework[];
       saved?: boolean;
     };
     variant: 'current' | 'local' | 'cloned';
@@ -275,6 +278,51 @@ export default function RepositoriesPage() {
       );
     };
 
+    // Framework badges component
+    const FrameworkBadges = ({ path }: { path: string }) => {
+      const repoData = repositoriesData[path];
+      const status = getRepoInitStatus(path);
+      const frameworks = repoData?.frameworks;
+
+      // Only show framework information if repo is successfully initialized
+      if (status !== 'success') {
+        return null;
+      }
+
+      if (frameworks === undefined) {
+        // Detection in progress
+        return (
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 bg-[var(--primary)] rounded-full animate-pulse" />
+            <span className="text-xs text-[var(--primary)]">Detecting...</span>
+          </div>
+        );
+      }
+
+      if (frameworks.length === 0) {
+        // No frameworks detected
+        return (
+          <span className="text-xs rounded-full pill px-2 py-0.5">
+            Unknown Framework
+          </span>
+        );
+      }
+
+      // Show framework badges
+      return (
+        <div className="flex items-center gap-1 flex-wrap">
+          {frameworks.map((framework) => (
+            <span
+              key={framework.id}
+              className="text-xs rounded-full pill-primary px-2 py-0.5"
+            >
+              {framework.name}
+            </span>
+          ))}
+        </div>
+      );
+    };
+
     return (
       <div className="card-milky p-4">
         <div className="flex items-center justify-between gap-3">
@@ -297,9 +345,9 @@ export default function RepositoriesPage() {
                 <DirtyIndicator path={repo.path} />
               </div>
             </div>
-            <span className="text-xs rounded-full pill px-2 py-0.5 ml-2 shrink-0">
-              {repo.framework}
-            </span>
+            <div className="ml-2 shrink-0">
+              <FrameworkBadges path={repo.path} />
+            </div>
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
@@ -566,7 +614,7 @@ export default function RepositoriesPage() {
           name: 'Current Workspace',
           path: sessionPath,
           saved: false,
-          framework: 'Unknown', // We'd need to detect this
+          frameworks: repositoriesData[sessionPath]?.frameworks,
         }
       : null;
 
@@ -580,7 +628,7 @@ export default function RepositoriesPage() {
           ? `${getRepoName(path)} (Current Workspace)`
           : getRepoName(path),
         path,
-        framework: 'Unknown', // We'd need to detect this
+        frameworks: repositoriesData[path]?.frameworks,
         isCurrentWorkspace,
         originalIndex: index,
       };
@@ -599,7 +647,7 @@ export default function RepositoriesPage() {
       .map((path) => ({
         name: getRepoName(path),
         path,
-        framework: 'Unknown', // We'd need to detect this
+        frameworks: repositoriesData[path]?.frameworks,
       })) || [];
 
   return (

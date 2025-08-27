@@ -1,11 +1,7 @@
 // Base class for compiler plugins (Foundry, Hardhat, etc.)
 import { BasePlugin } from "../../base-plugin.js";
 import { PluginType } from "../../types.js";
-import type {
-  ICompilerPlugin,
-  DetectOptions,
-  DetectionResult,
-} from "./types.js";
+import type { ICompilerPlugin, DetectionResult } from "./types.js";
 import type { PluginResponse } from "../../types.js";
 
 export abstract class CompilerPlugin
@@ -14,9 +10,7 @@ export abstract class CompilerPlugin
 {
   public readonly type = PluginType.COMPILER as const;
 
-  abstract detect(
-    options: DetectOptions,
-  ): Promise<PluginResponse<DetectionResult>>;
+  abstract detect(): Promise<PluginResponse<DetectionResult>>;
   // TODO: Add compile() and getArtifacts() when needed
 }
 
@@ -25,6 +19,5 @@ export type {
   CompilerOperations,
   CompilerOperation,
   ICompilerPlugin,
-  DetectOptions,
   DetectionResult,
 } from "./types.js";

@@ -85,6 +85,13 @@ export class PluginRegistryLoader {
     return await this.loadRegistry();
   }
 
+  async getPluginsByType(type: PluginType): Promise<PluginConfig[]> {
+    const registry = await this.loadRegistry();
+    return Object.values(registry).filter(
+      (config) => config.metadata.type === type
+    );
+  }
+
   private createPluginConfig(
     pluginId: string,
     metadata: PluginMetadata
@@ -121,7 +128,7 @@ export class PluginRegistryLoader {
     // - Utility plugins (formatters, validators)
     // - Network plugins (RPC interactions)
 
-    // For now, assume most stateless plugins need repo access
-    return true;
+    // For now, assume most stateless plugins do not need repo access
+    return false;
   }
 }
