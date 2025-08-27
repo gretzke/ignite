@@ -547,6 +547,7 @@ export const profileHandlers = {
       await fileSystem.writeJsonFile(repoPath, next);
 
       // Remove associated container(s) but be careful with session containers
+      // TODO: remove volumes for cloned containers or during cleanup remove all volumes not associated with a container
       await removeRepoContainers(kind, pathOrUrl);
 
       return reply.status(204).send(null);

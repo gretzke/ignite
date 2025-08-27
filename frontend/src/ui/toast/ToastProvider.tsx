@@ -238,7 +238,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 ) : null}
                 {t.description ? (
                   <Toast.Description className="toast-desc">
-                    {t.description}
+                    {typeof t.description === 'string' &&
+                    t.description.length > 100
+                      ? t.description.slice(0, 100) + '...'
+                      : t.description}
                   </Toast.Description>
                 ) : null}
               </div>

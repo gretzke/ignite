@@ -102,7 +102,7 @@ async function buildImage(dockerfilePath) {
     return imageName;
   } catch (error) {
     log(`❌ Failed to build ${imageName}: ${error.message}`, "red");
-    return null;
+    throw error;
   }
 }
 

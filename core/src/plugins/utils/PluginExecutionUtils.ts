@@ -49,16 +49,68 @@ export class PluginExecutionUtils {
 
           let output = '';
           let stderr = '';
+          // Buffer for robust Docker stream demultiplexing
+          let muxBuffer: Buffer = Buffer.alloc(0);
+          let multiplexingMode: 'unknown' | 'multiplexed' | 'raw' = 'unknown';
 
-          // Handle both stdout and stderr
+          // Handle both stdout and stderr with robust demultiplexing
           stream.on('data', (chunk: Buffer) => {
-            const data = chunk.toString();
-            if (chunk[0] === 2) {
-              // stderr stream
-              stderr += data.slice(8); // Remove Docker stream header
-            } else {
-              // stdout stream
-              output += data.slice(8); // Remove Docker stream header
+            // Accumulate chunks into buffer
+            muxBuffer = Buffer.concat([muxBuffer, chunk]);
+
+            // Decide mode if unknown and enough bytes
+            if (multiplexingMode === 'unknown' && muxBuffer.length >= 8) {
+              const looksLikeHeader =
+                (muxBuffer[0] === 0 ||
+                  muxBuffer[0] === 1 ||
+                  muxBuffer[0] === 2) &&
+                muxBuffer[1] === 0 &&
+                muxBuffer[2] === 0 &&
+                muxBuffer[3] === 0;
+              multiplexingMode = looksLikeHeader ? 'multiplexed' : 'raw';
+            }
+
+            if (multiplexingMode === 'raw') {
+              output += muxBuffer.toString('utf8');
+              muxBuffer = Buffer.alloc(0);
+              return;
+            }
+
+            // Parse multiplexed frames: [stream(1), 0,0,0, len(4), payload]
+            while (muxBuffer.length >= 8) {
+              const streamType = muxBuffer[0];
+              const z1 = muxBuffer[1];
+              const z2 = muxBuffer[2];
+              const z3 = muxBuffer[3];
+              const len = muxBuffer.readUInt32BE(4);
+
+              const headerValid =
+                (streamType === 0 || streamType === 1 || streamType === 2) &&
+                z1 === 0 &&
+                z2 === 0 &&
+                z3 === 0;
+              if (!headerValid) {
+                // Fallback to raw mode to avoid corrupting payload
+                multiplexingMode = 'raw';
+                output += muxBuffer.toString('utf8');
+                muxBuffer = Buffer.alloc(0);
+                break;
+              }
+
+              if (muxBuffer.length < 8 + len) {
+                // Wait for more data
+                break;
+              }
+
+              const payload = muxBuffer.subarray(8, 8 + len);
+              if (streamType === 2) {
+                stderr += payload.toString('utf8');
+              } else if (streamType === 1) {
+                output += payload.toString('utf8');
+              }
+              // stdin (0) ignored
+
+              muxBuffer = muxBuffer.subarray(8 + len);
             }
           });
 
@@ -68,14 +120,32 @@ export class PluginExecutionUtils {
               getLogger().info(`🔍 Plugin stderr (${pluginId}): "${stderr}"`);
 
               // Parse JSON response from plugin
-              const jsonMatch = output.match(/\{.*\}/s);
+              // Clean the output to remove any binary characters or control sequences
+              const cleanOutput = output
+                .split('')
+                .filter((char) => {
+                  const code = char.charCodeAt(0);
+                  return (code >= 32 && code <= 126) || code >= 160;
+                })
+                .join('')
+                .trim();
+
+              const jsonMatch = cleanOutput.match(/\{.*\}/s);
               if (jsonMatch) {
-                const result = JSON.parse(jsonMatch[0]);
-                resolve(result);
+                try {
+                  const result = JSON.parse(jsonMatch[0]);
+                  resolve(result);
+                } catch (parseError) {
+                  reject(
+                    new Error(
+                      `JSON parse error: ${parseError}. Clean output: "${cleanOutput}"`
+                    )
+                  );
+                }
               } else {
                 reject(
                   new Error(
-                    `Invalid plugin output: stdout="${output}", stderr="${stderr}"`
+                    `Invalid plugin output format. Clean output: "${cleanOutput}", stderr: "${stderr}"`
                   )
                 );
               }
