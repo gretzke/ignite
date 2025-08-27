@@ -10,9 +10,11 @@ import {
   profilesApi,
 } from './features/profiles/profilesSlice';
 import { repositoriesReducer } from './features/repositories/repositoriesSlice';
+import { compilerReducer } from './features/compiler/compilerSlice';
 import { apiGate } from './middleware/apiGate';
 import { uiEffects } from './middleware/uiEffects';
 import { repositoriesEffects } from './middleware/repositoriesEffects';
+import { compilerEffects } from './middleware/compilerEffects';
 
 export const store = configureStore({
   reducer: {
@@ -21,6 +23,7 @@ export const store = configureStore({
     connection: connectionReducer,
     profiles: profilesReducer,
     repositories: repositoriesReducer,
+    compiler: compilerReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({ serializableCheck: false })
@@ -28,7 +31,8 @@ export const store = configureStore({
         apiGate.middleware,
         uiEffects.middleware,
         toastListener.middleware,
-        repositoriesEffects.middleware
+        repositoriesEffects.middleware,
+        compilerEffects.middleware
       )
       .concat(websocketMiddleware),
 });

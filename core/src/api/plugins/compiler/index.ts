@@ -5,6 +5,8 @@ import type {
   IApiResponse,
   DetectionResult,
   DetectResponse,
+  CompilerOperationRequest,
+  ArtifactListResult,
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import { PluginType } from '@ignite/plugin-types/types';
@@ -79,6 +81,148 @@ export const compilerHandlers = {
         error: 'Internal Server Error',
         code: 'DETECT_ERROR',
         message: 'Failed to detect frameworks',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+      return reply.status(statusCode).send(body);
+    }
+  },
+
+  install: async (
+    request: FastifyRequest<{
+      Body: CompilerOperationRequest;
+    }>,
+    reply: FastifyReply
+  ) => {
+    try {
+      const { pathOrUrl, pluginId } = request.body;
+      const pluginOrchestrator = PluginOrchestrator.getInstance();
+
+      const result = await pluginOrchestrator.executePlugin(
+        pluginId,
+        'install',
+        { pathOrUrl }
+      );
+
+      if (!result.success) {
+        const statusCode = 500 as const;
+        const body: IApiError = {
+          statusCode,
+          error: 'Internal Server Error',
+          code: result.error?.code || 'INSTALL_FAILED',
+          message: result.error?.message || 'Installation failed',
+          details: result.error?.details,
+        };
+        return reply.status(statusCode).send(body);
+      }
+
+      return reply.status(204).send();
+    } catch (error) {
+      const statusCode = 500 as const;
+      const body: IApiError = {
+        statusCode,
+        error: 'Internal Server Error',
+        code: 'INSTALL_ERROR',
+        message: 'Failed to install dependencies',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+      return reply.status(statusCode).send(body);
+    }
+  },
+
+  compile: async (
+    request: FastifyRequest<{
+      Body: CompilerOperationRequest;
+    }>,
+    reply: FastifyReply
+  ) => {
+    try {
+      const { pathOrUrl, pluginId } = request.body;
+      // TODO: throw error is pluginId is not a compiler plugin
+      const pluginOrchestrator = PluginOrchestrator.getInstance();
+
+      const result = await pluginOrchestrator.executePlugin(
+        pluginId,
+        'compile',
+        { pathOrUrl }
+      );
+
+      if (!result.success) {
+        const statusCode = 500 as const;
+        const body: IApiError = {
+          statusCode,
+          error: 'Internal Server Error',
+          code: result.error?.code || 'COMPILE_FAILED',
+          message: result.error?.message || 'Compilation failed',
+          details: result.error?.details,
+        };
+        return reply.status(statusCode).send(body);
+      }
+
+      return reply.status(204).send();
+    } catch (error) {
+      const statusCode = 500 as const;
+      const body: IApiError = {
+        statusCode,
+        error: 'Internal Server Error',
+        code: 'COMPILE_ERROR',
+        message: 'Failed to compile',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+      return reply.status(statusCode).send(body);
+    }
+  },
+
+  listArtifacts: async (
+    request: FastifyRequest<{
+      Body: CompilerOperationRequest;
+    }>,
+    reply: FastifyReply
+  ): Promise<IApiResponse<ArtifactListResult>> => {
+    try {
+      const { pluginId, pathOrUrl } = request.body;
+
+      // Get hostPath from request body or fall back to environment/cwd
+      const hostPath =
+        pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
+
+      const pluginOrchestrator = PluginOrchestrator.getInstance();
+
+      // Execute listArtifacts operation on the specified plugin
+      const result = await pluginOrchestrator.executePlugin(
+        pluginId,
+        'listArtifacts',
+        { pathOrUrl: hostPath }
+      );
+
+      if (!result.success) {
+        const statusCode = 500 as const;
+        const body: IApiError = {
+          statusCode,
+          error: 'Internal Server Error',
+          code: result.error?.code || 'ARTIFACT_LISTING_ERROR',
+          message: result.error?.message || 'Failed to list artifacts',
+          details: result.error?.details,
+        };
+        return reply.status(statusCode).send(body);
+      }
+
+      const body: IApiResponse<ArtifactListResult> = {
+        data: result.data as ArtifactListResult,
+      };
+      return reply.status(200).send(body);
+    } catch (error) {
+      const statusCode = 500 as const;
+      const body: IApiError = {
+        statusCode,
+        error: 'Internal Server Error',
+        code: 'ARTIFACT_LISTING_ERROR',
+        message: 'Failed to list artifacts',
         details: {
           error: error instanceof Error ? error.message : String(error),
         },

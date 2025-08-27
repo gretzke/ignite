@@ -1,17 +1,24 @@
 import { PluginType } from "../../types.js";
 import type { PluginResponse } from "../../types.js";
-import type { NoParams } from "../../index.js";
+import type { NoParams, NoResult } from "../../index.js";
 
 export type CompilerOperations = {
   detect: {
     params: NoParams;
     result: DetectionResult;
   };
-  // TODO: Add when needed
-  // compile: {
-  //   params: CompileOptions;
-  //   result: CompileResult;
-  // };
+  install: {
+    params: NoParams;
+    result: NoResult;
+  };
+  compile: {
+    params: NoParams;
+    result: NoResult;
+  };
+  listArtifacts: {
+    params: NoParams;
+    result: ArtifactListResult;
+  };
 };
 
 // Extract valid operation names
@@ -28,4 +35,14 @@ export type ICompilerPlugin = {
 
 export interface DetectionResult {
   detected: boolean;
+}
+
+export interface ArtifactLocation {
+  contractName: string;
+  sourcePath: string; // relative to workspace root
+  artifactPath: string; // relative to workspace root
+}
+
+export interface ArtifactListResult {
+  artifacts: ArtifactLocation[];
 }

@@ -1,6 +1,6 @@
-import Tooltip from '../components/Tooltip';
-import Dropdown from '../components/Dropdown';
-import Select from '../components/Select';
+import Tooltip from '../../components/Tooltip';
+import Dropdown from '../../components/Dropdown';
+import Select from '../../components/Select';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
   Bookmark,
@@ -14,13 +14,15 @@ import {
   FileEdit,
 } from 'lucide-react';
 import { useState } from 'react';
-import { useAppSelector, useAppDispatch } from '../store/hooks';
+import { useNavigate } from 'react-router-dom';
+import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import {
   repositoriesApi,
   type IFramework,
-} from '../store/features/repositories/repositoriesSlice';
-import { triggerToast } from '../store/middleware/toastListener';
-import ConfirmDialog from '../components/ConfirmDialog';
+} from '../../store/features/repositories/repositoriesSlice';
+import { triggerToast } from '../../store/middleware/toastListener';
+import ConfirmDialog from '../../components/ConfirmDialog';
+import { getRepoName } from '../../utils/repo';
 
 export default function RepositoriesPage() {
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
@@ -37,10 +39,11 @@ export default function RepositoriesPage() {
   const [commitHashModalOpen, setCommitHashModalOpen] = useState(false);
   const [commitHash, setCommitHash] = useState('');
   const [commitHashError, setCommitHashError] = useState('');
-  const [_selectedRepoPath, setSelectedRepoPath] = useState<string>('');
+  const [selectedRepoPath, setSelectedRepoPath] = useState<string>('');
 
   // Store hooks
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const { repositories, repositoriesData, failedRepositories } = useAppSelector(
     (state) => state.repositories
   );
@@ -68,6 +71,28 @@ export default function RepositoriesPage() {
 
     // Show if repo has changes (dirty) or is not up to date
     return !repoData.info.upToDate;
+  };
+
+  // Helper to determine if repo card should be clickable
+  const isRepoClickable = (path: string) => {
+    const repoData = repositoriesData[path];
+    const status = getRepoInitStatus(path);
+
+    // Only clickable if successfully initialized and has frameworks
+    return (
+      status === 'success' &&
+      repoData?.frameworks &&
+      repoData.frameworks.length > 0
+    );
+  };
+
+  // Handler for repo card clicks
+  const handleRepoClick = (path: string) => {
+    if (isRepoClickable(path)) {
+      // Navigate to repo detail page - encode the path for URL safety
+      const encodedPath = encodeURIComponent(path);
+      navigate(`/repositories/${encodedPath}`);
+    }
   };
 
   // RepoCard component props interface
@@ -200,7 +225,10 @@ export default function RepositoriesPage() {
               <div
                 ref={ref}
                 className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
-                onClick={toggle}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggle();
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
@@ -260,7 +288,10 @@ export default function RepositoriesPage() {
       return (
         <div
           className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
-          onClick={handleCommitHashClick}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleCommitHashClick();
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
@@ -323,96 +354,116 @@ export default function RepositoriesPage() {
       );
     };
 
-    return (
-      <div className="card-milky p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
-              📁
+    const clickable = isRepoClickable(repo.path);
+
+    const CardContent = (
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
+            📁
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-medium truncate">{repo.name}</div>
+            <div className="text-xs opacity-70 truncate">
+              {repo.path}{' '}
+              {variant === 'current' && repo.saved === false ? '(unsaved)' : ''}
             </div>
-            <div className="min-w-0">
-              <div className="text-sm font-medium truncate">{repo.name}</div>
-              <div className="text-xs opacity-70 truncate">
-                {repo.path}{' '}
-                {variant === 'current' && repo.saved === false
-                  ? '(unsaved)'
-                  : ''}
-              </div>
-              <div className="flex items-center gap-3">
-                <StatusIndicator path={repo.path} />
-                <BranchSelector path={repo.path} />
-                <CommitHashSelector path={repo.path} />
-                <DirtyIndicator path={repo.path} />
-              </div>
-            </div>
-            <div className="ml-2 shrink-0">
-              <FrameworkBadges path={repo.path} />
+            <div className="flex items-center gap-3">
+              <StatusIndicator path={repo.path} />
+              <BranchSelector path={repo.path} />
+              <CommitHashSelector path={repo.path} />
+              <DirtyIndicator path={repo.path} />
             </div>
           </div>
-
-          <div className="flex items-center gap-3 shrink-0">
-            {showPullButton && onPull && (
-              <Tooltip label="Pull Changes" placement="top">
-                <button
-                  type="button"
-                  className={`btn btn-secondary ${
-                    variant !== 'current' ? 'btn-secondary-borderless' : ''
-                  }`}
-                  style={{
-                    width: 40,
-                    height: 36,
-                    paddingLeft: 0,
-                    paddingRight: 0,
-                  }}
-                  aria-label="Pull changes"
-                  title="Pull Changes"
-                  onClick={() => onPull(repo.path)}
-                >
-                  <GitPullRequest size={16} />
-                </button>
-              </Tooltip>
-            )}
-            {variant === 'current' && repo.saved === false && onSave && (
-              <Tooltip label="Save" placement="top">
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{
-                    width: 40,
-                    height: 36,
-                    paddingLeft: 0,
-                    paddingRight: 0,
-                  }}
-                  aria-label="Save repository"
-                  title="Save"
-                  onClick={onSave}
-                >
-                  <Bookmark size={16} />
-                </button>
-              </Tooltip>
-            )}
-            {(variant === 'local' || variant === 'cloned') && onRemove && (
-              <Tooltip label="Remove" placement="top">
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-secondary-borderless"
-                  style={{
-                    width: 40,
-                    height: 36,
-                    paddingLeft: 0,
-                    paddingRight: 0,
-                  }}
-                  aria-label="Remove repository"
-                  title="Remove"
-                  onClick={() => onRemove(repo.name, repo.path)}
-                >
-                  <X size={16} />
-                </button>
-              </Tooltip>
-            )}
+          <div className="ml-2 shrink-0">
+            <FrameworkBadges path={repo.path} />
           </div>
         </div>
+
+        <div className="flex items-center gap-3 shrink-0">
+          {showPullButton && onPull && (
+            <Tooltip label="Pull Changes" placement="top">
+              <button
+                type="button"
+                className={`btn btn-secondary ${
+                  variant !== 'current' ? 'btn-secondary-borderless' : ''
+                }`}
+                style={{
+                  width: 40,
+                  height: 36,
+                  paddingLeft: 0,
+                  paddingRight: 0,
+                }}
+                aria-label="Pull changes"
+                title="Pull Changes"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPull(repo.path);
+                }}
+              >
+                <GitPullRequest size={16} />
+              </button>
+            </Tooltip>
+          )}
+          {variant === 'current' && repo.saved === false && onSave && (
+            <Tooltip label="Save" placement="top">
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{
+                  width: 40,
+                  height: 36,
+                  paddingLeft: 0,
+                  paddingRight: 0,
+                }}
+                aria-label="Save repository"
+                title="Save"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSave();
+                }}
+              >
+                <Bookmark size={16} />
+              </button>
+            </Tooltip>
+          )}
+          {(variant === 'local' || variant === 'cloned') && onRemove && (
+            <Tooltip label="Remove" placement="top">
+              <button
+                type="button"
+                className="btn btn-secondary btn-secondary-borderless"
+                style={{
+                  width: 40,
+                  height: 36,
+                  paddingLeft: 0,
+                  paddingRight: 0,
+                }}
+                aria-label="Remove repository"
+                title="Remove"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(repo.name, repo.path);
+                }}
+              >
+                <X size={16} />
+              </button>
+            </Tooltip>
+          )}
+        </div>
       </div>
+    );
+
+    return clickable ? (
+      <button
+        type="button"
+        className="card-milky p-4 cursor-pointer hover:bg-white/15 transition-colors w-full text-left"
+        onClick={() => handleRepoClick(repo.path)}
+        aria-label={`Open ${repo.name} repository details`}
+      >
+        {CardContent}
+      </button>
+    ) : (
+      <div className="card-milky p-4">{CardContent}</div>
     );
   };
 
@@ -487,9 +538,9 @@ export default function RepositoriesPage() {
 
   const handleCommitHashKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && commitHash.trim() && !commitHashError) {
-      if (_selectedRepoPath) {
+      if (selectedRepoPath) {
         dispatch(
-          repositoriesApi.checkoutCommit(_selectedRepoPath, commitHash.trim())
+          repositoriesApi.checkoutCommit(selectedRepoPath, commitHash.trim())
         );
       }
       setCommitHashModalOpen(false);
@@ -584,14 +635,6 @@ export default function RepositoriesPage() {
 
     dispatch(repositoriesApi.removeRepository(currentId, repoToDelete.path));
     setRepoToDelete(null);
-  };
-
-  // Helper function to extract name from path
-  const getRepoName = (path: string) => {
-    if (path.includes('github.com/')) {
-      return path.split('/').slice(-2).join('/');
-    }
-    return path.split('/').pop() || path;
   };
 
   // Transform API data to display format and handle workspace matching
@@ -1079,10 +1122,10 @@ export default function RepositoriesPage() {
                 type="button"
                 className="btn btn-primary"
                 onClick={() => {
-                  if (commitHash.trim() && _selectedRepoPath) {
+                  if (commitHash.trim() && selectedRepoPath) {
                     dispatch(
                       repositoriesApi.checkoutCommit(
-                        _selectedRepoPath,
+                        selectedRepoPath,
                         commitHash.trim()
                       )
                     );

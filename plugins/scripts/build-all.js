@@ -103,7 +103,7 @@ async function buildPlugin(plugin) {
     }
   } catch (error) {
     log(`❌ Failed to build ${type}/${name}: ${error.message}`, "red");
-    return null;
+    throw error;
   }
 }
 

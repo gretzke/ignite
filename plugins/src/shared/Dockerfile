@@ -1,5 +1,7 @@
 # Ignite Shared Base - Foundation for all plugin types
-FROM node:22-slim
+FROM node:20-slim
+
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 # Create non-root user for security
 RUN groupadd -g 1001 plugin && \
@@ -10,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     bash \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Create plugin directory with correct ownership
