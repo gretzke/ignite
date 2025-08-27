@@ -27,3 +27,7 @@ export interface PluginMetadata {
   version: string;
   baseImage: string;
 }
+
+export interface PathOptions {
+  pathOrUrl: string;
+}

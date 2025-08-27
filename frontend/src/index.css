@@ -11,6 +11,8 @@
     --radius: 14px;
     /* User-selected primary profile color (placeholder default) */
     --profile-color: oklch(0.69 0.17 260);
+    /* Primary alias for easier usage */
+    --primary: var(--profile-color);
 
     /* Semantic colors */
     --color-error: #ef4444;
@@ -160,6 +162,13 @@
     background: color-mix(in oklch, var(--text) 8%, transparent);
     color: var(--text);
     border: 1px solid color-mix(in oklch, var(--text) 15%, transparent);
+  }
+
+  /* Primary pill variant using profile color */
+  .pill-primary {
+    background: color-mix(in oklch, var(--profile-color) 15%, transparent);
+    color: var(--profile-color);
+    border: 1px solid color-mix(in oklch, var(--profile-color) 25%, transparent);
   }
   /* Shared profile logo avatar style */
   .profile-logo {

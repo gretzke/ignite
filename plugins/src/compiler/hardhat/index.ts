@@ -1,4 +1,4 @@
-// MVP Foundry Detection Plugin
+// Hardhat Compiler Plugin
 import { promises as fs } from "fs";
 import { join } from "path";
 import {
@@ -9,34 +9,47 @@ import {
   type PluginResponse,
   type CompilerOperation,
 } from "../../shared/index.ts";
-import { runPluginCLI } from "../../shared/plugin-runner.js";
+import { runPluginCLI } from "../../shared/plugin-runner.ts";
 
 // PLUGIN_VERSION is injected at build time via --define:PLUGIN_VERSION
 declare const PLUGIN_VERSION: string;
 
-export class FoundryPlugin extends CompilerPlugin {
+export class HardhatPlugin extends CompilerPlugin {
   // Static metadata for registry generation (no instantiation needed)
   protected static getMetadata(): PluginMetadata {
     return {
-      id: "foundry",
+      id: "hardhat",
       type: PluginType.COMPILER,
-      name: "Foundry",
+      name: "Hardhat",
       version: PLUGIN_VERSION,
-      baseImage: "ignite/compiler_foundry:latest",
+      baseImage: "ignite/shared:latest",
     };
   }
 
   async detect(): Promise<PluginResponse<DetectionResult>> {
     try {
-      const foundryTomlPath = join("/workspace", "foundry.toml");
-      await fs.access(foundryTomlPath);
+      const hardhatConfigJsPath = join("/workspace", "hardhat.config.js");
+      const hardhatConfigTsPath = join("/workspace", "hardhat.config.ts");
 
-      return {
-        success: true,
-        data: {
-          detected: true,
-        },
-      };
+      // Try to access either hardhat.config.js or hardhat.config.ts
+      try {
+        await fs.access(hardhatConfigJsPath);
+        return {
+          success: true,
+          data: {
+            detected: true,
+          },
+        };
+      } catch {
+        // Try TypeScript config if JS config doesn't exist
+        await fs.access(hardhatConfigTsPath);
+        return {
+          success: true,
+          data: {
+            detected: true,
+          },
+        };
+      }
     } catch {
       return {
         success: true,
@@ -48,7 +61,7 @@ export class FoundryPlugin extends CompilerPlugin {
   }
 }
 
-const plugin = new FoundryPlugin();
+const plugin = new HardhatPlugin();
 
 // Export plugin instance as default for registry generation
 export default plugin;

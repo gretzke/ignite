@@ -1,10 +1,7 @@
 import { PluginType } from "../../types.js";
 import type { PluginResponse } from "../../types.js";
 import type { NoParams, NoResult } from "../index.js";
-
-export interface PathOptions {
-  pathOrUrl: string;
-}
+import type { PathOptions } from "../../types.js";
 
 // SSH credentials for Git operations
 export interface GitCredentials {

@@ -1,9 +1,10 @@
 import { PluginType } from "../../types.js";
 import type { PluginResponse } from "../../types.js";
+import type { NoParams } from "../../index.js";
 
 export type CompilerOperations = {
   detect: {
-    params: DetectOptions;
+    params: NoParams;
     result: DetectionResult;
   };
   // TODO: Add when needed
@@ -24,10 +25,6 @@ export type ICompilerPlugin = {
     options: CompilerOperations[K]["params"],
   ) => Promise<PluginResponse<CompilerOperations[K]["result"]>>;
 };
-
-export interface DetectOptions {
-  workspacePath?: string;
-}
 
 export interface DetectionResult {
   detected: boolean;

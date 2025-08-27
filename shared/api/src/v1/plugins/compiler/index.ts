@@ -1,28 +1,25 @@
 // Compiler plugin routes
 import { z } from "zod";
-import type { DetectOptions, DetectionResult } from "./types.js";
 import { V1_BASE_PATH } from "../../constants.js";
-import {
-  createRequestSchema,
-  createApiResponseSchema,
-} from "../../../utils/schema.js";
+import { createApiResponseSchema } from "../../../utils/schema.js";
+import { PathRequestSchema } from "../../shared.js";
 
 export * from "./types.js";
 
-// Type-safe schema that enforces DetectOptions interface compliance
-export const DetectRequestSchema = createRequestSchema<DetectOptions>(
-  "DetectRequestSchema",
-)(
-  z.object({
-    workspacePath: z.string().optional(),
-  }),
-);
+export interface DetectResponse {
+  frameworks: Array<{ id: string; name: string }>;
+}
 
-export const DetectResponseSchema = createApiResponseSchema<DetectionResult>(
+export const DetectResponseSchema = createApiResponseSchema<DetectResponse>(
   "DetectResponseSchema",
 )(
   z.object({
-    detected: z.boolean(),
+    frameworks: z.array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+      }),
+    ),
   }),
 );
 
@@ -33,7 +30,7 @@ export const compilerRoutes = {
     path: `${V1_BASE_PATH}/detect`,
     schema: {
       tags: ["compiler"],
-      body: DetectRequestSchema,
+      body: PathRequestSchema,
       response: {
         200: DetectResponseSchema,
       },

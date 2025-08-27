@@ -5,10 +5,16 @@ import { triggerToast } from '../../middleware/toastListener';
 import { ApiError } from '@ignite/api/client';
 import { formatApiError } from '../../middleware/apiGate';
 
+export interface IFramework {
+  id: string;
+  name: string;
+}
+
 export interface IRepository {
   initialized?: boolean; // undefined = loading, true = success, false = error
   info?: RepoInfoResult; // Repository information after successful initialization
   branches: string[]; // Repository branches (defaults to empty array)
+  frameworks?: IFramework[]; // undefined = detecting, empty array = no frameworks found
 }
 
 export interface IRepositoriesState {
@@ -161,6 +167,27 @@ const repositoriesSlice = createSlice({
       }
       state.repositoriesData[pathOrUrl].branches = branches;
     },
+    startFrameworkDetection(state, action: PayloadAction<string>) {
+      const pathOrUrl = action.payload;
+      if (!state.repositoriesData[pathOrUrl]) {
+        state.repositoriesData[pathOrUrl] = { branches: [] };
+      }
+      // Set frameworks to undefined to indicate detection is in progress
+      state.repositoriesData[pathOrUrl].frameworks = undefined;
+    },
+    setRepositoryFrameworks(
+      state,
+      action: PayloadAction<{
+        pathOrUrl: string;
+        frameworks: IFramework[];
+      }>
+    ) {
+      const { pathOrUrl, frameworks } = action.payload;
+      if (!state.repositoriesData[pathOrUrl]) {
+        state.repositoriesData[pathOrUrl] = { branches: [] };
+      }
+      state.repositoriesData[pathOrUrl].frameworks = frameworks;
+    },
   },
 });
 
@@ -172,6 +199,8 @@ export const {
   removeRepository: removeRepositoryAction,
   setRepositoryInfo,
   setRepositoryBranches,
+  startFrameworkDetection,
+  setRepositoryFrameworks,
 } = repositoriesSlice.actions;
 
 export const repositoriesReducer = repositoriesSlice.reducer;
@@ -527,6 +556,8 @@ export const repositoriesApi = {
               const getBranchesAction = apiClient.dispatch.getBranches({
                 body: { pathOrUrl },
                 onSuccess: (branchesData) => {
+                  const frameworkDetectionActions =
+                    repositoriesApi.detectFrameworks(pathOrUrl);
                   return [
                     setRepositoryInitialized({
                       pathOrUrl,
@@ -540,10 +571,14 @@ export const repositoriesApi = {
                       pathOrUrl,
                       branches: branchesData.branches,
                     }),
+                    // Trigger framework detection after successful initialization
+                    ...frameworkDetectionActions,
                   ];
                 },
                 onError: (error) => {
                   const { description } = formatApiError(error);
+                  const frameworkDetectionActions =
+                    repositoriesApi.detectFrameworks(pathOrUrl);
                   // Still mark as initialized and store info, but warn about branches failure
                   return [
                     setRepositoryInitialized({
@@ -560,6 +595,8 @@ export const repositoriesApi = {
                       variant: 'warning',
                       duration: 5000,
                     }),
+                    // Trigger framework detection even if branches failed
+                    ...frameworkDetectionActions,
                   ];
                 },
               });
@@ -568,6 +605,8 @@ export const repositoriesApi = {
             },
             onError: (error) => {
               const { description } = formatApiError(error);
+              const frameworkDetectionActions =
+                repositoriesApi.detectFrameworks(pathOrUrl);
               // Still mark as initialized since init succeeded, but warn about info failure
               return [
                 setRepositoryInitialized({
@@ -580,6 +619,8 @@ export const repositoriesApi = {
                   variant: 'warning',
                   duration: 5000,
                 }),
+                // Trigger framework detection even if repo info failed
+                ...frameworkDetectionActions,
               ];
             },
           });
@@ -607,4 +648,43 @@ export const repositoriesApi = {
 
   // Clear repositories (when no profile selected)
   clearRepositories: () => clearRepositories(),
+
+  // Detect frameworks for a repository
+  detectFrameworks: (pathOrUrl: string) => {
+    const repoName = pathOrUrl.split('/').pop() || pathOrUrl;
+
+    // Return an array of actions: start detection, then API call
+    return [
+      startFrameworkDetection(pathOrUrl),
+      apiDispatchAction({
+        endpoint: 'detect',
+        body: { pathOrUrl },
+        onSuccess: (data: unknown) => {
+          const typedData = data as { frameworks: IFramework[] };
+          return [
+            setRepositoryFrameworks({
+              pathOrUrl,
+              frameworks: typedData.frameworks,
+            }),
+          ];
+        },
+        onError: (error: ApiError) => {
+          const { description } = formatApiError(error);
+          return [
+            // Set empty array to indicate detection completed but failed
+            setRepositoryFrameworks({
+              pathOrUrl,
+              frameworks: [],
+            }),
+            triggerToast({
+              title: 'Framework Detection Failed',
+              description: `Failed to detect frameworks for ${repoName}: ${description}`,
+              variant: 'error',
+              duration: 5000,
+            }),
+          ];
+        },
+      }),
+    ];
+  },
 };

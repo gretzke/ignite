@@ -1,4 +1,4 @@
-import { PathOptions } from "@ignite/plugin-types/base/repo-manager";
+import { PathOptions } from "@ignite/plugin-types";
 import { createRequestSchema } from "../utils/schema.js";
 import { z } from "zod";
 

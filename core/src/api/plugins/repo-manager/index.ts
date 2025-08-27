@@ -1,11 +1,11 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import {
-  PathOptions,
   RepoCheckoutBranchOptions,
   RepoCheckoutCommitOptions,
   RepoGetBranchesResult,
   RepoInfoResult,
 } from '@ignite/plugin-types/base/repo-manager';
+import type { PathOptions } from '@ignite/plugin-types';
 import type { IApiError, IApiResponse } from '@ignite/api';
 import { z } from 'zod';
 import { PluginOrchestrator } from '../../../plugins/containers/PluginOrchestrator.js';
