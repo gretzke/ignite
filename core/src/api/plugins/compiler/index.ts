@@ -7,6 +7,8 @@ import type {
   DetectResponse,
   CompilerOperationRequest,
   ArtifactListResult,
+  GetArtifactDataRequest,
+  ArtifactData,
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import { PluginType } from '@ignite/plugin-types/types';
@@ -223,6 +225,67 @@ export const compilerHandlers = {
         error: 'Internal Server Error',
         code: 'ARTIFACT_LISTING_ERROR',
         message: 'Failed to list artifacts',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+      return reply.status(statusCode).send(body);
+    }
+  },
+
+  getArtifactData: async (
+    request: FastifyRequest<{
+      Body: GetArtifactDataRequest;
+    }>,
+    reply: FastifyReply
+  ): Promise<IApiResponse<ArtifactData>> => {
+    try {
+      const { pluginId, pathOrUrl, artifactPath } = request.body;
+
+      // Get hostPath from request body or fall back to environment/cwd
+      const hostPath =
+        pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
+
+      const pluginOrchestrator = PluginOrchestrator.getInstance();
+
+      // Execute getArtifactData operation on the specified plugin
+      const result = await pluginOrchestrator.executePlugin(
+        pluginId,
+        'getArtifactData',
+        { pathOrUrl: hostPath, artifactPath }
+      );
+
+      if (!result.success) {
+        // Map specific error codes to appropriate HTTP status codes
+        let statusCode: 404 | 500 = 500;
+        if (
+          result.error?.code === 'ARTIFACT_NOT_FOUND' ||
+          result.error?.code === 'ARTIFACT_PARSE_ERROR'
+        ) {
+          statusCode = 404;
+        }
+
+        const body: IApiError = {
+          statusCode,
+          error: statusCode === 404 ? 'Not Found' : 'Internal Server Error',
+          code: result.error?.code || 'ARTIFACT_DATA_ERROR',
+          message: result.error?.message || 'Failed to get artifact data',
+          details: result.error?.details,
+        };
+        return reply.status(statusCode).send(body);
+      }
+
+      const body: IApiResponse<ArtifactData> = {
+        data: result.data as ArtifactData,
+      };
+      return reply.status(200).send(body);
+    } catch (error) {
+      const statusCode = 500 as const;
+      const body: IApiError = {
+        statusCode,
+        error: 'Internal Server Error',
+        code: 'ARTIFACT_DATA_ERROR',
+        message: 'Failed to get artifact data',
         details: {
           error: error instanceof Error ? error.message : String(error),
         },

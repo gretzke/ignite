@@ -67,10 +67,12 @@ export default function App() {
 
       {/* Main view card fills remaining space */}
       <div
-        className="glass-surface glass-main"
+        className="p-0 glass-surface glass-main overflow-y-scroll overflow-x-hidden"
         style={{ left: sidebarCollapsed ? 56 + 24 : 220 + 24 }}
       >
-        <Outlet />
+        <div className="m-4">
+          <Outlet />
+        </div>
       </div>
     </div>
   );

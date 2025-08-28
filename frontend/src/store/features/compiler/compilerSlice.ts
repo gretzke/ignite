@@ -4,12 +4,14 @@ import { triggerToast } from '../../middleware/toastListener';
 import { ApiError } from '@ignite/api/client';
 import { formatApiError } from '../../middleware/apiGate';
 import { getRepoName } from '../../../utils/repo';
+import type { ArtifactLocation } from '@ignite/api';
 
 export type CompilationStatus = 'installing' | 'compiling' | 'ready' | 'error';
 
 export interface IFrameworkCompilation {
   status: CompilationStatus;
   error?: string;
+  artifacts?: ArtifactLocation[]; // undefined = loading, array = loaded
 }
 
 export interface ICompilerState {
@@ -40,9 +42,12 @@ const compilerSlice = createSlice({
         state.compilations[repoPath] = {};
       }
 
+      // Preserve existing artifacts when updating status
+      const existingData = state.compilations[repoPath][frameworkId];
       state.compilations[repoPath][frameworkId] = {
         status,
         error,
+        artifacts: existingData?.artifacts, // Preserve existing artifacts
       };
     },
 
@@ -61,12 +66,39 @@ const compilerSlice = createSlice({
       const repoPath = action.payload;
       delete state.compilations[repoPath];
     },
+
+    setArtifacts(
+      state,
+      action: PayloadAction<{
+        repoPath: string;
+        frameworkId: string;
+        artifacts: ArtifactLocation[];
+      }>
+    ) {
+      const { repoPath, frameworkId, artifacts } = action.payload;
+
+      if (!state.compilations[repoPath]) {
+        state.compilations[repoPath] = {};
+      }
+
+      if (!state.compilations[repoPath][frameworkId]) {
+        state.compilations[repoPath][frameworkId] = {
+          status: 'ready',
+        };
+      }
+
+      state.compilations[repoPath][frameworkId].artifacts = artifacts;
+    },
   },
 });
 
 // Action creators
-export const { setCompilationStatus, clearCompilationError, removeRepository } =
-  compilerSlice.actions;
+export const {
+  setCompilationStatus,
+  clearCompilationError,
+  removeRepository,
+  setArtifacts,
+} = compilerSlice.actions;
 
 // API actions
 export const installDependencies = ({
@@ -129,6 +161,38 @@ export const compileProject = ({
         title: 'Compilation Failed: ' + getRepoName(pathOrUrl),
         description: formatApiError(error).description,
         variant: 'error',
+      }),
+    ],
+  });
+
+export const listArtifacts = ({
+  pathOrUrl,
+  pluginId,
+}: {
+  pathOrUrl: string;
+  pluginId: string;
+}) =>
+  apiDispatchAction({
+    endpoint: 'listArtifacts',
+    body: { pathOrUrl, pluginId },
+    onSuccess: (data: unknown) => {
+      const typedData = data as { artifacts: ArtifactLocation[] };
+      return [
+        setArtifacts({
+          repoPath: pathOrUrl,
+          frameworkId: pluginId,
+          artifacts: typedData.artifacts,
+        }),
+      ];
+    },
+    onError: (error: ApiError) => [
+      triggerToast({
+        title: 'Failed to Load Artifacts',
+        description: `${getRepoName(pathOrUrl)}: ${
+          formatApiError(error).description
+        }`,
+        variant: 'error',
+        duration: 5000,
       }),
     ],
   });

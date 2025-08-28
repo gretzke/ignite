@@ -150,8 +150,17 @@ export class PluginExecutor {
     options: Record<string, unknown>
   ): Promise<string> {
     const pluginId = pluginConfig.metadata.id;
+
+    // Generate unique container name to prevent race conditions with concurrent requests
+    // Uses: timestamp + process ID + random component for guaranteed uniqueness
     const timestamp = Date.now();
-    const ephemeralContainerName = `ignite-ephemeral-${pluginId}-${timestamp}`;
+    const processId = process.pid;
+    const randomId = Math.random().toString(36).substring(2, 8); // 6 character random string
+    const ephemeralContainerName = `ignite-ephemeral-${pluginId}-${timestamp}-${processId}-${randomId}`;
+
+    getLogger().info(
+      `🔄 Creating ephemeral container: ${ephemeralContainerName}`
+    );
 
     const labels: Record<string, string> = {
       'ignite.type': 'ephemeral',

@@ -125,7 +125,36 @@ export class ContainerOrchestrator {
         `🔄 Restarted container: ${name} (refs: ${currentCount + 1})`
       );
       return name;
-    } catch (error) {
+    } catch (error: unknown) {
+      // Handle case where container is already running (HTTP 304)
+      if (
+        error &&
+        typeof error === 'object' &&
+        'statusCode' in error &&
+        (error as { statusCode: number }).statusCode === 304
+      ) {
+        getLogger().info(`✅ Container ${name} is already running`);
+
+        // Still need to update tracking and reference count
+        const container = this.docker.getContainer(name);
+        const info = await container.inspect();
+        const lifecycle = info.Config?.Labels?.[
+          'ignite.lifecycle'
+        ] as ContainerLifecycle;
+        if (lifecycle) {
+          this.managedContainers.set(name, lifecycle);
+        }
+
+        // Increment reference count
+        const currentCount = this.containerRefCounts.get(name) || 0;
+        this.containerRefCounts.set(name, currentCount + 1);
+
+        getLogger().info(
+          `🔄 Using already running container: ${name} (refs: ${currentCount + 1})`
+        );
+        return name;
+      }
+
       getLogger().error(`❌ Failed to start container ${name}:`, error);
       throw error;
     }

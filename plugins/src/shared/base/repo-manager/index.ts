@@ -11,6 +11,8 @@ import type {
   GitCredentialsParams,
   PathOptionsWithCredentials,
   GitCredentials,
+  RepoGetFileOptions,
+  RepoGetFileResult,
 } from "./types.js";
 import { execGit } from "../../utils/git.js";
 
@@ -175,6 +177,102 @@ export abstract class RepoManagerPlugin
   abstract getRepoInfo(
     _options: GitCredentialsParams,
   ): Promise<PluginResponse<RepoInfoResult>>;
+
+  // Secure file reading implementation with path traversal protection
+  async getFile(
+    options: RepoGetFileOptions,
+  ): Promise<PluginResponse<RepoGetFileResult>> {
+    try {
+      // Security: Validate file path to prevent path traversal attacks
+      const securityCheck = this.validateFilePath(options.filePath);
+      if (!securityCheck.success) {
+        return securityCheck as any;
+      }
+
+      const fs = await import("fs/promises");
+      const path = await import("path");
+
+      // Construct the full file path within the workspace
+      const filePath = path.join("/workspace", options.filePath);
+
+      // Check if file exists and get stats
+      const stats = await fs.stat(filePath);
+      if (!stats.isFile()) {
+        return {
+          success: false,
+          error: {
+            code: "FILE_NOT_FOUND",
+            message: `Path is not a file: ${options.filePath}`,
+          },
+        } as const;
+      }
+
+      // Read file content as UTF-8 string
+      const content = await fs.readFile(filePath, "utf8");
+
+      return {
+        success: true,
+        data: { content },
+      } as const;
+    } catch (error) {
+      if ((error as any).code === "ENOENT") {
+        return {
+          success: false,
+          error: {
+            code: "FILE_NOT_FOUND",
+            message: `File not found: ${options.filePath}`,
+          },
+        } as const;
+      }
+
+      return {
+        success: false,
+        error: {
+          code: "FILE_READ_ERROR",
+          message: `Failed to read file: ${(error as Error).message}`,
+          details: { error },
+        },
+      } as const;
+    }
+  }
+
+  // Security validation for file paths
+  private validateFilePath(filePath: string): PluginResponse<any> {
+    // Normalize path separators and remove leading/trailing slashes
+    const normalizedPath = filePath
+      .replace(/\\/g, "/")
+      .replace(/^\/+|\/+$/g, "");
+
+    // Split path into segments
+    const pathSegments = normalizedPath.split("/");
+
+    // Check each segment for security violations
+    for (const segment of pathSegments) {
+      // Reject empty segments (double slashes)
+      if (segment === "" || segment === ".." || segment.startsWith(".")) {
+        return {
+          success: false,
+          error: {
+            code: "INVALID_PATH",
+            message: `File path contains invalid segments: ${segment}`,
+          },
+        } as const;
+      }
+    }
+
+    // Additional check: ensure the path doesn't contain any remaining dangerous patterns
+    if (normalizedPath.includes("..") || normalizedPath.includes("./")) {
+      return {
+        success: false,
+        error: {
+          code: "SUSPICIOUS_PATH_PATTERN",
+          message: "File path contains suspicious patterns",
+        },
+      } as const;
+    }
+
+    return { success: true, data: undefined } as any;
+  }
 }
 
 // Re-export types for convenience
