@@ -8,8 +8,10 @@ import {
 import type {
   CheckoutBranchRequest,
   CheckoutCommitRequest,
+  GetFileRequest,
   RepoGetBranchesResult,
   RepoInfoResult,
+  RepoGetFileResult,
 } from "./types.js";
 import { PathShape, PathRequestSchema } from "../../shared.js";
 
@@ -31,6 +33,14 @@ const CheckoutCommitRequestSchema = createRequestSchema<CheckoutCommitRequest>(
   }),
 );
 
+const GetFileRequestSchema = createRequestSchema<GetFileRequest>(
+  "GetFileRequest",
+)(
+  PathShape.extend({
+    filePath: z.string(),
+  }),
+);
+
 const GetBranchesResponseSchema =
   createApiResponseSchema<RepoGetBranchesResult>("RepoGetBranchesResult")(
     z.object({
@@ -46,6 +56,14 @@ const GetRepoInfoResponseSchema = createApiResponseSchema<RepoInfoResult>(
     commit: z.string(),
     dirty: z.boolean(),
     upToDate: z.boolean(),
+  }),
+);
+
+const GetFileResponseSchema = createApiResponseSchema<RepoGetFileResult>(
+  "RepoGetFileResult",
+)(
+  z.object({
+    content: z.string(),
   }),
 );
 
@@ -103,6 +121,19 @@ export const repoManagerRoutes = {
       tags: ["repo-manager"],
       body: PathRequestSchema,
       response: { 200: GetRepoInfoResponseSchema },
+    },
+  },
+  getFile: {
+    method: "POST" as const,
+    path: `${V1_BASE_PATH}/repos/file`,
+    schema: {
+      tags: ["repo-manager"],
+      body: GetFileRequestSchema,
+      response: {
+        200: GetFileResponseSchema,
+        403: z.null(), // Forbidden (security violations)
+        404: z.null(), // File not found
+      },
     },
   },
 } as const;

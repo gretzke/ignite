@@ -11,6 +11,7 @@ import {
 } from './features/profiles/profilesSlice';
 import { repositoriesReducer } from './features/repositories/repositoriesSlice';
 import { compilerReducer } from './features/compiler/compilerSlice';
+import { filesReducer } from './features/files/filesSlice';
 import { apiGate } from './middleware/apiGate';
 import { uiEffects } from './middleware/uiEffects';
 import { repositoriesEffects } from './middleware/repositoriesEffects';
@@ -24,6 +25,7 @@ export const store = configureStore({
     profiles: profilesReducer,
     repositories: repositoriesReducer,
     compiler: compilerReducer,
+    files: filesReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({ serializableCheck: false })

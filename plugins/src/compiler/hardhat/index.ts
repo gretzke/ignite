@@ -11,6 +11,9 @@ import {
   type NoResult,
   type ArtifactListResult,
   type ArtifactLocation,
+  type GetArtifactDataOptions,
+  type ArtifactData,
+  type LinkReferences,
 } from "../../shared/index.ts";
 import { execCommand } from "../../shared/utils/exec.js";
 import { runPluginCLI } from "../../shared/plugin-runner.ts";
@@ -232,6 +235,167 @@ export class HardhatPlugin extends CompilerPlugin {
           },
         },
       };
+    }
+  }
+
+  async getArtifactData(
+    options: GetArtifactDataOptions,
+  ): Promise<PluginResponse<ArtifactData>> {
+    try {
+      const workspaceRoot = "/workspace";
+      const artifactPath = join(workspaceRoot, options.artifactPath);
+
+      // Check if artifact file exists
+      if (!(await fileExists(artifactPath))) {
+        return {
+          success: false,
+          error: {
+            code: "ARTIFACT_NOT_FOUND",
+            message: `Artifact file not found: ${options.artifactPath}`,
+          },
+        };
+      }
+
+      // Read and parse the artifact file
+      const artifactData = await readJsonFile<HardhatArtifact>(artifactPath);
+      if (!artifactData) {
+        return {
+          success: false,
+          error: {
+            code: "ARTIFACT_PARSE_ERROR",
+            message: `Failed to parse artifact file: ${options.artifactPath}`,
+          },
+        };
+      }
+
+      // Try to read build-info file for compilation settings
+      const buildInfo = await this.getBuildInfo(artifactData.sourceName);
+
+      // Parse link references for both creation and deployed bytecode
+      const creationCodeLinkReferences = this.parseLinkReferences(
+        artifactData.linkReferences,
+      );
+      const deployedBytecodeLinkReferences = this.parseLinkReferences(
+        artifactData.deployedLinkReferences,
+      );
+
+      const result: ArtifactData = {
+        solidityVersion:
+          buildInfo?.solcLongVersion || buildInfo?.solcVersion || "unknown",
+        optimizer: buildInfo?.optimizer || false,
+        optimizerRuns: buildInfo?.optimizerRuns || 0,
+        // evmVersion not available in Hardhat artifacts - left undefined
+        viaIR: buildInfo?.viaIR || false,
+        bytecodeHash: buildInfo?.bytecodeHash || "ipfs",
+        abi: artifactData.abi || [],
+        creationCode: artifactData.bytecode || "0x",
+        deployedBytecode: artifactData.deployedBytecode || "0x",
+        ...(creationCodeLinkReferences && {
+          creationCodeLinkReferences,
+        }),
+        ...(deployedBytecodeLinkReferences && {
+          deployedBytecodeLinkReferences,
+        }),
+      };
+
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: "ARTIFACT_DATA_EXTRACTION_FAILED",
+          message: `Failed to extract artifact data: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          details: {
+            stack: error instanceof Error ? error.stack : undefined,
+          },
+        },
+      };
+    }
+  }
+
+  // Helper method to parse Hardhat link references into our standard format
+  private parseLinkReferences(linkRefs: any): LinkReferences | undefined {
+    if (!linkRefs || typeof linkRefs !== "object") {
+      return undefined;
+    }
+
+    const result: LinkReferences = {};
+
+    // Hardhat link references structure: { "path/file.sol": { "ContractName": [{ start: number, length: number }] } }
+    for (const [filePath, contracts] of Object.entries(linkRefs)) {
+      if (typeof contracts === "object" && contracts !== null) {
+        result[filePath] = {};
+        for (const [contractName, positions] of Object.entries(contracts)) {
+          if (Array.isArray(positions)) {
+            result[filePath][contractName] = positions.map((pos: any) => ({
+              start: pos.start || 0,
+              length: pos.length || 0,
+            }));
+          }
+        }
+      }
+    }
+
+    return Object.keys(result).length > 0 ? result : undefined;
+  }
+
+  // Try to extract compilation settings from build-info files
+  private async getBuildInfo(sourceName: string): Promise<{
+    solcVersion?: string;
+    solcLongVersion?: string;
+    optimizer?: boolean;
+    optimizerRuns?: number;
+    viaIR?: boolean;
+    bytecodeHash?: string;
+  } | null> {
+    try {
+      // Build-info files are typically in artifacts/build-info/
+      const artifactsDir = await this.getHardhatDir("/workspace", "artifacts");
+      const buildInfoDir = join("/workspace", artifactsDir, "build-info");
+
+      if (!(await fileExists(buildInfoDir))) {
+        return null;
+      }
+
+      // Get all build-info files
+      const buildInfoFiles = await fs.readdir(buildInfoDir);
+      const jsonFiles = buildInfoFiles.filter((f) => f.endsWith(".json"));
+
+      // Try to find a build-info file that contains our specific source file
+      for (const file of jsonFiles) {
+        const buildInfoPath = join(buildInfoDir, file);
+        const buildInfo = await readJsonFile<any>(buildInfoPath);
+
+        if (!buildInfo) continue;
+
+        // Check if this build-info contains our source file
+        const sources = buildInfo.input?.sources;
+        if (sources && sources[sourceName]) {
+          // Extract compiler settings
+          const settings = buildInfo.input?.settings;
+
+          if (settings) {
+            return {
+              solcVersion: buildInfo.solcVersion,
+              solcLongVersion: buildInfo.solcLongVersion,
+              optimizer: settings.optimizer?.enabled || false,
+              optimizerRuns: settings.optimizer?.runs || 0,
+              viaIR: settings.viaIR || false,
+              bytecodeHash: settings.metadata?.bytecodeHash || "ipfs",
+            };
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      // If we can't read build-info, return null and use defaults
+      return null;
     }
   }
 

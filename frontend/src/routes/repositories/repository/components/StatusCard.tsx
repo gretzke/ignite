@@ -108,7 +108,7 @@ export default function StatusCard({
 
       {/* Framework details */}
       {frameworks.length > 0 && (
-        <div className="mt-6 pt-6 border-t border-white/10">
+        <div className="pt-6 border-t border-white/10">
           <div className="space-y-3">
             {frameworks.map((framework) => {
               const compilation = compilations[framework.id];

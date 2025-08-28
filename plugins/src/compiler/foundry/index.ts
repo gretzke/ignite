@@ -11,13 +11,15 @@ import {
   type NoResult,
   type ArtifactListResult,
   type ArtifactLocation,
+  type GetArtifactDataOptions,
+  type ArtifactData,
+  type LinkReferences,
 } from "../../shared/index.ts";
 import { execCommand } from "../../shared/utils/exec.js";
 import { runPluginCLI } from "../../shared/plugin-runner.js";
 import {
   traverseDirectory,
   jsonArtifactFilter,
-  extractContractNameFromPath,
   fileExists,
   readJsonFile,
 } from "../../shared/utils/artifacts.js";
@@ -52,7 +54,18 @@ interface FoundryArtifact {
       devdoc?: any;
       userdoc?: any;
     };
-    settings?: any;
+    settings?: {
+      optimizer?: {
+        enabled: boolean;
+        runs: number;
+      };
+      evmVersion?: string;
+      viaIR?: boolean;
+      metadata?: {
+        bytecodeHash?: string;
+      };
+      compilationTarget?: Record<string, string>;
+    };
     sources?: Record<
       string,
       {
@@ -195,8 +208,6 @@ export class FoundryPlugin extends CompilerPlugin {
 
       // Process each artifact file and read contents to check bytecode
       for (const file of artifactFiles) {
-        // const contractName = extractContractNameFromPath(file.path);
-
         // Validate and sanitize paths to prevent JSON corruption
         if (!file.relativePath) {
           continue; // Skip invalid entries
@@ -218,7 +229,7 @@ export class FoundryPlugin extends CompilerPlugin {
 
         // Extract source path from artifact metadata using compilationTarget
         const compilationTarget =
-          artifactData.metadata?.settings.compilationTarget;
+          artifactData.metadata?.settings?.compilationTarget;
         const sourcePaths = Object.keys(compilationTarget || {});
         for (const sourcePath of sourcePaths) {
           const contractName = compilationTarget?.[sourcePath] || "";
@@ -266,6 +277,113 @@ export class FoundryPlugin extends CompilerPlugin {
         },
       };
     }
+  }
+
+  async getArtifactData(
+    options: GetArtifactDataOptions,
+  ): Promise<PluginResponse<ArtifactData>> {
+    try {
+      const workspaceRoot = "/workspace";
+      const artifactPath = join(workspaceRoot, options.artifactPath);
+
+      // Check if artifact file exists
+      if (!(await fileExists(artifactPath))) {
+        return {
+          success: false,
+          error: {
+            code: "ARTIFACT_NOT_FOUND",
+            message: `Artifact file not found: ${options.artifactPath}`,
+          },
+        };
+      }
+
+      // Read and parse the artifact file
+      const artifactData = await readJsonFile<FoundryArtifact>(artifactPath);
+      if (!artifactData) {
+        return {
+          success: false,
+          error: {
+            code: "ARTIFACT_PARSE_ERROR",
+            message: `Failed to parse artifact file: ${options.artifactPath}`,
+          },
+        };
+      }
+
+      // Extract compilation settings from metadata
+      const metadata = artifactData.metadata;
+      const settings = metadata?.settings;
+      const compiler = metadata?.compiler;
+
+      // Parse link references for both creation and deployed bytecode
+      const creationCodeLinkReferences = this.parseLinkReferences(
+        artifactData.bytecode?.linkReferences,
+      );
+      const deployedBytecodeLinkReferences = this.parseLinkReferences(
+        artifactData.deployedBytecode?.linkReferences,
+      );
+
+      const result: ArtifactData = {
+        solidityVersion: compiler?.version || "unknown",
+        optimizer: settings?.optimizer?.enabled || false,
+        optimizerRuns: settings?.optimizer?.runs || 0,
+        evmVersion: settings?.evmVersion,
+        viaIR: settings?.viaIR || false,
+        bytecodeHash: settings?.metadata?.bytecodeHash || "ipfs",
+        abi: artifactData.abi || [],
+        creationCode: artifactData.bytecode?.object || "0x",
+        deployedBytecode: artifactData.deployedBytecode?.object || "0x",
+        ...(creationCodeLinkReferences && {
+          creationCodeLinkReferences,
+        }),
+        ...(deployedBytecodeLinkReferences && {
+          deployedBytecodeLinkReferences,
+        }),
+      };
+
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: "ARTIFACT_DATA_EXTRACTION_FAILED",
+          message: `Failed to extract artifact data: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          details: {
+            stack: error instanceof Error ? error.stack : undefined,
+          },
+        },
+      };
+    }
+  }
+
+  // Helper method to parse Foundry link references into our standard format
+  private parseLinkReferences(linkRefs: any): LinkReferences | undefined {
+    if (!linkRefs || typeof linkRefs !== "object") {
+      return undefined;
+    }
+
+    const result: LinkReferences = {};
+
+    // Foundry link references structure: { "path/file.sol": { "ContractName": [{ start: number, length: number }] } }
+    for (const [filePath, contracts] of Object.entries(linkRefs)) {
+      if (typeof contracts === "object" && contracts !== null) {
+        result[filePath] = {};
+        for (const [contractName, positions] of Object.entries(contracts)) {
+          if (Array.isArray(positions)) {
+            result[filePath][contractName] = positions.map((pos: any) => ({
+              start: pos.start || 0,
+              length: pos.length || 0,
+            }));
+          }
+        }
+      }
+    }
+
+    return Object.keys(result).length > 0 ? result : undefined;
   }
 
   // Parse foundry.toml to get the src directory

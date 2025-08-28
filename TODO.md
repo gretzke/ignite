@@ -1,3 +1,5 @@
+- Add clean compile functionality to repos
+
 Upgrade paths:
 
 - Implement migration paths when new versions of the CLI or plugins are detected

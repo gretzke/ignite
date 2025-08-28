@@ -4,6 +4,8 @@ import {
   RepoCheckoutCommitOptions,
   RepoGetBranchesResult,
   RepoInfoResult,
+  RepoGetFileOptions,
+  RepoGetFileResult,
 } from '@ignite/plugin-types/base/repo-manager';
 import type { PathOptions } from '@ignite/plugin-types';
 import type { IApiError, IApiResponse } from '@ignite/api';
@@ -171,6 +173,48 @@ export const repoManagerHandlers = {
     }
     const body: IApiResponse<RepoInfoResult> = {
       data: result.data as RepoInfoResult,
+    };
+    return reply.status(200).send(body);
+  },
+
+  getFile: async (
+    request: FastifyRequest<{ Body: PathOptions & RepoGetFileOptions }>,
+    reply: FastifyReply
+  ): Promise<IApiResponse<RepoGetFileResult>> => {
+    const orchestrator = PluginOrchestrator.getInstance();
+    const pluginId = getRepoPluginId(request.body.pathOrUrl);
+    const result = await orchestrator.executePlugin(pluginId, 'getFile', {
+      pathOrUrl: request.body.pathOrUrl,
+      filePath: request.body.filePath,
+    });
+    if (!result.success) {
+      // Map specific error codes to appropriate HTTP status codes
+      let statusCode: 404 | 403 | 500 = 500;
+      if (result.error?.code === 'FILE_NOT_FOUND') {
+        statusCode = 404;
+      } else if (
+        result.error?.code === 'INVALID_PATH' ||
+        result.error?.code === 'SUSPICIOUS_PATH_PATTERN'
+      ) {
+        statusCode = 403; // Forbidden
+      }
+
+      const body: IApiError = {
+        statusCode,
+        error:
+          statusCode === 404
+            ? 'Not Found'
+            : statusCode === 403
+              ? 'Forbidden'
+              : 'Internal Server Error',
+        code: result.error?.code || 'GET_FILE_ERROR',
+        message: result.error?.message || 'Failed to get file',
+        details: result.error?.details,
+      };
+      return reply.status(statusCode).send(body);
+    }
+    const body: IApiResponse<RepoGetFileResult> = {
+      data: result.data as RepoGetFileResult,
     };
     return reply.status(200).send(body);
   },

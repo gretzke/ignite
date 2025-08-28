@@ -11,10 +11,15 @@ export interface CheckoutCommitRequest extends PathOptions {
   commit: string;
 }
 
+export interface GetFileRequest extends PathOptions {
+  filePath: string;
+}
+
 // API-response types reuse plugin operation results
 import type {
   RepoGetBranchesResult,
   RepoInfoResult,
+  RepoGetFileResult,
 } from "@ignite/plugin-types/base/repo-manager";
 
-export type { RepoGetBranchesResult, RepoInfoResult };
+export type { RepoGetBranchesResult, RepoInfoResult, RepoGetFileResult };

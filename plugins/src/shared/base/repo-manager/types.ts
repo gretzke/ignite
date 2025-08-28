@@ -40,6 +40,14 @@ export interface RepoInfoResult {
   upToDate: boolean;
 }
 
+export interface RepoGetFileOptions {
+  filePath: string; // Relative path from repository root
+}
+
+export interface RepoGetFileResult {
+  content: string;
+}
+
 export type RepoManagerOperations = {
   init: {
     params: PathOptionsWithCredentials;
@@ -64,6 +72,10 @@ export type RepoManagerOperations = {
   getRepoInfo: {
     params: GitCredentialsParams;
     result: RepoInfoResult;
+  };
+  getFile: {
+    params: RepoGetFileOptions;
+    result: RepoGetFileResult;
   };
 };
 

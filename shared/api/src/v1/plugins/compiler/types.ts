@@ -5,4 +5,12 @@ export type {
   DetectionResult,
   ArtifactListResult,
   ArtifactLocation,
+  ArtifactData,
+  GetArtifactDataOptions,
 } from "@ignite/plugin-types/base/compiler";
+
+export interface GetArtifactDataRequest {
+  pathOrUrl: string;
+  pluginId: string;
+  artifactPath: string;
+}

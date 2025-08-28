@@ -19,6 +19,10 @@ export type CompilerOperations = {
     params: NoParams;
     result: ArtifactListResult;
   };
+  getArtifactData: {
+    params: GetArtifactDataOptions;
+    result: ArtifactData;
+  };
 };
 
 // Extract valid operation names
@@ -45,4 +49,33 @@ export interface ArtifactLocation {
 
 export interface ArtifactListResult {
   artifacts: ArtifactLocation[];
+}
+
+export interface LinkReference {
+  start: number;
+  length: number;
+}
+
+export interface LinkReferences {
+  [path: string]: {
+    [contractName: string]: LinkReference[];
+  };
+}
+
+export interface GetArtifactDataOptions {
+  artifactPath: string; // relative to workspace root
+}
+
+export interface ArtifactData {
+  solidityVersion: string;
+  optimizer: boolean;
+  optimizerRuns: number;
+  evmVersion?: string; // Optional - available in Foundry but not Hardhat
+  viaIR: boolean;
+  bytecodeHash: string;
+  abi: any[]; // JSON ABI array
+  creationCode: string;
+  deployedBytecode: string;
+  creationCodeLinkReferences?: LinkReferences;
+  deployedBytecodeLinkReferences?: LinkReferences;
 }

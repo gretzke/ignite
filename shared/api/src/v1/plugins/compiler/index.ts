@@ -7,7 +7,11 @@ import {
   createRequestSchema,
 } from "../../../utils/schema.js";
 import { PathRequestSchema, PathShape } from "../../shared.js";
-import type { ArtifactListResult } from "./types.js";
+import type {
+  ArtifactListResult,
+  ArtifactData,
+  GetArtifactDataRequest,
+} from "./types.js";
 
 export * from "./types.js";
 
@@ -52,6 +56,32 @@ export const CompilerOperationRequestSchema =
     }),
   );
 
+export const GetArtifactDataRequestSchema =
+  createRequestSchema<GetArtifactDataRequest>("GetArtifactDataRequest")(
+    PathShape.extend({
+      pluginId: z.string(),
+      artifactPath: z.string(),
+    }),
+  );
+
+export const ArtifactDataResponseSchema = createApiResponseSchema<ArtifactData>(
+  "ArtifactDataResponseSchema",
+)(
+  z.object({
+    solidityVersion: z.string(),
+    optimizer: z.boolean(),
+    optimizerRuns: z.number(),
+    evmVersion: z.string().optional(),
+    viaIR: z.boolean(),
+    bytecodeHash: z.string(),
+    abi: z.array(z.any()),
+    creationCode: z.string(),
+    deployedBytecode: z.string(),
+    creationCodeLinkReferences: z.any().optional(),
+    deployedBytecodeLinkReferences: z.any().optional(),
+  }),
+);
+
 // Route definitions
 export const compilerRoutes = {
   detect: {
@@ -95,6 +125,18 @@ export const compilerRoutes = {
       body: CompilerOperationRequestSchema,
       response: {
         200: ArtifactListResponseSchema,
+      },
+    },
+  },
+  getArtifactData: {
+    method: "POST" as const,
+    path: `${V1_BASE_PATH}/artifacts/data`,
+    schema: {
+      tags: ["compiler"],
+      body: GetArtifactDataRequestSchema,
+      response: {
+        200: ArtifactDataResponseSchema,
+        404: z.null(), // Artifact not found
       },
     },
   },
