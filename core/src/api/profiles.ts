@@ -57,11 +57,17 @@ async function removeRepoContainers(
         await container.remove();
         getLogger().info(`✅ Removed persistent container: ${persistentName}`);
       } catch (error) {
-        // Container might not exist or already be removed - that's OK
-        getLogger().debug(
-          `Container ${persistentName} not found or already removed:`,
-          error
-        );
+        const statusCode = (error as { statusCode?: number })?.statusCode;
+        if (statusCode === 404) {
+          getLogger().debug(
+            `Container ${persistentName} not found or already removed`
+          );
+        } else {
+          getLogger().warn(
+            `⚠️ Failed to remove container ${persistentName}:`,
+            error
+          );
+        }
       }
 
       getLogger().info(
@@ -82,11 +88,17 @@ async function removeRepoContainers(
         await container.remove();
         getLogger().info(`✅ Removed container: ${containerName}`);
       } catch (error) {
-        // Container might not exist or already be removed - that's OK
-        getLogger().debug(
-          `Container ${containerName} not found or already removed:`,
-          error
-        );
+        const statusCode = (error as { statusCode?: number })?.statusCode;
+        if (statusCode === 404) {
+          getLogger().debug(
+            `Container ${containerName} not found or already removed`
+          );
+        } else {
+          getLogger().warn(
+            `⚠️ Failed to remove container ${containerName}:`,
+            error
+          );
+        }
       }
     }
   } catch (error) {
