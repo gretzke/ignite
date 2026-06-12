@@ -5,10 +5,11 @@ FROM ignite/shared:latest
 # Switch back to root to install compiler tools
 USER root
 
-# Install Foundry properly with explicit shell
+# Install Foundry, pinned for reproducible builds — bump deliberately; the image
+# staleness check (ignite.dockerfileHash label) flags rebuilds when this file changes
 RUN mkdir -p /root/.foundry && \
     curl -L https://foundry.paradigm.xyz | SHELL=/bin/bash bash && \
-    /root/.foundry/bin/foundryup
+    /root/.foundry/bin/foundryup --install v1.7.1
 
 # Make foundry binaries accessible to all users and copy to system location
 RUN chmod -R 755 /root/.foundry/bin && \

@@ -1,5 +1,6 @@
 # Ignite Shared Base - Foundation for all plugin types
-FROM node:20-slim
+# trixie (Debian 13, glibc 2.41) is required: solc >=0.8.29 arm64 binaries need GLIBC_2.38+
+FROM node:22-trixie-slim
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
