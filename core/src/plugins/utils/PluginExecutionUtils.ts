@@ -1,4 +1,5 @@
 import type { Duplex } from 'stream';
+import { setTimeout, clearTimeout } from 'node:timers';
 import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import { PluginAssetLoader } from '../../assets/PluginAssetLoader.js';
@@ -23,29 +24,52 @@ export class PluginExecutionUtils {
     // Load and inject plugin JavaScript
     const pluginCode = await this.pluginLoader.loadPlugin(pluginType, pluginId);
 
-    // Execute operation in container with type-safe parameters
+    // Options are passed via stdin (not argv) so secrets like git credentials
+    // never show up in the container's process list or `docker inspect` output
     const optionsJson = JSON.stringify(options);
-    const cmd = ['node', '-e', pluginCode, String(operation), optionsJson];
+    const cmd = ['node', '-e', pluginCode, String(operation)];
 
     const exec = await container.exec({
       Cmd: cmd,
+      AttachStdin: true,
       AttachStdout: true,
       AttachStderr: true,
     });
 
+    const timeoutMs =
+      Number(process.env.IGNITE_PLUGIN_EXEC_TIMEOUT_MS) || 15 * 60 * 1000;
+
     return new Promise((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settle = <T>(fn: (value: T) => void, value: T) => {
+        if (timer) clearTimeout(timer);
+        fn(value);
+      };
+
       exec.start(
-        { hijack: true },
+        { hijack: true, stdin: true },
         (err: Error | null, stream: Duplex | undefined) => {
           if (err) {
-            reject(err);
+            settle(reject, err);
             return;
           }
 
           if (!stream) {
-            reject(new Error('No stream returned from container exec'));
+            settle(
+              reject,
+              new Error('No stream returned from container exec')
+            );
             return;
           }
+
+          timer = setTimeout(() => {
+            stream.destroy();
+            reject(
+              new Error(
+                `Plugin ${pluginId}.${operation} timed out after ${timeoutMs}ms`
+              )
+            );
+          }, timeoutMs);
 
           let output = '';
           let stderr = '';
@@ -116,8 +140,14 @@ export class PluginExecutionUtils {
 
           stream.on('end', () => {
             try {
-              getLogger().info(`🔍 Plugin stdout (${pluginId}): "${output}"`);
-              getLogger().info(`🔍 Plugin stderr (${pluginId}): "${stderr}"`);
+              // Debug-level + truncated: plugin output can be large and may
+              // echo repository contents
+              getLogger().debug(
+                `🔍 Plugin stdout (${pluginId}): "${output.slice(0, 2000)}"`
+              );
+              getLogger().debug(
+                `🔍 Plugin stderr (${pluginId}): "${stderr.slice(0, 2000)}"`
+              );
 
               // Parse JSON response from plugin
               // Clean the output to remove any binary characters or control sequences
@@ -134,25 +164,35 @@ export class PluginExecutionUtils {
               if (jsonMatch) {
                 try {
                   const result = JSON.parse(jsonMatch[0]);
-                  resolve(result);
+                  settle(resolve, result);
                 } catch (parseError) {
-                  reject(
+                  settle(
+                    reject,
                     new Error(
                       `JSON parse error: ${parseError}. Clean output: "${cleanOutput}"`
                     )
                   );
                 }
               } else {
-                reject(
+                settle(
+                  reject,
                   new Error(
                     `Invalid plugin output format. Clean output: "${cleanOutput}", stderr: "${stderr}"`
                   )
                 );
               }
             } catch (error) {
-              reject(new Error(`Failed to parse plugin output: ${error}`));
+              settle(
+                reject,
+                new Error(`Failed to parse plugin output: ${error}`)
+              );
             }
           });
+
+          // Send options on stdin and half-close so the plugin sees EOF;
+          // output continues to flow on the same hijacked connection
+          stream.write(optionsJson);
+          stream.end();
         }
       );
     });

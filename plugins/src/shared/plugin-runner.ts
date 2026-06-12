@@ -56,6 +56,15 @@ export async function executePluginOperation<T extends keyof AllOperations>(
   }
 }
 
+// Read the full stdin stream until EOF
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 // CLI entry point for generic plugin execution
 export async function runPluginCLI<T extends keyof AllOperations>(
   plugin: IPluginExecutor<T>,
@@ -64,11 +73,10 @@ export async function runPluginCLI<T extends keyof AllOperations>(
     return;
   }
   try {
-    // Parse command line arguments for container execution
-    // From the debug output, we see: ["/usr/local/bin/node", "detect", "{\"repoContainerName\":...}"]
-    // So operation is at argv[1] and options are at argv[2]
+    // Operation comes via argv; options arrive on stdin so that secrets
+    // (e.g. git credentials) never appear in the container's process list
     const operationStr = process.argv[1];
-    const optionsJson = process.argv[2] || "{}";
+    const optionsJson = (await readStdin()).trim() || "{}";
 
     if (!operationStr) {
       console.log(
