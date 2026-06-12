@@ -104,7 +104,11 @@ export default function RepositoryPage() {
 
       {/* Status card */}
       <div className="mb-6">
-        <StatusCard frameworks={frameworks} compilations={repoCompilations} />
+        <StatusCard
+          repoPath={decodedPath}
+          frameworks={frameworks}
+          compilations={repoCompilations}
+        />
       </div>
 
       {/* Framework tabs */}

@@ -6,7 +6,14 @@ import { formatApiError } from '../../middleware/apiGate';
 import { getRepoName } from '../../../utils/repo';
 import type { ArtifactLocation } from '@ignite/api';
 
-export type CompilationStatus = 'installing' | 'compiling' | 'ready' | 'error';
+// 'idle' = framework detected but not compiled this session; compilation is
+// user-triggered (Clean compile button) instead of running on every startup
+export type CompilationStatus =
+  | 'idle'
+  | 'installing'
+  | 'compiling'
+  | 'ready'
+  | 'error';
 
 export interface IFrameworkCompilation {
   status: CompilationStatus;
@@ -99,6 +106,25 @@ export const {
   removeRepository,
   setArtifacts,
 } = compilerSlice.actions;
+
+// Explicit user-triggered clean compile: install dependencies, then compile.
+// installDependencies sets status to 'compiling' on success, which the effects
+// middleware turns into a compileProject dispatch. Returns an array of actions
+// for the caller to dispatch (same pattern as repositoriesApi.detectFrameworks).
+export const cleanCompile = ({
+  pathOrUrl,
+  pluginId,
+}: {
+  pathOrUrl: string;
+  pluginId: string;
+}) => [
+  setCompilationStatus({
+    repoPath: pathOrUrl,
+    frameworkId: pluginId,
+    status: 'installing' as const,
+  }),
+  installDependencies({ pathOrUrl, pluginId }),
+];
 
 // API actions
 export const installDependencies = ({

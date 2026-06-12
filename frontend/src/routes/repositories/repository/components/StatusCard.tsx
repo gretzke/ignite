@@ -1,19 +1,33 @@
-import { CheckCircle, Clock, AlertCircle, Loader2 } from 'lucide-react';
-import type { CompilationStatus } from '../../../../store/features/compiler/compilerSlice';
+import { CheckCircle, Clock, AlertCircle, Loader2, Hammer } from 'lucide-react';
+import { useAppDispatch } from '../../../../store/hooks';
+import {
+  cleanCompile,
+  type CompilationStatus,
+} from '../../../../store/features/compiler/compilerSlice';
 import type { IFramework } from '../../../../store/features/repositories/repositoriesSlice';
 
 interface StatusCardProps {
+  repoPath: string;
   frameworks: IFramework[];
   compilations: Record<string, { status: CompilationStatus; error?: string }>;
 }
 
 export default function StatusCard({
+  repoPath,
   frameworks,
   compilations,
 }: StatusCardProps) {
+  const dispatch = useAppDispatch();
+
+  const handleCleanCompile = (frameworkId: string) => {
+    cleanCompile({ pathOrUrl: repoPath, pluginId: frameworkId }).forEach(
+      (action) => dispatch(action)
+    );
+  };
+
   // Calculate overall status
   const getOverallStatus = (): {
-    status: 'ready' | 'installing' | 'compiling' | 'error' | 'pending';
+    status: 'ready' | 'installing' | 'compiling' | 'error' | 'pending' | 'idle';
     message: string;
   } => {
     if (frameworks.length === 0) {
@@ -42,8 +56,11 @@ export default function StatusCard({
       return { status: 'ready', message: 'Ready for deployment' };
     }
 
-    // Default: still processing
-    return { status: 'installing', message: 'Processing...' };
+    // Not compiled this session - waiting for the user to trigger a compile
+    return {
+      status: 'idle',
+      message: 'Not compiled — run a clean compile when ready',
+    };
   };
 
   const { status, message } = getOverallStatus();
@@ -112,8 +129,11 @@ export default function StatusCard({
           <div className="space-y-3">
             {frameworks.map((framework) => {
               const compilation = compilations[framework.id];
-              const frameworkStatus = compilation?.status || 'installing';
+              const frameworkStatus = compilation?.status || 'idle';
               const frameworkDisplay = getStatusDisplay(frameworkStatus);
+              const isBusy =
+                frameworkStatus === 'installing' ||
+                frameworkStatus === 'compiling';
 
               return (
                 <div
@@ -141,6 +161,7 @@ export default function StatusCard({
 
                   <div className="flex items-center gap-2">
                     <span className={`text-xs ${frameworkDisplay.color}`}>
+                      {frameworkStatus === 'idle' && 'Not compiled'}
                       {frameworkStatus === 'installing' && 'Installing...'}
                       {frameworkStatus === 'compiling' && 'Compiling...'}
                       {frameworkStatus === 'ready' && 'Ready'}
@@ -156,6 +177,20 @@ export default function StatusCard({
                         aria-label="View error details"
                       >
                         Details
+                      </button>
+                    )}
+
+                    {/* Clean compile: installs dependencies, then compiles */}
+                    {!isBusy && (
+                      <button
+                        type="button"
+                        onClick={() => handleCleanCompile(framework.id)}
+                        className="btn btn-secondary text-xs flex items-center gap-1 px-2 py-1"
+                        title="Install dependencies and compile from scratch"
+                        aria-label={`Clean compile ${framework.name}`}
+                      >
+                        <Hammer size={12} />
+                        Clean compile
                       </button>
                     )}
                   </div>
