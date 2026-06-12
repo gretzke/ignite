@@ -48,8 +48,7 @@ export class HardhatPlugin extends CompilerPlugin {
       type: PluginType.COMPILER,
       name: "Hardhat",
       version: PLUGIN_VERSION,
-      // use foundry base image for hardhat repos using the hardhat-foundry plugin
-      baseImage: "ignite/compiler_foundry:latest",
+      baseImage: "ignite/compiler_hardhat:latest",
     };
   }
 
