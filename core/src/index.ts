@@ -7,7 +7,7 @@ import { FileSystem } from './filesystem/FileSystem.js';
 import { ProfileManager } from './filesystem/ProfileManager.js';
 import { PluginManager } from './filesystem/PluginManager.js';
 import { PluginOrchestrator } from './plugins/containers/PluginOrchestrator.js';
-import { setGlobalLogger, getLogger } from './utils/logger.js';
+import { setGlobalLogger } from './utils/logger.js';
 import {
   openBrowser,
   getVersion,
@@ -16,6 +16,7 @@ import {
 } from './utils/startup.js';
 import { registerApi } from './api/index.js';
 import { StaticAssetHandler } from './assets/StaticAssetHandler.js';
+import { validatePluginImages } from './plugins/utils/ImageValidator.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -131,6 +132,10 @@ async function main(): Promise<void> {
       pluginManager: _pluginManager,
       pluginOrchestrator,
     } = await ignite(workspacePath);
+
+    // Warn early about missing or stale plugin images
+    await validatePluginImages();
+
     const port = parseInt(process.env.PORT || '1301', 10);
 
     // Log the repository path we're working with

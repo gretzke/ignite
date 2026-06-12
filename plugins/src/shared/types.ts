@@ -26,6 +26,10 @@ export interface PluginMetadata {
   name: string;
   version: string;
   baseImage: string;
+  // Hash of the Dockerfiles the baseImage was built from (set at registry
+  // generation); compared against the image's ignite.dockerfileHash label
+  // to detect stale images
+  imageHash?: string;
 }
 
 export interface PathOptions {

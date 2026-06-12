@@ -4,6 +4,7 @@
 import { readdir } from "fs/promises";
 import { join, dirname, basename } from "path";
 import { execSync } from "child_process";
+import { imageHash } from "./image-hash.js";
 
 const SRC_DIR = "src";
 
@@ -92,7 +93,8 @@ async function buildImage(dockerfilePath) {
   log(`🐳 Building ${imageName} from ${dockerfilePath}...`, "blue");
 
   try {
-    const buildCmd = `docker build -t ${imageName}:latest ${contextDir}`;
+    const hash = imageHash(imageName);
+    const buildCmd = `docker build -t ${imageName}:latest --label ignite.dockerfileHash=${hash} ${contextDir}`;
 
     execSync(buildCmd, {
       stdio: "pipe",

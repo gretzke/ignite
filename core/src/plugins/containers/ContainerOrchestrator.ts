@@ -86,6 +86,12 @@ export class ContainerOrchestrator {
       getLogger().info(`✅ ${lifecycle} container started: ${name} (refs: 1)`);
       return name;
     } catch (error) {
+      const statusCode = (error as { statusCode?: number })?.statusCode;
+      if (statusCode === 404) {
+        const msg = `Docker image ${image} not found. Run \`npm run docker:build\` to build plugin images.`;
+        getLogger().error(`❌ ${msg}`);
+        throw new Error(msg);
+      }
       getLogger().error(`❌ Failed to create container ${name}:`, error);
       throw error;
     }

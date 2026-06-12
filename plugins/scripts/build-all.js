@@ -6,6 +6,7 @@ import { join, resolve } from "path";
 import { execSync } from "child_process";
 import { existsSync } from "fs";
 import { pathToFileURL } from "url";
+import { imageHash } from "./image-hash.js";
 
 const SRC_DIR = "src";
 const DIST_DIR = "dist";
@@ -189,6 +190,8 @@ async function generatePluginRegistry(builtResults) {
     const { plugin, filePath } = result;
     const metadata = await extractPluginMetadata(plugin, filePath);
     if (metadata) {
+      // Record the Dockerfile hash so core can detect stale images at startup
+      metadata.imageHash = imageHash(metadata.baseImage);
       registry[metadata.id] = metadata;
       log(`✅ Added to registry: ${metadata.id} (${metadata.name})`, "green");
     }
