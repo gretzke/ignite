@@ -17,6 +17,7 @@ import { PluginType } from '@ignite/plugin-types/types';
 import { PluginExecutionUtils } from '../utils/PluginExecutionUtils.js';
 import { hashWorkspacePath } from '../../utils/startup.js';
 import { GitCredentialManager } from '../utils/GitCredentialManager.js';
+import { KeyedMutex } from '../../utils/KeyedMutex.js';
 import { setTimeout } from 'node:timers/promises';
 
 // Persistent Plugin Lifecycle (repo plugins):
@@ -34,6 +35,8 @@ export class PluginExecutor {
   private static instance: PluginExecutor;
   private containerOrchestrator = ContainerOrchestrator.getInstance();
   private registryLoader = PluginRegistryLoader.getInstance();
+  // Serializes repo-container resolution per repo to avoid check-then-create races
+  private repoContainerMutex = new KeyedMutex();
 
   private constructor() {}
 
@@ -101,17 +104,17 @@ export class PluginExecutor {
 
     const containerName = await this.resolveRepoContainer(pluginId, pathOrUrl);
 
-    // Execute directly using PluginExecutionUtils
-    const result = await this.executeOperationDirect(
-      pluginConfig,
-      operation,
-      options,
-      containerName
-    );
-
-    await this.containerOrchestrator.stopContainer(containerName);
-
-    return result;
+    // Always release the container reference, even if execution throws
+    try {
+      return await this.executeOperationDirect(
+        pluginConfig,
+        operation,
+        options,
+        containerName
+      );
+    } finally {
+      await this.containerOrchestrator.stopContainer(containerName);
+    }
   }
 
   // Execute ephemeral plugin - short-lived containers, auto-cleanup
@@ -129,19 +132,19 @@ export class PluginExecutor {
       options
     );
 
-    // Execute with resolved ephemeral container
+    // Execute with resolved ephemeral container; always stop it afterwards
+    // (AutoRemove=true, so Docker cleans it up once stopped)
     const { ...cleanOptions } = this.extractPathInfo(options);
-    const result = await this.executeOperationDirect(
-      pluginConfig,
-      operation,
-      cleanOptions,
-      ephemeralContainer
-    );
-
-    // Stop ephemeral container after operation (it has AutoRemove=true so Docker will clean it up)
-    await this.containerOrchestrator.stopContainer(ephemeralContainer);
-
-    return result;
+    try {
+      return await this.executeOperationDirect(
+        pluginConfig,
+        operation,
+        cleanOptions,
+        ephemeralContainer
+      );
+    } finally {
+      await this.containerOrchestrator.stopContainer(ephemeralContainer);
+    }
   }
 
   // Create ephemeral container with AutoRemove=true and VolumesFrom repo if needed
@@ -266,7 +269,9 @@ export class PluginExecutor {
     return { pathOrUrl: pathOrUrl as string | undefined, ...cleanOptions };
   }
 
-  // Resolve repository container for persistent plugins
+  // Resolve repository container for persistent plugins.
+  // Serialized per repo path: concurrent requests would otherwise both pass the
+  // containerExists() check and race to create the same container.
   private async resolveRepoContainer(
     pluginId: string,
     pathOrUrl?: string
@@ -277,6 +282,15 @@ export class PluginExecutor {
       );
     }
 
+    return this.repoContainerMutex.run(pathOrUrl, () =>
+      this.resolveRepoContainerLocked(pluginId, pathOrUrl)
+    );
+  }
+
+  private async resolveRepoContainerLocked(
+    pluginId: string,
+    pathOrUrl: string
+  ): Promise<string> {
     const kind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
     const isSession = RepoContainerUtils.isSessionLocal(kind, pathOrUrl);
 
