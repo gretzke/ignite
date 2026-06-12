@@ -8,6 +8,14 @@ export enum ContainerLifecycle {
   EPHEMERAL = 'ephemeral', // Processing containers - removed immediately after use
 }
 
+// Grace period (seconds) between SIGTERM and SIGKILL when stopping containers.
+// MUST be > 0: instant SIGKILL can tear down a container's bind mount while
+// compiler processes still hold files open, which triggers a "Busy inodes
+// after unmount of fakeowner" kernel oops in Docker Desktop's Linux VM and
+// takes down the whole Docker daemon. See docs/docker-desktop-vm-crashes.md.
+const STOP_GRACE_SECONDS =
+  Number(process.env.IGNITE_CONTAINER_STOP_GRACE_SECONDS) || 2;
+
 // Container creation options
 export interface ContainerCreateOptions {
   image: string;
@@ -181,7 +189,7 @@ export class ContainerOrchestrator {
       // Only actually stop the container if reference count reaches zero
       if (newCount === 0) {
         const container = this.docker.getContainer(name);
-        await container.stop({ t: 0 });
+        await container.stop({ t: STOP_GRACE_SECONDS });
 
         const lifecycle = this.managedContainers.get(name);
         if (lifecycle === ContainerLifecycle.EPHEMERAL) {
@@ -248,7 +256,7 @@ export class ContainerOrchestrator {
 
       // Stop the container first
       try {
-        await container.stop({ t: 0 });
+        await container.stop({ t: STOP_GRACE_SECONDS });
       } catch {
         // Container might already be stopped
         getLogger().debug(`Container ${containerName} already stopped`);
