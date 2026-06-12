@@ -15,5 +15,8 @@
     "@types/node": "^22.0.0",
     "esbuild": "^0.25.8",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "smol-toml": "^1.6.1"
   }
 }

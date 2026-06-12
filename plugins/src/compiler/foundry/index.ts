@@ -1,6 +1,7 @@
 // MVP Foundry Detection Plugin
 import { promises as fs } from "fs";
 import { join } from "path";
+import { parse as parseToml } from "smol-toml";
 import {
   CompilerPlugin,
   PluginType,
@@ -386,8 +387,8 @@ export class FoundryPlugin extends CompilerPlugin {
     return Object.keys(result).length > 0 ? result : undefined;
   }
 
-  // Parse foundry.toml to get the src directory
-  // Returns "src" as default if file doesn't exist or can't be parsed
+  // Parse foundry.toml to resolve a directory setting (e.g. "out", "src"),
+  // honoring FOUNDRY_PROFILE with fallback to the default profile
   private async getFoundryDir(
     workspaceRoot: string,
     dir: string,
@@ -397,24 +398,22 @@ export class FoundryPlugin extends CompilerPlugin {
 
     try {
       if (!(await fileExists(foundryTomlPath))) {
-        return defaultDir; // Default
+        return defaultDir;
       }
 
       const tomlContent = await fs.readFile(foundryTomlPath, "utf-8");
+      const config = parseToml(tomlContent) as {
+        profile?: Record<string, Record<string, unknown>>;
+      };
 
-      // Simple regex to extract the directory from foundry.toml
-      // This is a basic implementation - a proper TOML parser would be better
-      const dirMatch = tomlContent.match(
-        new RegExp(`^\\s*${dir}\\s*=\\s*["']([^"']+)["']`, "m"),
-      );
+      const profileName = process.env.FOUNDRY_PROFILE || "default";
+      const value =
+        config.profile?.[profileName]?.[dir] ??
+        config.profile?.default?.[dir];
 
-      if (dirMatch && dirMatch[1]) {
-        return dirMatch[1];
-      }
-
-      return defaultDir; // Default if not found
-    } catch (error) {
-      return defaultDir; // Default on error
+      return typeof value === "string" ? value : defaultDir;
+    } catch {
+      return defaultDir;
     }
   }
 }
