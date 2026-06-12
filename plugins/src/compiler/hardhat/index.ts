@@ -16,6 +16,7 @@ import {
   type LinkReferences,
 } from "../../shared/index.ts";
 import { execCommand } from "../../shared/utils/exec.js";
+import { execFailureMessage } from "../../shared/utils/format-error.js";
 import { runPluginCLI } from "../../shared/plugin-runner.ts";
 import {
   traverseDirectory,
@@ -101,7 +102,7 @@ export class HardhatPlugin extends CompilerPlugin {
         success: false,
         error: {
           code: "NPM_INSTALL_FAILED",
-          message: "Failed to run npm install",
+          message: execFailureMessage("Dependency installation failed", result),
           details: result.error?.details,
         },
       };
@@ -125,7 +126,7 @@ export class HardhatPlugin extends CompilerPlugin {
         success: false,
         error: {
           code: "HARDHAT_COMPILE_FAILED",
-          message: "Compilation failed",
+          message: execFailureMessage("Compilation failed", result),
           details: result.error?.details,
         },
       };

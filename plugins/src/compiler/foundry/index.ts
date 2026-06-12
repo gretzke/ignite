@@ -17,6 +17,7 @@ import {
   type LinkReferences,
 } from "../../shared/index.ts";
 import { execCommand } from "../../shared/utils/exec.js";
+import { execFailureMessage } from "../../shared/utils/format-error.js";
 import { runPluginCLI } from "../../shared/plugin-runner.js";
 import {
   traverseDirectory,
@@ -134,7 +135,10 @@ export class FoundryPlugin extends CompilerPlugin {
         success: false,
         error: {
           code: "GIT_SUBMODULE_FAILED",
-          message: "Failed to update git submodules",
+          message: execFailureMessage(
+            "Failed to update git submodules",
+            submoduleResult,
+          ),
           details: submoduleResult.error?.details,
         },
       };
@@ -148,7 +152,7 @@ export class FoundryPlugin extends CompilerPlugin {
         success: false,
         error: {
           code: "FORGE_INSTALL_FAILED",
-          message: "Failed to run forge install",
+          message: execFailureMessage("forge install failed", forgeResult),
           details: forgeResult.error?.details,
         },
       };
@@ -168,7 +172,7 @@ export class FoundryPlugin extends CompilerPlugin {
         success: false,
         error: {
           code: "FORGE_BUILD_FAILED",
-          message: "Compilation failed",
+          message: execFailureMessage("Compilation failed", result),
           details: result.error?.details,
         },
       };
