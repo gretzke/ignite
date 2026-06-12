@@ -1,7 +1,6 @@
 // Compiler plugin route handlers
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type {
-  IApiError,
   IApiResponse,
   DetectionResult,
   DetectResponse,
@@ -15,6 +14,36 @@ import { PluginType } from '@ignite/plugin-types/types';
 import { PluginOrchestrator } from '../../../plugins/containers/PluginOrchestrator.js';
 import { PluginRegistryLoader } from '../../../assets/PluginRegistryLoader.js';
 import { getLogger } from '../../../utils/logger.js';
+import {
+  sendPluginError,
+  sendCaughtError,
+  sendBadRequest,
+} from '../../utils/errors.js';
+
+// Returns null if pluginId resolves to a compiler plugin, otherwise an error reply
+async function rejectNonCompilerPlugin(
+  reply: FastifyReply,
+  pluginId: string
+): Promise<FastifyReply | null> {
+  try {
+    const config =
+      await PluginRegistryLoader.getInstance().getPluginConfig(pluginId);
+    if (config.metadata.type !== PluginType.COMPILER) {
+      return sendBadRequest(
+        reply,
+        'NOT_A_COMPILER_PLUGIN',
+        `Plugin ${pluginId} is not a compiler plugin`
+      );
+    }
+    return null;
+  } catch {
+    return sendBadRequest(
+      reply,
+      'UNKNOWN_PLUGIN',
+      `Unknown plugin: ${pluginId}`
+    );
+  }
+}
 
 // Compiler handlers object - matches shared API route structure
 export const compilerHandlers = {
@@ -34,12 +63,12 @@ export const compilerHandlers = {
       const pluginOrchestrator = PluginOrchestrator.getInstance();
       const registryLoader = PluginRegistryLoader.getInstance();
 
-      // Get all compiler plugins from registry
       const compilerPlugins = await registryLoader.getPluginsByType(
         PluginType.COMPILER
       );
 
-      // Run detection on all compiler plugins in parallel
+      // Run detection on all compiler plugins in parallel; a single broken
+      // plugin must not fail detection for the others
       const detectionPromises = compilerPlugins.map(async (pluginConfig) => {
         try {
           const result = await pluginOrchestrator.executePlugin(
@@ -48,7 +77,6 @@ export const compilerHandlers = {
             { pathOrUrl: hostPath }
           );
 
-          // Only return framework if detection was successful
           if (result.success && (result.data as DetectionResult).detected) {
             return {
               id: pluginConfig.metadata.id,
@@ -60,13 +88,12 @@ export const compilerHandlers = {
           getLogger().error(
             `Failed to detect ${pluginConfig.metadata.id}: ${error}`
           );
-          throw error;
+          return null;
         }
       });
 
       const detectionResults = await Promise.all(detectionPromises);
 
-      // Filter out null results (failed or undetected frameworks)
       const frameworks = detectionResults.filter(
         (framework): framework is { id: string; name: string } =>
           framework !== null
@@ -77,17 +104,12 @@ export const compilerHandlers = {
       };
       return reply.status(200).send(body);
     } catch (error) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: 'DETECT_ERROR',
-        message: 'Failed to detect frameworks',
-        details: {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-      return reply.status(statusCode).send(body);
+      return sendCaughtError(
+        reply,
+        error,
+        'DETECT_ERROR',
+        'Failed to detect frameworks'
+      );
     }
   },
 
@@ -99,39 +121,33 @@ export const compilerHandlers = {
   ) => {
     try {
       const { pathOrUrl, pluginId } = request.body;
-      const pluginOrchestrator = PluginOrchestrator.getInstance();
 
-      const result = await pluginOrchestrator.executePlugin(
+      const rejection = await rejectNonCompilerPlugin(reply, pluginId);
+      if (rejection) return rejection;
+
+      const result = await PluginOrchestrator.getInstance().executePlugin(
         pluginId,
         'install',
         { pathOrUrl }
       );
 
       if (!result.success) {
-        const statusCode = 500 as const;
-        const body: IApiError = {
-          statusCode,
-          error: 'Internal Server Error',
-          code: result.error?.code || 'INSTALL_FAILED',
-          message: result.error?.message || 'Installation failed',
-          details: result.error?.details,
-        };
-        return reply.status(statusCode).send(body);
+        return sendPluginError(
+          reply,
+          result,
+          'INSTALL_FAILED',
+          'Installation failed'
+        );
       }
 
       return reply.status(204).send();
     } catch (error) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: 'INSTALL_ERROR',
-        message: 'Failed to install dependencies',
-        details: {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-      return reply.status(statusCode).send(body);
+      return sendCaughtError(
+        reply,
+        error,
+        'INSTALL_ERROR',
+        'Failed to install dependencies'
+      );
     }
   },
 
@@ -143,40 +159,28 @@ export const compilerHandlers = {
   ) => {
     try {
       const { pathOrUrl, pluginId } = request.body;
-      // TODO: throw error is pluginId is not a compiler plugin
-      const pluginOrchestrator = PluginOrchestrator.getInstance();
 
-      const result = await pluginOrchestrator.executePlugin(
+      const rejection = await rejectNonCompilerPlugin(reply, pluginId);
+      if (rejection) return rejection;
+
+      const result = await PluginOrchestrator.getInstance().executePlugin(
         pluginId,
         'compile',
         { pathOrUrl }
       );
 
       if (!result.success) {
-        const statusCode = 500 as const;
-        const body: IApiError = {
-          statusCode,
-          error: 'Internal Server Error',
-          code: result.error?.code || 'COMPILE_FAILED',
-          message: result.error?.message || 'Compilation failed',
-          details: result.error?.details,
-        };
-        return reply.status(statusCode).send(body);
+        return sendPluginError(
+          reply,
+          result,
+          'COMPILE_FAILED',
+          'Compilation failed'
+        );
       }
 
       return reply.status(204).send();
     } catch (error) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: 'COMPILE_ERROR',
-        message: 'Failed to compile',
-        details: {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-      return reply.status(statusCode).send(body);
+      return sendCaughtError(reply, error, 'COMPILE_ERROR', 'Failed to compile');
     }
   },
 
@@ -189,29 +193,26 @@ export const compilerHandlers = {
     try {
       const { pluginId, pathOrUrl } = request.body;
 
+      const rejection = await rejectNonCompilerPlugin(reply, pluginId);
+      if (rejection) return rejection;
+
       // Get hostPath from request body or fall back to environment/cwd
       const hostPath =
         pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
 
-      const pluginOrchestrator = PluginOrchestrator.getInstance();
-
-      // Execute listArtifacts operation on the specified plugin
-      const result = await pluginOrchestrator.executePlugin(
+      const result = await PluginOrchestrator.getInstance().executePlugin(
         pluginId,
         'listArtifacts',
         { pathOrUrl: hostPath }
       );
 
       if (!result.success) {
-        const statusCode = 500 as const;
-        const body: IApiError = {
-          statusCode,
-          error: 'Internal Server Error',
-          code: result.error?.code || 'ARTIFACT_LISTING_ERROR',
-          message: result.error?.message || 'Failed to list artifacts',
-          details: result.error?.details,
-        };
-        return reply.status(statusCode).send(body);
+        return sendPluginError(
+          reply,
+          result,
+          'ARTIFACT_LISTING_ERROR',
+          'Failed to list artifacts'
+        );
       }
 
       const body: IApiResponse<ArtifactListResult> = {
@@ -219,17 +220,12 @@ export const compilerHandlers = {
       };
       return reply.status(200).send(body);
     } catch (error) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: 'ARTIFACT_LISTING_ERROR',
-        message: 'Failed to list artifacts',
-        details: {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-      return reply.status(statusCode).send(body);
+      return sendCaughtError(
+        reply,
+        error,
+        'ARTIFACT_LISTING_ERROR',
+        'Failed to list artifacts'
+      );
     }
   },
 
@@ -242,37 +238,31 @@ export const compilerHandlers = {
     try {
       const { pluginId, pathOrUrl, artifactPath } = request.body;
 
+      const rejection = await rejectNonCompilerPlugin(reply, pluginId);
+      if (rejection) return rejection;
+
       // Get hostPath from request body or fall back to environment/cwd
       const hostPath =
         pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
 
-      const pluginOrchestrator = PluginOrchestrator.getInstance();
-
-      // Execute getArtifactData operation on the specified plugin
-      const result = await pluginOrchestrator.executePlugin(
+      const result = await PluginOrchestrator.getInstance().executePlugin(
         pluginId,
         'getArtifactData',
         { pathOrUrl: hostPath, artifactPath }
       );
 
       if (!result.success) {
-        // Map specific error codes to appropriate HTTP status codes
-        let statusCode: 404 | 500 = 500;
-        if (
-          result.error?.code === 'ARTIFACT_NOT_FOUND' ||
-          result.error?.code === 'ARTIFACT_PARSE_ERROR'
-        ) {
-          statusCode = 404;
-        }
-
-        const body: IApiError = {
-          statusCode,
-          error: statusCode === 404 ? 'Not Found' : 'Internal Server Error',
-          code: result.error?.code || 'ARTIFACT_DATA_ERROR',
-          message: result.error?.message || 'Failed to get artifact data',
-          details: result.error?.details,
-        };
-        return reply.status(statusCode).send(body);
+        const notFound =
+          !result.success &&
+          (result.error?.code === 'ARTIFACT_NOT_FOUND' ||
+            result.error?.code === 'ARTIFACT_PARSE_ERROR');
+        return sendPluginError(
+          reply,
+          result,
+          'ARTIFACT_DATA_ERROR',
+          'Failed to get artifact data',
+          notFound ? 404 : 500
+        );
       }
 
       const body: IApiResponse<ArtifactData> = {
@@ -280,17 +270,12 @@ export const compilerHandlers = {
       };
       return reply.status(200).send(body);
     } catch (error) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: 'ARTIFACT_DATA_ERROR',
-        message: 'Failed to get artifact data',
-        details: {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-      return reply.status(statusCode).send(body);
+      return sendCaughtError(
+        reply,
+        error,
+        'ARTIFACT_DATA_ERROR',
+        'Failed to get artifact data'
+      );
     }
   },
 } as const;
