@@ -10,6 +10,8 @@ import type {
 } from '@ignite/api';
 import { TrustManager } from '../../plugins/trust/TrustManager.js';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
+import { PluginManager } from '../../filesystem/PluginManager.js';
+import { ErrorCodes } from '../../types/errors.js';
 import { sendCaughtError } from '../utils/errors.js';
 
 type SetTrustBody = {
@@ -68,7 +70,7 @@ export function createTrustHandlers(
           const body: IApiError = {
             statusCode: 404,
             error: 'Not Found',
-            code: 'PLUGIN_NOT_FOUND',
+            code: ErrorCodes.PLUGIN_NOT_FOUND,
             message: `Plugin ${pluginId} is not installed`,
           };
           return reply.status(404).send(body);
@@ -107,9 +109,15 @@ export function createTrustHandlers(
   };
 }
 
+// Union of the bundled built-in catalog and the persisted per-profile
+// registry: third-party plugins only exist in the latter, built-ins only in
+// the former (the persisted registry starts empty).
 async function listInstalledPluginIds(): Promise<string[]> {
-  const plugins = await PluginRegistryLoader.getInstance().getAllPlugins();
-  return Object.keys(plugins);
+  const [builtIn, installed] = await Promise.all([
+    PluginRegistryLoader.getInstance().getAllPlugins(),
+    PluginManager.getInstance().listPlugins(),
+  ]);
+  return [...new Set([...Object.keys(builtIn), ...Object.keys(installed)])];
 }
 
 export const trustHandlers = createTrustHandlers(

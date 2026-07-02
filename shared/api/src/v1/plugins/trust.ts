@@ -66,7 +66,7 @@ export const trustRoutes = {
   setPluginTrust: {
     method: "POST" as const,
     path: `${V1_BASE_PATH}/plugins/:pluginId/trust`,
-    params: z.object({ pluginId: z.string() }),
+    params: z.object({ pluginId: z.string().min(1) }),
     schema: {
       tags: ["plugins"],
       body: SetPluginTrustBodySchema,
