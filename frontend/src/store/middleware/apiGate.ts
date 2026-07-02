@@ -4,6 +4,7 @@ import { apiDispatchAction, isApiDispatchAction } from '../api/client';
 import { getToastApi } from '../../ui/toast/toastBus';
 import type { RootState } from '../store';
 import { ConnectionStatus } from '../features/connection/connectionSlice';
+import { permissionRequired } from '../features/plugins/trustSlice';
 
 // Central API gating and execution middleware.
 // It defers API operations until the connection is CONNECTED, and aborts when DISCONNECTED.
@@ -61,6 +62,26 @@ apiGate.startListening({
           }
         }
       } catch (err: unknown) {
+        // Permissioning layer: surface an approval prompt instead of a toast
+        // when a plugin operation was denied for a missing permission.
+        if (
+          err instanceof ApiError &&
+          err.body.code === 'PERMISSION_REQUIRED' &&
+          err.body.details &&
+          typeof err.body.details.pluginId === 'string' &&
+          typeof err.body.details.permission === 'string'
+        ) {
+          const { endpoint, params, query, body } = action.payload;
+          api.dispatch(
+            permissionRequired({
+              pluginId: err.body.details.pluginId,
+              permission: err.body.details.permission as 'hostWrite' | 'net',
+              retry: { endpoint: String(endpoint), params, query, body },
+            })
+          );
+          return;
+        }
+
         // Handle error callback with type-safe ApiError
         const { onError } = action.payload;
         if (onError) {
