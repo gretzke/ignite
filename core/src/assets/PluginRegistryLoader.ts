@@ -1,23 +1,28 @@
 import { PluginMetadata, PluginType } from '@ignite/plugin-types/types';
 import { AssetManager } from './AssetManager.js';
+import { PluginManager } from '../filesystem/PluginManager.js';
 import { getLogger } from '../utils/logger.js';
 
-// Plugin lifecycle classification
 export enum PluginLifecycle {
-  PERSISTENT = 'persistent', // Repo plugins - long-lived containers with data storage
-  EPHEMERAL = 'ephemeral', // Processing plugins - short-lived, auto-cleanup containers
+  PERSISTENT = 'persistent',
+  EPHEMERAL = 'ephemeral',
 }
+
+export type PluginOrigin = 'builtin' | 'installed';
 
 export interface PluginConfig {
-  metadata: PluginMetadata; // Core plugin metadata
+  metadata: PluginMetadata;
   lifecycle: PluginLifecycle;
-  requiresRepo: boolean; // Whether this plugin needs repo container access
+  requiresRepo: boolean;
+  origin: PluginOrigin;
 }
 
-// Plugin registry loader for dynamic plugin metadata
 export class PluginRegistryLoader {
   private static instance: PluginRegistryLoader;
-  private registry: Record<string, PluginConfig> = {};
+  private builtinRegistry: Record<string, PluginConfig> = {};
+  // Load-once guard: concurrent callers await the same promise instead of
+  // racing to (re)load and clobbering each other's partial state.
+  private builtinLoad?: Promise<Record<string, PluginConfig>>;
   private assetManager = AssetManager.getInstance();
 
   private constructor() {}
@@ -29,88 +34,107 @@ export class PluginRegistryLoader {
     return PluginRegistryLoader.instance;
   }
 
-  async loadRegistry(): Promise<Record<string, PluginConfig>> {
-    if (Object.keys(this.registry).length > 0) {
-      return this.registry;
+  // Built-in catalog: loaded once from the bundled registry file.
+  private loadBuiltinRegistry(): Promise<Record<string, PluginConfig>> {
+    if (Object.keys(this.builtinRegistry).length > 0) {
+      return Promise.resolve(this.builtinRegistry);
     }
+    if (!this.builtinLoad) {
+      this.builtinLoad = (async () => {
+        try {
+          const registryPath = 'plugins/dist/plugin-registry.json';
+          if (!this.assetManager.exists(registryPath)) {
+            throw new Error(`Registry file not found: ${registryPath}`);
+          }
+          const baseRegistry: Record<string, PluginMetadata> = JSON.parse(
+            this.assetManager.getAssetText(registryPath)
+          );
+          const built: Record<string, PluginConfig> = {};
+          for (const [pluginId, metadata] of Object.entries(baseRegistry)) {
+            built[pluginId] = this.createPluginConfig(
+              pluginId,
+              metadata,
+              'builtin'
+            );
+          }
+          this.builtinRegistry = built;
+          getLogger().info(
+            `✅ Built-in plugin catalog loaded: ${Object.keys(built).join(', ')}`
+          );
+          return built;
+        } catch (error) {
+          getLogger().error('❌ Failed to load built-in plugin catalog:', error);
+          // Allow a later call to retry rather than caching the failure.
+          this.builtinLoad = undefined;
+          return {};
+        }
+      })();
+    }
+    return this.builtinLoad;
+  }
 
+  // Installed (third-party) plugins from the persisted registry, read fresh so
+  // installs/uninstalls take effect without a restart.
+  private async loadInstalledRegistry(): Promise<Record<string, PluginConfig>> {
     try {
-      getLogger().info('📋 Loading plugin registry...');
-
-      const registryPath = 'plugins/dist/plugin-registry.json';
-      getLogger().info(`📋 Registry path: ${registryPath}`);
-
-      if (!this.assetManager.exists(registryPath)) {
-        throw new Error(`Registry file not found: ${registryPath}`);
+      const installed = await PluginManager.getInstance().listPlugins();
+      const out: Record<string, PluginConfig> = {};
+      for (const [pluginId, metadata] of Object.entries(installed)) {
+        out[pluginId] = this.createPluginConfig(pluginId, metadata, 'installed');
       }
-
-      const registryContent = this.assetManager.getAssetText(registryPath);
-      getLogger().info(
-        `📋 Registry content preview: ${registryContent.substring(0, 200)}...`
-      );
-
-      const baseRegistry: Record<string, PluginMetadata> =
-        JSON.parse(registryContent);
-
-      // Transform base metadata into PluginConfig
-      for (const [pluginId, metadata] of Object.entries(baseRegistry)) {
-        this.registry[pluginId] = this.createPluginConfig(pluginId, metadata);
-      }
-
-      const pluginCount = Object.keys(this.registry).length;
-      getLogger().info(`✅ Plugin registry loaded: ${pluginCount} plugins`);
-      getLogger().info(
-        `📋 Available plugins: ${Object.keys(this.registry).join(', ')}`
-      );
-
-      return this.registry;
+      return out;
     } catch (error) {
-      getLogger().error('❌ Failed to load plugin registry:', error);
-      // Fallback to empty registry
-      this.registry = {};
-      return this.registry;
+      getLogger().warn(`⚠️ Could not read installed plugin registry: ${error}`);
+      return {};
     }
   }
 
+  async getAllPlugins(): Promise<Record<string, PluginConfig>> {
+    const [builtin, installed] = await Promise.all([
+      this.loadBuiltinRegistry(),
+      this.loadInstalledRegistry(),
+    ]);
+    // Built-in wins on id collision (native precedence).
+    return { ...installed, ...builtin };
+  }
+
+  async isBuiltin(pluginId: string): Promise<boolean> {
+    const builtin = await this.loadBuiltinRegistry();
+    return pluginId in builtin;
+  }
+
   async getPluginConfig(pluginId: string): Promise<PluginConfig> {
-    const registry = await this.loadRegistry();
-    const config = registry[pluginId];
+    const config = (await this.getAllPlugins())[pluginId];
     if (!config) {
       throw new Error(`Unknown plugin: ${pluginId}`);
     }
     return config;
   }
 
-  async getAllPlugins(): Promise<Record<string, PluginConfig>> {
-    return await this.loadRegistry();
-  }
-
   async getPluginsByType(type: PluginType): Promise<PluginConfig[]> {
-    const registry = await this.loadRegistry();
-    return Object.values(registry).filter(
+    return Object.values(await this.getAllPlugins()).filter(
       (config) => config.metadata.type === type
     );
   }
 
   private createPluginConfig(
     pluginId: string,
-    metadata: PluginMetadata
+    metadata: PluginMetadata,
+    origin: PluginOrigin
   ): PluginConfig {
-    // Persistent: Repo plugins (local-repo, cloned-repo)
     if (metadata.type === PluginType.REPO_MANAGER) {
       return {
         metadata,
         lifecycle: PluginLifecycle.PERSISTENT,
-        requiresRepo: false, // Repo plugins don't require other repos
+        requiresRepo: false,
+        origin,
       };
     }
-
-    // Ephemeral: All other plugins (foundry, hardhat, future encryption plugins, etc.)
-    const requiresRepo = this.determineRepoRequirement(pluginId, metadata);
     return {
       metadata,
       lifecycle: PluginLifecycle.EPHEMERAL,
-      requiresRepo,
+      requiresRepo: this.determineRepoRequirement(pluginId, metadata),
+      origin,
     };
   }
 
@@ -118,17 +142,6 @@ export class PluginRegistryLoader {
     _pluginId: string,
     metadata: PluginMetadata
   ): boolean {
-    // Compiler plugins (foundry, hardhat) need repo access to analyze/compile code
-    if (metadata.type === PluginType.COMPILER) {
-      return true;
-    }
-
-    // Future plugin types that would NOT require repo access:
-    // - Encryption plugins (work with local data)
-    // - Utility plugins (formatters, validators)
-    // - Network plugins (RPC interactions)
-
-    // For now, assume most stateless plugins do not need repo access
-    return false;
+    return metadata.type === PluginType.COMPILER;
   }
 }

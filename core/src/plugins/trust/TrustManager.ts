@@ -58,10 +58,8 @@ export class TrustManager {
       );
       // Built-in registry plugins are native: they ship with the binary and
       // implement core infrastructure (repo management, compilation).
-      const isNativePlugin = async (pluginId: string) => {
-        const plugins = await PluginRegistryLoader.getInstance().getAllPlugins();
-        return pluginId in plugins;
-      };
+      const isNativePlugin = async (pluginId: string) =>
+        PluginRegistryLoader.getInstance().isBuiltin(pluginId);
       TrustManager.instance = new TrustManager(trustFilePath, isNativePlugin);
     }
     return TrustManager.instance;
