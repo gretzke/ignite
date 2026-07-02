@@ -82,9 +82,18 @@ export async function registerSessionAuth(
         return;
       }
 
-      const isProtected = PROTECTED_PREFIXES.some(
-        (prefix) => request.url === '/ws' || request.url.startsWith(prefix)
-      );
+      // Fastify decodes percent-escapes and normalizes the path before
+      // matching a route; by the time onRequest runs (v5 runs it post-
+      // routing) request.routeOptions.url holds that matched route PATTERN
+      // (e.g. '/api/v1/system/health', '/ws'), not the raw request.url. Using
+      // the raw url here let `GET /%61pi/...` route to a protected handler
+      // while being judged unprotected, serving it without credentials.
+      // routeOptions.url is undefined when nothing matched (request.is404) —
+      // that's the SPA/static fallback and is intentionally public.
+      const matchedRoute = request.routeOptions?.url;
+      const isProtected =
+        matchedRoute !== undefined &&
+        PROTECTED_PREFIXES.some((prefix) => matchedRoute.startsWith(prefix));
       if (!isProtected) return;
 
       const cookieToken = request.cookies?.[SESSION_COOKIE];
