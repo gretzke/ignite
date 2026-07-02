@@ -231,6 +231,11 @@ export class FileSystem {
     return emptyRegistry;
   }
 
+  // Persist the plugin registry (third-party install/uninstall write path)
+  async writePluginRegistry(registry: PluginRegistry): Promise<void> {
+    await this.writeJsonFile(this.getRegistryPath(), registry);
+  }
+
   // Read global config, create default if doesn't exist
   async readGlobalConfig(): Promise<IgniteConfig> {
     const configPath = this.getGlobalConfigPath();
