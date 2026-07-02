@@ -36,6 +36,16 @@ describe('TrustManager', () => {
     expect(grant).toEqual(UNTRUSTED_GRANT);
   });
 
+  it('fails closed when a trusted entry has a malformed permissions field', async () => {
+    await fs.writeFile(
+      trustFile,
+      JSON.stringify({ '@acme/foundry': { trust: 'trusted', ts: 'now' } }),
+      'utf8'
+    );
+    const grant = await manager.getGrant('@acme/foundry');
+    expect(grant).toEqual(UNTRUSTED_GRANT);
+  });
+
   it('persists and returns granted permissions', async () => {
     await manager.setTrust('@acme/foundry', 'trusted', {
       hostWrite: true,

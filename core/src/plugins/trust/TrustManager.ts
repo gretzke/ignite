@@ -77,7 +77,14 @@ export class TrustManager {
     }
     const entries = await this.readTrustFile();
     const entry = entries[pluginId];
-    if (!entry || entry.trust !== 'trusted') {
+    if (
+      !entry ||
+      entry.trust !== 'trusted' ||
+      typeof entry.permissions !== 'object' ||
+      entry.permissions === null
+    ) {
+      // Fail closed on any corruption shape, including schema-corrupt entries
+      // that parse as JSON but lack a permissions object.
       return UNTRUSTED_GRANT;
     }
     return Object.freeze({
