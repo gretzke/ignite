@@ -6,12 +6,14 @@ export { V1_BASE_PATH } from "./constants.js";
 export * from "./system.js";
 export * from "./profiles.js";
 export * from "./plugins/index.js";
+export * from "./plugins/trust.js";
 export * from "./plugins/compiler/index.js";
 export * from "./plugins/repo-manager/index.js";
 
 import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
 import { pluginRoutes } from "./plugins/index.js";
+import { trustRoutes } from "./plugins/trust.js";
 import { compilerRoutes } from "./plugins/compiler/index.js";
 import { repoManagerRoutes } from "./plugins/repo-manager/index.js";
 
@@ -44,6 +46,7 @@ const allRoutes = {
   ...systemRoutes,
   ...profileRoutes,
   ...pluginRoutes,
+  ...trustRoutes,
   ...compilerRoutes,
   ...repoManagerRoutes,
 } as const;
