@@ -15,6 +15,7 @@ import {
   checkDockerAvailability,
 } from './utils/startup.js';
 import { registerApi } from './api/index.js';
+import { registerSessionAuth, resolveSessionToken } from './api/auth.js';
 import { StaticAssetHandler } from './assets/StaticAssetHandler.js';
 import { validatePluginImages } from './plugins/utils/ImageValidator.js';
 
@@ -24,6 +25,7 @@ async function ignite(workspacePath: string): Promise<{
   profileManager: ProfileManager;
   pluginManager: PluginManager;
   pluginOrchestrator: PluginOrchestrator;
+  sessionToken: string;
 }> {
   // Create Fastify instance - disable logger in production for clean output
   const app: FastifyInstance = fastify({
@@ -32,6 +34,11 @@ async function ignite(workspacePath: string): Promise<{
 
   // Set up global logger
   setGlobalLogger(app.log);
+
+  // Session auth must be registered before all routes so its onRequest hook
+  // guards every subsequently registered route, including /ws and the API.
+  const sessionToken = resolveSessionToken();
+  await registerSessionAuth(app, sessionToken);
 
   // Initialize filesystem infrastructure
   app.log.info('🔧 Initializing Ignite...');
@@ -83,6 +90,7 @@ async function ignite(workspacePath: string): Promise<{
     profileManager,
     pluginManager,
     pluginOrchestrator,
+    sessionToken,
   };
 }
 
@@ -131,6 +139,7 @@ async function main(): Promise<void> {
       profileManager,
       pluginManager: _pluginManager,
       pluginOrchestrator,
+      sessionToken,
     } = await ignite(workspacePath);
 
     // Warn early about missing or stale plugin images
@@ -141,20 +150,20 @@ async function main(): Promise<void> {
     // Log the repository path we're working with
     app.log.info(`📁 Repository path: ${workspacePath}`);
 
-    // Listen on localhost only for security
+    // Listen on localhost only; session auth protects /api and /ws even from
+    // containers that reach us via host.docker.internal.
     await app.listen({ port, host: '127.0.0.1' });
 
+    const authedUrl = `http://localhost:${port}/?token=${sessionToken}`;
+
     // User-facing message - direct to stdout for visibility
-    process.stdout.write(
-      `\n🚀 Ignite server listening on http://localhost:${port}\n\n`
-    );
+    process.stdout.write(`\n🚀 Ignite server listening on ${authedUrl}\n\n`);
     app.log.info(`📂 Current profile: ${profileManager.getCurrentProfile()}`);
     app.log.info(`📁 Ignite home: ${fileSystem.getIgniteHome()}`);
 
     // Open browser by default (CLI usage) unless explicitly disabled in development
     if (process.env.NODE_ENV !== 'development') {
-      const frontendUrl = `http://localhost:${port}`;
-      openBrowser(frontendUrl);
+      openBrowser(authedUrl);
     }
 
     // Graceful shutdown handling

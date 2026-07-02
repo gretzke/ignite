@@ -19,6 +19,16 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:1301',
+        headers: {
+          'x-ignite-token': process.env.IGNITE_DEV_TOKEN || 'dev',
+        },
+      },
+      '/ws': {
+        target: 'http://localhost:1301',
+        ws: true,
+        headers: {
+          'x-ignite-token': process.env.IGNITE_DEV_TOKEN || 'dev',
+        },
       },
     },
   },
