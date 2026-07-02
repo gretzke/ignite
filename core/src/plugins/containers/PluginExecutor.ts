@@ -25,9 +25,10 @@ import {
   type PluginPermissions,
 } from '../trust/TrustManager.js';
 
-// SPEC.md §3.1 operations matrix: compile mutates the shared volume,
-// verify talks to block explorers. detect/mount/etc. need no grant.
+// SPEC.md §3.1 operations matrix: install and compile mutate the shared
+// volume, verify talks to block explorers. detect/mount/etc. need no grant.
 export const OPERATION_PERMISSIONS: Record<string, keyof PluginPermissions> = {
+  install: 'hostWrite',
   compile: 'hostWrite',
   verify: 'net',
 };

@@ -60,4 +60,16 @@ describe('missingPermission', () => {
     expect(missingPermission('compile', NATIVE_GRANT)).toBeNull();
     expect(missingPermission('detect', UNTRUSTED_GRANT)).toBeNull();
   });
+
+  it('maps install to hostWrite, matching the runtime write it performs', async () => {
+    // Clean compile runs install before compile (forge install / git
+    // submodule writes into /workspace). Without this gate an untrusted
+    // plugin's install runs, gets a :ro mount, and fails at the container
+    // with a generic error instead of surfacing PERMISSION_REQUIRED.
+    const { missingPermission } = await import(
+      '../../plugins/containers/PluginExecutor.js'
+    );
+    expect(missingPermission('install', UNTRUSTED_GRANT)).toBe('hostWrite');
+    expect(missingPermission('install', NATIVE_GRANT)).toBeNull();
+  });
 });
