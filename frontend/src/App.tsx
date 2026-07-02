@@ -4,6 +4,7 @@ import Sidebar from './ui/Sidebar';
 import { Outlet } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from './store';
 import { startConnect } from './store/features/connection/connectionSlice';
+import PermissionApprovalDialog from './components/PermissionApprovalDialog';
 
 type CSSVars = React.CSSProperties & { ['--profile-color']?: string };
 
@@ -56,6 +57,9 @@ export default function App() {
 
       {/* Sidebar */}
       <Sidebar />
+
+      {/* Plugin permission approval prompt */}
+      <PermissionApprovalDialog />
 
       {/* Ambient background layers */}
       <div className="ambient-gradient" aria-hidden="true" />

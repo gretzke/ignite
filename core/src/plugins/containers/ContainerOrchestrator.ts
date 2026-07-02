@@ -1,5 +1,6 @@
 import Docker from 'dockerode';
 import { getLogger } from '../../utils/logger.js';
+import type { PermissionGrant } from '../trust/TrustManager.js';
 
 // Container lifecycle types
 export enum ContainerLifecycle {
@@ -21,6 +22,9 @@ export interface ContainerCreateOptions {
   image: string;
   name: string;
   lifecycle: ContainerLifecycle;
+  // Resolved trust grant — REQUIRED so no caller can create a container
+  // without going through the permissioning layer.
+  grant: PermissionGrant;
   labels?: Record<string, string>;
   binds?: string[];
   volumes?: Record<string, object>; // Named volumes: { '/path': {} }
@@ -51,6 +55,7 @@ export class ContainerOrchestrator {
       image,
       name,
       lifecycle,
+      grant,
       labels = {},
       binds,
       volumes,
@@ -77,7 +82,12 @@ export class ContainerOrchestrator {
       HostConfig: {
         AutoRemove: lifecycle === ContainerLifecycle.EPHEMERAL, // Only ephemeral containers auto-remove
         Binds: binds,
-        VolumesFrom: volumesFrom,
+        // Without hostWrite, shared repo volumes are mounted read-only.
+        VolumesFrom: volumesFrom?.map((source) =>
+          grant.hostWrite ? source : `${source}:ro`
+        ),
+        // Without net, the container gets no network stack at all.
+        NetworkMode: grant.net ? 'bridge' : 'none',
       },
     };
 

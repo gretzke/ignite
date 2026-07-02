@@ -12,6 +12,7 @@ import { v1Routes } from '@ignite/api';
 import { systemHandlers } from './system.js';
 import { profileHandlers } from './profiles.js';
 import { pluginHandlers } from './plugins/index.js';
+import { trustHandlers } from './plugins/trust.js';
 import { compilerHandlers } from './plugins/compiler/index.js';
 import { repoManagerHandlers } from './plugins/repo-manager/index.js';
 
@@ -71,6 +72,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...systemHandlers,
     ...profileHandlers,
     ...pluginHandlers,
+    ...trustHandlers,
     ...compilerHandlers,
     ...repoManagerHandlers,
   };

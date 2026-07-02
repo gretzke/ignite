@@ -19,6 +19,29 @@ import { hashWorkspacePath } from '../../utils/startup.js';
 import { GitCredentialManager } from '../utils/GitCredentialManager.js';
 import { KeyedMutex } from '../../utils/KeyedMutex.js';
 import { setTimeout } from 'node:timers/promises';
+import {
+  TrustManager,
+  type PermissionGrant,
+  type PluginPermissions,
+} from '../trust/TrustManager.js';
+
+// SPEC.md §3.1 operations matrix: install and compile mutate the shared
+// volume, verify talks to block explorers. detect/mount/etc. need no grant.
+export const OPERATION_PERMISSIONS: Record<string, keyof PluginPermissions> = {
+  install: 'hostWrite',
+  compile: 'hostWrite',
+  verify: 'net',
+};
+
+// Returns the permission the operation needs but the grant lacks, or null.
+export function missingPermission(
+  operation: string,
+  grant: PermissionGrant
+): keyof PluginPermissions | null {
+  const required = OPERATION_PERMISSIONS[operation];
+  if (required && !grant[required]) return required;
+  return null;
+}
 
 // Persistent Plugin Lifecycle (repo plugins):
 // - Long-lived containers (AutoRemove=false)
@@ -62,19 +85,39 @@ export class PluginExecutor {
 
     getLogger().info(`🔄 Plugin ${pluginId} lifecycle: ${lifecycle}`);
 
+    // Resolve the trust grant once; everything downstream enforces it.
+    const grant = await TrustManager.getInstance().getGrant(pluginId);
+
+    const denied = missingPermission(operation, grant);
+    if (denied) {
+      getLogger().warn(
+        `🔒 Denied ${pluginId}.${operation}: missing '${denied}' permission (trust: ${grant.trust})`
+      );
+      return {
+        success: false,
+        error: {
+          code: 'PERMISSION_REQUIRED',
+          message: `Plugin ${pluginId} requires the '${denied}' permission to run '${operation}'. Approve it in the plugin settings.`,
+          details: { pluginId, permission: denied },
+        },
+      };
+    }
+
     // Execute based on plugin lifecycle from metadata
     switch (lifecycle) {
       case PluginLifecycle.PERSISTENT:
         return await this.executePersistentPlugin(
           pluginConfig,
           operation,
-          options
+          options,
+          grant
         );
       case PluginLifecycle.EPHEMERAL:
         return await this.executeEphemeralPlugin(
           pluginConfig,
           operation,
-          options
+          options,
+          grant
         );
       default: {
         const _exhaustiveCheck: never = lifecycle;
@@ -87,7 +130,8 @@ export class PluginExecutor {
   private async executePersistentPlugin(
     pluginConfig: PluginConfig,
     operation: string,
-    options: Record<string, unknown>
+    options: Record<string, unknown>,
+    grant: PermissionGrant
   ): Promise<PluginResponse<unknown>> {
     const pluginId = pluginConfig.metadata.id;
     getLogger().info(
@@ -102,7 +146,11 @@ export class PluginExecutor {
       options = await this.injectGitCredentials(options, pathOrUrl);
     }
 
-    const containerName = await this.resolveRepoContainer(pluginId, pathOrUrl);
+    const containerName = await this.resolveRepoContainer(
+      pluginId,
+      pathOrUrl,
+      grant
+    );
 
     // Always release the container reference, even if execution throws
     try {
@@ -121,7 +169,8 @@ export class PluginExecutor {
   private async executeEphemeralPlugin(
     pluginConfig: PluginConfig,
     operation: string,
-    options: Record<string, unknown>
+    options: Record<string, unknown>,
+    grant: PermissionGrant
   ): Promise<PluginResponse<unknown>> {
     const pluginId = pluginConfig.metadata.id;
     getLogger().info(`⚡ Executing ephemeral plugin: ${pluginId}.${operation}`);
@@ -129,7 +178,8 @@ export class PluginExecutor {
     // Create ephemeral container with repo dependency resolution
     const ephemeralContainer = await this.createEphemeralContainer(
       pluginConfig,
-      options
+      options,
+      grant
     );
 
     // Execute with resolved ephemeral container; always stop it afterwards
@@ -150,7 +200,8 @@ export class PluginExecutor {
   // Create ephemeral container with AutoRemove=true and VolumesFrom repo if needed
   private async createEphemeralContainer(
     pluginConfig: PluginConfig,
-    options: Record<string, unknown>
+    options: Record<string, unknown>,
+    grant: PermissionGrant
   ): Promise<string> {
     const pluginId = pluginConfig.metadata.id;
 
@@ -230,6 +281,7 @@ export class PluginExecutor {
       lifecycle: ContainerLifecycle.EPHEMERAL,
       labels,
       volumesFrom,
+      grant,
     });
   }
 
@@ -274,7 +326,8 @@ export class PluginExecutor {
   // containerExists() check and race to create the same container.
   private async resolveRepoContainer(
     pluginId: string,
-    pathOrUrl?: string
+    pathOrUrl: string | undefined,
+    grant: PermissionGrant
   ): Promise<string> {
     if (!pathOrUrl) {
       throw new Error(
@@ -283,13 +336,14 @@ export class PluginExecutor {
     }
 
     return this.repoContainerMutex.run(pathOrUrl, () =>
-      this.resolveRepoContainerLocked(pluginId, pathOrUrl)
+      this.resolveRepoContainerLocked(pluginId, pathOrUrl, grant)
     );
   }
 
   private async resolveRepoContainerLocked(
     pluginId: string,
-    pathOrUrl: string
+    pathOrUrl: string,
+    grant: PermissionGrant
   ): Promise<string> {
     const kind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
     const isSession = RepoContainerUtils.isSessionLocal(kind, pathOrUrl);
@@ -348,7 +402,8 @@ export class PluginExecutor {
         pathOrUrl,
         containerName,
         preferredLifecycle,
-        pluginId
+        pluginId,
+        grant
       );
     } catch (error: unknown) {
       // Handle race condition - another request might have created the container
@@ -376,7 +431,8 @@ export class PluginExecutor {
     pathOrUrl: string,
     containerName: string,
     lifecycle: ContainerLifecycle,
-    pluginId: string
+    pluginId: string,
+    grant: PermissionGrant
   ): Promise<string> {
     const baseImage = 'ignite/base_repo-manager:latest';
     const labels: Record<string, string> = {
@@ -417,6 +473,7 @@ export class PluginExecutor {
       labels,
       binds,
       volumes,
+      grant,
     });
   }
 

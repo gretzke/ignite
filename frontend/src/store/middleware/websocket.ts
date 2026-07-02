@@ -49,7 +49,8 @@ export const websocketMiddleware: Middleware = (store) => {
       return;
     }
     try {
-      ws = new WebSocket('ws://localhost:1301/ws');
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${wsProtocol}://${window.location.host}/ws`);
       ws.onopen = () => {
         reconnectStartTs = null;
         store.dispatch(setStatus(ConnectionStatus.CONNECTED));
