@@ -4,6 +4,8 @@ import type { IApiResponse, InstallPluginData } from '@ignite/api';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 import { PluginInstaller } from '../../plugins/install/PluginInstaller.js';
 import { LocalFolderBuildBackend } from '../../plugins/install/LocalFolderBuildBackend.js';
+import { GitSourceBuildBackend } from '../../plugins/install/GitSourceBuildBackend.js';
+import { RoutingBuildBackend } from '../../plugins/install/RoutingBuildBackend.js';
 import type { PluginInstallSource } from '../../plugins/install/types.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 import { sendBadRequest, sendCaughtError } from '../utils/errors.js';
@@ -72,8 +74,13 @@ export function createInstallHandlers(installer: InstallerLike) {
   };
 }
 
-// Production wiring: local-folder backend reads contextDir + dockerfile straight
-// from the request source — no path guessing.
+// Production wiring: route local sources to the host builder, git sources to
+// the isolated builder.
 export const installHandlers = createInstallHandlers(
-  new PluginInstaller(new LocalFolderBuildBackend())
+  new PluginInstaller(
+    new RoutingBuildBackend(
+      new LocalFolderBuildBackend(),
+      new GitSourceBuildBackend()
+    )
+  )
 );
