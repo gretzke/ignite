@@ -77,7 +77,9 @@ export class IsolatedBuilder {
     const proxy = `ignite-build-proxy-${id}`;
     const builder = `ignite-buildkitd-${id}`;
     const tempTag = `ignite/installing_git_${id}:build`;
-    const proxyUrl = `http://${proxy}:3128`;
+    // NOTE: proxyUrl is resolved to the proxy's internal-network IP, not its
+    // container name, further down (see the comment at that assignment).
+    let proxyUrl = '';
 
     getLogger().info(`🔒 Starting isolated build ${id} from ${contextDir}`);
 
@@ -97,6 +99,20 @@ export class IsolatedBuilder {
         internalNet,
         SQUID_IMAGE,
       ]);
+      // RUN-step processes execute inside buildkitd's rootless (rootlesskit
+      // + slirp4netns) inner network namespace, which is NOT the buildkitd
+      // container's own Docker network namespace: it ships its own resolver
+      // (hardcoded public nameservers) that cannot see Docker's embedded DNS,
+      // so container-name lookups (e.g. `http://ignite-build-proxy-xxxx:3128`)
+      // always fail there with EAI_AGAIN even though the container name
+      // resolves fine via `docker exec`. Raw IP traffic on the internal
+      // network DOES reach the proxy from inside a RUN step, so resolve the
+      // proxy's own IP on internalNet up front and address it by IP instead
+      // — otherwise every RUN step that touches the network (npm install,
+      // apt-get, pip, curl, wget — anything that honors HTTP(S)_PROXY) would
+      // silently fail to reach the egress proxy at all.
+      const proxyIp = await this.getContainerIp(proxy, internalNet);
+      proxyUrl = `http://${proxyIp}:3128`;
       // Write the ACL config into the running proxy and reload it. Squid
       // needs a moment to finish its own startup before `-k reconfigure`
       // (or a plain exec) will succeed, so poll briefly instead of a single
@@ -204,6 +220,28 @@ export class IsolatedBuilder {
         });
       }
     }
+  }
+
+  // Resolve a container's IPv4 address on a given Docker network, for
+  // addressing it from inside a RUN step's rootless network sandbox where
+  // Docker's embedded DNS is unreachable (see the comment above its call site).
+  private async getContainerIp(
+    container: string,
+    network: string
+  ): Promise<string> {
+    const out = await dockerCli([
+      'inspect',
+      '--format',
+      `{{(index .NetworkSettings.Networks "${network}").IPAddress}}`,
+      container,
+    ]);
+    const ip = out.trim();
+    if (!ip) {
+      throw new Error(
+        `Could not resolve IP of ${container} on network ${network}`
+      );
+    }
+    return ip;
   }
 
   // Fail closed if the builder somehow came up privileged or with the socket.
