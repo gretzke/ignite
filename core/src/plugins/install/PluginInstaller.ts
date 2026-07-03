@@ -4,6 +4,7 @@ import { PluginManager } from '../../filesystem/PluginManager.js';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 import { TrustManager } from '../trust/TrustManager.js';
 import { getLogger } from '../../utils/logger.js';
+import { PluginError, ErrorCodes } from '../../types/errors.js';
 import type { PluginBuildBackend, PluginInstallSource } from './types.js';
 
 // Injectable dependencies (tests pass fakes; production uses real singletons).
@@ -45,8 +46,9 @@ export class PluginInstaller {
     const { imageTag, metadata } = await this.backend.buildPluginImage(source);
 
     if (await this.deps.loader.isBuiltin(metadata.id)) {
-      throw new Error(
-        `Cannot install '${metadata.id}': it shadows a built-in plugin`
+      throw new PluginError(
+        `Cannot install '${metadata.id}': it shadows a built-in plugin`,
+        ErrorCodes.PLUGIN_INSTALL_CONFLICT
       );
     }
 
@@ -60,7 +62,10 @@ export class PluginInstaller {
 
   async uninstall(pluginId: string): Promise<void> {
     if (await this.deps.loader.isBuiltin(pluginId)) {
-      throw new Error(`Cannot uninstall built-in plugin '${pluginId}'`);
+      throw new PluginError(
+        `Cannot uninstall built-in plugin '${pluginId}'`,
+        ErrorCodes.PLUGIN_INSTALL_CONFLICT
+      );
     }
     let imageTag: string | undefined;
     if (await this.deps.pluginManager.hasPlugin(pluginId)) {

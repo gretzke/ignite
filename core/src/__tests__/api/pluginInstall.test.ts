@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
 import { PluginType } from '@ignite/plugin-types/types';
 import { createInstallHandlers } from '../../api/plugins/install.js';
+import { PluginError, ErrorCodes } from '../../types/errors.js';
 
 const waffleMeta = {
   id: 'waffle',
@@ -43,7 +44,10 @@ describe('install API handlers', () => {
 
   it('returns 400 when install rejects a built-in shadow', async () => {
     installer.install.mockRejectedValueOnce(
-      new Error("Cannot install 'foundry': it shadows a built-in plugin")
+      new PluginError(
+        "Cannot install 'foundry': it shadows a built-in plugin",
+        ErrorCodes.PLUGIN_INSTALL_CONFLICT
+      )
     );
     const res = await app.inject({
       method: 'POST',

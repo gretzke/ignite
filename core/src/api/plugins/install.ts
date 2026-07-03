@@ -5,6 +5,7 @@ import type { PluginMetadata } from '@ignite/plugin-types/types';
 import { PluginInstaller } from '../../plugins/install/PluginInstaller.js';
 import { LocalFolderBuildBackend } from '../../plugins/install/LocalFolderBuildBackend.js';
 import type { PluginInstallSource } from '../../plugins/install/types.js';
+import { PluginError, ErrorCodes } from '../../types/errors.js';
 import { sendBadRequest, sendCaughtError } from '../utils/errors.js';
 
 interface InstallerLike {
@@ -22,9 +23,15 @@ export function createInstallHandlers(installer: InstallerLike) {
         const plugin = await installer.install(request.body.source);
         return reply.status(200).send({ data: { plugin } });
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        if (/built-in|shadow/i.test(msg)) {
-          return sendBadRequest(reply, 'PLUGIN_INSTALL_REJECTED', msg);
+        if (
+          error instanceof PluginError &&
+          error.code === ErrorCodes.PLUGIN_INSTALL_CONFLICT
+        ) {
+          return sendBadRequest(
+            reply,
+            'PLUGIN_INSTALL_REJECTED',
+            error.message
+          );
         }
         return sendCaughtError(
           reply,
@@ -43,9 +50,15 @@ export function createInstallHandlers(installer: InstallerLike) {
         await installer.uninstall(request.params.pluginId);
         return reply.status(204).send();
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        if (/built-in/i.test(msg)) {
-          return sendBadRequest(reply, 'PLUGIN_UNINSTALL_REJECTED', msg) as unknown as null;
+        if (
+          error instanceof PluginError &&
+          error.code === ErrorCodes.PLUGIN_INSTALL_CONFLICT
+        ) {
+          return sendBadRequest(
+            reply,
+            'PLUGIN_UNINSTALL_REJECTED',
+            error.message
+          ) as unknown as null;
         }
         return sendCaughtError(
           reply,

@@ -67,4 +67,5 @@ export const ErrorCodes = {
 
   // Plugin errors
   PLUGIN_NOT_FOUND: 'PLUGIN_NOT_FOUND',
+  PLUGIN_INSTALL_CONFLICT: 'PLUGIN_INSTALL_CONFLICT',
 } as const;
