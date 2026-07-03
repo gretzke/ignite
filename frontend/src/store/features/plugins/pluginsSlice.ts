@@ -166,6 +166,25 @@ export const pluginsApi = {
       },
     });
   },
+  installGit(url: string, ref?: string) {
+    return apiClient.dispatch.installPlugin({
+      body: { source: ref ? { kind: 'git', url, ref } : { kind: 'git', url } },
+      onSuccess: () => [
+        triggerToast({
+          title: 'Plugin installed',
+          variant: 'success',
+          duration: 3000,
+        }),
+        ...pluginsApi.refresh(),
+      ],
+      onError: (error) => {
+        const { title, description } = formatApiError(error);
+        return [
+          triggerToast({ title, description, variant: 'error', duration: 6000 }),
+        ];
+      },
+    });
+  },
   uninstall(pluginId: string) {
     return apiClient.dispatch.uninstallPlugin({
       params: { pluginId },

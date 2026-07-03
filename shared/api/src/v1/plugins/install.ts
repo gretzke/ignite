@@ -17,12 +17,17 @@ const PluginMetadataSchema = z.object({
   baseImage: z.string(),
 }) satisfies z.ZodType<PluginMetadata>;
 
-// Discriminated union so Spec B can add { kind: 'git', url } without a breaking change.
+// Discriminated union: local folder (Spec A) or git URL (Spec B).
 export const PluginInstallSourceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("local"),
     contextDir: z.string().min(1),
     dockerfile: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("git"),
+    url: z.string().min(1),
+    ref: z.string().optional(),
   }),
 ]);
 
