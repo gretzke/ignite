@@ -119,6 +119,16 @@ export class TrustManager {
     return entry;
   }
 
+  // Remove a plugin's trust entry entirely (used on uninstall). Absence ⇒
+  // UNTRUSTED_GRANT, so this fails closed.
+  async revoke(pluginId: string): Promise<void> {
+    const entries = await this.readTrustFile();
+    if (pluginId in entries) {
+      delete entries[pluginId];
+      await this.writeTrustFile(entries);
+    }
+  }
+
   private async readTrustFile(): Promise<TrustFile> {
     try {
       const raw = await fs.readFile(this.trustFilePath, 'utf8');
