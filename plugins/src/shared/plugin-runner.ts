@@ -74,8 +74,13 @@ export async function runPluginCLI<T extends keyof AllOperations>(
   }
   try {
     // Operation comes via argv; options arrive on stdin so that secrets
-    // (e.g. git credentials) never appear in the container's process list
-    const operationStr = process.argv[1];
+    // (e.g. git credentials) never appear in the container's process list.
+    // Built-in plugins run as `node -e <code> <operation>` (operation lands
+    // at argv[1]); installed (third-party) plugins run as
+    // `node /plugin/index.js <operation>` (operation lands at argv[2] since
+    // node consumes the script path as argv[1]). The operation is always the
+    // last argv element in both invocation styles, so index from the end.
+    const operationStr = process.argv[process.argv.length - 1];
     const optionsJson = (await readStdin()).trim() || "{}";
 
     if (!operationStr) {

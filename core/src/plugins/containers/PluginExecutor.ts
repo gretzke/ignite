@@ -141,8 +141,15 @@ export class PluginExecutor {
     // Extract pathOrUrl and resolve container for repo plugins
     const { pathOrUrl } = this.extractPathInfo(options);
 
-    // Inject credentials for repo-manager plugins
-    if (pluginConfig.metadata.type === PluginType.REPO_MANAGER) {
+    // Inject credentials for repo-manager plugins. Restricted to built-in
+    // origin: PluginInstaller.install() already rejects installing a
+    // REPO_MANAGER-typed plugin, but this is defense-in-depth against any
+    // future bypass of that check (a third-party plugin self-declares its
+    // type via getInfo, so it must never be trusted to gate credentials).
+    if (
+      pluginConfig.origin === 'builtin' &&
+      pluginConfig.metadata.type === PluginType.REPO_MANAGER
+    ) {
       options = await this.injectGitCredentials(options, pathOrUrl);
     }
 
@@ -299,7 +306,8 @@ export class PluginExecutor {
         pluginConfig.metadata.id,
         operation,
         options,
-        containerName
+        containerName,
+        pluginConfig.origin
       );
     } catch (error) {
       return {

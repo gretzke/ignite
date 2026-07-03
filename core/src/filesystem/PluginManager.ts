@@ -53,4 +53,23 @@ export class PluginManager {
 
     return filtered;
   }
+
+  async hasPlugin(pluginId: string): Promise<boolean> {
+    const registry = await this.fileSystem.readPluginRegistry();
+    return pluginId in registry.plugins;
+  }
+
+  async addPlugin(metadata: PluginMetadata): Promise<void> {
+    const registry = await this.fileSystem.readPluginRegistry();
+    registry.plugins[metadata.id] = metadata;
+    await this.fileSystem.writePluginRegistry(registry);
+  }
+
+  async removePlugin(pluginId: string): Promise<void> {
+    const registry = await this.fileSystem.readPluginRegistry();
+    if (pluginId in registry.plugins) {
+      delete registry.plugins[pluginId];
+      await this.fileSystem.writePluginRegistry(registry);
+    }
+  }
 }

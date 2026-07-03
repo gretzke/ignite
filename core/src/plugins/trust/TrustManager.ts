@@ -58,10 +58,8 @@ export class TrustManager {
       );
       // Built-in registry plugins are native: they ship with the binary and
       // implement core infrastructure (repo management, compilation).
-      const isNativePlugin = async (pluginId: string) => {
-        const plugins = await PluginRegistryLoader.getInstance().getAllPlugins();
-        return pluginId in plugins;
-      };
+      const isNativePlugin = async (pluginId: string) =>
+        PluginRegistryLoader.getInstance().isBuiltin(pluginId);
       TrustManager.instance = new TrustManager(trustFilePath, isNativePlugin);
     }
     return TrustManager.instance;
@@ -119,6 +117,16 @@ export class TrustManager {
     entries[pluginId] = entry;
     await this.writeTrustFile(entries);
     return entry;
+  }
+
+  // Remove a plugin's trust entry entirely (used on uninstall). Absence ⇒
+  // UNTRUSTED_GRANT, so this fails closed.
+  async revoke(pluginId: string): Promise<void> {
+    const entries = await this.readTrustFile();
+    if (pluginId in entries) {
+      delete entries[pluginId];
+      await this.writeTrustFile(entries);
+    }
   }
 
   private async readTrustFile(): Promise<TrustFile> {

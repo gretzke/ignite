@@ -1,0 +1,7 @@
+{
+  "name": "@ignite/stub-compiler-plugin",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "description": "Throwaway compiler plugin used to verify the third-party plugin runtime end-to-end."
+}

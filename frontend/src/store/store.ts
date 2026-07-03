@@ -13,6 +13,7 @@ import { repositoriesReducer } from './features/repositories/repositoriesSlice';
 import { compilerReducer } from './features/compiler/compilerSlice';
 import { filesReducer } from './features/files/filesSlice';
 import { trustReducer } from './features/plugins/trustSlice';
+import { pluginsReducer } from './features/plugins/pluginsSlice';
 import { apiGate } from './middleware/apiGate';
 import { uiEffects } from './middleware/uiEffects';
 import { repositoriesEffects } from './middleware/repositoriesEffects';
@@ -28,6 +29,7 @@ export const store = configureStore({
     compiler: compilerReducer,
     files: filesReducer,
     trust: trustReducer,
+    plugins: pluginsReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({ serializableCheck: false })

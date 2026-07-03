@@ -8,6 +8,7 @@ import type {
 } from '@ignite/api';
 import { PluginType } from '@ignite/plugin-types/types';
 import { PluginManager } from '../../filesystem/PluginManager.js';
+import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 
 // Plugin handlers object - matches shared API route structure
 export const pluginHandlers = {
@@ -17,15 +18,20 @@ export const pluginHandlers = {
   ): Promise<IApiResponse<ListPluginsData>> => {
     try {
       const { type } = request.query;
-      const pluginManager = PluginManager.getInstance();
 
       const validType =
         type && Object.values(PluginType).includes(type as PluginType)
           ? (type as PluginType)
           : undefined;
-      const plugins = await pluginManager.listPlugins(validType);
 
-      const body: IApiResponse<ListPluginsData> = { data: { plugins } };
+      const builtin = await PluginRegistryLoader.getInstance().getAllPlugins();
+      const merged: ListPluginsData['plugins'] = {};
+      for (const [id, config] of Object.entries(builtin)) {
+        if (!validType || config.metadata.type === validType) {
+          merged[id] = config.metadata;
+        }
+      }
+      const body: IApiResponse<ListPluginsData> = { data: { plugins: merged } };
       return reply.status(200).send(body);
     } catch (error) {
       const statusCode = 500 as const;

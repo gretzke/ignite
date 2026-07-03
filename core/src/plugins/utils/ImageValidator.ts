@@ -20,6 +20,11 @@ export async function validatePluginImages(): Promise<void> {
 
     try {
       const info = await docker.getImage(baseImage).inspect();
+      if (!imageHash) {
+        // Installed third-party images have no registry-generated hash; only
+        // existence is validated for them.
+        continue;
+      }
       const builtHash = info.Config?.Labels?.['ignite.dockerfileHash'];
       if (imageHash && builtHash !== imageHash) {
         getLogger().warn(
