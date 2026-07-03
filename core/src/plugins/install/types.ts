@@ -1,15 +1,11 @@
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 
-// Discriminated so Spec B can add { kind: 'git'; url: string } without breaking
-// the install contract. For a local build, contextDir is the Docker build
-// context and dockerfile is the Dockerfile path relative to it (defaults to
-// 'Dockerfile'). The stub fixture needs the monorepo's plugins/ dir as context,
-// so contextDir and dockerfile are separate rather than a single folder path.
-export type PluginInstallSource = {
-  kind: 'local';
-  contextDir: string;
-  dockerfile?: string;
-};
+// Discriminated union of install sources. Spec A: local folder (host build).
+// Spec B: git URL (isolated build). Downstream (PluginInstaller, API, tab) is
+// source-agnostic; only the build backends branch on `kind`.
+export type PluginInstallSource =
+  | { kind: 'local'; contextDir: string; dockerfile?: string }
+  | { kind: 'git'; url: string; ref?: string };
 
 export interface PluginBuildResult {
   imageTag: string;
