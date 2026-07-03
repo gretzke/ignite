@@ -12,6 +12,8 @@ export default function PluginsPage() {
   const loading = useAppSelector(selectPluginsLoading);
   const [contextDir, setContextDir] = useState('');
   const [dockerfile, setDockerfile] = useState('');
+  const [gitUrl, setGitUrl] = useState('');
+  const [gitRef, setGitRef] = useState('');
 
   useEffect(() => {
     pluginsApi.refresh().forEach((a) => dispatch(a));
@@ -66,6 +68,33 @@ export default function PluginsPage() {
           }}
         >
           Install
+        </button>
+      </div>
+
+      <div className="flex gap-2 my-4">
+        <input
+          className="input-glass"
+          placeholder="Git URL (https://github.com/owner/repo)"
+          value={gitUrl}
+          onChange={(e) => setGitUrl(e.target.value)}
+        />
+        <input
+          className="input-glass"
+          placeholder="ref (optional, e.g. v1.0.0)"
+          value={gitRef}
+          onChange={(e) => setGitRef(e.target.value)}
+        />
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={!gitUrl.trim()}
+          onClick={() => {
+            dispatch(pluginsApi.installGit(gitUrl.trim(), gitRef.trim() || undefined));
+            setGitUrl('');
+            setGitRef('');
+          }}
+        >
+          Install from Git
         </button>
       </div>
 
