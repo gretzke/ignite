@@ -5,11 +5,28 @@ import { PluginType } from '@ignite/plugin-types/types';
 import { PluginAssetLoader } from '../../assets/PluginAssetLoader.js';
 import { ContainerOrchestrator } from '../containers/ContainerOrchestrator.js';
 import { getLogger } from '../../utils/logger.js';
+import type { PluginOrigin } from '../../assets/PluginRegistryLoader.js';
 
 // Utility class for executing plugin operations in containers
 export class PluginExecutionUtils {
   private static pluginLoader = PluginAssetLoader.getInstance();
   private static containerOrchestrator = ContainerOrchestrator.getInstance();
+
+  // Built-in plugins have their bundle injected as a string (node -e); installed
+  // plugins carry the bundle inside their self-contained image at /plugin/index.js.
+  // The operation is appended as argv, options are still sent over stdin.
+  static buildExecCommand(
+    origin: PluginOrigin,
+    pluginCode: string | null
+  ): string[] {
+    if (origin === 'installed') {
+      return ['node', '/plugin/index.js'];
+    }
+    if (pluginCode === null) {
+      throw new Error('Built-in plugin execution requires injected bundle code');
+    }
+    return ['node', '-e', pluginCode];
+  }
 
   // Execute a plugin operation in a container
   static async executeOperation<TResult>(
@@ -17,17 +34,25 @@ export class PluginExecutionUtils {
     pluginId: string,
     operation: string,
     options: unknown,
-    containerName: string
+    containerName: string,
+    origin: PluginOrigin
   ): Promise<PluginResponse<TResult>> {
     const container = this.containerOrchestrator.getContainer(containerName);
 
-    // Load and inject plugin JavaScript
-    const pluginCode = await this.pluginLoader.loadPlugin(pluginType, pluginId);
+    // Built-in bundles are injected from the host; installed plugins run the
+    // bundle baked into their image.
+    const pluginCode =
+      origin === 'builtin'
+        ? await this.pluginLoader.loadPlugin(pluginType, pluginId)
+        : null;
 
     // Options are passed via stdin (not argv) so secrets like git credentials
     // never show up in the container's process list or `docker inspect` output
     const optionsJson = JSON.stringify(options);
-    const cmd = ['node', '-e', pluginCode, String(operation)];
+    const cmd = [
+      ...this.buildExecCommand(origin, pluginCode),
+      String(operation),
+    ];
 
     const exec = await container.exec({
       Cmd: cmd,

@@ -299,7 +299,8 @@ export class PluginExecutor {
         pluginConfig.metadata.id,
         operation,
         options,
-        containerName
+        containerName,
+        pluginConfig.origin
       );
     } catch (error) {
       return {
