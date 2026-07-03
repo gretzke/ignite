@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { PassThrough } from 'node:stream';
+import { randomBytes } from 'node:crypto';
 import Docker from 'dockerode';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 import { getLogger } from '../../utils/logger.js';
@@ -8,6 +9,11 @@ import type {
   PluginBuildResult,
   PluginInstallSource,
 } from './types.js';
+
+// Timeout for reading getInfo output from the freshly-built image. A
+// misbehaving or hung plugin entrypoint must not wedge the install request
+// (or leak the temp container) forever.
+const DESCRIBE_TIMEOUT_MS = 30_000;
 
 // Spec A backend: builds a self-contained image from a local plugin folder using
 // the host Docker daemon. Acceptable only because Spec A installs our own
@@ -25,25 +31,31 @@ export class LocalFolderBuildBackend implements PluginBuildBackend {
     }
     const contextDir = source.contextDir;
     const dockerfile = source.dockerfile ?? 'Dockerfile';
-    const tempTag = `ignite/installing_${Date.now()}:build`;
+    // Random suffix guards against same-millisecond collisions (e.g. two
+    // installs firing in rapid succession in tests or automation).
+    const suffix = randomBytes(4).toString('hex');
+    const tempTag = `ignite/installing_${Date.now()}_${suffix}:build`;
 
     getLogger().info(
       `🔨 Building plugin image from ${contextDir} (${dockerfile})`
     );
     await this.dockerBuild(contextDir, dockerfile, tempTag);
 
-    const metadata = await this.describe(tempTag);
-    const imageTag = `ignite/installed_${metadata.id}:${metadata.version}`;
-    await this.docker.getImage(tempTag).tag({
-      repo: `ignite/installed_${metadata.id}`,
-      tag: metadata.version,
-    });
-    await this.docker
-      .getImage(tempTag)
-      .remove({ force: true })
-      .catch(() => {});
-
-    return { imageTag, metadata: { ...metadata, baseImage: imageTag } };
+    try {
+      const metadata = await this.describe(tempTag);
+      const imageTag = `ignite/installed_${metadata.id}:${metadata.version}`;
+      await this.docker.getImage(tempTag).tag({
+        repo: `ignite/installed_${metadata.id}`,
+        tag: metadata.version,
+      });
+      return { imageTag, metadata: { ...metadata, baseImage: imageTag } };
+    } finally {
+      // Remove the temp build tag whether describe/tag succeeded or threw.
+      await this.docker
+        .getImage(tempTag)
+        .remove({ force: true })
+        .catch(() => {});
+    }
   }
 
   // Build via the `docker` CLI. Chosen over dockerode's tar-stream build
@@ -99,30 +111,60 @@ export class LocalFolderBuildBackend implements PluginBuildBackend {
       Cmd: ['node', '/plugin/index.js', 'getInfo'],
       HostConfig: { AutoRemove: false, NetworkMode: 'none' },
     });
-    await container.start();
-    const stream = await container.logs({
-      stdout: true,
-      stderr: false,
-      follow: true,
-    });
-    const stdout = new PassThrough();
-    const chunks: Buffer[] = [];
-    stdout.on('data', (c: Buffer) => chunks.push(c));
-    await new Promise<void>((resolve) => {
-      this.docker.modem.demuxStream(stream, stdout, new PassThrough());
-      stream.on('end', () => resolve());
-    });
-    await container.remove({ force: true }).catch(() => {});
-    const text = Buffer.concat(chunks).toString('utf8');
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) {
-      throw new Error(`Could not read plugin metadata from ${imageTag}`);
+    try {
+      await container.start();
+      const stream = await container.logs({
+        stdout: true,
+        stderr: false,
+        follow: true,
+      });
+      const stdout = new PassThrough();
+      const chunks: Buffer[] = [];
+      stdout.on('data', (c: Buffer) => chunks.push(c));
+
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(
+            new Error(
+              `Timed out waiting for plugin metadata from ${imageTag} ` +
+                `(getInfo did not complete within ${DESCRIBE_TIMEOUT_MS}ms)`
+            )
+          );
+        }, DESCRIBE_TIMEOUT_MS);
+
+        this.docker.modem.demuxStream(stream, stdout, new PassThrough());
+        stream.on('end', () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        });
+        stream.on('error', (err: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(err);
+        });
+      });
+
+      const text = Buffer.concat(chunks).toString('utf8');
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) {
+        throw new Error(`Could not read plugin metadata from ${imageTag}`);
+      }
+      const parsed = JSON.parse(match[0]);
+      const meta = parsed.data ?? parsed;
+      if (!meta?.id || !meta?.type) {
+        throw new Error(`Plugin metadata missing id/type from ${imageTag}`);
+      }
+      return meta as PluginMetadata;
+    } finally {
+      // Force-remove regardless of outcome (including timeout) so a hung or
+      // failing getInfo never leaks a container.
+      await container.remove({ force: true }).catch(() => {});
     }
-    const parsed = JSON.parse(match[0]);
-    const meta = parsed.data ?? parsed;
-    if (!meta?.id || !meta?.type) {
-      throw new Error(`Plugin metadata missing id/type from ${imageTag}`);
-    }
-    return meta as PluginMetadata;
   }
 }

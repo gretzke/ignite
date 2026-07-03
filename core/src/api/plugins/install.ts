@@ -25,7 +25,8 @@ export function createInstallHandlers(installer: InstallerLike) {
       } catch (error) {
         if (
           error instanceof PluginError &&
-          error.code === ErrorCodes.PLUGIN_INSTALL_CONFLICT
+          (error.code === ErrorCodes.PLUGIN_INSTALL_CONFLICT ||
+            error.code === ErrorCodes.PLUGIN_INSTALL_INVALID)
         ) {
           return sendBadRequest(
             reply,
