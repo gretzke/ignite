@@ -177,6 +177,14 @@ export class IsolatedBuilder {
         : '/tmp/src';
       const dfName = dockerfileRel.slice(dockerfileRel.lastIndexOf('/') + 1);
 
+      // Decisive readiness gate: the proxy's final config was applied (or
+      // the container was restarted) and it was reattached to the egress
+      // net above, but neither of those guarantees squid is listening yet.
+      // Confirm it here, immediately before the build starts, so buildkitd's
+      // base-image pull can never hit the proxy before it accepts
+      // connections (the root cause of the intermittent ECONNREFUSED).
+      await this.waitForSquidReady(proxy);
+
       getLogger().info(`🔨 Isolated build ${id}: running buildctl build`);
       await dockerCli(
         [
@@ -290,9 +298,16 @@ export class IsolatedBuilder {
     }
   }
 
-  // Poll until squid inside the container will accept an exec (i.e. its
-  // process is up), so the config write + reconfigure below don't race
-  // container startup.
+  // Poll until squid is actually accepting TCP connections on 3128 — NOT
+  // just until `/etc/squid` exists (that directory is baked into the image
+  // and is present instantly, long before the squid process is listening).
+  // ubuntu/squid is Ubuntu-based (has bash), so probe with a bash /dev/tcp
+  // connect: it exits 0 only when something is listening on the port. Squid
+  // binds 0.0.0.0:3128 (http_port 3128), so loopback readiness implies the
+  // internal-net IP is ready too. On exhaustion this throws rather than
+  // silently falling through — a proxy that never starts listening must fail
+  // the build loudly instead of proceeding into a confusing ECONNREFUSED
+  // once buildkitd starts pulling through it.
   private async waitForSquidReady(
     container: string,
     attempts = 20,
@@ -300,14 +315,21 @@ export class IsolatedBuilder {
   ): Promise<void> {
     for (let i = 0; i < attempts; i++) {
       try {
-        await dockerCli(['exec', container, 'test', '-d', '/etc/squid']);
+        await dockerCli([
+          'exec',
+          container,
+          'bash',
+          '-c',
+          'exec 3<>/dev/tcp/127.0.0.1/3128',
+        ]);
         return;
       } catch {
         await sleep(delayMs);
       }
     }
-    // Not fatal — fall through and let the caller's own retry/restart logic
-    // handle it; this is just to avoid the common-case race.
+    throw new Error(
+      `squid proxy in ${container} did not start accepting connections on port 3128 in time`
+    );
   }
 
   // Poll until buildctl can reach the buildkitd daemon socket, so step 4
