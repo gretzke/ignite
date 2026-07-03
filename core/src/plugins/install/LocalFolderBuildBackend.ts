@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { PassThrough } from 'node:stream';
 import Docker from 'dockerode';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 import { getLogger } from '../../utils/logger.js';
@@ -86,14 +87,16 @@ export class LocalFolderBuildBackend implements PluginBuildBackend {
 
   // Extract metadata by running the built image's `getInfo` operation.
   private async describe(imageTag: string): Promise<PluginMetadata> {
-    // Tty: true makes Docker run the container with a pseudo-TTY, which means
-    // the log stream is NOT multiplexed — there are no 8-byte stdout/stderr
-    // frame headers to strip, so the raw output is clean UTF-8 and the JSON
-    // regex parse below is reliable regardless of how many chunks arrive.
+    // No Tty here (unlike PluginExecutionUtils' interactive execs): every
+    // installed plugin's CLI entrypoint blocks reading stdin to EOF before
+    // running any operation (runPluginCLI's readStdin()). A pty stdin never
+    // delivers EOF on its own, so Tty: true made this container — and thus
+    // every real plugin install — hang forever. Without Tty, Docker leaves
+    // stdin closed (immediate EOF) but multiplexes the log stream, so the
+    // output needs the standard 8-byte frame headers stripped.
     const container = await this.docker.createContainer({
       Image: imageTag,
       Cmd: ['node', '/plugin/index.js', 'getInfo'],
-      Tty: true,
       HostConfig: { AutoRemove: false, NetworkMode: 'none' },
     });
     await container.start();
@@ -102,13 +105,14 @@ export class LocalFolderBuildBackend implements PluginBuildBackend {
       stderr: false,
       follow: true,
     });
+    const stdout = new PassThrough();
     const chunks: Buffer[] = [];
+    stdout.on('data', (c: Buffer) => chunks.push(c));
     await new Promise<void>((resolve) => {
-      stream.on('data', (c: Buffer) => chunks.push(c));
+      this.docker.modem.demuxStream(stream, stdout, new PassThrough());
       stream.on('end', () => resolve());
     });
     await container.remove({ force: true }).catch(() => {});
-    // With Tty: true the output is unframed, so parse the JSON object directly.
     const text = Buffer.concat(chunks).toString('utf8');
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) {
