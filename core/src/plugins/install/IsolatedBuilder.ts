@@ -2,11 +2,15 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { getLogger } from '../../utils/logger.js';
 
-// Squid egress ACL: deny loopback + RFC1918 + link-local BEFORE allowing the
-// rest of the internet (squid evaluates rules top-to-bottom). host.docker.internal
-// resolves inside 192.168.0.0/16 on Docker Desktop, so the generic RFC1918 rule
-// covers it. This is the policy layer; the --internal network is the enforcement
-// layer (a build ignoring the proxy env has no route out at all).
+// Squid egress ACL: deny loopback + RFC1918 + link-local (IPv4 and IPv6)
+// BEFORE allowing the rest of the internet (squid evaluates rules
+// top-to-bottom). host.docker.internal resolves inside 192.168.0.0/16 on
+// Docker Desktop, so the generic RFC1918 rule covers it. The IPv6 ranges
+// (::1 loopback, fc00::/7 ULA, fe80::/10 link-local, ::ffff:0:0/96
+// IPv4-mapped) close off the same classes of address over IPv6 so the ACL
+// matches its documented contract even if the sandbox ever gains IPv6
+// connectivity. This is the policy layer; the --internal network is the
+// enforcement layer (a build ignoring the proxy env has no route out at all).
 export const SQUID_CONF = `acl SSL_ports port 443
 acl CONNECT method CONNECT
 acl private_dst dst 127.0.0.0/8
@@ -14,6 +18,10 @@ acl private_dst dst 10.0.0.0/8
 acl private_dst dst 172.16.0.0/12
 acl private_dst dst 192.168.0.0/16
 acl private_dst dst 169.254.0.0/16
+acl private_dst dst ::1/128
+acl private_dst dst fc00::/7
+acl private_dst dst fe80::/10
+acl private_dst dst ::ffff:0:0/96
 http_access deny private_dst
 http_access allow CONNECT SSL_ports
 http_access allow all
@@ -157,7 +165,7 @@ export class IsolatedBuilder {
         BUILDKIT_IMAGE,
         '--oci-worker-no-process-sandbox',
       ]);
-      await this.assertUnprivileged(builder);
+      await this.assertUnprivileged(builder, internalNet);
       await this.waitForBuildkitReady(builder);
 
       // 4. Copy source into the builder and build to a docker-format tarball.
@@ -244,15 +252,24 @@ export class IsolatedBuilder {
     return ip;
   }
 
-  // Fail closed if the builder somehow came up privileged or with the socket.
-  private async assertUnprivileged(container: string): Promise<void> {
+  // Fail closed if the builder somehow came up privileged, with the docker
+  // socket mounted, or attached to any network other than the isolated
+  // internal one (e.g. the egress net, a user-defined bridge, or host
+  // networking) — the internal-only network attachment is the property that
+  // actually keeps untrusted build code from reaching the host or the wider
+  // network, so it's checked as strictly as the other two.
+  private async assertUnprivileged(
+    container: string,
+    internalNet: string
+  ): Promise<void> {
     const out = await dockerCli([
       'inspect',
       '--format',
-      '{{.HostConfig.Privileged}}|{{range .Mounts}}{{.Source}},{{end}}',
+      '{{.HostConfig.Privileged}}|{{range .Mounts}}{{.Source}},{{end}}|' +
+        '{{range $k,$v := .NetworkSettings.Networks}}{{$k}},{{end}}',
       container,
     ]);
-    const [priv, mounts = ''] = out.trim().split('|');
+    const [priv, mounts = '', networksRaw = ''] = out.trim().split('|');
     if (priv === 'true') {
       throw new Error(
         'Isolated builder came up privileged — refusing to build'
@@ -261,6 +278,14 @@ export class IsolatedBuilder {
     if (mounts.includes('docker.sock')) {
       throw new Error(
         'Isolated builder has the docker socket mounted — refusing'
+      );
+    }
+    const networks = networksRaw.split(',').filter(Boolean);
+    const unique = new Set(networks);
+    if (unique.size !== 1 || !unique.has(internalNet)) {
+      throw new Error(
+        `Isolated builder is attached to unexpected network(s) [${networks.join(', ') || 'none'}] ` +
+          `— expected exactly [${internalNet}], refusing to build`
       );
     }
   }

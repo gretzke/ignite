@@ -14,6 +14,10 @@ describe('IsolatedBuilder egress ACL', () => {
       '172.16.0.0/12',
       '192.168.0.0/16',
       '169.254.0.0/16',
+      '::1/128',
+      'fc00::/7',
+      'fe80::/10',
+      '::ffff:0:0/96',
     ]) {
       expect(SQUID_CONF).toContain(cidr);
     }
