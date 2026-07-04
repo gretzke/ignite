@@ -56,6 +56,7 @@ class TestRepoPlugin extends RepoManagerPlugin {
   checkoutCommit = vi.fn() as never;
   getBranches = vi.fn() as never;
   pullChanges = vi.fn() as never;
+  reset = vi.fn() as never;
   getRepoInfo = vi.fn() as never;
   getFile = vi.fn() as never;
 

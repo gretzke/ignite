@@ -40,6 +40,8 @@ export default function RepositoriesPage() {
   const [commitHash, setCommitHash] = useState('');
   const [commitHashError, setCommitHashError] = useState('');
   const [selectedRepoPath, setSelectedRepoPath] = useState<string>('');
+  // Repo path pending a confirmed `git reset --hard`; '' = dialog closed
+  const [resetRepoPath, setResetRepoPath] = useState<string>('');
 
   // Store hooks
   const dispatch = useAppDispatch();
@@ -165,11 +167,25 @@ export default function RepositoriesPage() {
       }
 
       return (
-        <Tooltip label="There are uncommitted changes present" placement="top">
+        <Tooltip
+          label="Uncommitted changes present — click to discard them"
+          placement="top"
+        >
           <div
-            className="flex items-center gap-1 cursor-default"
-            role="status"
-            aria-label="Repository has uncommitted changes"
+            className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+            role="button"
+            tabIndex={0}
+            aria-label="Discard uncommitted changes"
+            onClick={(e) => {
+              e.stopPropagation();
+              setResetRepoPath(path);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setResetRepoPath(path);
+              }
+            }}
           >
             <FileEdit size={12} className="text-orange-400" />
             <span className="text-xs text-orange-400">dirty</span>
@@ -242,8 +258,8 @@ export default function RepositoriesPage() {
                   isDetachedHead
                     ? 'detached HEAD'
                     : finalDisplayLabel === 'Select branch...'
-                    ? 'select branch'
-                    : finalDisplayLabel
+                      ? 'select branch'
+                      : finalDisplayLabel
                 }`}
                 {...(getReferenceProps ? getReferenceProps() : {})}
               >
@@ -252,8 +268,8 @@ export default function RepositoriesPage() {
                   {isDetachedHead
                     ? 'detached HEAD'
                     : finalDisplayLabel === 'Select branch...'
-                    ? currentBranch || 'branch'
-                    : finalDisplayLabel}
+                      ? currentBranch || 'branch'
+                      : finalDisplayLabel}
                 </span>
               </div>
             );
@@ -924,9 +940,6 @@ export default function RepositoriesPage() {
           <Dialog.Content
             className="dialog-content glass-surface"
             style={{
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
               maxWidth: 460,
               width: '90vw',
               padding: 16,
@@ -993,9 +1006,6 @@ export default function RepositoriesPage() {
           <Dialog.Content
             className="dialog-content glass-surface"
             style={{
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
               maxWidth: 460,
               width: '90vw',
               padding: 16,
@@ -1064,9 +1074,6 @@ export default function RepositoriesPage() {
           <Dialog.Content
             className="dialog-content glass-surface"
             style={{
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
               maxWidth: 460,
               width: '90vw',
               padding: 16,
@@ -1140,6 +1147,30 @@ export default function RepositoriesPage() {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      {/* Discard-changes confirmation (dirty tag) */}
+      <ConfirmDialog
+        open={!!resetRepoPath}
+        onOpenChange={(open) => {
+          if (!open) setResetRepoPath('');
+        }}
+        title="Discard uncommitted changes?"
+        description={
+          <>
+            This runs <code>git reset --hard</code> in{' '}
+            <span className="font-mono">{getRepoName(resetRepoPath)}</span>,
+            permanently discarding all uncommitted changes. This cannot be
+            undone.
+          </>
+        }
+        confirmText="Discard changes"
+        variant="danger"
+        onConfirm={() => {
+          if (resetRepoPath) {
+            dispatch(repositoriesApi.resetRepo(resetRepoPath));
+          }
+        }}
+      />
     </div>
   );
 }

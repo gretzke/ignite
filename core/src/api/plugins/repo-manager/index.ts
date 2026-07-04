@@ -151,6 +151,29 @@ export const repoManagerHandlers = {
     return reply.status(204).send(null);
   },
 
+  resetRepo: async (
+    request: FastifyRequest<{ Body: PathOptions }>,
+    reply: FastifyReply
+  ): Promise<z.ZodNull> => {
+    const orchestrator = PluginOrchestrator.getInstance();
+    const pluginId = getRepoPluginId(request.body.pathOrUrl);
+    const result = await orchestrator.executePlugin(pluginId, 'reset', {
+      pathOrUrl: request.body.pathOrUrl,
+    });
+    if (!result.success) {
+      const statusCode = 500 as const;
+      const body: IApiError = {
+        statusCode,
+        error: 'Internal Server Error',
+        code: result.error?.code || 'RESET_ERROR',
+        message: result.error?.message || 'Failed to reset repository',
+        details: result.error?.details,
+      };
+      return reply.status(statusCode).send(body);
+    }
+    return reply.status(204).send(null);
+  },
+
   getRepoInfo: async (
     request: FastifyRequest<{ Body: PathOptions }>,
     reply: FastifyReply

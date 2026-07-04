@@ -114,6 +114,15 @@ export const repoManagerRoutes = {
       response: { 204: z.null() },
     },
   },
+  resetRepo: {
+    method: "POST" as const,
+    path: `${V1_BASE_PATH}/repos/reset`,
+    schema: {
+      tags: ["repo-manager"],
+      body: PathRequestSchema,
+      response: { 204: z.null() },
+    },
+  },
   getRepoInfo: {
     method: "POST" as const,
     path: `${V1_BASE_PATH}/repos/info`,

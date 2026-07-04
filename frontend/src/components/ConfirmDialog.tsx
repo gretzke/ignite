@@ -37,9 +37,6 @@ export default function ConfirmDialog({
         <Dialog.Content
           className="dialog-content glass-surface"
           style={{
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
             maxWidth: 420,
             width: '90vw',
             padding: 24,
@@ -53,14 +50,14 @@ export default function ConfirmDialog({
                   variant === 'danger'
                     ? 'rgba(239, 68, 68, 0.1)'
                     : variant === 'warning'
-                    ? 'rgba(245, 158, 11, 0.1)'
-                    : 'rgba(59, 130, 246, 0.1)',
+                      ? 'rgba(245, 158, 11, 0.1)'
+                      : 'rgba(59, 130, 246, 0.1)',
                 color:
                   variant === 'danger'
                     ? '#ef4444'
                     : variant === 'warning'
-                    ? '#f59e0b'
-                    : '#3b82f6',
+                      ? '#f59e0b'
+                      : '#3b82f6',
               }}
             >
               <AlertTriangle size={20} />
@@ -84,8 +81,8 @@ export default function ConfirmDialog({
                     variant === 'danger'
                       ? 'btn btn-danger'
                       : variant === 'warning'
-                      ? 'btn btn-warning'
-                      : 'btn btn-primary'
+                        ? 'btn btn-warning'
+                        : 'btn btn-primary'
                   }
                   onClick={handleConfirm}
                 >

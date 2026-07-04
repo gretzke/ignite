@@ -9,11 +9,7 @@ import type { ArtifactLocation } from '@ignite/api';
 // 'idle' = framework detected but not compiled this session; compilation is
 // user-triggered (Clean compile button) instead of running on every startup
 export type CompilationStatus =
-  | 'idle'
-  | 'installing'
-  | 'compiling'
-  | 'ready'
-  | 'error';
+  'idle' | 'installing' | 'compiling' | 'ready' | 'error';
 
 export interface IFrameworkCompilation {
   status: CompilationStatus;
@@ -89,8 +85,10 @@ const compilerSlice = createSlice({
       }
 
       if (!state.compilations[repoPath][frameworkId]) {
+        // Artifacts on disk mean the framework was compiled (possibly in an
+        // earlier session); an empty listing means it wasn't.
         state.compilations[repoPath][frameworkId] = {
-          status: 'ready',
+          status: artifacts.length > 0 ? 'ready' : 'idle',
         };
       }
 

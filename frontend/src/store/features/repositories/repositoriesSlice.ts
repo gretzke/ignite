@@ -4,6 +4,7 @@ import { apiClient, apiDispatchAction } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
 import { ApiError } from '@ignite/api/client';
 import { formatApiError } from '../../middleware/apiGate';
+import { getRepoName } from '../../../utils/repo';
 
 export interface IFramework {
   id: string;
@@ -457,6 +458,67 @@ export const repositoriesApi = {
         const { title, description } = formatApiError(err as ApiError);
         return {
           title: title || 'Pull Failed',
+          description,
+          variant: 'error',
+          duration: 5000,
+        };
+      },
+    });
+  },
+
+  // Discard uncommitted changes (git reset --hard); destructive, so callers
+  // must confirm with the user before dispatching
+  resetRepo: (pathOrUrl: string) => {
+    const repoName = getRepoName(pathOrUrl);
+
+    const apiAction = apiClient.dispatch.resetRepo({
+      body: { pathOrUrl },
+      onSuccess: () => {
+        // After the reset, refresh repo info so the dirty flag clears
+        const refreshInfoAction = apiClient.dispatch.getRepoInfo({
+          body: { pathOrUrl },
+          onSuccess: (repoInfo) => {
+            return setRepositoryInfo({
+              pathOrUrl,
+              info: repoInfo,
+            });
+          },
+          onError: (error) => {
+            const { description } = formatApiError(error);
+            return triggerToast({
+              title: 'Info Refresh Failed',
+              description: `Changes discarded but failed to refresh info: ${description}`,
+              variant: 'warning',
+              duration: 5000,
+            });
+          },
+        });
+
+        return [refreshInfoAction];
+      },
+      onError: (error) => {
+        // Error handling will be done by the promise-based toast
+        throw error;
+      },
+    });
+
+    return triggerToast({
+      apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
+      loading: {
+        title: 'Discarding Changes...',
+        description: `Resetting ${repoName} to the last commit`,
+        variant: 'info',
+      },
+      onSuccess: () => ({
+        title: 'Changes Discarded',
+        description: `${repoName} was reset to the last commit`,
+        variant: 'success',
+        duration: 4000,
+      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return {
+          title: title || 'Reset Failed',
           description,
           variant: 'error',
           duration: 5000,

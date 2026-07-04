@@ -204,6 +204,16 @@ export class ClonedRepoPlugin extends RepoManagerPlugin {
     });
   }
 
+  async reset(_options: NoParams): Promise<PluginResponse<NoResult>> {
+    // Cloned repos are managed clones, but expose reset for interface parity
+    // (e.g. stray files after a failed operation).
+    const ensured = await ensureGitRepo();
+    if (!ensured.success) return ensured as any;
+    const res = await execGit(["reset", "--hard"]);
+    if (!res.success) return res as any;
+    return { success: true, data: {} } as const;
+  }
+
   async getRepoInfo(
     options: GitCredentialsParams,
   ): Promise<PluginResponse<RepoInfoResult>> {

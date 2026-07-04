@@ -69,6 +69,10 @@ export type RepoManagerOperations = {
     params: GitCredentialsParams;
     result: NoResult;
   };
+  reset: {
+    params: NoParams;
+    result: NoResult;
+  };
   getRepoInfo: {
     params: GitCredentialsParams;
     result: RepoInfoResult;

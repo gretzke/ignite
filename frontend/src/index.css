@@ -4,8 +4,9 @@
 @layer theme {
   :root {
     /* Typography */
-    --font-sans: Manrope, ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
-      Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji',
+    --font-sans:
+      Manrope, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+      'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji',
       'Segoe UI Emoji';
     /* Global radius token for surfaces & controls */
     --radius: 14px;
@@ -104,7 +105,8 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: var(--radius);
     padding: 1.5rem;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12),
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.12),
       inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
 
@@ -143,6 +145,13 @@
   }
   .dialog-content {
     position: fixed;
+    /* Center with inset+margin instead of translate(-50%, -50%): a fractional
+       transform puts the backdrop-filtered layer on a half-pixel boundary and
+       rasterizes the whole dialog slightly out of focus. */
+    inset: 0;
+    margin: auto;
+    width: fit-content;
+    height: fit-content;
     z-index: 1001;
   }
   /* Global font application */
@@ -205,7 +214,10 @@
     cursor: pointer;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
-    transition: opacity 120ms ease, transform 80ms ease, box-shadow 150ms ease;
+    transition:
+      opacity 120ms ease,
+      transform 80ms ease,
+      box-shadow 150ms ease;
   }
   .btn-block {
     width: 100%;
@@ -589,7 +601,8 @@
     inset: 0;
     pointer-events: none;
     z-index: 0;
-    background: radial-gradient(
+    background:
+      radial-gradient(
         100vw 100vh at 0% 0%,
         color-mix(
           in oklch,
@@ -632,7 +645,8 @@
         0 50%,
       var(--bg-base) 150%
     );
-    box-shadow: 0 0 60px 20px
+    box-shadow:
+      0 0 60px 20px
         color-mix(
           in oklch,
           var(--profile-color) var(--shape-glow-1),

@@ -149,6 +149,16 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
     });
   }
 
+  async reset(_options: NoParams): Promise<PluginResponse<NoResult>> {
+    // Discard uncommitted changes; no credentials needed (local operation).
+    // Destructive by design — the frontend confirms before calling.
+    const ensured = await ensureGitRepo();
+    if (!ensured.success) return ensured as any;
+    const res = await execGit(["reset", "--hard"]);
+    if (!res.success) return res as any;
+    return { success: true, data: {} } as const;
+  }
+
   async getRepoInfo(
     options: GitCredentialsParams,
   ): Promise<PluginResponse<RepoInfoResult>> {

@@ -249,9 +249,6 @@ export default function ProfileModal({
         <Dialog.Content
           className="dialog-content glass-surface"
           style={{
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
             maxWidth: '90vw',
             padding: 16,
           }}
@@ -507,9 +504,6 @@ export default function ProfileModal({
               <Dialog.Content
                 className="dialog-content glass-surface"
                 style={{
-                  top: '50%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%)',
                   padding: 16,
                   zIndex: 1003,
                 }}

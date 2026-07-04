@@ -183,6 +183,8 @@ export abstract class RepoManagerPlugin
     _options: GitCredentialsParams,
   ): Promise<PluginResponse<NoResult>>;
 
+  abstract reset(_options: NoParams): Promise<PluginResponse<NoResult>>;
+
   abstract getRepoInfo(
     _options: GitCredentialsParams,
   ): Promise<PluginResponse<RepoInfoResult>>;
