@@ -1157,10 +1157,11 @@ export default function RepositoriesPage() {
         title="Discard uncommitted changes?"
         description={
           <>
-            This runs <code>git reset --hard</code> in{' '}
+            This runs <code>git reset --hard</code> and{' '}
+            <code>git clean -fd</code> in{' '}
             <span className="font-mono">{getRepoName(resetRepoPath)}</span>,
-            permanently discarding all uncommitted changes. This cannot be
-            undone.
+            permanently discarding all uncommitted changes including untracked
+            files. This cannot be undone.
           </>
         }
         confirmText="Discard changes"

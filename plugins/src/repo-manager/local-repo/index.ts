@@ -156,6 +156,10 @@ export class LocalRepoPlugin extends RepoManagerPlugin {
     if (!ensured.success) return ensured as any;
     const res = await execGit(["reset", "--hard"]);
     if (!res.success) return res as any;
+    // reset --hard leaves untracked files (e.g. build byproducts like
+    // foundry.lock) behind, which keeps the repo dirty; clean them too
+    const clean = await execGit(["clean", "-fd"]);
+    if (!clean.success) return clean as any;
     return { success: true, data: {} } as const;
   }
 

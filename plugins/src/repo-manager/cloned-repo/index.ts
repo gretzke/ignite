@@ -198,6 +198,12 @@ export class ClonedRepoPlugin extends RepoManagerPlugin {
     return this.withGitCredentials(options.gitCredentials, async () => {
       const ensured = await ensureGitRepo();
       if (!ensured.success) return ensured as any;
+      // Cloned repos are managed clones with no user work to preserve, but
+      // operations like compilation leave untracked byproducts behind (e.g.
+      // foundry.lock) that make `git pull` abort when the incoming commits
+      // contain the same paths. Force a pristine tree before pulling.
+      const pristine = await this.makePristine();
+      if (!pristine.success) return pristine as any;
       const pull = await execGit(["pull", "--ff-only"]);
       if (!pull.success) return pull as any;
       return { success: true, data: {} } as const;
@@ -209,8 +215,16 @@ export class ClonedRepoPlugin extends RepoManagerPlugin {
     // (e.g. stray files after a failed operation).
     const ensured = await ensureGitRepo();
     if (!ensured.success) return ensured as any;
+    return this.makePristine();
+  }
+
+  // Restore a pristine working tree: discard tracked modifications and
+  // remove untracked files (reset --hard alone leaves the latter behind)
+  private async makePristine(): Promise<PluginResponse<NoResult>> {
     const res = await execGit(["reset", "--hard"]);
     if (!res.success) return res as any;
+    const clean = await execGit(["clean", "-fd"]);
+    if (!clean.success) return clean as any;
     return { success: true, data: {} } as const;
   }
 
