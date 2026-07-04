@@ -1,5 +1,6 @@
 import fastify from 'fastify';
 import path from 'path';
+import { setTimeout } from 'node:timers';
 import { Command } from 'commander';
 import websocket from '@fastify/websocket';
 import type { FastifyInstance } from 'fastify';
@@ -169,30 +170,40 @@ async function main(): Promise<void> {
       openBrowser(authedUrl);
     }
 
-    // Graceful shutdown handling
-    process.on('SIGINT', async () => {
-      app.log.info('🛑 Shutting down gracefully...');
-      try {
-        await pluginOrchestrator.cleanup();
-        await app.close();
-        process.exit(0);
-      } catch (error) {
-        app.log.error(`Error during shutdown: ${error}`);
-        process.exit(1);
+    // Graceful shutdown handling. Container stops are handed to a detached
+    // process so the CLI exits promptly instead of waiting out every stop
+    // grace period; a second signal force-exits.
+    let shuttingDown = false;
+    const shutdown = (signal: string) => {
+      if (shuttingDown) {
+        process.stdout.write('\n⚠️  Force exiting.\n');
+        process.exit(130);
       }
-    });
+      shuttingDown = true;
+      process.stdout.write('\n👋 Exiting...\n');
+      app.log.info(`🛑 Received ${signal}, shutting down...`);
 
-    process.on('SIGTERM', async () => {
-      app.log.info('🛑 Received SIGTERM, shutting down...');
-      try {
-        await pluginOrchestrator.cleanup();
-        await app.close();
-        process.exit(0);
-      } catch (error) {
-        app.log.error(`Error during shutdown: ${error}`);
-        process.exit(1);
-      }
-    });
+      // unref'd so this timer never keeps the process alive on its own
+      setTimeout(() => {
+        process.stdout.write(
+          'Still shutting down — press Ctrl+C again to force exit.\n'
+        );
+      }, 5000).unref();
+
+      void (async () => {
+        try {
+          pluginOrchestrator.cleanupDetached();
+          await app.close();
+          process.exit(0);
+        } catch (error) {
+          app.log.error(`Error during shutdown: ${error}`);
+          process.exit(1);
+        }
+      })();
+    };
+
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
   } catch (err) {
     process.stderr.write(`❌ Failed to start Ignite: ${err}\n`);
     process.exit(1);

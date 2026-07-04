@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import Docker from 'dockerode';
 import { getLogger } from '../../utils/logger.js';
 import type { PermissionGrant } from '../trust/TrustManager.js';
@@ -231,6 +232,56 @@ export class ContainerOrchestrator {
   // Container lifecycle operations should still go through orchestrator methods
   getContainer(name: string): Docker.Container {
     return this.docker.getContainer(name);
+  }
+
+  // Fast-path cleanup for CLI shutdown: hand the container stops to a
+  // detached `docker` process so the CLI can exit immediately instead of
+  // waiting out every container's stop grace period. Same semantics as
+  // cleanup(): everything is stopped, only session/ephemeral containers are
+  // removed, and the stop keeps STOP_GRACE_SECONDS (an instant kill can
+  // crash Docker Desktop's VM, see docs/docker-desktop-vm-crashes.md).
+  cleanupDetached(): void {
+    if (this.managedContainers.size === 0) {
+      return;
+    }
+
+    const stopNames: string[] = [];
+    const removeNames: string[] = [];
+    for (const [containerName, lifecycle] of this.managedContainers.entries()) {
+      stopNames.push(containerName);
+      if (
+        lifecycle === ContainerLifecycle.SESSION ||
+        lifecycle === ContainerLifecycle.EPHEMERAL
+      ) {
+        removeNames.push(containerName);
+      }
+    }
+
+    // Container names are derived by RepoContainerUtils (alphanumerics and
+    // dashes only), so plain space-joining is shell-safe here.
+    const script = [
+      `docker stop -t ${STOP_GRACE_SECONDS} ${stopNames.join(' ')} >/dev/null 2>&1`,
+      removeNames.length > 0
+        ? `docker rm -f ${removeNames.join(' ')} >/dev/null 2>&1`
+        : ':',
+    ].join('; ');
+
+    try {
+      const child = spawn('sh', ['-c', script], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      getLogger().info(
+        `🧹 Detached shutdown of ${stopNames.length} container(s) started`
+      );
+      this.managedContainers.clear();
+      this.containerRefCounts.clear();
+    } catch (error) {
+      // Leaving containers running is an acceptable fallback; they are
+      // reconciled the next time the CLI starts.
+      getLogger().warn(`Failed to start detached container cleanup: ${error}`);
+    }
   }
 
   // Cleanup on CLI shutdown - remove ephemeral and session containers, preserve persistent

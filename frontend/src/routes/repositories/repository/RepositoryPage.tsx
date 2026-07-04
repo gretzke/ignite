@@ -1,5 +1,5 @@
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useAppSelector, useAppDispatch } from '../../../store/hooks';
@@ -18,7 +18,9 @@ export default function RepositoryPage() {
   const decodedPath = repoPath ? decodeURIComponent(repoPath) : '';
 
   // Get repository data from store
-  const { repositoriesData } = useAppSelector((state) => state.repositories);
+  const { repositories, repositoriesData } = useAppSelector(
+    (state) => state.repositories
+  );
   const { compilations } = useAppSelector((state) => state.compiler);
 
   const repoData = repositoriesData[decodedPath];
@@ -42,8 +44,27 @@ export default function RepositoryPage() {
     }
   }, [repoData?.frameworks, decodedPath, repoCompilations, dispatch]);
 
-  // If repository doesn't exist or has no frameworks, redirect back
-  if (!repoData || !repoData.frameworks || repoData.frameworks.length === 0) {
+  // On a fresh page load the repo list, initialization, and framework
+  // detection all happen asynchronously — show progress instead of jumping
+  // straight to "not found".
+  const isSaved =
+    repositories !== null &&
+    (repositories.session === decodedPath ||
+      repositories.local.includes(decodedPath) ||
+      repositories.cloned.includes(decodedPath));
+
+  const loadingMessage =
+    repositories === null
+      ? 'Loading repositories...'
+      : isSaved && (!repoData || repoData.initialized === undefined)
+        ? 'Initializing repository...'
+        : isSaved &&
+            repoData?.initialized === true &&
+            repoData.frameworks === undefined
+          ? 'Detecting frameworks...'
+          : null;
+
+  if (loadingMessage) {
     return (
       <div className="text-[var(--text)]">
         <div className="flex items-center gap-3 mb-6">
@@ -54,13 +75,44 @@ export default function RepositoryPage() {
           >
             <ArrowLeft size={16} />
           </button>
-          <h2 className="page-title mb-0">Repository Not Found</h2>
+          <h2 className="page-title mb-0">{getRepoName(decodedPath)}</h2>
         </div>
 
         <div className="card-milky p-6">
-          <p className="text-center opacity-70">
-            Repository not found or no frameworks detected.
-          </p>
+          <div className="flex items-center justify-center gap-3">
+            <Loader2 size={20} className="animate-spin" />
+            <span className="opacity-70">{loadingMessage}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Repo list is loaded but this repo isn't saved, initialization failed, or
+  // detection finished without finding frameworks
+  if (!repoData || !repoData.frameworks || repoData.frameworks.length === 0) {
+    const message = !isSaved
+      ? 'Repository not found.'
+      : repoData?.initialized === false
+        ? 'Repository failed to initialize.'
+        : 'No frameworks detected in this repository.';
+    return (
+      <div className="text-[var(--text)]">
+        <div className="flex items-center gap-3 mb-6">
+          <button
+            onClick={() => navigate('/repositories')}
+            className="btn btn-secondary btn-secondary-borderless"
+            aria-label="Back to repositories"
+          >
+            <ArrowLeft size={16} />
+          </button>
+          <h2 className="page-title mb-0">
+            {isSaved ? getRepoName(decodedPath) : 'Repository Not Found'}
+          </h2>
+        </div>
+
+        <div className="card-milky p-6">
+          <p className="text-center opacity-70">{message}</p>
           <div className="flex justify-center mt-4">
             <button
               onClick={() => navigate('/repositories')}

@@ -56,4 +56,9 @@ export class PluginOrchestrator {
   async cleanup(): Promise<void> {
     await this.executor.cleanup();
   }
+
+  // Fast-path cleanup for CLI shutdown (container stops continue detached)
+  cleanupDetached(): void {
+    this.executor.cleanupDetached();
+  }
 }

@@ -534,4 +534,10 @@ export class PluginExecutor {
 
     getLogger().info('✅ Plugin Executor cleanup completed');
   }
+
+  // Fast-path cleanup for CLI shutdown: container stops run in a detached
+  // process so the CLI is not held open by them
+  cleanupDetached(): void {
+    this.containerOrchestrator.cleanupDetached();
+  }
 }
