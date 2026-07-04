@@ -46,8 +46,10 @@ export function createClient(options: IApiClientOptions = {}): Client {
     const paramsSchema = (route as any)?.params as
       | z.ZodSchema<z.infer<InferParamsSchema<(typeof v1Routes)[TName]>>>
       | undefined;
+    // Parse `?? {}` so routes whose schema has only optional fields can be
+    // called without the caller passing an (empty) object explicitly.
     const validatedParams = paramsSchema
-      ? (paramsSchema.parse(params) as z.infer<
+      ? (paramsSchema.parse(params ?? {}) as z.infer<
           InferParamsSchema<(typeof v1Routes)[TName]>
         >)
       : (params as z.infer<InferParamsSchema<(typeof v1Routes)[TName]>>);
@@ -63,7 +65,7 @@ export function createClient(options: IApiClientOptions = {}): Client {
       | z.ZodSchema<z.infer<InferQuerySchema<(typeof v1Routes)[TName]>>>
       | undefined;
     const validatedQuery = querySchema
-      ? (querySchema.parse(query) as z.infer<
+      ? (querySchema.parse(query ?? {}) as z.infer<
           InferQuerySchema<(typeof v1Routes)[TName]>
         >)
       : (query as z.infer<InferQuerySchema<(typeof v1Routes)[TName]>>);

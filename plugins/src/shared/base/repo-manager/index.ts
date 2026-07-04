@@ -50,21 +50,6 @@ export abstract class RepoManagerPlugin
     credentials: GitCredentials | undefined,
     operation: () => Promise<T>,
   ): Promise<T> {
-    // If we have SSH credentials, configure Git to use SSH URLs
-    if (credentials && credentials.type === "ssh") {
-      const repoUrl = await this.getRepoUrl();
-      if (repoUrl && repoUrl.startsWith("https://")) {
-        const sshUrl = this.convertToSSH(repoUrl);
-        // Set up Git URL rewriting to convert HTTPS to SSH
-        await execGit([
-          "config",
-          "--global",
-          `url.${sshUrl}.insteadOf`,
-          repoUrl,
-        ]);
-      }
-    }
-
     if (!credentials) {
       return await operation();
     }
@@ -75,8 +60,18 @@ export abstract class RepoManagerPlugin
     const sshDir = "/tmp/.ssh";
     const privateKeyPath = `${sshDir}/id_rsa`;
     const publicKeyPath = `${sshDir}/id_rsa.pub`;
+    let insteadOfKey: string | null = null;
 
     try {
+      // Configure Git to use SSH URLs while the credentials are available
+      const repoUrl = await this.getRepoUrl();
+      if (repoUrl && repoUrl.startsWith("https://")) {
+        const sshUrl = this.convertToSSH(repoUrl);
+        // Set up Git URL rewriting to convert HTTPS to SSH
+        insteadOfKey = `url.${sshUrl}.insteadOf`;
+        await execGit(["config", "--global", insteadOfKey, repoUrl]);
+      }
+
       // Setup SSH credentials
       await this.createSSHDirectory(sshDir);
       await this.writeSSHKeys(
@@ -91,7 +86,7 @@ export abstract class RepoManagerPlugin
       return await operation();
     } finally {
       // Always cleanup credentials and URL rewriting
-      await this.cleanupSSHCredentials(sshDir);
+      await this.cleanupSSHCredentials(sshDir, insteadOfKey);
     }
     // }
     // default: {
@@ -135,12 +130,26 @@ export abstract class RepoManagerPlugin
   }
 
   // Clean up SSH credentials and reset Git configuration
-  private async cleanupSSHCredentials(sshDir: string): Promise<void> {
+  private async cleanupSSHCredentials(
+    sshDir: string,
+    insteadOfKey: string | null,
+  ): Promise<void> {
     try {
       // Reset Git SSH configuration
       await execGit(["config", "--global", "--unset", "core.sshCommand"]);
     } catch {
       // Ignore errors when unsetting config
+    }
+
+    if (insteadOfKey) {
+      try {
+        // Remove the HTTPS→SSH URL rewrite; leaving it behind makes every
+        // later credential-less operation hit SSH without a key or
+        // known_hosts and fail with "Host key verification failed".
+        await execGit(["config", "--global", "--unset", insteadOfKey]);
+      } catch {
+        // Ignore errors when unsetting config
+      }
     }
 
     try {
