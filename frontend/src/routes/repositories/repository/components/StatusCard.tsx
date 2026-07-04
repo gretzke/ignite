@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
 import { CheckCircle, Clock, AlertCircle, Loader2, Hammer } from 'lucide-react';
 import { useAppDispatch } from '../../../../store/hooks';
 import {
@@ -18,6 +20,11 @@ export default function StatusCard({
   compilations,
 }: StatusCardProps) {
   const dispatch = useAppDispatch();
+  // Compilation error shown in the details dialog; null = closed
+  const [errorDetails, setErrorDetails] = useState<{
+    frameworkName: string;
+    error: string;
+  } | null>(null);
 
   const handleCleanCompile = (frameworkId: string) => {
     cleanCompile({ pathOrUrl: repoPath, pluginId: frameworkId }).forEach(
@@ -146,12 +153,12 @@ export default function StatusCard({
                         frameworkStatus === 'ready'
                           ? 'bg-green-500'
                           : frameworkStatus === 'installing'
-                          ? 'bg-blue-500'
-                          : frameworkStatus === 'compiling'
-                          ? 'bg-yellow-500'
-                          : frameworkStatus === 'error'
-                          ? 'bg-red-500'
-                          : 'bg-gray-500'
+                            ? 'bg-blue-500'
+                            : frameworkStatus === 'compiling'
+                              ? 'bg-yellow-500'
+                              : frameworkStatus === 'error'
+                                ? 'bg-red-500'
+                                : 'bg-gray-500'
                       }`}
                     />
                     <span className="text-sm font-medium">
@@ -173,8 +180,13 @@ export default function StatusCard({
                       <button
                         type="button"
                         className="text-xs text-red-400 hover:text-red-300 cursor-pointer"
-                        title={compilation.error}
                         aria-label="View error details"
+                        onClick={() =>
+                          setErrorDetails({
+                            frameworkName: framework.name,
+                            error: compilation.error as string,
+                          })
+                        }
                       >
                         Details
                       </button>
@@ -200,6 +212,39 @@ export default function StatusCard({
           </div>
         </div>
       )}
+
+      {/* Compilation error details dialog */}
+      <Dialog.Root
+        open={!!errorDetails}
+        onOpenChange={(open) => {
+          if (!open) setErrorDetails(null);
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay
+            className="dialog-overlay"
+            style={{ background: 'transparent' }}
+          />
+          <Dialog.Content
+            className="dialog-content glass-surface"
+            style={{ maxWidth: 680, width: '90vw', padding: 16 }}
+          >
+            <Dialog.Title className="text-lg font-medium mb-3">
+              {errorDetails?.frameworkName} compilation error
+            </Dialog.Title>
+            <pre className="bg-[var(--surface-2)] p-4 rounded-lg text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap text-[var(--text)]">
+              {errorDetails?.error}
+            </pre>
+            <div className="flex items-center justify-end mt-4">
+              <Dialog.Close asChild>
+                <button type="button" className="btn btn-secondary">
+                  Close
+                </button>
+              </Dialog.Close>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }
