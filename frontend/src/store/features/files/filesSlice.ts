@@ -33,7 +33,9 @@ export interface FileData {
   loading: boolean;
   error?: string;
   content?: FileContent;
-  artifactData?: ArtifactData;
+  // Keyed by framework/plugin id: in multi-framework repos the same source
+  // file has a different artifact per framework
+  artifactData?: Record<string, ArtifactData>;
 }
 
 export interface IFilesState {
@@ -93,16 +95,20 @@ const filesSlice = createSlice({
       action: PayloadAction<{
         repoPath: string;
         filePath: string;
+        frameworkId: string;
         artifactData: ArtifactData;
       }>
     ) {
-      const { repoPath, filePath, artifactData } = action.payload;
+      const { repoPath, filePath, frameworkId, artifactData } = action.payload;
       const key = `${repoPath}:${filePath}`;
 
       if (!state.files[key]) {
         state.files[key] = { loading: false };
       }
-      state.files[key].artifactData = artifactData;
+      state.files[key].artifactData = {
+        ...state.files[key].artifactData,
+        [frameworkId]: artifactData,
+      };
     },
     setFileError(
       state,
@@ -194,6 +200,7 @@ export const filesApi = {
         return setArtifactData({
           repoPath,
           filePath, // Use the source file path as the key
+          frameworkId: pluginId,
           artifactData: data,
         });
       },

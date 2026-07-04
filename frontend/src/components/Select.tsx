@@ -307,8 +307,8 @@ function SelectContent({
           highlightedIndex === -1
             ? 0
             : highlightedIndex < currentOptions.length - 1
-            ? highlightedIndex + 1
-            : 0;
+              ? highlightedIndex + 1
+              : 0;
         setHighlightedIndex(nextIndex);
         focusItem(nextIndex);
       } else if (event.key === 'ArrowUp') {
@@ -317,8 +317,8 @@ function SelectContent({
           highlightedIndex === -1
             ? currentOptions.length - 1
             : highlightedIndex > 0
-            ? highlightedIndex - 1
-            : currentOptions.length - 1;
+              ? highlightedIndex - 1
+              : currentOptions.length - 1;
         setHighlightedIndex(prevIndex);
         focusItem(prevIndex);
       } else if (event.key === 'Home') {
@@ -472,7 +472,11 @@ function SelectContent({
   }, [clearAutoScrollTimer]);
 
   return (
-    <div>
+    // Clicks inside the dropdown (options, search, scroll buttons) must not
+    // bubble to whatever hosts the Select — e.g. a repo card whose onClick
+    // navigates. React synthetic events bubble through the component tree
+    // even when the dropdown is rendered in a portal.
+    <div onClick={(e) => e.stopPropagation()}>
       {/* Search field for large lists */}
       {showSearch && (
         <div className="p-3 border-b border-white/10">

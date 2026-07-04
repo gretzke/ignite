@@ -145,7 +145,10 @@ async function main(): Promise<void> {
     // Warn early about missing or stale plugin images
     await validatePluginImages();
 
-    const port = parseInt(process.env.PORT || '1301', 10);
+    const port = parseInt(
+      process.env.IGNITE_CORE_PORT || process.env.PORT || '1301',
+      10
+    );
 
     // Log the repository path we're working with
     app.log.info(`📁 Repository path: ${workspacePath}`);

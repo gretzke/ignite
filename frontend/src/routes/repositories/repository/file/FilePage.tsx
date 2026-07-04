@@ -144,9 +144,14 @@ export default function FilePage() {
     fileData?.loading,
   ]);
 
-  // Fetch artifact data
+  // Fetch artifact data (keyed by framework: the same file has a different
+  // artifact per framework in multi-framework repos)
   useEffect(() => {
-    if (frameworkId && frameworkData?.artifacts && !fileData?.artifactData) {
+    if (
+      frameworkId &&
+      frameworkData?.artifacts &&
+      !fileData?.artifactData?.[frameworkId]
+    ) {
       const artifact = frameworkData.artifacts.find(
         (art: {
           sourcePath: string;
@@ -193,7 +198,9 @@ export default function FilePage() {
     frameworkId && frameworkData && frameworkData.artifacts === undefined;
   const error = fileData?.error;
   const content = fileData?.content?.content;
-  const artifactData = fileData?.artifactData;
+  const artifactData = frameworkId
+    ? fileData?.artifactData?.[frameworkId]
+    : undefined;
 
   // Only show main loading for file content - artifact data loads separately in the Contract Details card
   const isLoading = fileLoading || !contentLoaded;

@@ -1,14 +1,10 @@
 // Session authentication: protects the API from plugin containers and
 // DNS-rebinding browsers. Only the browser the core opens (or a user pasting
 // the printed URL) ever receives the session token; every /api and /ws
-// request must present it. See docs/superpowers/specs/2026-07-02-permissioning-layer-design.md.
+// request must present it.
 import crypto from 'node:crypto';
 import cookie from '@fastify/cookie';
-import type {
-  FastifyInstance,
-  FastifyRequest,
-  FastifyReply,
-} from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { IApiError } from '@ignite/api';
 
 export const SESSION_COOKIE = 'ignite_session';

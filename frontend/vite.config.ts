@@ -3,6 +3,12 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import compression from 'vite-plugin-compression';
 
+const frontendPort = Number(process.env.IGNITE_FRONTEND_PORT || 1302);
+const corePort = Number(
+  process.env.IGNITE_CORE_PORT || process.env.PORT || 1301
+);
+const coreTarget = `http://localhost:${corePort}`;
+
 export default defineConfig({
   plugins: [
     react(),
@@ -15,16 +21,17 @@ export default defineConfig({
     }),
   ],
   server: {
-    port: 1302,
+    port: frontendPort,
+    strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:1301',
+        target: coreTarget,
         headers: {
           'x-ignite-token': process.env.IGNITE_DEV_TOKEN || 'dev',
         },
       },
       '/ws': {
-        target: 'http://localhost:1301',
+        target: coreTarget,
         ws: true,
         headers: {
           'x-ignite-token': process.env.IGNITE_DEV_TOKEN || 'dev',

@@ -19,6 +19,8 @@ import { repoManagerHandlers } from './plugins/repo-manager/index.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
+  const port = process.env.IGNITE_CORE_PORT || process.env.PORT || '1301';
+
   // Enable Zod validation and serialization at runtime
   // and configure OpenAPI generation to transform Zod → JSON Schema
   app.setValidatorCompiler(validatorCompiler);
@@ -35,7 +37,7 @@ export async function registerApi(app: FastifyInstance) {
       },
       servers: [
         {
-          url: 'http://localhost:1301',
+          url: `http://localhost:${port}`,
           description: 'Development server',
         },
       ],

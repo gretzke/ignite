@@ -50,8 +50,14 @@ npm run dev
 
 This will start:
 
-- Backend server on `http://localhost:1301`
-- Frontend dev server on `http://localhost:1302` (which proxies to backend)
+- Backend server on `http://localhost:1401`
+- Frontend dev server on `http://localhost:1402` (which proxies to backend)
+
+To override the dev ports:
+
+```bash
+IGNITE_CORE_PORT=1501 IGNITE_FRONTEND_PORT=1502 npm run dev
+```
 
 ## 🏗️ Production Build
 
