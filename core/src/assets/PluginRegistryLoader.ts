@@ -41,34 +41,37 @@ export class PluginRegistryLoader {
     }
     if (!this.builtinLoad) {
       this.builtinLoad = (async () => {
-        try {
-          const registryPath = 'plugins/dist/plugin-registry.json';
-          if (!this.assetManager.exists(registryPath)) {
-            throw new Error(`Registry file not found: ${registryPath}`);
-          }
-          const baseRegistry: Record<string, PluginMetadata> = JSON.parse(
-            this.assetManager.getAssetText(registryPath)
-          );
-          const built: Record<string, PluginConfig> = {};
-          for (const [pluginId, metadata] of Object.entries(baseRegistry)) {
-            built[pluginId] = this.createPluginConfig(
-              pluginId,
-              metadata,
-              'builtin'
-            );
-          }
-          this.builtinRegistry = built;
-          getLogger().info(
-            `✅ Built-in plugin catalog loaded: ${Object.keys(built).join(', ')}`
-          );
-          return built;
-        } catch (error) {
-          getLogger().error('❌ Failed to load built-in plugin catalog:', error);
-          // Allow a later call to retry rather than caching the failure.
-          this.builtinLoad = undefined;
-          return {};
+        const registryPath = 'plugins/dist/plugin-registry.json';
+        if (!this.assetManager.exists(registryPath)) {
+          throw new Error(`Registry file not found: ${registryPath}`);
         }
-      })();
+        const baseRegistry: Record<string, PluginMetadata> = JSON.parse(
+          this.assetManager.getAssetText(registryPath)
+        );
+        const built: Record<string, PluginConfig> = {};
+        for (const [pluginId, metadata] of Object.entries(baseRegistry)) {
+          built[pluginId] = this.createPluginConfig(
+            pluginId,
+            metadata,
+            'builtin'
+          );
+        }
+        this.builtinRegistry = built;
+        getLogger().info(
+          `✅ Built-in plugin catalog loaded: ${Object.keys(built).join(', ')}`
+        );
+        return built;
+      })().catch((error): Record<string, PluginConfig> => {
+        getLogger().error('❌ Failed to load built-in plugin catalog:', error);
+        // Allow a later call to retry rather than caching the failure. The
+        // reset must live in a .catch attached to the promise: the load can
+        // fail synchronously (exists() throws before any await), and a
+        // try/catch inside the IIFE would reset builtinLoad before the
+        // `this.builtinLoad = ...` assignment lands, which would overwrite
+        // the reset and cache the empty catalog forever.
+        this.builtinLoad = undefined;
+        return {};
+      });
     }
     return this.builtinLoad;
   }
@@ -80,7 +83,11 @@ export class PluginRegistryLoader {
       const installed = await PluginManager.getInstance().listPlugins();
       const out: Record<string, PluginConfig> = {};
       for (const [pluginId, metadata] of Object.entries(installed)) {
-        out[pluginId] = this.createPluginConfig(pluginId, metadata, 'installed');
+        out[pluginId] = this.createPluginConfig(
+          pluginId,
+          metadata,
+          'installed'
+        );
       }
       return out;
     } catch (error) {

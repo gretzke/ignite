@@ -38,7 +38,10 @@ export class StaticAssetHandler {
     request: FastifyRequest,
     reply: FastifyReply
   ): Promise<void> {
-    const url = request.url;
+    // request.url includes the query string; assets must resolve by pathname
+    // only. The session bootstrap URL the CLI prints is /?token=..., so the
+    // very first request a user makes always carries a query string.
+    const url = request.url.split('?')[0];
     let assetPath: string;
 
     if (url === '/') {
