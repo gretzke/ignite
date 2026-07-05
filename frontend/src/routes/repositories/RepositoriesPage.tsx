@@ -22,6 +22,7 @@ import {
 } from '../../store/features/repositories/repositoriesSlice';
 import { triggerToast } from '../../store/middleware/toastListener';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import { DirectoryPicker } from '../../components/DirectoryPicker';
 import { getRepoName } from '../../utils/repo';
 
 export default function RepositoriesPage() {
@@ -29,7 +30,6 @@ export default function RepositoriesPage() {
   const [cloneUrl, setCloneUrl] = useState('');
   const [localRepoModalOpen, setLocalRepoModalOpen] = useState(false);
   const [localRepoPath, setLocalRepoPath] = useState('');
-  const [localRepoError, setLocalRepoError] = useState('');
   const [cloneUrlError, setCloneUrlError] = useState('');
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [repoToDelete, setRepoToDelete] = useState<{
@@ -490,7 +490,6 @@ export default function RepositoriesPage() {
 
   const resetLocalRepoState = () => {
     setLocalRepoPath('');
-    setLocalRepoError('');
   };
 
   // Validation helpers
@@ -515,13 +514,6 @@ export default function RepositoriesPage() {
   // Input change handlers with validation
   const handleLocalRepoPathChange = (value: string) => {
     setLocalRepoPath(value);
-    if (value.trim() && !isValidAbsolutePath(value.trim())) {
-      setLocalRepoError(
-        'Please enter a valid absolute path (e.g., /Users/username/projects/repo)'
-      );
-    } else {
-      setLocalRepoError('');
-    }
   };
 
   const handleCloneUrlChange = (value: string) => {
@@ -536,16 +528,6 @@ export default function RepositoriesPage() {
   };
 
   // Enter key handlers
-  const handleLocalRepoKeyDown = (e: React.KeyboardEvent) => {
-    if (
-      e.key === 'Enter' &&
-      localRepoPath.trim() &&
-      isValidAbsolutePath(localRepoPath.trim())
-    ) {
-      handleLocalRepoSubmit();
-    }
-  };
-
   const handleCloneUrlKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && cloneUrl.trim() && isValidUrl(cloneUrl.trim())) {
       handleCloneSubmit();
@@ -940,7 +922,7 @@ export default function RepositoriesPage() {
           <Dialog.Content
             className="dialog-content glass-surface"
             style={{
-              maxWidth: 460,
+              maxWidth: 720,
               width: '90vw',
               padding: 16,
             }}
@@ -949,26 +931,18 @@ export default function RepositoriesPage() {
               Add Local Repository
             </Dialog.Title>
             <div className="text-sm opacity-80 mb-4">
-              Enter the full path to your local repository directory.
+              Enter the full path or browse to your local repository directory.
             </div>
             <div className="mb-4">
               <label className="block text-sm font-medium mb-2">
                 Repository Path
               </label>
-              <input
-                type="text"
-                placeholder="/Users/username/projects/my-repo"
+              <DirectoryPicker
                 value={localRepoPath}
-                onChange={(e) => handleLocalRepoPathChange(e.target.value)}
-                onKeyDown={handleLocalRepoKeyDown}
-                className="input-glass"
+                onChange={handleLocalRepoPathChange}
+                onSubmit={handleLocalRepoSubmit}
                 autoFocus
               />
-              {localRepoError && (
-                <div className="text-xs text-red-400 mt-1">
-                  {localRepoError}
-                </div>
-              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 mt-2">
