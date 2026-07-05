@@ -14,7 +14,6 @@ import { FileSystem } from '../filesystem/FileSystem.js';
 import { PluginInstaller } from '../plugins/install/PluginInstaller.js';
 import { LocalFolderBuildBackend } from '../plugins/install/LocalFolderBuildBackend.js';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
-import { PluginOrchestrator } from '../plugins/containers/PluginOrchestrator.js';
 import { TrustManager } from '../plugins/trust/TrustManager.js';
 import {
   RepoContainerUtils,
@@ -122,7 +121,7 @@ describe.skipIf(!ready)('third-party plugin runtime (Docker)', () => {
       false
     );
 
-    const initResult = await PluginOrchestrator.getInstance().executePlugin(
+    const initResult = await PluginExecutor.getInstance().execute(
       'local-repo',
       'init',
       { pathOrUrl: workspace }

@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { FileSystem } from './filesystem/FileSystem.js';
 import { ProfileManager } from './filesystem/ProfileManager.js';
 import { PluginManager } from './filesystem/PluginManager.js';
-import { PluginOrchestrator } from './plugins/containers/PluginOrchestrator.js';
+import { PluginExecutor } from './plugins/containers/PluginExecutor.js';
 import { setGlobalLogger } from './utils/logger.js';
 import {
   openBrowser,
@@ -25,7 +25,7 @@ async function ignite(workspacePath: string): Promise<{
   fileSystem: FileSystem;
   profileManager: ProfileManager;
   pluginManager: PluginManager;
-  pluginOrchestrator: PluginOrchestrator;
+  pluginExecutor: PluginExecutor;
   sessionToken: string;
 }> {
   // Create Fastify instance - disable logger in production for clean output
@@ -46,7 +46,7 @@ async function ignite(workspacePath: string): Promise<{
   const fileSystem = FileSystem.getInstance();
   const profileManager = await ProfileManager.getInstance();
   const pluginManager = PluginManager.getInstance();
-  const pluginOrchestrator = PluginOrchestrator.getInstance();
+  const pluginExecutor = PluginExecutor.getInstance();
 
   // Pre-startup checks
   app.log.info(`🔍 Workspace path: ${workspacePath}`);
@@ -90,7 +90,7 @@ async function ignite(workspacePath: string): Promise<{
     fileSystem,
     profileManager,
     pluginManager,
-    pluginOrchestrator,
+    pluginExecutor,
     sessionToken,
   };
 }
@@ -145,7 +145,7 @@ async function main(): Promise<void> {
       fileSystem,
       profileManager,
       pluginManager: _pluginManager,
-      pluginOrchestrator,
+      pluginExecutor,
       sessionToken,
     } = await ignite(workspacePath);
 
@@ -198,7 +198,7 @@ async function main(): Promise<void> {
 
       void (async () => {
         try {
-          pluginOrchestrator.cleanupDetached();
+          pluginExecutor.cleanupDetached();
           await app.close();
           process.exit(0);
         } catch (error) {

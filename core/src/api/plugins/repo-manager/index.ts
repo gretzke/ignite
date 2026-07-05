@@ -10,7 +10,7 @@ import {
 import type { PathOptions } from '@ignite/plugin-types';
 import type { IApiError, IApiResponse } from '@ignite/api';
 import { z } from 'zod';
-import { PluginOrchestrator } from '../../../plugins/containers/PluginOrchestrator.js';
+import { PluginExecutor } from '../../../plugins/containers/PluginExecutor.js';
 import {
   RepoContainerUtils,
   RepoContainerKind,
@@ -27,9 +27,9 @@ export const repoManagerHandlers = {
     request: FastifyRequest<{ Body: PathOptions }>,
     reply: FastifyReply
   ): Promise<z.ZodNull> => {
-    const orchestrator = PluginOrchestrator.getInstance();
+    const executor = PluginExecutor.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await orchestrator.executePlugin(pluginId, 'init', {
+    const result = await executor.execute(pluginId, 'init', {
       pathOrUrl: request.body.pathOrUrl,
     });
     if (!result.success) {
@@ -50,9 +50,9 @@ export const repoManagerHandlers = {
     request: FastifyRequest<{ Body: PathOptions }>,
     reply: FastifyReply
   ): Promise<IApiResponse<RepoGetBranchesResult>> => {
-    const orchestrator = PluginOrchestrator.getInstance();
+    const executor = PluginExecutor.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await orchestrator.executePlugin(pluginId, 'getBranches', {
+    const result = await executor.execute(pluginId, 'getBranches', {
       pathOrUrl: request.body.pathOrUrl,
     });
     if (!result.success) {
@@ -76,16 +76,12 @@ export const repoManagerHandlers = {
     request: FastifyRequest<{ Body: PathOptions & RepoCheckoutBranchOptions }>,
     reply: FastifyReply
   ): Promise<z.ZodNull> => {
-    const orchestrator = PluginOrchestrator.getInstance();
+    const executor = PluginExecutor.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await orchestrator.executePlugin(
-      pluginId,
-      'checkoutBranch',
-      {
-        pathOrUrl: request.body.pathOrUrl,
-        branch: request.body.branch,
-      }
-    );
+    const result = await executor.execute(pluginId, 'checkoutBranch', {
+      pathOrUrl: request.body.pathOrUrl,
+      branch: request.body.branch,
+    });
     if (!result.success) {
       const statusCode = 500 as const;
       const body: IApiError = {
@@ -104,16 +100,12 @@ export const repoManagerHandlers = {
     request: FastifyRequest<{ Body: PathOptions & RepoCheckoutCommitOptions }>,
     reply: FastifyReply
   ): Promise<z.ZodNull> => {
-    const orchestrator = PluginOrchestrator.getInstance();
+    const executor = PluginExecutor.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await orchestrator.executePlugin(
-      pluginId,
-      'checkoutCommit',
-      {
-        pathOrUrl: request.body.pathOrUrl,
-        commit: request.body.commit,
-      }
-    );
+    const result = await executor.execute(pluginId, 'checkoutCommit', {
+      pathOrUrl: request.body.pathOrUrl,
+      commit: request.body.commit,
+    });
     if (!result.success) {
       const statusCode = 500 as const;
       const body: IApiError = {
@@ -132,9 +124,9 @@ export const repoManagerHandlers = {
     request: FastifyRequest<{ Body: PathOptions }>,
     reply: FastifyReply
   ): Promise<z.ZodNull> => {
-    const orchestrator = PluginOrchestrator.getInstance();
+    const executor = PluginExecutor.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await orchestrator.executePlugin(pluginId, 'pullChanges', {
+    const result = await executor.execute(pluginId, 'pullChanges', {
       pathOrUrl: request.body.pathOrUrl,
     });
     if (!result.success) {
@@ -155,9 +147,9 @@ export const repoManagerHandlers = {
     request: FastifyRequest<{ Body: PathOptions }>,
     reply: FastifyReply
   ): Promise<z.ZodNull> => {
-    const orchestrator = PluginOrchestrator.getInstance();
+    const executor = PluginExecutor.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await orchestrator.executePlugin(pluginId, 'reset', {
+    const result = await executor.execute(pluginId, 'reset', {
       pathOrUrl: request.body.pathOrUrl,
     });
     if (!result.success) {
@@ -178,9 +170,9 @@ export const repoManagerHandlers = {
     request: FastifyRequest<{ Body: PathOptions }>,
     reply: FastifyReply
   ): Promise<IApiResponse<RepoInfoResult>> => {
-    const orchestrator = PluginOrchestrator.getInstance();
+    const executor = PluginExecutor.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await orchestrator.executePlugin(pluginId, 'getRepoInfo', {
+    const result = await executor.execute(pluginId, 'getRepoInfo', {
       pathOrUrl: request.body.pathOrUrl,
     });
     if (!result.success) {
@@ -204,9 +196,9 @@ export const repoManagerHandlers = {
     request: FastifyRequest<{ Body: PathOptions & RepoGetFileOptions }>,
     reply: FastifyReply
   ): Promise<IApiResponse<RepoGetFileResult>> => {
-    const orchestrator = PluginOrchestrator.getInstance();
+    const executor = PluginExecutor.getInstance();
     const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await orchestrator.executePlugin(pluginId, 'getFile', {
+    const result = await executor.execute(pluginId, 'getFile', {
       pathOrUrl: request.body.pathOrUrl,
       filePath: request.body.filePath,
     });

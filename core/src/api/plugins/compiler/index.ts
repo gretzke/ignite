@@ -11,7 +11,7 @@ import type {
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import { PluginType } from '@ignite/plugin-types/types';
-import { PluginOrchestrator } from '../../../plugins/containers/PluginOrchestrator.js';
+import { PluginExecutor } from '../../../plugins/containers/PluginExecutor.js';
 import { PluginRegistryLoader } from '../../../assets/PluginRegistryLoader.js';
 import { getLogger } from '../../../utils/logger.js';
 import {
@@ -60,7 +60,7 @@ export const compilerHandlers = {
         process.env.IGNITE_WORKSPACE_PATH ||
         process.cwd();
 
-      const pluginOrchestrator = PluginOrchestrator.getInstance();
+      const pluginExecutor = PluginExecutor.getInstance();
       const registryLoader = PluginRegistryLoader.getInstance();
 
       const compilerPlugins = await registryLoader.getPluginsByType(
@@ -71,7 +71,7 @@ export const compilerHandlers = {
       // plugin must not fail detection for the others
       const detectionPromises = compilerPlugins.map(async (pluginConfig) => {
         try {
-          const result = await pluginOrchestrator.executePlugin(
+          const result = await pluginExecutor.execute(
             pluginConfig.metadata.id,
             'detect',
             { pathOrUrl: hostPath }
@@ -125,7 +125,7 @@ export const compilerHandlers = {
       const rejection = await rejectNonCompilerPlugin(reply, pluginId);
       if (rejection) return rejection;
 
-      const result = await PluginOrchestrator.getInstance().executePlugin(
+      const result = await PluginExecutor.getInstance().execute(
         pluginId,
         'install',
         { pathOrUrl }
@@ -163,7 +163,7 @@ export const compilerHandlers = {
       const rejection = await rejectNonCompilerPlugin(reply, pluginId);
       if (rejection) return rejection;
 
-      const result = await PluginOrchestrator.getInstance().executePlugin(
+      const result = await PluginExecutor.getInstance().execute(
         pluginId,
         'compile',
         { pathOrUrl }
@@ -180,7 +180,12 @@ export const compilerHandlers = {
 
       return reply.status(204).send();
     } catch (error) {
-      return sendCaughtError(reply, error, 'COMPILE_ERROR', 'Failed to compile');
+      return sendCaughtError(
+        reply,
+        error,
+        'COMPILE_ERROR',
+        'Failed to compile'
+      );
     }
   },
 
@@ -200,7 +205,7 @@ export const compilerHandlers = {
       const hostPath =
         pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
 
-      const result = await PluginOrchestrator.getInstance().executePlugin(
+      const result = await PluginExecutor.getInstance().execute(
         pluginId,
         'listArtifacts',
         { pathOrUrl: hostPath }
@@ -245,7 +250,7 @@ export const compilerHandlers = {
       const hostPath =
         pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
 
-      const result = await PluginOrchestrator.getInstance().executePlugin(
+      const result = await PluginExecutor.getInstance().execute(
         pluginId,
         'getArtifactData',
         { pathOrUrl: hostPath, artifactPath }

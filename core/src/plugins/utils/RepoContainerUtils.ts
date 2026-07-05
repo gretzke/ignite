@@ -89,4 +89,32 @@ export class RepoContainerUtils {
     const normalizedB = path.resolve(pathOrUrl);
     return normalizedA === normalizedB;
   }
+
+  // Resolve which existing repo container backs a path: persistent wins over
+  // session; session is only considered for the current session's workspace.
+  static async findExistingRepoContainer(
+    pathOrUrl: string,
+    containerExists: (name: string) => Promise<boolean>
+  ): Promise<string | null> {
+    const kind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
+    const persistentName = await RepoContainerUtils.deriveRepoContainerName(
+      kind,
+      pathOrUrl,
+      false
+    );
+    if (await containerExists(persistentName)) {
+      return persistentName;
+    }
+    if (RepoContainerUtils.isSessionLocal(kind, pathOrUrl)) {
+      const sessionName = await RepoContainerUtils.deriveRepoContainerName(
+        kind,
+        pathOrUrl,
+        true
+      );
+      if (await containerExists(sessionName)) {
+        return sessionName;
+      }
+    }
+    return null;
+  }
 }

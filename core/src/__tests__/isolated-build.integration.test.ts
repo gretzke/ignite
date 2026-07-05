@@ -16,15 +16,14 @@ import { FileSystem } from '../filesystem/FileSystem.js';
 const IGNITE_HOME = await mkdtemp(path.join(tmpdir(), 'ignite-b-e2e-'));
 FileSystem.getInstance(IGNITE_HOME);
 
-const { PluginInstaller } = await import('../plugins/install/PluginInstaller.js');
+const { PluginInstaller } = await import(
+  '../plugins/install/PluginInstaller.js'
+);
 const { GitSourceBuildBackend } = await import(
   '../plugins/install/GitSourceBuildBackend.js'
 );
 const { PluginExecutor } = await import(
   '../plugins/containers/PluginExecutor.js'
-);
-const { PluginOrchestrator } = await import(
-  '../plugins/containers/PluginOrchestrator.js'
 );
 const { TrustManager } = await import('../plugins/trust/TrustManager.js');
 const { RepoContainerUtils, RepoContainerKind } = await import(
@@ -180,7 +179,7 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
         repoDir,
         false
       );
-      const initResult = await PluginOrchestrator.getInstance().executePlugin(
+      const initResult = await PluginExecutor.getInstance().execute(
         'local-repo',
         'init',
         { pathOrUrl: repoDir }
@@ -240,7 +239,7 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
       '  process.exit(1);',
       '}',
       '// Forward-proxy request: absolute-URI path sent straight to the proxy,',
-      "// which is on the reachable internal network and does the real fetch.",
+      '// which is on the reachable internal network and does the real fetch.',
       'const req = http.request(',
       "  { host, port: Number(portStr), path: 'http://example.com/', method: 'GET', timeout: 8000 },",
       '  (res) => {',
@@ -258,13 +257,21 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
     await fs.writeFile(path.join(probeDir, 'probe.cjs'), probe);
     await fs.writeFile(
       path.join(probeDir, 'Dockerfile'),
-      ['FROM node:22-slim', 'COPY probe.cjs /tmp/probe.cjs', 'RUN node /tmp/probe.cjs'].join(
-        '\n'
-      )
+      [
+        'FROM node:22-slim',
+        'COPY probe.cjs /tmp/probe.cjs',
+        'RUN node /tmp/probe.cjs',
+      ].join('\n')
     );
-    const tag = await new IsolatedBuilder().buildToTempTag(probeDir, 'Dockerfile');
+    const tag = await new IsolatedBuilder().buildToTempTag(
+      probeDir,
+      'Dockerfile'
+    );
     expect(tag).toContain('ignite/installing_git_');
-    await docker.getImage(tag).remove({ force: true }).catch(() => {});
+    await docker
+      .getImage(tag)
+      .remove({ force: true })
+      .catch(() => {});
     await rm(probeDir, { recursive: true, force: true }).catch(() => {});
   }, 600_000);
 
@@ -288,9 +295,11 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
     await fs.writeFile(path.join(probeDir, 'probe.cjs'), probe);
     await fs.writeFile(
       path.join(probeDir, 'Dockerfile'),
-      ['FROM node:22-slim', 'COPY probe.cjs /tmp/probe.cjs', 'RUN node /tmp/probe.cjs'].join(
-        '\n'
-      )
+      [
+        'FROM node:22-slim',
+        'COPY probe.cjs /tmp/probe.cjs',
+        'RUN node /tmp/probe.cjs',
+      ].join('\n')
     );
     // The RUN step exits non-zero when the connection is refused/unreachable
     // (the expected outcome), which fails the Dockerfile build itself.
