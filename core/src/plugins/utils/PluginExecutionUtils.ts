@@ -10,6 +10,7 @@ import {
   createDockerStreamDemuxer,
   parsePluginOutput,
 } from './pluginTransport.js';
+import { INSTALLED_PLUGIN_ENTRYPOINT } from '../install/types.js';
 
 // Utility class for executing plugin operations in containers
 export class PluginExecutionUtils {
@@ -24,7 +25,7 @@ export class PluginExecutionUtils {
     pluginCode: string | null
   ): string[] {
     if (origin === 'installed') {
-      return ['node', '/plugin/index.js'];
+      return ['node', INSTALLED_PLUGIN_ENTRYPOINT];
     }
     if (pluginCode === null) {
       throw new Error('Built-in plugin execution requires injected bundle code');

@@ -1,9 +1,9 @@
-import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Docker from 'dockerode';
 import { getLogger } from '../../utils/logger.js';
+import { runCommand } from '../../utils/runCommand.js';
 import type {
   PluginBuildBackend,
   PluginBuildResult,
@@ -57,7 +57,11 @@ export class GitSourceBuildBackend implements PluginBuildBackend {
   // Shallow clone with hooks disabled. -c core.hooksPath=/dev/null prevents any
   // repo-supplied hook from running; --depth 1 keeps it fast. If a ref is given,
   // clone then checkout it.
-  private clone(url: string, ref: string | undefined, dir: string): Promise<void> {
+  private async clone(
+    url: string,
+    ref: string | undefined,
+    dir: string
+  ): Promise<void> {
     const args = [
       '-c', 'core.hooksPath=/dev/null',
       'clone', '--depth', '1', '--no-tags',
@@ -65,32 +69,18 @@ export class GitSourceBuildBackend implements PluginBuildBackend {
     if (ref) args.push('--branch', ref);
     args.push('--', url, dir);
     getLogger().info(`⬇️  Cloning plugin source from ${url}${ref ? `@${ref}` : ''}`);
-    return new Promise((resolve, reject) => {
-      const child = spawn('git', args, {
-        stdio: ['ignore', 'ignore', 'pipe'],
-        // Explicit protocol allowlist so a host gitconfig with
-        // protocol.allow=always can't re-enable ext::/fd:: transports (which
-        // can execute an arbitrary command / inherit an arbitrary fd) —
-        // this must not depend on ambient host config for a security
-        // boundary. The URL-scheme guard above is the first layer; this is
-        // defense in depth in case a redirect or submodule URL slips one through.
-        env: { ...process.env, GIT_ALLOW_PROTOCOL: 'https:git:ssh:file' },
-      });
-      let stderr = '';
-      const timer = setTimeout(() => {
-        child.kill('SIGKILL');
-        reject(new Error(`git clone timed out after ${CLONE_TIMEOUT_MS}ms`));
-      }, CLONE_TIMEOUT_MS);
-      child.stderr?.on('data', (c: Buffer) => (stderr += c.toString('utf8')));
-      child.on('error', (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        if (code === 0) resolve();
-        else reject(new Error(`git clone failed (exit ${code}): ${stderr.trim()}`));
-      });
+    const result = await runCommand('git', args, {
+      // Explicit protocol allowlist so a host gitconfig with
+      // protocol.allow=always can't re-enable ext::/fd:: transports (which
+      // can execute an arbitrary command / inherit an arbitrary fd) —
+      // this must not depend on ambient host config for a security
+      // boundary. The URL-scheme guard above is the first layer; this is
+      // defense in depth in case a redirect or submodule URL slips one through.
+      env: { ...process.env, GIT_ALLOW_PROTOCOL: 'https:git:ssh:file' },
+      timeoutMs: CLONE_TIMEOUT_MS,
     });
+    if (result.code !== 0) {
+      throw new Error(`git clone failed (exit ${result.code}): ${result.stderr.trim()}`);
+    }
   }
 }

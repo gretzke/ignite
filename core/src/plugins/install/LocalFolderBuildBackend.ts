@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import Docker from 'dockerode';
 import { getLogger } from '../../utils/logger.js';
+import { runCommand } from '../../utils/runCommand.js';
 import type {
   PluginBuildBackend,
   PluginBuildResult,
@@ -43,36 +43,23 @@ export class LocalFolderBuildBackend implements PluginBuildBackend {
   // dockerode; shelling out to the CLI keeps this backend dependency-free
   // and type-safe. Spec A only builds our own fixture, so trusting the
   // locally-installed `docker` binary is acceptable.
-  private dockerBuild(
+  private async dockerBuild(
     contextDir: string,
     dockerfile: string,
     tag: string
   ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(
-        'docker',
-        ['build', '-f', dockerfile, '-t', tag, contextDir],
-        { cwd: contextDir, stdio: ['ignore', 'pipe', 'pipe'] }
+    const result = await runCommand(
+      'docker',
+      ['build', '-f', dockerfile, '-t', tag, contextDir],
+      { cwd: contextDir }
+    );
+    if (result.stdout.trim()) {
+      getLogger().debug(`🔨 docker build: ${result.stdout.trim()}`);
+    }
+    if (result.code !== 0) {
+      throw new Error(
+        `docker build failed (exit ${result.code}) for ${contextDir}: ${result.stderr.trim()}`
       );
-      let stderr = '';
-      child.stdout?.on('data', (chunk: Buffer) => {
-        getLogger().debug(`🔨 docker build: ${chunk.toString('utf8').trim()}`);
-      });
-      child.stderr?.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8');
-      });
-      child.on('error', (err) => reject(err));
-      child.on('close', (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(
-            new Error(
-              `docker build failed (exit ${code}) for ${contextDir}: ${stderr.trim()}`
-            )
-          );
-        }
-      });
-    });
+    }
   }
 }

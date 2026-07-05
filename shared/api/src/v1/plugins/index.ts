@@ -19,7 +19,7 @@ export interface GetPluginData {
 // Zod schemas for validation
 const PluginTypeSchema = z.enum(PluginType);
 
-const PluginMetadataSchema = z.object({
+export const PluginMetadataSchema = z.object({
   id: z.string(),
   type: PluginTypeSchema,
   name: z.string(),

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { getLogger } from '../../utils/logger.js';
+import { runCommand } from '../../utils/runCommand.js';
 
 // Squid egress ACL: deny loopback + RFC1918 + link-local (IPv4 and IPv6)
 // BEFORE allowing the rest of the internet (squid evaluates rules
@@ -33,34 +34,14 @@ const SQUID_IMAGE = 'ubuntu/squid:latest';
 const BUILD_TIMEOUT_MS = 10 * 60 * 1000;
 
 // Run a docker CLI command, capturing stdout; reject on non-zero exit.
-function dockerCli(args: string[], timeoutMs = 60_000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`docker ${args[0]} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    child.stdout?.on('data', (c: Buffer) => (stdout += c.toString('utf8')));
-    child.stderr?.on('data', (c: Buffer) => (stderr += c.toString('utf8')));
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve(stdout);
-      else
-        reject(
-          new Error(
-            `docker ${args.join(' ')} failed (exit ${code}): ${stderr.trim()}`
-          )
-        );
-    });
-  });
+async function dockerCli(args: string[], timeoutMs = 60_000): Promise<string> {
+  const result = await runCommand('docker', args, { timeoutMs });
+  if (result.code !== 0) {
+    throw new Error(
+      `docker ${args.join(' ')} failed (exit ${result.code}): ${result.stderr.trim()}`
+    );
+  }
+  return result.stdout;
 }
 
 // Sleep helper for the squid-readiness poll below.

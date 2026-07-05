@@ -2,6 +2,7 @@ import { PassThrough } from 'node:stream';
 import Docker from 'dockerode';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 import type { PluginBuildResult } from './types.js';
+import { INSTALLED_PLUGIN_ENTRYPOINT } from './types.js';
 
 // A misbehaving/hung plugin entrypoint must not wedge the install (or leak the
 // temp container) forever.
@@ -34,7 +35,7 @@ export async function describeImage(
 ): Promise<PluginMetadata> {
   const container = await docker.createContainer({
     Image: imageTag,
-    Cmd: ['node', '/plugin/index.js', 'getInfo'],
+    Cmd: ['node', INSTALLED_PLUGIN_ENTRYPOINT, 'getInfo'],
     HostConfig: { AutoRemove: false, NetworkMode: 'none' },
   });
   try {

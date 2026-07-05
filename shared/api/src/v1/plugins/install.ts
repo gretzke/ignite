@@ -1,21 +1,13 @@
 // Third-party plugin install/uninstall routes
 import { z } from "zod";
 import type { PluginMetadata } from "@ignite/plugin-types/types";
-import { PluginType } from "@ignite/plugin-types/types";
 import { V1_BASE_PATH } from "../constants.js";
 import { createApiResponseSchema } from "../../utils/schema.js";
+import { PluginMetadataSchema } from "./index.js";
 
 export interface InstallPluginData {
   plugin: PluginMetadata;
 }
-
-const PluginMetadataSchema = z.object({
-  id: z.string(),
-  type: z.enum(PluginType),
-  name: z.string(),
-  version: z.string(),
-  baseImage: z.string(),
-}) satisfies z.ZodType<PluginMetadata>;
 
 // Discriminated union: local folder (Spec A) or git URL (Spec B).
 export const PluginInstallSourceSchema = z.discriminatedUnion("kind", [
