@@ -1,4 +1,5 @@
 import Docker from 'dockerode';
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import { PluginManager } from '../../filesystem/PluginManager.js';
@@ -6,6 +7,7 @@ import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 import { TrustManager } from '../trust/TrustManager.js';
 import { getLogger } from '../../utils/logger.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
+import { pluginCacheVolumeName } from '../utils/pluginCache.js';
 import type { PluginBuildBackend, PluginInstallSource } from './types.js';
 
 // Injectable dependencies (tests pass fakes; production uses real singletons).
@@ -17,6 +19,7 @@ export interface PluginInstallerDeps {
   loader: Pick<PluginRegistryLoader, 'isBuiltin'>;
   trust: { revoke: (pluginId: string) => Promise<void> };
   removeImage: (imageTag: string) => Promise<void>;
+  removeVolume: (volumeName: string) => Promise<void>;
 }
 
 export class PluginInstaller {
@@ -39,6 +42,33 @@ export class PluginInstaller {
           } catch (error) {
             getLogger().warn(`⚠️ Could not remove image ${imageTag}: ${error}`);
           }
+        }),
+      removeVolume:
+        deps?.removeVolume ??
+        (async (volumeName: string) => {
+          // A just-stopped ephemeral container (AutoRemove) can still hold the
+          // volume for a moment, making removal 409 "in use" — retry briefly.
+          for (let attempt = 0; attempt < 10; attempt++) {
+            try {
+              await docker.getVolume(volumeName).remove();
+              return;
+            } catch (error) {
+              const statusCode = (error as { statusCode?: number })?.statusCode;
+              // 404 = the plugin never executed, so no cache volume exists.
+              if (statusCode === 404) return;
+              if (statusCode === 409) {
+                await sleep(500);
+                continue;
+              }
+              getLogger().warn(
+                `⚠️ Could not remove volume ${volumeName}: ${error}`
+              );
+              return;
+            }
+          }
+          getLogger().warn(
+            `⚠️ Could not remove volume ${volumeName}: still in use`
+          );
         }),
     };
   }
@@ -134,5 +164,8 @@ export class PluginInstaller {
     if (imageTag) {
       await this.deps.removeImage(imageTag);
     }
+    // A fresh install of the same id must not inherit the old plugin's cache,
+    // for the same reason it must not inherit its trust grant.
+    await this.deps.removeVolume(pluginCacheVolumeName(pluginId));
   }
 }

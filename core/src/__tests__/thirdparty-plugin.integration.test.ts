@@ -145,5 +145,30 @@ describe.skipIf(!ready)('third-party plugin runtime (Docker)', () => {
       'utf8'
     );
     expect(marker.trim().length).toBeGreaterThan(0);
-  }, 180_000);
+
+    // The run created the per-plugin cache volume, and the stub bumped its
+    // counter in /cache, mirroring the value into the workspace.
+    const cacheVolumeName = 'ignite-plugin-cache-stub-compiler';
+    await expect(
+      docker.getVolume(cacheVolumeName).inspect()
+    ).resolves.toBeTruthy();
+    const readCount = () =>
+      fs.readFile(path.join(workspace!, '.stub-compiler-cache-count'), 'utf8');
+    expect((await readCount()).trim()).toBe('1');
+
+    // A second compile runs in a brand-new ephemeral container; the counter
+    // reaching 2 proves /cache persisted across containers.
+    const again = await PluginExecutor.getInstance().execute(
+      'stub-compiler',
+      'compile',
+      { pathOrUrl: workspace }
+    );
+    expect(again.success).toBe(true);
+    expect((await readCount()).trim()).toBe('2');
+
+    // Uninstall removes the cache volume so a future reinstall of the same id
+    // starts from a clean slate (mirrors the no-inherited-trust rule).
+    await installer.uninstall('stub-compiler');
+    await expect(docker.getVolume(cacheVolumeName).inspect()).rejects.toThrow();
+  }, 240_000);
 });

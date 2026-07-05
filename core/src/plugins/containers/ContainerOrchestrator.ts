@@ -31,6 +31,7 @@ export interface ContainerCreateOptions {
   volumes?: Record<string, object>; // Named volumes: { '/path': {} }
   volumesFrom?: string[];
   cmd?: string[];
+  env?: string[]; // Container environment, e.g. ['KEY=value']
 }
 
 // Centralized container orchestrator - the ONLY way to create Docker containers
@@ -62,6 +63,7 @@ export class ContainerOrchestrator {
       volumes,
       volumesFrom,
       cmd = ['sleep', 'infinity'],
+      env,
     } = options;
 
     getLogger().info(`🚀 Creating ${lifecycle} container: ${name}`);
@@ -80,6 +82,7 @@ export class ContainerOrchestrator {
       Labels: allLabels,
       Volumes: volumes,
       Cmd: cmd,
+      Env: env,
       HostConfig: {
         AutoRemove: lifecycle === ContainerLifecycle.EPHEMERAL, // Only ephemeral containers auto-remove
         Binds: binds,

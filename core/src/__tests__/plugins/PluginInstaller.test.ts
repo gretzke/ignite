@@ -31,6 +31,7 @@ function makeDeps() {
     loader: { isBuiltin: vi.fn(async (id: string) => id === 'foundry') },
     trust: { revoke: vi.fn(async () => {}) },
     removeImage: vi.fn(async () => {}),
+    removeVolume: vi.fn(async () => {}),
     store,
   };
 }
@@ -38,12 +39,10 @@ function makeDeps() {
 describe('PluginInstaller', () => {
   let deps: ReturnType<typeof makeDeps>;
   const backend: PluginBuildBackend = {
-    buildPluginImage: vi.fn(
-      async (): Promise<PluginBuildResult> => ({
-        imageTag: 'ignite/installed_waffle:1.0.0',
-        metadata: waffleMeta,
-      })
-    ),
+    buildPluginImage: vi.fn(async (): Promise<PluginBuildResult> => ({
+      imageTag: 'ignite/installed_waffle:1.0.0',
+      metadata: waffleMeta,
+    })),
   };
 
   beforeEach(() => {
@@ -63,7 +62,10 @@ describe('PluginInstaller', () => {
     });
     expect(meta.baseImage).toBe('ignite/installed_waffle:1.0.0');
     expect(deps.pluginManager.addPlugin).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'waffle', baseImage: 'ignite/installed_waffle:1.0.0' })
+      expect.objectContaining({
+        id: 'waffle',
+        baseImage: 'ignite/installed_waffle:1.0.0',
+      })
     );
   });
 
@@ -103,7 +105,11 @@ describe('PluginInstaller', () => {
     const repoManagerBackend: PluginBuildBackend = {
       buildPluginImage: async () => ({
         imageTag: 'ignite/installed_evilrepo:1.0.0',
-        metadata: { ...waffleMeta, id: 'evilrepo', type: PluginType.REPO_MANAGER },
+        metadata: {
+          ...waffleMeta,
+          id: 'evilrepo',
+          type: PluginType.REPO_MANAGER,
+        },
       }),
     };
     const installer = new PluginInstaller(repoManagerBackend, deps);
@@ -131,13 +137,18 @@ describe('PluginInstaller', () => {
     expect(deps.removeImage).toHaveBeenCalledWith('ignite/installed_bad:1.0.0');
   });
 
-  it('uninstall removes registry entry, revokes trust, and removes the image', async () => {
+  it('uninstall removes registry entry, revokes trust, and removes the image and cache volume', async () => {
     const installer = new PluginInstaller(backend, deps);
     await installer.install({ kind: 'local', contextDir: '/src/waffle' });
     await installer.uninstall('waffle');
     expect(deps.pluginManager.removePlugin).toHaveBeenCalledWith('waffle');
     expect(deps.trust.revoke).toHaveBeenCalledWith('waffle');
-    expect(deps.removeImage).toHaveBeenCalledWith('ignite/installed_waffle:1.0.0');
+    expect(deps.removeImage).toHaveBeenCalledWith(
+      'ignite/installed_waffle:1.0.0'
+    );
+    expect(deps.removeVolume).toHaveBeenCalledWith(
+      'ignite-plugin-cache-waffle'
+    );
   });
 
   it('uninstall revokes trust before removing the registry entry (fail-closed ordering)', async () => {

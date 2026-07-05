@@ -24,6 +24,11 @@ import {
   type PermissionGrant,
   type PluginPermissions,
 } from '../trust/TrustManager.js';
+import {
+  PLUGIN_CACHE_ENV,
+  PLUGIN_CACHE_MOUNT,
+  pluginCacheVolumeName,
+} from '../utils/pluginCache.js';
 
 // SPEC.md §3.1 operations matrix: install and compile mutate the shared
 // volume, verify talks to block explorers. detect/mount/etc. need no grant.
@@ -223,10 +228,15 @@ export class PluginExecutor {
       `🔄 Creating ephemeral container: ${ephemeralContainerName}`
     );
 
+    // Private persistent cache, shared across this plugin's runs. Docker
+    // creates the named volume on first use; uninstall removes it.
+    const cacheVolume = pluginCacheVolumeName(pluginId);
+
     const labels: Record<string, string> = {
       'ignite.type': 'ephemeral',
       'ignite.plugin': pluginId,
       'ignite.image': pluginConfig.metadata.baseImage,
+      'ignite.cacheVolume': cacheVolume,
     };
 
     let volumesFrom: string[] | undefined;
@@ -282,14 +292,48 @@ export class PluginExecutor {
       );
     }
 
-    return await this.containerOrchestrator.createContainer({
+    const containerName = await this.containerOrchestrator.createContainer({
       image: pluginConfig.metadata.baseImage,
       name: ephemeralContainerName,
       lifecycle: ContainerLifecycle.EPHEMERAL,
       labels,
+      binds: [`${cacheVolume}:${PLUGIN_CACHE_MOUNT}`],
+      volumes: { [PLUGIN_CACHE_MOUNT]: {} },
+      env: [`${PLUGIN_CACHE_ENV}=${PLUGIN_CACHE_MOUNT}`],
       volumesFrom,
       grant,
     });
+
+    await this.ensureCacheWritable(containerName);
+
+    return containerName;
+  }
+
+  // Docker creates named volumes root-owned, but plugin images may run as an
+  // unprivileged user (e.g. ignite/shared runs as 'plugin'). Open up the
+  // mount /tmp-style (sticky, world-writable) via a root exec so any
+  // container user can use its private cache. Best-effort: an image without
+  // chmod just ends up with an unusable cache, not a failed operation.
+  private async ensureCacheWritable(containerName: string): Promise<void> {
+    try {
+      const container = this.containerOrchestrator.getContainer(containerName);
+      const exec = await container.exec({
+        Cmd: ['chmod', '1777', PLUGIN_CACHE_MOUNT],
+        User: '0:0',
+        AttachStdout: true,
+        AttachStderr: true,
+      });
+      const stream = await exec.start({});
+      await new Promise<void>((resolve) => {
+        stream.on('end', resolve);
+        stream.on('error', () => resolve());
+        stream.resume();
+      });
+    } catch (error) {
+      getLogger().warn(
+        `⚠️ Could not make ${PLUGIN_CACHE_MOUNT} writable in ${containerName}: ${error}`
+      );
+    }
   }
 
   // Execute operation directly without handler - new handler-free approach

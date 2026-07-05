@@ -43,6 +43,26 @@ export class StubCompilerPlugin extends CompilerPlugin {
         join('/workspace', '.stub-compiler-ran'),
         new Date().toISOString()
       );
+
+      // Prove the per-plugin cache volume persists across ephemeral
+      // containers: bump a counter in /cache and mirror it into the
+      // workspace, where the host (and the integration test) can read it.
+      const cacheDir = process.env.IGNITE_PLUGIN_CACHE;
+      if (cacheDir) {
+        const counterPath = join(cacheDir, 'compile-count');
+        let count = 0;
+        try {
+          count = parseInt(await fs.readFile(counterPath, 'utf8'), 10) || 0;
+        } catch {
+          // first run: no counter yet
+        }
+        count += 1;
+        await fs.writeFile(counterPath, String(count));
+        await fs.writeFile(
+          join('/workspace', '.stub-compiler-cache-count'),
+          String(count)
+        );
+      }
       return { success: true, data: {} as NoResult };
     } catch (error) {
       return {
