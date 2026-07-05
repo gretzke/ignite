@@ -99,7 +99,7 @@ describe('api error helpers', () => {
         success: false,
         error: { code: 'COMPILE_FAILED', message: 'nope' },
       },
-      ErrorCodes.COMPILE_ERROR,
+      ErrorCodes.COMPILE_FAILED,
       'Compilation failed'
     );
     expect(reply.statusCode).toBe(500);

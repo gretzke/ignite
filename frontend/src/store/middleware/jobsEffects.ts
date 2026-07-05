@@ -29,9 +29,36 @@ import type { AppDispatch, RootState } from '../store';
 // Job-driven compiler/plugin flow. This is the sole place that turns a
 // terminal job (detect/install/compile/plugin.install) into the state
 // transitions the rest of the app already reacts to (setRepositoryFrameworks,
-// setCompilationStatus, plugin list refresh, permission dialog). See
-// .superpowers/sdd/task-8-brief.md for the routing table this implements.
+// setCompilationStatus, plugin list refresh, permission dialog). Routing
+// table: compiler.detect -> setRepositoryFrameworks (success) or empty
+// frameworks + toast (failure); compiler.install -> status 'compiling'
+// (success) or PERMISSION_REQUIRED dialog / status 'error' + toast
+// (failure); compiler.compile -> status 'ready' (success) or the same
+// PERMISSION_REQUIRED-vs-error split (failure); plugin.install -> refresh
+// plugin list + toast (success) or PERMISSION_REQUIRED dialog / error toast
+// (failure).
 export const jobsEffects = createListenerMiddleware();
+
+// PluginExecutor's grant gate (core/src/plugins/containers/PluginExecutor.ts)
+// denies compiler.install/compiler.compile operations for untrusted
+// third-party compiler plugins missing the 'hostWrite' permission — that
+// denial surfaces as a failed job with error.code PERMISSION_REQUIRED
+// instead of the toast a generic failure gets. Read the plugin/permission
+// out of error.details (JobManager preserves it end to end) and route to
+// the same trust approval dialog apiGate.ts uses for non-job endpoints.
+function permissionDetails(
+  job: JobRecord
+): { pluginId: string; permission: 'hostWrite' | 'net' } | null {
+  if (job.error?.code !== 'PERMISSION_REQUIRED') return null;
+  const details = job.error.details as
+    | { pluginId?: string; permission?: string }
+    | undefined;
+  if (!details?.pluginId || !details.permission) return null;
+  return {
+    pluginId: details.pluginId,
+    permission: details.permission as 'hostWrite' | 'net',
+  };
+}
 
 const TERMINAL_STATES: ReadonlySet<JobState> = new Set([
   'succeeded',
@@ -109,23 +136,42 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
         dispatch(
           setCompilationStatus({ repoPath, frameworkId, status: 'compiling' })
         );
-      } else {
-        dispatch(
-          setCompilationStatus({
-            repoPath,
-            frameworkId,
-            status: 'error',
-            error: errorMessage,
-          })
-        );
-        dispatch(
-          triggerToast({
-            title: 'Installation Failed: ' + getRepoName(repoPath),
-            description: errorMessage,
-            variant: 'error',
-          })
-        );
+        break;
       }
+
+      const perm = permissionDetails(job);
+      if (perm) {
+        // Match the old apiGate behavior of intercepting before the
+        // failure is treated as a generic error: no status flip, no
+        // toast. Status stays 'installing' — Allow retries the install
+        // job (which continues the chain to 'compiling' on success);
+        // Cancel flips it to 'error' itself (see PermissionApprovalDialog)
+        // so the status pill doesn't spin forever.
+        dispatch(
+          permissionRequired({
+            pluginId: perm.pluginId,
+            permission: perm.permission,
+            retry: { endpoint: 'install', body: { pathOrUrl: repoPath, pluginId: frameworkId } },
+          })
+        );
+        break;
+      }
+
+      dispatch(
+        setCompilationStatus({
+          repoPath,
+          frameworkId,
+          status: 'error',
+          error: errorMessage,
+        })
+      );
+      dispatch(
+        triggerToast({
+          title: 'Installation Failed: ' + getRepoName(repoPath),
+          description: errorMessage,
+          variant: 'error',
+        })
+      );
       break;
     }
 
@@ -136,23 +182,38 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
         dispatch(
           setCompilationStatus({ repoPath, frameworkId, status: 'ready' })
         );
-      } else {
-        dispatch(
-          setCompilationStatus({
-            repoPath,
-            frameworkId,
-            status: 'error',
-            error: errorMessage,
-          })
-        );
-        dispatch(
-          triggerToast({
-            title: 'Compilation Failed: ' + getRepoName(repoPath),
-            description: errorMessage,
-            variant: 'error',
-          })
-        );
+        break;
       }
+
+      const perm = permissionDetails(job);
+      if (perm) {
+        // Same rationale as compiler.install above: leave status
+        // 'compiling' for Allow to resume; Cancel unsticks it.
+        dispatch(
+          permissionRequired({
+            pluginId: perm.pluginId,
+            permission: perm.permission,
+            retry: { endpoint: 'compile', body: { pathOrUrl: repoPath, pluginId: frameworkId } },
+          })
+        );
+        break;
+      }
+
+      dispatch(
+        setCompilationStatus({
+          repoPath,
+          frameworkId,
+          status: 'error',
+          error: errorMessage,
+        })
+      );
+      dispatch(
+        triggerToast({
+          title: 'Compilation Failed: ' + getRepoName(repoPath),
+          description: errorMessage,
+          variant: 'error',
+        })
+      );
       break;
     }
 
@@ -170,21 +231,19 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
       }
 
       // PERMISSION_REQUIRED denials happen inside the runner now, so they
-      // arrive as a failed job with this code instead of an HTTP 4xx —
-      // apiGate's PERMISSION_REQUIRED interception (still used by
-      // non-job endpoints) never sees these.
-      const details = job.error?.details as
-        | { pluginId?: string; permission?: string }
-        | undefined;
-      if (
-        job.error?.code === 'PERMISSION_REQUIRED' &&
-        details?.pluginId &&
-        details.permission
-      ) {
+      // would arrive as a failed job with this code instead of an HTTP 4xx —
+      // apiGate's PERMISSION_REQUIRED interception (still used by non-job
+      // endpoints) never sees these. Currently unexercisable: PluginInstaller
+      // has no grant gate (only PluginExecutor's compiler.install/compile
+      // path denies on a missing permission today), so this branch never
+      // actually fires. Kept for when/if plugin.install grows one, so a
+      // future denial routes straight to the dialog instead of a toast.
+      const perm = permissionDetails(job);
+      if (perm) {
         dispatch(
           permissionRequired({
-            pluginId: details.pluginId,
-            permission: details.permission as 'hostWrite' | 'net',
+            pluginId: perm.pluginId,
+            permission: perm.permission,
             retry: {
               endpoint: 'installPlugin',
               body: { source: job.params.source },

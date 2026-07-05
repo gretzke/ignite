@@ -21,9 +21,13 @@ export const RECONNECT_WINDOW_MS = 30000;
 // resubscribe effects are responsible for re-sending once it is.
 export const wsSend = createAction<unknown>('ws/send');
 
-// Server → client frame shapes we care about (see phase2-shared-design.md).
-// Other frame types (e.g. 'connected', 'error') are intentionally ignored
-// here.
+// Server → client frame shapes we care about: 'job-snapshot' carries a full
+// JobRecord (result/error are only ever populated via this frame, never the
+// lighter 'job-event' one); 'job-event' carries one incremental JobEvent
+// (a log line, or a state change) keyed by a monotonic per-job seq — a
+// terminal state event with no snapshot yet queues a GET /jobs/:jobId fetch
+// (see jobsEffects.ts) to obtain the result/error. Other frame types (e.g.
+// 'connected', 'error') are intentionally ignored here.
 interface JobSnapshotFrame {
   type: 'job-snapshot';
   job: JobRecord;

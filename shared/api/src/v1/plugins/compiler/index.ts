@@ -16,6 +16,12 @@ import type {
 
 export * from "./types.js";
 
+// Still used as the return type of the compiler.detect job's async body
+// (core/src/api/plugins/compiler/index.ts) even though the detect route
+// itself now responds with JobStartedResponseSchema — the job result shape
+// still needs a name. DetectResponseSchema (the zod wrapper) was only ever
+// used for the route's old synchronous response and has no remaining
+// consumer; deleted.
 export interface DetectResponse {
   frameworks: Array<{ id: string; name: string }>;
 }
@@ -23,19 +29,6 @@ export interface DetectResponse {
 export interface CompilerOperationRequest extends PathOptions {
   pluginId: string;
 }
-
-export const DetectResponseSchema = createApiResponseSchema<DetectResponse>(
-  "DetectResponseSchema",
-)(
-  z.object({
-    frameworks: z.array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-      }),
-    ),
-  }),
-);
 
 export const ArtifactListResponseSchema =
   createApiResponseSchema<ArtifactListResult>("ArtifactListResponseSchema")(

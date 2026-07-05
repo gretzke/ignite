@@ -1,14 +1,7 @@
 // Third-party plugin install/uninstall routes
 import { z } from "zod";
-import type { PluginMetadata } from "@ignite/plugin-types/types";
 import { V1_BASE_PATH } from "../constants.js";
-import { createApiResponseSchema } from "../../utils/schema.js";
-import { PluginMetadataSchema } from "./index.js";
 import { JobStartedResponseSchema } from "../jobs.js";
-
-export interface InstallPluginData {
-  plugin: PluginMetadata;
-}
 
 // Discriminated union: local folder (Spec A) or git URL (Spec B).
 export const PluginInstallSourceSchema = z.discriminatedUnion("kind", [
@@ -27,11 +20,6 @@ export const PluginInstallSourceSchema = z.discriminatedUnion("kind", [
 export const InstallPluginBodySchema = z.object({
   source: PluginInstallSourceSchema,
 });
-
-export const InstallPluginResponseSchema =
-  createApiResponseSchema<InstallPluginData>("InstallPluginResponseSchema")(
-    z.object({ plugin: PluginMetadataSchema })
-  );
 
 export const UninstallPluginParamsSchema = z.object({
   pluginId: z.string().min(1),
