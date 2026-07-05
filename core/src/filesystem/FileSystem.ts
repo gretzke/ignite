@@ -62,6 +62,14 @@ export class FileSystem {
     return path.join(this.igniteHome, 'jobs');
   }
 
+  // Host workspace directory for cloned repos (RepoService), keyed by
+  // profile so different profiles never share a clone. Distinct from
+  // getProfileReposPath, which holds the local/cloned pathOrUrl *registry*
+  // (local.json/cloned.json) rather than actual git workspaces.
+  getReposPath(profileId: string): string {
+    return path.join(this.igniteHome, 'repos', profileId);
+  }
+
   // === Profile Paths (keyed by immutable profile id) ===
 
   getProfilePath(profileId: string): string {
