@@ -21,7 +21,10 @@ import {
   type IFramework,
 } from '../features/repositories/repositoriesSlice';
 import { setCompilationStatus } from '../features/compiler/compilerSlice';
-import { permissionRequired } from '../features/plugins/trustSlice';
+import {
+  permissionRequired,
+  approvalCancelled,
+} from '../features/plugins/trustSlice';
 import { pluginsApi } from '../features/plugins/pluginsSlice';
 import { getRepoName } from '../../utils/repo';
 import type { AppDispatch, RootState } from '../store';
@@ -391,6 +394,48 @@ jobsEffects.startListening({
           }
           return actions;
         },
+      })
+    );
+  },
+});
+
+// The compiler.install/compiler.compile PERMISSION_REQUIRED branches above
+// deliberately leave the compilation status at 'installing'/'compiling' so
+// that approving the permission can resume the chain via the dialog's retry.
+// If the user cancels the dialog instead, nothing else will ever move that
+// status — flip it to 'error' here so the spinner doesn't strand.
+//
+// This must fire only on a REAL cancel. ConfirmDialog calls onConfirm() and
+// then synchronously onOpenChange(false), so PermissionApprovalDialog
+// dispatches approvalCancelled after every Allow click too; the reducer
+// ignores that one because approvalConfirmed already set inFlight. Rather
+// than duplicating the inFlight rules here, key off their outcome: the
+// cancel took effect exactly when pendingApproval went from set to cleared
+// across this action. The cleared approval's retry (read from the PREVIOUS
+// state) identifies which repo/framework to flip; installPlugin retries
+// aren't tied to a compilation status and are left alone.
+jobsEffects.startListening({
+  predicate: (action, currentState, previousState) =>
+    approvalCancelled.match(action) &&
+    (previousState as RootState).trust.pendingApproval !== null &&
+    (currentState as RootState).trust.pendingApproval === null,
+  effect: async (_action, listenerApi) => {
+    const cancelled = (listenerApi.getOriginalState() as RootState).trust
+      .pendingApproval;
+    if (!cancelled?.retry) return;
+    const { endpoint, body } = cancelled.retry;
+    if (endpoint !== 'install' && endpoint !== 'compile') return;
+    const { pathOrUrl, pluginId } = (body ?? {}) as {
+      pathOrUrl?: string;
+      pluginId?: string;
+    };
+    if (!pathOrUrl || !pluginId) return;
+    listenerApi.dispatch(
+      setCompilationStatus({
+        repoPath: pathOrUrl,
+        frameworkId: pluginId,
+        status: 'error',
+        error: `Permission denied: ${cancelled.pluginId} was not granted '${cancelled.permission}'`,
       })
     );
   },

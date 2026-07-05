@@ -11,7 +11,6 @@ import { apiClient, apiDispatchAction } from '../store/api/client';
 import { triggerToast } from '../store/middleware/toastListener';
 import { jobStarted } from '../store/features/jobs/jobsSlice';
 import { wsSend } from '../store/middleware/websocket';
-import { setCompilationStatus } from '../store/features/compiler/compilerSlice';
 import type { ApiError } from '@ignite/api/client';
 import type { ListPluginTrustData } from '@ignite/api';
 
@@ -118,40 +117,19 @@ export default function PermissionApprovalDialog() {
     );
   };
 
-  // Cancel (Cancel button, overlay, Escape). jobsEffects deliberately leaves
-  // a compiler.install/compiler.compile job's status at 'installing'/
-  // 'compiling' when it fails with PERMISSION_REQUIRED, so Allow can resume
-  // the chain on retry. If the user cancels instead, nothing else will ever
-  // move that status off installing/compiling — flip it to 'error' here so
-  // the status pill/spinner doesn't spin forever. installPlugin retries
-  // aren't tied to a compilation status, so they're left alone.
-  const handleCancel = () => {
-    dispatch(approvalCancelled());
-    if (retry && (retry.endpoint === 'install' || retry.endpoint === 'compile')) {
-      const body = retry.body as
-        | { pathOrUrl?: string; pluginId?: string }
-        | undefined;
-      if (body?.pathOrUrl && body.pluginId) {
-        dispatch(
-          setCompilationStatus({
-            repoPath: body.pathOrUrl,
-            frameworkId: body.pluginId,
-            status: 'error',
-            error: `Permission denied: ${pluginId} was not granted '${permission}'`,
-          })
-        );
-      }
-    }
-  };
-
   return (
     <ConfirmDialog
       open={!inFlight}
       onOpenChange={(open) => {
         // approvalCancelled is a no-op in the reducer while the grant is in
         // flight, so the synchronous close ConfirmDialog fires right after
-        // onConfirm doesn't clear the reserved approval.
-        if (!open) handleCancel();
+        // onConfirm doesn't clear the reserved approval. Any side effect of
+        // a real cancel (e.g. unsticking a compile status left at
+        // 'installing'/'compiling' for a permission retry) lives in
+        // jobsEffects' approvalCancelled listener, which fires only when the
+        // reducer actually cleared pendingApproval — not on the synchronous
+        // close after Allow.
+        if (!open) dispatch(approvalCancelled());
       }}
       title={`Allow ${pluginId}?`}
       description={`The plugin ${pluginId} wants to ${PERMISSION_COPY[permission]}. Only approve plugins you trust — this permission persists until you revoke it.`}
