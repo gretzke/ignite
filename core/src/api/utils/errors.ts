@@ -1,12 +1,13 @@
 import type { FastifyReply } from 'fastify';
 import type { IApiError } from '@ignite/api';
 import type { PluginResponse } from '@ignite/plugin-types/types';
+import type { ErrorCode } from '../../types/errors.js';
 
 // Reply with an error built from a failed plugin response
 export function sendPluginError(
   reply: FastifyReply,
   result: PluginResponse<unknown>,
-  fallbackCode: string,
+  fallbackCode: ErrorCode,
   fallbackMessage: string,
   statusCode: 404 | 500 = 500
 ) {
@@ -25,7 +26,7 @@ export function sendPluginError(
 export function sendCaughtError(
   reply: FastifyReply,
   error: unknown,
-  code: string,
+  code: ErrorCode,
   message: string
 ) {
   const body: IApiError = {
@@ -41,7 +42,7 @@ export function sendCaughtError(
 // Reply with a 400 Bad Request
 export function sendBadRequest(
   reply: FastifyReply,
-  code: string,
+  code: ErrorCode,
   message: string
 ) {
   const body: IApiError = {
