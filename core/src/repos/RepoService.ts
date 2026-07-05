@@ -13,6 +13,7 @@ import { FileSystem } from '../filesystem/FileSystem.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { hashWorkspacePath } from '../utils/startup.js';
 import { runCommand, type RunCommandResult } from '../utils/runCommand.js';
+import { getLogger } from '../utils/logger.js';
 
 export enum RepoKind {
   LOCAL = 'local',
@@ -255,19 +256,24 @@ export class RepoService {
         };
       }
 
+      // Fetch the full set of remote heads so non-default branches show up in
+      // getBranches. This is best-effort and NOT gated: the reference plugin
+      // (cloned-repo/index.ts) fires this fetch and ignores its result, and
+      // gating init on it would be actively harmful — a transient network
+      // blip after a successful clone would return CLONE_FAILED, yet a retry
+      // short-circuits on the already-present clone (isGitRepo === true) and
+      // reports success WITHOUT ever re-fetching, permanently stranding the
+      // clone missing its non-default branches. Log and move on; a later
+      // init/getBranches/checkout re-runs `fetch --all` and recovers.
       const fetchHeads = await this.runGit(
         workspacePath,
         ['fetch', 'origin', '+refs/heads/*:refs/remotes/origin/*'],
         TIMEOUT_FETCH_MS
       );
       if (!fetchHeads.success) {
-        return {
-          success: false,
-          error: {
-            code: 'CLONE_FAILED',
-            message: `Cloned but failed to fetch remote heads: ${fetchHeads.error.message}`,
-          },
-        };
+        getLogger().warn(
+          `Cloned ${pathOrUrl} but failed to fetch all remote heads (non-default branches may be missing until the next fetch): ${fetchHeads.error.message}`
+        );
       }
 
       return { success: true, data: null };
@@ -474,10 +480,10 @@ export class RepoService {
       const target = path.join(cwd, filePath);
       const resolvedRoot = path.resolve(cwd);
       const resolvedTarget = path.resolve(target);
-      // Defense in depth: even though validateFilePath already rejects any
+      // Lexical containment: even though validateFilePath already rejects any
       // segment that could escape the root, re-derive containment from the
-      // resolved absolute path before touching the filesystem — this is host
-      // disk now, not a throwaway container filesystem.
+      // resolved absolute path before touching disk. Fast reject that runs
+      // before any filesystem access.
       if (
         resolvedTarget !== resolvedRoot &&
         !resolvedTarget.startsWith(resolvedRoot + path.sep)
@@ -488,10 +494,59 @@ export class RepoService {
         };
       }
 
+      // Symlink-aware containment. Lexical checks and fs.stat/readFile follow
+      // symlinks at the OS level, so a committed symlink (leaf OR an
+      // intermediate path component) pointing outside the workspace would
+      // otherwise leak arbitrary host files (~/.ssh/id_rsa, /etc/passwd, …).
+      // For CLONED repos the working tree is fully attacker-controlled (any
+      // public repo can commit such a symlink), and on the host this is the
+      // ONLY containment jail — the old container jail is gone. Resolve BOTH
+      // the root and the target to their real paths (the root too: on macOS
+      // /tmp is itself a symlink to /private/tmp) and require the real target
+      // to still live inside the real root. In-tree symlinks that resolve
+      // back inside the workspace are allowed; anything escaping is refused
+      // with SUSPICIOUS_PATH_PATTERN (an explicit containment refusal, NOT
+      // FILE_NOT_FOUND — the file may well exist, we're declining to read it).
+      let realRoot: string;
+      try {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: resolvedRoot is FileSystem.getReposPath-derived or the LOCAL repo path
+        realRoot = await fs.realpath(resolvedRoot);
+      } catch (error) {
+        if ((error as { code?: string }).code === 'ENOENT') {
+          return {
+            success: false,
+            error: { code: 'FILE_NOT_FOUND', message: `File not found: ${filePath}` },
+          };
+        }
+        throw error;
+      }
+      let realTarget: string;
+      try {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: containment is enforced against realRoot immediately below, before any read
+        realTarget = await fs.realpath(resolvedTarget);
+      } catch (error) {
+        if ((error as { code?: string }).code === 'ENOENT') {
+          return {
+            success: false,
+            error: { code: 'FILE_NOT_FOUND', message: `File not found: ${filePath}` },
+          };
+        }
+        throw error;
+      }
+      if (realTarget !== realRoot && !realTarget.startsWith(realRoot + path.sep)) {
+        return {
+          success: false,
+          error: {
+            code: 'SUSPICIOUS_PATH_PATTERN',
+            message: 'File path resolves outside the repository (symlink escape)',
+          },
+        };
+      }
+
       let stats;
       try {
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: resolvedTarget containment is checked above
-        stats = await fs.stat(resolvedTarget);
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: realTarget containment is checked above
+        stats = await fs.stat(realTarget);
       } catch (error) {
         if ((error as { code?: string }).code === 'ENOENT') {
           return {
@@ -508,8 +563,8 @@ export class RepoService {
         };
       }
 
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: resolvedTarget containment is checked above
-      const content = await fs.readFile(resolvedTarget, 'utf8');
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: realTarget containment is checked above
+      const content = await fs.readFile(realTarget, 'utf8');
       return { success: true, data: { content } };
     } catch (error) {
       return { success: false, error: { code: 'FILE_READ_ERROR', message: errMsg(error) } };

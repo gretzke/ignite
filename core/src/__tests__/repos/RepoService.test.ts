@@ -182,7 +182,18 @@ describe('resolveWorkspacePath', () => {
 });
 
 describe('git invocation safety', () => {
-  it('every git call disables hooks and sets the protocol allowlist', async () => {
+  function assertRailsOnEveryCall(
+    calls: { cmd: string; args: string[]; opts: Parameters<typeof runCommand>[2] }[]
+  ): void {
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call.cmd).toBe('git');
+      expect(call.args.slice(0, 2)).toEqual(['-c', 'core.hooksPath=/dev/null']);
+      expect(call.opts?.env?.GIT_ALLOW_PROTOCOL).toBe('https:git:ssh:file');
+    }
+  }
+
+  it('read op (getBranches) disables hooks and sets the protocol allowlist on every call', async () => {
     const dir = await mkTmp('ignite-local-');
     await initRepo(dir);
     const { spy, calls } = makeRunSpy();
@@ -191,12 +202,43 @@ describe('git invocation safety', () => {
     const result = await svc.getBranches(dir);
 
     expect(result.success).toBe(true);
-    expect(calls.length).toBeGreaterThan(0);
-    for (const call of calls) {
-      expect(call.cmd).toBe('git');
-      expect(call.args.slice(0, 2)).toEqual(['-c', 'core.hooksPath=/dev/null']);
-      expect(call.opts?.env?.GIT_ALLOW_PROTOCOL).toBe('https:git:ssh:file');
-    }
+    assertRailsOnEveryCall(calls);
+  });
+
+  it('clone (CLONED init) applies the rails on every call, including the clone itself', async () => {
+    const remoteDir = await initRemoteWithBranches();
+    const url = scpLikeCloneSource(remoteDir);
+
+    await withFileInsteadOf(url, remoteDir, async () => {
+      const { spy, calls } = makeRunSpy();
+      const svc = await newService({ run: spy });
+
+      const result = await svc.init(url);
+
+      expect(result).toEqual({ success: true, data: null });
+      assertRailsOnEveryCall(calls);
+      // The clone invocation specifically must carry the rails.
+      const cloneCall = calls.find((c) => c.args.includes('clone'));
+      expect(cloneCall).toBeDefined();
+      expect(cloneCall?.args.slice(0, 2)).toEqual(['-c', 'core.hooksPath=/dev/null']);
+      expect(cloneCall?.opts?.env?.GIT_ALLOW_PROTOCOL).toBe('https:git:ssh:file');
+    });
+  });
+
+  it('checkout op applies the rails on every call', async () => {
+    const dir = await mkTmp('ignite-local-');
+    await initRepo(dir);
+    git(dir, ['checkout', '-q', '-b', 'feature']);
+    git(dir, ['checkout', '-q', 'main']);
+    const { spy, calls } = makeRunSpy();
+    const svc = await newService({ run: spy });
+
+    const result = await svc.checkoutBranch(dir, 'feature');
+
+    expect(result).toEqual({ success: true, data: null });
+    assertRailsOnEveryCall(calls);
+    const checkoutCall = calls.find((c) => c.args.includes('checkout'));
+    expect(checkoutCall).toBeDefined();
   });
 });
 
@@ -263,6 +305,34 @@ describe('init', () => {
 
       expect(infoAfter).toEqual(infoBefore);
       expect((await fs.stat(workspacePath)).isDirectory()).toBe(true);
+    });
+  });
+
+  it('CLONED: post-clone remote-heads fetch failure is non-fatal (clone still usable)', async () => {
+    const remoteDir = await initRemoteWithBranches();
+    const url = scpLikeCloneSource(remoteDir);
+
+    await withFileInsteadOf(url, remoteDir, async () => {
+      // Pass everything through to real git EXCEPT the remote-heads fetch,
+      // which we force to fail — simulating a transient network blip that
+      // lands after a successful clone. init must NOT report failure, or a
+      // retry would short-circuit on the already-present clone and never
+      // recover.
+      const run = ((cmd: string, args: string[], opts?: Parameters<typeof runCommand>[2]) => {
+        if (args.includes('fetch') && args.includes('+refs/heads/*:refs/remotes/origin/*')) {
+          return Promise.resolve({ stdout: '', stderr: 'simulated fetch failure', code: 1 });
+        }
+        return runCommand(cmd, args, opts);
+      }) as typeof runCommand;
+
+      const svc = await newService({ run });
+      const result = await svc.init(url);
+
+      expect(result).toEqual({ success: true, data: null });
+      const workspacePath = await svc.resolveWorkspacePath(url);
+      expect((await fs.stat(workspacePath)).isDirectory()).toBe(true);
+      // The clone is a real, usable git repo despite the failed fetch.
+      expect(git(workspacePath, ['rev-parse', '--is-inside-work-tree']).trim()).toBe('true');
     });
   });
 });
@@ -638,6 +708,57 @@ describe('getFile', () => {
       success: true,
       data: { content: 'workspace-local, not the real /etc/passwd\n' },
     });
+  });
+
+  it('refuses a committed symlink whose leaf points outside the workspace', async () => {
+    const { dir, svc } = await makeWorkspace();
+    // A secret file living OUTSIDE the repo (the attacker's real target).
+    const secretDir = await mkTmp('ignite-secret-');
+    const secretFile = path.join(secretDir, 'secret.txt');
+    await fs.writeFile(secretFile, 'TOP SECRET — must never be read via getFile\n');
+    // Commit a symlink inside the repo that points at it (any public repo can
+    // do this). fs.stat/readFile would follow it at the OS level absent a
+    // realpath-based containment check.
+    await fs.symlink(secretFile, path.join(dir, 'evil-link'));
+    commitAll(dir, 'add evil symlink');
+
+    const result = await svc.getFile(dir, 'evil-link');
+
+    // An explicit containment refusal, NOT FILE_NOT_FOUND (the file exists;
+    // we decline to read it).
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.code).toBe('SUSPICIOUS_PATH_PATTERN');
+  });
+
+  it('refuses a symlink escape via an intermediate path component', async () => {
+    const { dir, svc } = await makeWorkspace();
+    const secretDir = await mkTmp('ignite-secret-');
+    await fs.writeFile(path.join(secretDir, 'creds'), 'aws creds\n');
+    // A directory symlink inside the repo pointing outside; the leaf name
+    // ('creds') is a normal segment, so only realpath resolution catches it.
+    await fs.symlink(secretDir, path.join(dir, 'outside'));
+    commitAll(dir, 'add evil dir symlink');
+
+    const result = await svc.getFile(dir, 'outside/creds');
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.code).toBe('SUSPICIOUS_PATH_PATTERN');
+  });
+
+  it('allows an in-tree symlink that resolves back inside the workspace', async () => {
+    const { dir, svc } = await makeWorkspace();
+    // Decision: in-tree symlinks are permitted — only escapes are refused.
+    // A symlink to another file within the workspace resolves to a contained
+    // realpath and is read normally.
+    await fs.symlink(
+      path.join(dir, 'nested', 'dir', 'file.txt'),
+      path.join(dir, 'in-tree-link')
+    );
+    commitAll(dir, 'add in-tree symlink');
+
+    const result = await svc.getFile(dir, 'in-tree-link');
+
+    expect(result).toEqual({ success: true, data: { content: 'content\n' } });
   });
 });
 
