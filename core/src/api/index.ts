@@ -16,6 +16,7 @@ import { trustHandlers } from './plugins/trust.js';
 import { installHandlers } from './plugins/install.js';
 import { compilerHandlers } from './plugins/compiler/index.js';
 import { repoManagerHandlers } from './plugins/repo-manager/index.js';
+import { filesystemHandlers } from './filesystem.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
@@ -46,6 +47,7 @@ export async function registerApi(app: FastifyInstance) {
         { name: 'profiles', description: 'Profile management' },
         { name: 'plugins', description: 'Plugin management and execution' },
         { name: 'compiler', description: 'Compiler plugin operations' },
+        { name: 'filesystem', description: 'Host filesystem browsing' },
       ],
     },
     transform: jsonSchemaTransform,
@@ -79,6 +81,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...installHandlers,
     ...compilerHandlers,
     ...repoManagerHandlers,
+    ...filesystemHandlers,
   };
 
   checkHandlers(allHandlers);
