@@ -6,6 +6,10 @@ import { PluginAssetLoader } from '../../assets/PluginAssetLoader.js';
 import { ContainerOrchestrator } from '../containers/ContainerOrchestrator.js';
 import { getLogger } from '../../utils/logger.js';
 import type { PluginOrigin } from '../../assets/PluginRegistryLoader.js';
+import {
+  createDockerStreamDemuxer,
+  parsePluginOutput,
+} from './pluginTransport.js';
 
 // Utility class for executing plugin operations in containers
 export class PluginExecutionUtils {
@@ -96,120 +100,27 @@ export class PluginExecutionUtils {
             );
           }, timeoutMs);
 
-          let output = '';
-          let stderr = '';
-          // Buffer for robust Docker stream demultiplexing
-          let muxBuffer: Buffer = Buffer.alloc(0);
-          let multiplexingMode: 'unknown' | 'multiplexed' | 'raw' = 'unknown';
+          const demux = createDockerStreamDemuxer();
 
-          // Handle both stdout and stderr with robust demultiplexing
-          stream.on('data', (chunk: Buffer) => {
-            // Accumulate chunks into buffer
-            muxBuffer = Buffer.concat([muxBuffer, chunk]);
-
-            // Decide mode if unknown and enough bytes
-            if (multiplexingMode === 'unknown' && muxBuffer.length >= 8) {
-              const looksLikeHeader =
-                (muxBuffer[0] === 0 ||
-                  muxBuffer[0] === 1 ||
-                  muxBuffer[0] === 2) &&
-                muxBuffer[1] === 0 &&
-                muxBuffer[2] === 0 &&
-                muxBuffer[3] === 0;
-              multiplexingMode = looksLikeHeader ? 'multiplexed' : 'raw';
-            }
-
-            if (multiplexingMode === 'raw') {
-              output += muxBuffer.toString('utf8');
-              muxBuffer = Buffer.alloc(0);
-              return;
-            }
-
-            // Parse multiplexed frames: [stream(1), 0,0,0, len(4), payload]
-            while (muxBuffer.length >= 8) {
-              const streamType = muxBuffer[0];
-              const z1 = muxBuffer[1];
-              const z2 = muxBuffer[2];
-              const z3 = muxBuffer[3];
-              const len = muxBuffer.readUInt32BE(4);
-
-              const headerValid =
-                (streamType === 0 || streamType === 1 || streamType === 2) &&
-                z1 === 0 &&
-                z2 === 0 &&
-                z3 === 0;
-              if (!headerValid) {
-                // Fallback to raw mode to avoid corrupting payload
-                multiplexingMode = 'raw';
-                output += muxBuffer.toString('utf8');
-                muxBuffer = Buffer.alloc(0);
-                break;
-              }
-
-              if (muxBuffer.length < 8 + len) {
-                // Wait for more data
-                break;
-              }
-
-              const payload = muxBuffer.subarray(8, 8 + len);
-              if (streamType === 2) {
-                stderr += payload.toString('utf8');
-              } else if (streamType === 1) {
-                output += payload.toString('utf8');
-              }
-              // stdin (0) ignored
-
-              muxBuffer = muxBuffer.subarray(8 + len);
-            }
-          });
+          stream.on('data', (chunk: Buffer) => demux.push(chunk));
 
           stream.on('end', () => {
+            const { stdout, stderr } = demux.result();
+            getLogger().debug(
+              `🔍 Plugin stdout (${pluginId}): "${stdout.slice(0, 2000)}"`
+            );
+            getLogger().debug(
+              `🔍 Plugin stderr (${pluginId}): "${stderr.slice(0, 2000)}"`
+            );
             try {
-              // Debug-level + truncated: plugin output can be large and may
-              // echo repository contents
-              getLogger().debug(
-                `🔍 Plugin stdout (${pluginId}): "${output.slice(0, 2000)}"`
+              settle(
+                resolve,
+                parsePluginOutput(stdout, stderr) as PluginResponse<TResult>
               );
-              getLogger().debug(
-                `🔍 Plugin stderr (${pluginId}): "${stderr.slice(0, 2000)}"`
-              );
-
-              // Parse JSON response from plugin
-              // Clean the output to remove any binary characters or control sequences
-              const cleanOutput = output
-                .split('')
-                .filter((char) => {
-                  const code = char.charCodeAt(0);
-                  return (code >= 32 && code <= 126) || code >= 160;
-                })
-                .join('')
-                .trim();
-
-              const jsonMatch = cleanOutput.match(/\{.*\}/s);
-              if (jsonMatch) {
-                try {
-                  const result = JSON.parse(jsonMatch[0]);
-                  settle(resolve, result);
-                } catch (parseError) {
-                  settle(
-                    reject,
-                    new Error(
-                      `JSON parse error: ${parseError}. Clean output: "${cleanOutput}"`
-                    )
-                  );
-                }
-              } else {
-                settle(
-                  reject,
-                  new Error(
-                    `Invalid plugin output format. Clean output: "${cleanOutput}", stderr: "${stderr}"`
-                  )
-                );
-              }
             } catch (error) {
               settle(
                 reject,
-                new Error(`Failed to parse plugin output: ${error}`)
+                error instanceof Error ? error : new Error(String(error))
               );
             }
           });

@@ -2,6 +2,7 @@
 import type { PluginResponse } from "./types.js";
 import type { CompilerOperations } from "./base/compiler/types.js";
 import type { RepoManagerOperations } from "./base/repo-manager/types.js";
+import { frameResult } from "./utils/protocol.js";
 
 // Union of all operation types
 type AllOperations = CompilerOperations & RepoManagerOperations;
@@ -85,20 +86,16 @@ export async function runPluginCLI<T extends keyof AllOperations>(
 
     if (!operationStr) {
       console.log(
-        JSON.stringify(
-          {
-            success: false,
-            error: {
-              code: "NO_OPERATION_SPECIFIED",
-              message: "No operation specified",
-              details: {
-                instructions: process.argv,
-              },
+        frameResult({
+          success: false,
+          error: {
+            code: "NO_OPERATION_SPECIFIED",
+            message: "No operation specified",
+            details: {
+              instructions: process.argv,
             },
           },
-          null,
-          2,
-        ),
+        }),
       );
       return;
     }
@@ -117,25 +114,21 @@ export async function runPluginCLI<T extends keyof AllOperations>(
     };
 
     const result = await executePluginOperation(plugin, request);
-    console.log(JSON.stringify(result, null, 2));
+    console.log(frameResult(result));
   } catch (error) {
     console.log(
-      JSON.stringify(
-        {
-          success: false,
-          error: {
-            code: "CLI_EXECUTION_FAILED",
-            message: `CLI execution failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            details: {
-              stack: error instanceof Error ? error.stack : undefined,
-            },
+      frameResult({
+        success: false,
+        error: {
+          code: "CLI_EXECUTION_FAILED",
+          message: `CLI execution failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          details: {
+            stack: error instanceof Error ? error.stack : undefined,
           },
         },
-        null,
-        2,
-      ),
+      }),
     );
   }
 }

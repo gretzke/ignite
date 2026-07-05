@@ -3,3 +3,4 @@ export * from "./base-plugin.js";
 export * from "./base/index.js";
 export * from "./plugin-runner.js";
 export * from "./utils/gitUrl.js";
+export * from "./utils/protocol.js";
