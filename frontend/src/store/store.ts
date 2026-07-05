@@ -14,6 +14,7 @@ import { compilerReducer } from './features/compiler/compilerSlice';
 import { filesReducer } from './features/files/filesSlice';
 import { trustReducer } from './features/plugins/trustSlice';
 import { pluginsReducer } from './features/plugins/pluginsSlice';
+import { jobsReducer } from './features/jobs/jobsSlice';
 import { apiGate } from './middleware/apiGate';
 import { uiEffects } from './middleware/uiEffects';
 import { repositoriesEffects } from './middleware/repositoriesEffects';
@@ -30,6 +31,7 @@ export const store = configureStore({
     files: filesReducer,
     trust: trustReducer,
     plugins: pluginsReducer,
+    jobs: jobsReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({ serializableCheck: false })
