@@ -3,20 +3,27 @@ import Docker from 'dockerode';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 import type { PluginBuildResult } from './types.js';
 import { INSTALLED_PLUGIN_ENTRYPOINT } from './types.js';
+import { parsePluginOutput } from '../utils/pluginTransport.js';
 
 // A misbehaving/hung plugin entrypoint must not wedge the install (or leak the
 // temp container) forever.
 const DESCRIBE_TIMEOUT_MS = 30_000;
 
 // Pure: extract and validate the metadata JSON emitted by the image's getInfo
-// operation. Accepts a bare metadata object or a { data: metadata } envelope.
+// operation via the shared sentinel-first parser (legacy brace-regex fallback
+// for images built before the framing protocol). Accepts a bare metadata
+// object or a { data: metadata } envelope.
 export function parsePluginMetadata(logText: string): PluginMetadata {
-  const match = logText.match(/\{[\s\S]*\}/);
-  if (!match) {
-    throw new Error('Could not read plugin metadata from image output');
+  let parsed: unknown;
+  try {
+    parsed = parsePluginOutput(logText, '');
+  } catch (error) {
+    throw new Error(
+      `Could not read plugin metadata from image output: ${error}`
+    );
   }
-  const parsed = JSON.parse(match[0]);
-  const meta = parsed.data ?? parsed;
+  const envelope = parsed as { data?: unknown } | null;
+  const meta = (envelope?.data ?? parsed) as Partial<PluginMetadata> | null;
   if (!meta?.id || !meta?.type) {
     throw new Error('Plugin metadata missing id/type in image output');
   }

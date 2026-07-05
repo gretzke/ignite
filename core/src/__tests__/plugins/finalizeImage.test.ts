@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { RESULT_BEGIN, RESULT_END } from '@ignite/plugin-types';
 import { parsePluginMetadata } from '../../plugins/install/finalizeImage.js';
 
 describe('parsePluginMetadata', () => {
@@ -27,5 +28,14 @@ describe('parsePluginMetadata', () => {
     expect(() => parsePluginMetadata('{"id":"waffle"}')).toThrow(
       /missing id\/type/i
     );
+  });
+
+  it('prefers a sentinel-framed envelope over stray braces in the log', () => {
+    const framed =
+      'npm warn config {"not":"the result"}\n' +
+      `${RESULT_BEGIN}{"success":true,"data":{"id":"stub","type":"compiler","name":"Stub","version":"1.2.3","baseImage":"unused"}}${RESULT_END}\n`;
+    const meta = parsePluginMetadata(framed);
+    expect(meta.id).toBe('stub');
+    expect(meta.version).toBe('1.2.3');
   });
 });
