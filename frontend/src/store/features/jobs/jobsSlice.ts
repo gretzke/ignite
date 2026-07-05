@@ -64,6 +64,19 @@ function jobRecordToView(job: JobRecord): JobView {
   };
 }
 
+// Merge a snapshot record into byId, preserving lastSeq monotonicity: if a
+// view already exists and has seen events at least as new as the incoming
+// record (existing lastSeq >= the record's derived lastSeq), keep the
+// existing view — a stale REST list response or duplicate snapshot resolving
+// after live WS events must not snap state/logTail/lastSeq backward. When
+// the incoming record is newer, replace the view wholesale.
+function mergeSnapshot(state: IJobsState, job: JobRecord): void {
+  const incoming = jobRecordToView(job);
+  const existing = state.byId[job.id];
+  if (existing && incoming.lastSeq <= existing.lastSeq) return;
+  state.byId[job.id] = incoming;
+}
+
 function applyEvent(view: JobView, event: JobEvent): void {
   // Idempotent replay guard: snapshot-then-events and reconnect/resubscribe
   // can both redeliver events we've already applied.
@@ -85,9 +98,10 @@ const jobsSlice = createSlice({
   initialState,
   reducers: {
     // Full record snapshot, sent immediately on WS subscribe (and available
-    // for bulk list responses via jobsLoaded below).
+    // for bulk list responses via jobsLoaded below). Skipped if the existing
+    // view is already at least as fresh (see mergeSnapshot).
     jobSnapshotReceived(state, action: PayloadAction<JobRecord>) {
-      state.byId[action.payload.id] = jobRecordToView(action.payload);
+      mergeSnapshot(state, action.payload);
     },
     // Live/replayed event for a job. Unknown jobId means the snapshot for it
     // hasn't arrived yet (or never will, e.g. server restart edge cases) —
@@ -134,10 +148,11 @@ const jobsSlice = createSlice({
         logTail: [],
       };
     },
-    // Bulk snapshot-map, e.g. from a REST list-jobs response. Merges by id.
+    // Bulk snapshot-map, e.g. from a REST list-jobs response. Merges by id;
+    // per-job, an already-fresher view wins (see mergeSnapshot).
     jobsLoaded(state, action: PayloadAction<JobRecord[]>) {
       for (const job of action.payload) {
-        state.byId[job.id] = jobRecordToView(job);
+        mergeSnapshot(state, job);
       }
     },
   },

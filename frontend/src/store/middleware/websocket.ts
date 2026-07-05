@@ -24,10 +24,48 @@ export const wsSend = createAction<unknown>('ws/send');
 // Server → client frame shapes we care about (see phase2-shared-design.md).
 // Other frame types (e.g. 'connected', 'error') are intentionally ignored
 // here.
-type ServerFrame =
-  | { type: 'job-snapshot'; job: JobRecord }
-  | { type: 'job-event'; jobId: string; event: JobEvent }
-  | { type: string; [key: string]: unknown };
+interface JobSnapshotFrame {
+  type: 'job-snapshot';
+  job: JobRecord;
+}
+
+interface JobEventFrame {
+  type: 'job-event';
+  jobId: string;
+  event: JobEvent;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+// Minimal shape guards at the transport boundary: a malformed frame that
+// parses as JSON but lacks required fields must not reach the reducers
+// (e.g. a job-event without a numeric seq would poison the idempotency
+// guard; a snapshot without a job object would throw in the reducer).
+// Frames failing these checks are silently ignored, consistent with the
+// ignore-unknown-frame-types policy.
+function isJobSnapshotFrame(
+  frame: Record<string, unknown>
+): frame is Record<string, unknown> & JobSnapshotFrame {
+  return (
+    frame.type === 'job-snapshot' &&
+    isRecord(frame.job) &&
+    typeof frame.job.id === 'string'
+  );
+}
+
+function isJobEventFrame(
+  frame: Record<string, unknown>
+): frame is Record<string, unknown> & JobEventFrame {
+  return (
+    frame.type === 'job-event' &&
+    typeof frame.jobId === 'string' &&
+    isRecord(frame.event) &&
+    typeof frame.event.seq === 'number' &&
+    typeof frame.event.kind === 'string'
+  );
+}
 
 export const websocketMiddleware: Middleware = (store) => {
   let ws: WebSocket | null = null;
@@ -75,31 +113,22 @@ export const websocketMiddleware: Middleware = (store) => {
         store.dispatch(setStatus(ConnectionStatus.CONNECTED));
       };
       ws.onmessage = (messageEvent: MessageEvent) => {
-        let frame: ServerFrame;
+        let parsed: unknown;
         try {
-          frame = JSON.parse(messageEvent.data as string) as ServerFrame;
+          parsed = JSON.parse(messageEvent.data as string);
         } catch {
           // Unparseable frame; ignore.
           return;
         }
-        switch (frame.type) {
-          case 'job-snapshot':
-            store.dispatch(
-              jobSnapshotReceived((frame as { job: JobRecord }).job)
-            );
-            break;
-          case 'job-event': {
-            const { jobId, event } = frame as {
-              jobId: string;
-              event: JobEvent;
-            };
-            store.dispatch(jobEventReceived({ jobId, event }));
-            break;
-          }
-          default:
-            // 'connected', 'error', or unknown frame types: nothing to do here.
-            break;
+        if (!isRecord(parsed)) return;
+        if (isJobSnapshotFrame(parsed)) {
+          store.dispatch(jobSnapshotReceived(parsed.job));
+        } else if (isJobEventFrame(parsed)) {
+          store.dispatch(
+            jobEventReceived({ jobId: parsed.jobId, event: parsed.event })
+          );
         }
+        // 'connected', 'error', unknown, or malformed frame types: ignored.
       };
       ws.onclose = () => {
         scheduleReconnect();
