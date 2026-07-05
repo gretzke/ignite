@@ -81,7 +81,7 @@ const TIMEOUT_LOCAL_MS = 30 * 1000;
 // which can execute an arbitrary host command / inherit an arbitrary fd) is
 // rejected before any git invocation. scp-like `git@host:path` is the fourth
 // accepted form alongside the three URL schemes plus file://.
-function isAllowedCloneUrl(url: string): boolean {
+export function isAllowedCloneUrl(url: string): boolean {
   return (
     /^https:\/\//i.test(url) ||
     /^git:\/\//i.test(url) ||

@@ -1,3 +1,6 @@
+// Repo-manager route handlers — thin wrappers over RepoService (host git).
+// `init` is the one job-backed op (cloning is slow/network-bound); every
+// other op is fast on host disk and stays synchronous.
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import {
   RepoCheckoutBranchOptions,
@@ -8,229 +11,250 @@ import {
   RepoGetFileResult,
 } from '@ignite/plugin-types/base/repo-manager';
 import type { PathOptions } from '@ignite/plugin-types';
-import type { IApiError, IApiResponse } from '@ignite/api';
-import { z } from 'zod';
-import { PluginExecutor } from '../../../plugins/containers/PluginExecutor.js';
+import type { IApiResponse, JobStartedData } from '@ignite/api';
+import type { z } from 'zod';
 import {
-  RepoContainerUtils,
-  RepoContainerKind,
-} from '../../../plugins/utils/RepoContainerUtils.js';
+  RepoService,
+  RepoKind,
+  deriveRepoKind,
+  isAllowedCloneUrl,
+  type RepoResult,
+} from '../../../repos/RepoService.js';
+import { JobManager } from '../../../jobs/JobManager.js';
+import { ErrorCodes, type ErrorCode } from '../../../types/errors.js';
+import { sendPluginError, sendBadRequest } from '../../utils/errors.js';
 
-// Helper function to determine correct repo plugin based on path
-function getRepoPluginId(pathOrUrl: string): string {
-  const repoKind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
-  return repoKind === RepoContainerKind.LOCAL ? 'local-repo' : 'cloned-repo';
+// Subsets of the real singletons the handlers depend on — narrow enough that
+// tests can inject fakes without implementing the full classes.
+export interface RepoServiceLike {
+  init: RepoService['init'];
+  getBranches: RepoService['getBranches'];
+  checkoutBranch: RepoService['checkoutBranch'];
+  checkoutCommit: RepoService['checkoutCommit'];
+  pullChanges: RepoService['pullChanges'];
+  reset: RepoService['reset'];
+  getRepoInfo: RepoService['getRepoInfo'];
+  getFile: RepoService['getFile'];
 }
 
-export const repoManagerHandlers = {
-  init: async (
-    request: FastifyRequest<{ Body: PathOptions }>,
-    reply: FastifyReply
-  ): Promise<z.ZodNull> => {
-    const executor = PluginExecutor.getInstance();
-    const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await executor.execute(pluginId, 'init', {
-      pathOrUrl: request.body.pathOrUrl,
-    });
-    if (!result.success) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: result.error?.code || 'INIT_ERROR',
-        message: result.error?.message || 'Failed to init repository',
-        details: result.error?.details,
-      };
-      return reply.status(statusCode).send(body);
-    }
-    return reply.status(204).send(null);
-  },
+export interface RepoJobManagerLike {
+  start: JobManager['start'];
+}
 
-  getBranches: async (
-    request: FastifyRequest<{ Body: PathOptions }>,
-    reply: FastifyReply
-  ): Promise<IApiResponse<RepoGetBranchesResult>> => {
-    const executor = PluginExecutor.getInstance();
-    const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await executor.execute(pluginId, 'getBranches', {
-      pathOrUrl: request.body.pathOrUrl,
-    });
-    if (!result.success) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: result.error?.code || 'GET_BRANCHES_ERROR',
-        message: result.error?.message || 'Failed to get branches',
-        details: result.error?.details,
-      };
-      return reply.status(statusCode).send(body);
-    }
-    const body: IApiResponse<RepoGetBranchesResult> = {
-      data: result.data as RepoGetBranchesResult,
-    };
-    return reply.status(200).send(body);
-  },
+export interface RepoHandlerDeps {
+  repos: RepoServiceLike;
+  jobs: RepoJobManagerLike;
+}
 
-  checkoutBranch: async (
-    request: FastifyRequest<{ Body: PathOptions & RepoCheckoutBranchOptions }>,
-    reply: FastifyReply
-  ): Promise<z.ZodNull> => {
-    const executor = PluginExecutor.getInstance();
-    const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await executor.execute(pluginId, 'checkoutBranch', {
-      pathOrUrl: request.body.pathOrUrl,
-      branch: request.body.branch,
-    });
-    if (!result.success) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: result.error?.code || 'CHECKOUT_BRANCH_ERROR',
-        message: result.error?.message || 'Failed to checkout branch',
-        details: result.error?.details,
-      };
-      return reply.status(statusCode).send(body);
-    }
-    return reply.status(204).send(null);
-  },
+// Every non-init op stays a flat 500 on failure, matching the old
+// plugin-executor handlers exactly — only getFile (below) has a richer
+// status-code mapping.
+function sendRepoError<T>(
+  reply: FastifyReply,
+  result: RepoResult<T>,
+  fallbackCode: ErrorCode,
+  fallbackMessage: string,
+  statusCode: 404 | 500 = 500
+) {
+  return sendPluginError(
+    reply,
+    result,
+    fallbackCode,
+    fallbackMessage,
+    statusCode
+  );
+}
 
-  checkoutCommit: async (
-    request: FastifyRequest<{ Body: PathOptions & RepoCheckoutCommitOptions }>,
-    reply: FastifyReply
-  ): Promise<z.ZodNull> => {
-    const executor = PluginExecutor.getInstance();
-    const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await executor.execute(pluginId, 'checkoutCommit', {
-      pathOrUrl: request.body.pathOrUrl,
-      commit: request.body.commit,
-    });
-    if (!result.success) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: result.error?.code || 'CHECKOUT_COMMIT_ERROR',
-        message: result.error?.message || 'Failed to checkout commit',
-        details: result.error?.details,
-      };
-      return reply.status(statusCode).send(body);
-    }
-    return reply.status(204).send(null);
-  },
+export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
+  const d: RepoHandlerDeps = {
+    repos: deps?.repos ?? RepoService.getInstance(),
+    jobs: deps?.jobs ?? JobManager.getInstance(),
+  };
 
-  pullChanges: async (
-    request: FastifyRequest<{ Body: PathOptions }>,
-    reply: FastifyReply
-  ): Promise<z.ZodNull> => {
-    const executor = PluginExecutor.getInstance();
-    const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await executor.execute(pluginId, 'pullChanges', {
-      pathOrUrl: request.body.pathOrUrl,
-    });
-    if (!result.success) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: result.error?.code || 'PULL_ERROR',
-        message: result.error?.message || 'Failed to pull changes',
-        details: result.error?.details,
-      };
-      return reply.status(statusCode).send(body);
-    }
-    return reply.status(204).send(null);
-  },
+  return {
+    init: async (
+      request: FastifyRequest<{ Body: PathOptions }>,
+      reply: FastifyReply
+    ): Promise<IApiResponse<JobStartedData>> => {
+      const { pathOrUrl } = request.body;
 
-  resetRepo: async (
-    request: FastifyRequest<{ Body: PathOptions }>,
-    reply: FastifyReply
-  ): Promise<z.ZodNull> => {
-    const executor = PluginExecutor.getInstance();
-    const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await executor.execute(pluginId, 'reset', {
-      pathOrUrl: request.body.pathOrUrl,
-    });
-    if (!result.success) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: result.error?.code || 'RESET_ERROR',
-        message: result.error?.message || 'Failed to reset repository',
-        details: result.error?.details,
-      };
-      return reply.status(statusCode).send(body);
-    }
-    return reply.status(204).send(null);
-  },
-
-  getRepoInfo: async (
-    request: FastifyRequest<{ Body: PathOptions }>,
-    reply: FastifyReply
-  ): Promise<IApiResponse<RepoInfoResult>> => {
-    const executor = PluginExecutor.getInstance();
-    const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await executor.execute(pluginId, 'getRepoInfo', {
-      pathOrUrl: request.body.pathOrUrl,
-    });
-    if (!result.success) {
-      const statusCode = 500 as const;
-      const body: IApiError = {
-        statusCode,
-        error: 'Internal Server Error',
-        code: result.error?.code || 'INFO_ERROR',
-        message: result.error?.message || 'Failed to get repo info',
-        details: result.error?.details,
-      };
-      return reply.status(statusCode).send(body);
-    }
-    const body: IApiResponse<RepoInfoResult> = {
-      data: result.data as RepoInfoResult,
-    };
-    return reply.status(200).send(body);
-  },
-
-  getFile: async (
-    request: FastifyRequest<{ Body: PathOptions & RepoGetFileOptions }>,
-    reply: FastifyReply
-  ): Promise<IApiResponse<RepoGetFileResult>> => {
-    const executor = PluginExecutor.getInstance();
-    const pluginId = getRepoPluginId(request.body.pathOrUrl);
-    const result = await executor.execute(pluginId, 'getFile', {
-      pathOrUrl: request.body.pathOrUrl,
-      filePath: request.body.filePath,
-    });
-    if (!result.success) {
-      // Map specific error codes to appropriate HTTP status codes
-      let statusCode: 404 | 403 | 500 = 500;
-      if (result.error?.code === 'FILE_NOT_FOUND') {
-        statusCode = 404;
-      } else if (
-        result.error?.code === 'INVALID_PATH' ||
-        result.error?.code === 'SUSPICIOUS_PATH_PATTERN'
+      // Sync pre-flight: reject an unclonable URL scheme before a job is
+      // ever created (ext:: / fd:: and friends can execute arbitrary host
+      // commands or inherit arbitrary fds — never worth a round trip through
+      // the job machinery).
+      if (
+        deriveRepoKind(pathOrUrl) === RepoKind.CLONED &&
+        !isAllowedCloneUrl(pathOrUrl)
       ) {
-        statusCode = 403; // Forbidden
+        sendBadRequest(
+          reply,
+          ErrorCodes.INIT_ERROR,
+          `Refusing to clone repository: unsupported URL scheme in '${pathOrUrl}'. ` +
+            'Only https://, git://, ssh://, file://, and git@host:path are allowed.'
+        );
+        return reply as unknown as IApiResponse<JobStartedData>;
       }
 
-      const body: IApiError = {
-        statusCode,
-        error:
-          statusCode === 404
-            ? 'Not Found'
-            : statusCode === 403
-              ? 'Forbidden'
-              : 'Internal Server Error',
-        code: result.error?.code || 'GET_FILE_ERROR',
-        message: result.error?.message || 'Failed to get file',
-        details: result.error?.details,
-      };
-      return reply.status(statusCode).send(body);
-    }
-    const body: IApiResponse<RepoGetFileResult> = {
-      data: result.data as RepoGetFileResult,
-    };
-    return reply.status(200).send(body);
-  },
-} as const;
+      const job = d.jobs.start(
+        'repo.init',
+        { pathOrUrl },
+        async (ctx): Promise<null> => {
+          ctx.log(`Initializing repository ${pathOrUrl}...`);
+          const result = await d.repos.init(pathOrUrl);
+          if (!result.success) {
+            throw Object.assign(new Error(result.error.message), {
+              code: result.error.code,
+            });
+          }
+          ctx.log(`Repository ${pathOrUrl} initialized.`);
+          return null;
+        }
+      );
+
+      return reply.status(200).send({ data: { jobId: job.id } });
+    },
+
+    getBranches: async (
+      request: FastifyRequest<{ Body: PathOptions }>,
+      reply: FastifyReply
+    ): Promise<IApiResponse<RepoGetBranchesResult>> => {
+      const result = await d.repos.getBranches(request.body.pathOrUrl);
+      if (!result.success) {
+        return sendRepoError(
+          reply,
+          result,
+          ErrorCodes.GET_BRANCHES_ERROR,
+          'Failed to get branches'
+        );
+      }
+      return reply.status(200).send({ data: result.data });
+    },
+
+    checkoutBranch: async (
+      request: FastifyRequest<{
+        Body: PathOptions & RepoCheckoutBranchOptions;
+      }>,
+      reply: FastifyReply
+    ): Promise<z.ZodNull> => {
+      const { pathOrUrl, branch } = request.body;
+      const result = await d.repos.checkoutBranch(pathOrUrl, branch);
+      if (!result.success) {
+        return sendRepoError(
+          reply,
+          result,
+          ErrorCodes.CHECKOUT_BRANCH_ERROR,
+          'Failed to checkout branch'
+        );
+      }
+      return reply.status(204).send(null);
+    },
+
+    checkoutCommit: async (
+      request: FastifyRequest<{
+        Body: PathOptions & RepoCheckoutCommitOptions;
+      }>,
+      reply: FastifyReply
+    ): Promise<z.ZodNull> => {
+      const { pathOrUrl, commit } = request.body;
+      const result = await d.repos.checkoutCommit(pathOrUrl, commit);
+      if (!result.success) {
+        return sendRepoError(
+          reply,
+          result,
+          ErrorCodes.CHECKOUT_COMMIT_ERROR,
+          'Failed to checkout commit'
+        );
+      }
+      return reply.status(204).send(null);
+    },
+
+    pullChanges: async (
+      request: FastifyRequest<{ Body: PathOptions }>,
+      reply: FastifyReply
+    ): Promise<z.ZodNull> => {
+      const result = await d.repos.pullChanges(request.body.pathOrUrl);
+      if (!result.success) {
+        return sendRepoError(
+          reply,
+          result,
+          ErrorCodes.PULL_ERROR,
+          'Failed to pull changes'
+        );
+      }
+      return reply.status(204).send(null);
+    },
+
+    resetRepo: async (
+      request: FastifyRequest<{ Body: PathOptions }>,
+      reply: FastifyReply
+    ): Promise<z.ZodNull> => {
+      const result = await d.repos.reset(request.body.pathOrUrl);
+      if (!result.success) {
+        return sendRepoError(
+          reply,
+          result,
+          ErrorCodes.RESET_ERROR,
+          'Failed to reset repository'
+        );
+      }
+      return reply.status(204).send(null);
+    },
+
+    getRepoInfo: async (
+      request: FastifyRequest<{ Body: PathOptions }>,
+      reply: FastifyReply
+    ): Promise<IApiResponse<RepoInfoResult>> => {
+      const result = await d.repos.getRepoInfo(request.body.pathOrUrl);
+      if (!result.success) {
+        return sendRepoError(
+          reply,
+          result,
+          ErrorCodes.INFO_ERROR,
+          'Failed to get repo info'
+        );
+      }
+      return reply.status(200).send({ data: result.data });
+    },
+
+    getFile: async (
+      request: FastifyRequest<{ Body: PathOptions & RepoGetFileOptions }>,
+      reply: FastifyReply
+    ): Promise<IApiResponse<RepoGetFileResult>> => {
+      const { pathOrUrl, filePath } = request.body;
+      const result = await d.repos.getFile(pathOrUrl, filePath);
+      if (!result.success) {
+        // Map specific error codes to appropriate HTTP status codes, exactly
+        // matching the old plugin-executor handler.
+        let statusCode: 404 | 403 | 500 = 500;
+        if (result.error.code === 'FILE_NOT_FOUND') {
+          statusCode = 404;
+        } else if (
+          result.error.code === 'INVALID_PATH' ||
+          result.error.code === 'SUSPICIOUS_PATH_PATTERN'
+        ) {
+          statusCode = 403;
+        }
+        if (statusCode === 403) {
+          return reply.status(403).send({
+            statusCode: 403,
+            error: 'Forbidden',
+            code: result.error.code,
+            message: result.error.message,
+          });
+        }
+        return sendRepoError(
+          reply,
+          result,
+          ErrorCodes.GET_FILE_ERROR,
+          'Failed to get file',
+          statusCode
+        );
+      }
+      return reply.status(200).send({ data: result.data });
+    },
+  };
+}
+
+// Production wiring: same exported name as before, so route registration in
+// core/src/api/index.ts is untouched.
+export const repoManagerHandlers = createRepoHandlers();

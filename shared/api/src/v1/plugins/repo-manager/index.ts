@@ -14,6 +14,7 @@ import type {
   RepoGetFileResult,
 } from "./types.js";
 import { PathShape, PathRequestSchema } from "../../shared.js";
+import { JobStartedResponseSchema } from "../../jobs.js";
 
 export * from "./types.js";
 
@@ -75,7 +76,7 @@ export const repoManagerRoutes = {
     schema: {
       tags: ["repo-manager"],
       body: PathRequestSchema,
-      response: { 204: z.null() },
+      response: { 200: JobStartedResponseSchema },
     },
   },
   getBranches: {

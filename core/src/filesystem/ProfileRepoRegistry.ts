@@ -1,5 +1,5 @@
 // Per-profile repo registry (local.json / cloned.json under the profile dir)
-// plus cleanup of the containers that back a removed repo.
+// plus cleanup of the disk/containers that back a removed repo.
 import path from 'path';
 import { FileSystem } from './FileSystem.js';
 import {
@@ -7,6 +7,7 @@ import {
   RepoContainerUtils,
 } from '../plugins/utils/RepoContainerUtils.js';
 import { ContainerOrchestrator } from '../plugins/containers/ContainerOrchestrator.js';
+import { RepoService, RepoKind, deriveRepoKind } from '../repos/RepoService.js';
 import { isGitRepository } from '../utils/startup.js';
 import { getLogger } from '../utils/logger.js';
 
@@ -17,10 +18,7 @@ export interface ProfileRepoRegistryDeps {
     'getProfileReposPath' | 'fileExists' | 'readJsonFile' | 'writeJsonFile'
   >;
   isGitRepository: (p: string) => boolean;
-  removeRepoContainers: (
-    kind: RepoContainerKind,
-    pathOrUrl: string
-  ) => Promise<void>;
+  removeClone: (pathOrUrl: string) => Promise<void>;
   sessionPath: () => string | null;
 }
 
@@ -48,14 +46,22 @@ export async function removeRepoContainers(
       if (statusCode === 404) {
         getLogger().debug(`Container ${containerName} already removed`);
       } else {
-        getLogger().warn(`⚠️ Failed to remove container ${containerName}:`, error);
+        getLogger().warn(
+          `⚠️ Failed to remove container ${containerName}:`,
+          error
+        );
       }
     }
     if (isCurrentSession) {
-      getLogger().info('⏸️ Keeping session container active for current workspace');
+      getLogger().info(
+        '⏸️ Keeping session container active for current workspace'
+      );
     }
   } catch (error) {
-    getLogger().error(`❌ Failed to remove containers for ${pathOrUrl}:`, error);
+    getLogger().error(
+      `❌ Failed to remove containers for ${pathOrUrl}:`,
+      error
+    );
   }
 }
 
@@ -66,24 +72,23 @@ export class ProfileRepoRegistry {
     this.deps = {
       fileSystem: deps?.fileSystem ?? FileSystem.getInstance(),
       isGitRepository: deps?.isGitRepository ?? isGitRepository,
-      removeRepoContainers:
-        deps?.removeRepoContainers ?? removeRepoContainers,
+      removeClone:
+        deps?.removeClone ??
+        ((pathOrUrl: string) =>
+          RepoService.getInstance().removeClone(pathOrUrl)),
       sessionPath:
         deps?.sessionPath ?? (() => process.env.IGNITE_WORKSPACE_PATH || null),
     };
   }
 
-  private registryPath(profileId: string, kind: RepoContainerKind): string {
+  private registryPath(profileId: string, kind: RepoKind): string {
     return path.join(
       this.deps.fileSystem.getProfileReposPath(profileId),
       `${kind}.json`
     );
   }
 
-  private async readList(
-    profileId: string,
-    kind: RepoContainerKind
-  ): Promise<string[]> {
+  private async readList(profileId: string, kind: RepoKind): Promise<string[]> {
     const p = this.registryPath(profileId, kind);
     try {
       if (await this.deps.fileSystem.fileExists(p)) {
@@ -102,14 +107,14 @@ export class ProfileRepoRegistry {
   }> {
     return {
       session: this.deps.sessionPath(),
-      local: await this.readList(profileId, RepoContainerKind.LOCAL),
-      cloned: await this.readList(profileId, RepoContainerKind.CLONED),
+      local: await this.readList(profileId, RepoKind.LOCAL),
+      cloned: await this.readList(profileId, RepoKind.CLONED),
     };
   }
 
   async save(profileId: string, pathOrUrl: string): Promise<void> {
-    const kind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
-    if (kind === RepoContainerKind.LOCAL) {
+    const kind = deriveRepoKind(pathOrUrl);
+    if (kind === RepoKind.LOCAL) {
       if (pathOrUrl.startsWith('./') || pathOrUrl.startsWith('..')) {
         throw new Error(`Local repository path must be absolute: ${pathOrUrl}`);
       }
@@ -135,7 +140,7 @@ export class ProfileRepoRegistry {
   }
 
   async remove(profileId: string, pathOrUrl: string): Promise<void> {
-    const kind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
+    const kind = deriveRepoKind(pathOrUrl);
     const p = this.registryPath(profileId, kind);
     if (!(await this.deps.fileSystem.fileExists(p))) {
       throw new Error(`Repository ${pathOrUrl} not found`);
@@ -145,7 +150,12 @@ export class ProfileRepoRegistry {
       p,
       arr.filter((x) => x !== pathOrUrl)
     );
-    // TODO(preserved from old handler): remove volumes for cloned containers
-    await this.deps.removeRepoContainers(kind, pathOrUrl);
+    // The clone is disposable host data we own; a LOCAL repo is the user's
+    // own directory and is never ours to delete (removeClone no-ops there
+    // too, but skip the call entirely to keep the CLONED-only contract
+    // explicit here).
+    if (kind === RepoKind.CLONED) {
+      await this.deps.removeClone(pathOrUrl);
+    }
   }
 }
