@@ -64,16 +64,20 @@ function jobRecordToView(job: JobRecord): JobView {
   };
 }
 
-// Merge a snapshot record into byId, preserving lastSeq monotonicity: if a
-// view already exists and has seen events at least as new as the incoming
-// record (existing lastSeq >= the record's derived lastSeq), keep the
-// existing view — a stale REST list response or duplicate snapshot resolving
-// after live WS events must not snap state/logTail/lastSeq backward. When
-// the incoming record is newer, replace the view wholesale.
+// Merge a snapshot record into byId, preserving lastSeq monotonicity: drop
+// only strictly-stale snapshots (incoming lastSeq < existing) — a stale REST
+// list response resolving after live WS events must not snap
+// state/logTail/lastSeq backward. Equal-lastSeq snapshots MUST replace the
+// view: live 'state' events never carry result/error (and placeholder views
+// lack real type/params), so after a terminal state event advances the view
+// to seq N, the follow-up snapshot at the same seq N is the only delivery
+// mechanism for result/error — dropping it would strand those fields forever.
+// Equal-seq replacement is safe: identical event history implies equivalent
+// state/logTail.
 function mergeSnapshot(state: IJobsState, job: JobRecord): void {
   const incoming = jobRecordToView(job);
   const existing = state.byId[job.id];
-  if (existing && incoming.lastSeq <= existing.lastSeq) return;
+  if (existing && incoming.lastSeq < existing.lastSeq) return;
   state.byId[job.id] = incoming;
 }
 
