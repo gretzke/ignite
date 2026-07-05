@@ -15,6 +15,7 @@ import type {
   RepoGetFileResult,
 } from "./types.js";
 import { execGit } from "../../utils/git.js";
+import { convertHttpsToSsh } from "../../utils/gitUrl.js";
 
 export abstract class RepoManagerPlugin
   extends BasePlugin<PluginType.REPO_MANAGER>
@@ -26,22 +27,6 @@ export abstract class RepoManagerPlugin
   // - Local repos: return remote URL
   // - Cloned repos: return remote URL (or pathOrUrl during init)
   protected abstract getRepoUrl(): Promise<string | null>;
-
-  // Convert HTTPS URL to SSH format when SSH credentials are available
-  private convertToSSH(url: string): string {
-    // For HTTPS URLs, convert to SSH format
-    const httpsMatch = url.match(
-      /^https:\/\/([^\/]+)\/(.+?)(?:\.git)?(?:\/)?$/,
-    );
-    if (httpsMatch) {
-      const [, host, repoPath] = httpsMatch;
-      const sshUrl = `git@${host}:${repoPath}.git`;
-      return sshUrl;
-    }
-
-    // If already SSH format or unrecognized format, return as-is
-    return url;
-  }
 
   // Execute a Git operation with credentials if provided
   // Uses temporary SSH files for secure credential handling in containers
@@ -66,7 +51,7 @@ export abstract class RepoManagerPlugin
       // Configure Git to use SSH URLs while the credentials are available
       const repoUrl = await this.getRepoUrl();
       if (repoUrl && repoUrl.startsWith("https://")) {
-        const sshUrl = this.convertToSSH(repoUrl);
+        const sshUrl = convertHttpsToSsh(repoUrl);
         // Set up Git URL rewriting to convert HTTPS to SSH
         insteadOfKey = `url.${sshUrl}.insteadOf`;
         await execGit(["config", "--global", insteadOfKey, repoUrl]);
