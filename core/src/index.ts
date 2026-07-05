@@ -17,8 +17,10 @@ import {
 } from './utils/startup.js';
 import { registerApi } from './api/index.js';
 import { registerSessionAuth, resolveSessionToken } from './api/auth.js';
+import { createWsHandler } from './api/ws.js';
 import { StaticAssetHandler } from './assets/StaticAssetHandler.js';
 import { validatePluginImages } from './plugins/utils/ImageValidator.js';
+import { JobManager } from './jobs/JobManager.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -47,6 +49,7 @@ async function ignite(workspacePath: string): Promise<{
   const profileManager = await ProfileManager.getInstance();
   const pluginManager = PluginManager.getInstance();
   const pluginExecutor = PluginExecutor.getInstance();
+  await JobManager.getInstance().recover();
 
   // Pre-startup checks
   app.log.info(`🔍 Workspace path: ${workspacePath}`);
@@ -57,29 +60,14 @@ async function ignite(workspacePath: string): Promise<{
   // Register static asset handler for serving frontend from bundled assets
   await StaticAssetHandler.register(app);
 
-  // WebSocket route
+  // WebSocket route: job event channel (subscribe/unsubscribe, snapshot +
+  // replay + live events). See api/ws.ts for the protocol.
   await app.register(async function (fastify: FastifyInstance) {
-    fastify.get('/ws', { websocket: true }, (connection) => {
-      connection.on('message', (message: Buffer) => {
-        // Echo back with a greeting
-        connection.send(
-          JSON.stringify({
-            type: 'greeting',
-            message: `Hello from backend! You said: ${message.toString()}`,
-          })
-        );
-      });
-
-      connection.on('close', () => {});
-
-      // Send initial connection message
-      connection.send(
-        JSON.stringify({
-          type: 'connected',
-          message: 'Connected to Ignite backend!',
-        })
-      );
-    });
+    fastify.get(
+      '/ws',
+      { websocket: true },
+      createWsHandler(JobManager.getInstance())
+    );
   });
 
   // Register API documentation and schemas
