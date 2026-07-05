@@ -7,6 +7,7 @@ import {
   createRequestSchema,
 } from "../../../utils/schema.js";
 import { PathRequestSchema, PathShape } from "../../shared.js";
+import { JobStartedResponseSchema } from "../../jobs.js";
 import type {
   ArtifactListResult,
   ArtifactData,
@@ -91,7 +92,7 @@ export const compilerRoutes = {
       tags: ["compiler"],
       body: PathRequestSchema,
       response: {
-        200: DetectResponseSchema,
+        200: JobStartedResponseSchema,
       },
     },
   },
@@ -102,7 +103,7 @@ export const compilerRoutes = {
       tags: ["compiler"],
       body: CompilerOperationRequestSchema,
       response: {
-        204: z.null(),
+        200: JobStartedResponseSchema,
       },
     },
   },
@@ -113,7 +114,7 @@ export const compilerRoutes = {
       tags: ["compiler"],
       body: CompilerOperationRequestSchema,
       response: {
-        204: z.null(),
+        200: JobStartedResponseSchema,
       },
     },
   },

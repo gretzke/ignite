@@ -4,6 +4,7 @@ import type { PluginMetadata } from "@ignite/plugin-types/types";
 import { V1_BASE_PATH } from "../constants.js";
 import { createApiResponseSchema } from "../../utils/schema.js";
 import { PluginMetadataSchema } from "./index.js";
+import { JobStartedResponseSchema } from "../jobs.js";
 
 export interface InstallPluginData {
   plugin: PluginMetadata;
@@ -43,7 +44,7 @@ export const installRoutes = {
     schema: {
       tags: ["plugins"],
       body: InstallPluginBodySchema,
-      response: { 200: InstallPluginResponseSchema },
+      response: { 200: JobStartedResponseSchema },
     },
   },
   uninstallPlugin: {
