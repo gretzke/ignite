@@ -1,3 +1,5 @@
+import fs from 'fs/promises';
+import path from 'path';
 import { FileSystem } from './FileSystem.js';
 import type { ProfileConfig, IgniteConfig } from '../types/index.js';
 import { ProfileError, ErrorCodes } from '../types/errors.js';
@@ -98,8 +100,11 @@ export class ProfileManager {
   }
 
   // Create a new profile
-  async createProfile(profileName: string): Promise<ProfileConfig> {
-    return await this.fileSystem.createProfile(profileName);
+  async createProfile(
+    profileName: string,
+    options?: { color?: string; icon?: string }
+  ): Promise<ProfileConfig> {
+    return await this.fileSystem.createProfile(profileName, options);
   }
 
   // List all available profiles
@@ -123,6 +128,44 @@ export class ProfileManager {
     );
 
     return profiles;
+  }
+
+  // List config of every archived profile; unreadable entries are skipped.
+  async listArchivedProfiles(): Promise<ProfileConfig[]> {
+    const archivedRoot = this.fileSystem.getArchivedProfilesPath();
+    const profiles: ProfileConfig[] = [];
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: derived from ~/.ignite
+      const entries = await fs.readdir(archivedRoot);
+      for (const id of entries) {
+        const p = path.join(archivedRoot, id);
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: derived from ~/.ignite
+        const stat = await fs.stat(p);
+        if (stat.isDirectory()) {
+          const cfgPath = path.join(p, 'config.json');
+          profiles.push(await this.fileSystem.readJsonFile<ProfileConfig>(cfgPath));
+        }
+      }
+    } catch {
+      return [];
+    }
+    return profiles;
+  }
+
+  // Merge partial updates onto the stored config and persist via editProfile.
+  async updateProfile(
+    id: string,
+    updates: { name?: string; color?: string; icon?: string }
+  ): Promise<ProfileConfig> {
+    const current = await this.getProfileConfig(id);
+    const updated: ProfileConfig = {
+      ...current,
+      name: updates.name ?? current.name,
+      color: updates.color ?? current.color,
+      icon: updates.icon ?? current.icon,
+    };
+    await this.editProfile(id, updated);
+    return updated;
   }
 
   // Archive and delete a profile
@@ -161,16 +204,10 @@ export class ProfileManager {
     getLogger().info(`🗑️  Profile '${profileId}' deleted`);
   }
 
-  // Archive a profile for safe deletion
-  private async archiveProfile(profileId: string): Promise<void> {
-    // Validate
-    if (profileId === this.currentProfile) {
-      throw new ProfileError(
-        'Cannot delete the currently active profile',
-        ErrorCodes.CANNOT_DELETE_ACTIVE_PROFILE,
-        { profileId }
-      );
-    }
+  // Archive a profile for safe deletion. Permissive by design (matches the
+  // old handler's inline behavior): callers that need to protect the active
+  // profile (e.g. deleteProfile) enforce that guard themselves before calling.
+  async archiveProfile(profileId: string): Promise<void> {
     // Move dir to archive using profile id to prevent name collisions
     const config = await this.fileSystem.getProfileConfig(profileId);
     const srcPath = this.fileSystem.getProfilePath(profileId);
