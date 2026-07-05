@@ -65,9 +65,14 @@ export function createDockerStreamDemuxer() {
 // fall back to the legacy control-char-strip + brace-regex for plugin images
 // built before the sentinel protocol. Throws on unparseable output.
 export function parsePluginOutput(stdout: string, stderr: string): unknown {
-  const begin = stdout.lastIndexOf(RESULT_BEGIN);
-  if (begin !== -1) {
-    const end = stdout.indexOf(RESULT_END, begin);
+  // Scan backwards for the last COMPLETE sentinel block: a dangling
+  // RESULT_BEGIN (e.g. an async console.log racing shutdown, or a plugin
+  // echoing the constant) must not shadow a valid framed result before it.
+  // A complete block with invalid JSON still throws — fail loud rather than
+  // scanning past a corrupt result.
+  let begin = stdout.lastIndexOf(RESULT_BEGIN);
+  while (begin !== -1) {
+    const end = stdout.indexOf(RESULT_END, begin + RESULT_BEGIN.length);
     if (end !== -1) {
       const json = stdout.slice(begin + RESULT_BEGIN.length, end);
       try {
@@ -78,6 +83,9 @@ export function parsePluginOutput(stdout: string, stderr: string): unknown {
         );
       }
     }
+    // lastIndexOf clamps a negative fromIndex to 0, which would re-find a
+    // match at index 0 forever — stop explicitly once the start is reached.
+    begin = begin > 0 ? stdout.lastIndexOf(RESULT_BEGIN, begin - 1) : -1;
   }
 
   // Legacy path — matches the old inline implementation byte-for-byte.

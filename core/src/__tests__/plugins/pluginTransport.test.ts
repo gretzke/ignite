@@ -35,6 +35,22 @@ describe('createDockerStreamDemuxer', () => {
     demux.push(Buffer.from('plain text output, no header'));
     expect(demux.result().stdout).toBe('plain text output, no header');
   });
+
+  it('flips to raw mode mid-stream on an invalid header, keeping earlier frames', () => {
+    const demux = createDockerStreamDemuxer();
+    demux.push(frame(1, 'framed part'));
+    demux.push(Buffer.from('corrupt raw tail'));
+    const { stdout, stderr } = demux.result();
+    expect(stdout).toBe('framed partcorrupt raw tail');
+    expect(stderr).toBe('');
+  });
+
+  it('silently drops stream-type 0 (stdin) frames', () => {
+    const demux = createDockerStreamDemuxer();
+    demux.push(frame(0, 'x'));
+    demux.push(frame(1, 'out'));
+    expect(demux.result()).toEqual({ stdout: 'out', stderr: '' });
+  });
 });
 
 describe('parsePluginOutput', () => {
@@ -42,6 +58,20 @@ describe('parsePluginOutput', () => {
 
   it('parses a sentinel-framed result, ignoring noise around it', () => {
     const stdout = `npm WARN something {stray brace\n${RESULT_BEGIN}${JSON.stringify(payload)}${RESULT_END}\n`;
+    expect(parsePluginOutput(stdout, '')).toEqual(payload);
+  });
+
+  it('returns the last COMPLETE block when a dangling RESULT_BEGIN follows it', () => {
+    // Noise braces around the block make the legacy fallback misparse, so
+    // this only passes if the parser finds the complete sentinel block.
+    const stdout = `npm WARN {stray brace\n${RESULT_BEGIN}${JSON.stringify(payload)}${RESULT_END}\nasync log: ${RESULT_BEGIN}oops, no end`;
+    expect(parsePluginOutput(stdout, '')).toEqual(payload);
+  });
+
+  it('falls through to the legacy path when the only RESULT_BEGIN is dangling at position 0', () => {
+    // Also guards against an infinite backward scan (lastIndexOf clamps a
+    // negative fromIndex to 0 and would re-find index 0 forever).
+    const stdout = `${RESULT_BEGIN}no end here\n${JSON.stringify(payload)}`;
     expect(parsePluginOutput(stdout, '')).toEqual(payload);
   });
 
@@ -59,6 +89,17 @@ describe('parsePluginOutput', () => {
   it('throws the legacy error shape when no JSON is present', () => {
     expect(() => parsePluginOutput('garbage', 'boom')).toThrow(
       /Invalid plugin output format/
+    );
+  });
+
+  it('throws a JSON parse error for a complete sentinel block with invalid JSON', () => {
+    const stdout = `${RESULT_BEGIN}{not valid json}${RESULT_END}`;
+    expect(() => parsePluginOutput(stdout, '')).toThrow(/JSON parse error/);
+  });
+
+  it('throws a JSON parse error when the legacy brace match is invalid JSON', () => {
+    expect(() => parsePluginOutput('log {not valid json} log', '')).toThrow(
+      /JSON parse error/
     );
   });
 });
