@@ -15,12 +15,30 @@ interface InstallerLike {
   uninstall(pluginId: string): Promise<void>;
 }
 
-export function createInstallHandlers(installer: InstallerLike) {
+interface InstallHandlerOptions {
+  // Local-path installs bypass the isolated git build, so they are only
+  // allowed in development mode unless explicitly enabled (e.g. in tests).
+  allowLocalSource: () => boolean;
+}
+
+export function createInstallHandlers(
+  installer: InstallerLike,
+  options: InstallHandlerOptions = {
+    allowLocalSource: () => process.env.NODE_ENV === 'development',
+  }
+) {
   return {
     installPlugin: async (
       request: FastifyRequest<{ Body: { source: PluginInstallSource } }>,
       reply: FastifyReply
     ): Promise<IApiResponse<InstallPluginData>> => {
+      if (request.body.source.kind === 'local' && !options.allowLocalSource()) {
+        return sendBadRequest(
+          reply,
+          'PLUGIN_INSTALL_REJECTED',
+          'Installing plugins from a local path is only available in development mode'
+        );
+      }
       try {
         const plugin = await installer.install(request.body.source);
         return reply.status(200).send({ data: { plugin } });

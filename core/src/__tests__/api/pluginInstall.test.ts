@@ -21,7 +21,9 @@ describe('install API handlers', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    const handlers = createInstallHandlers(installer);
+    const handlers = createInstallHandlers(installer, {
+      allowLocalSource: () => true,
+    });
     app = fastify();
     app.post('/api/v1/plugins/install', handlers.installPlugin);
     app.delete('/api/v1/plugins/:pluginId', handlers.uninstallPlugin);
@@ -55,6 +57,33 @@ describe('install API handlers', () => {
       payload: { source: { kind: 'local', contextDir: '/src/foundry' } },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects local sources when local installs are not allowed', async () => {
+    const handlers = createInstallHandlers(installer, {
+      allowLocalSource: () => false,
+    });
+    const gated = fastify();
+    gated.post('/api/v1/plugins/install', handlers.installPlugin);
+    await gated.ready();
+
+    const localRes = await gated.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/install',
+      payload: { source: { kind: 'local', contextDir: '/src/waffle' } },
+    });
+    expect(localRes.statusCode).toBe(400);
+    expect(localRes.json().code).toBe('PLUGIN_INSTALL_REJECTED');
+    expect(installer.install).not.toHaveBeenCalled();
+
+    const gitRes = await gated.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/install',
+      payload: {
+        source: { kind: 'git', url: 'https://github.com/acme/waffle' },
+      },
+    });
+    expect(gitRes.statusCode).toBe(200);
   });
 
   it('uninstalls a plugin', async () => {

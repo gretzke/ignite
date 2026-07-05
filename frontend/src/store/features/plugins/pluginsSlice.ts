@@ -16,9 +16,10 @@ export interface PluginRow {
 interface PluginsState {
   rows: Record<string, PluginRow>;
   loading: boolean;
+  devMode: boolean;
 }
 
-const initialState: PluginsState = { rows: {}, loading: false };
+const initialState: PluginsState = { rows: {}, loading: false, devMode: false };
 
 const pluginsSlice = createSlice({
   name: 'plugins',
@@ -26,6 +27,9 @@ const pluginsSlice = createSlice({
   reducers: {
     setLoading(state, action: PayloadAction<boolean>) {
       state.loading = action.payload;
+    },
+    setDevMode(state, action: PayloadAction<boolean>) {
+      state.devMode = action.payload;
     },
     setMetadata(
       state,
@@ -73,11 +77,12 @@ const pluginsSlice = createSlice({
   },
 });
 
-export const { setLoading, setMetadata, setTrust, removeRow } =
+export const { setLoading, setDevMode, setMetadata, setTrust, removeRow } =
   pluginsSlice.actions;
 export const selectPluginRows = (s: RootState) =>
   Object.values(s.plugins.rows);
 export const selectPluginsLoading = (s: RootState) => s.plugins.loading;
+export const selectDevMode = (s: RootState) => s.plugins.devMode;
 export const pluginsReducer = pluginsSlice.reducer;
 
 // API actions using the enhanced client (following the repositories/profiles pattern)
@@ -85,6 +90,9 @@ export const pluginsApi = {
   refresh() {
     return [
       setLoading(true),
+      apiClient.dispatch.systemInfo({
+        onSuccess: (data) => [setDevMode(data.devMode)],
+      }),
       apiClient.dispatch.listPlugins({
         onSuccess: (data) => [
           setMetadata(

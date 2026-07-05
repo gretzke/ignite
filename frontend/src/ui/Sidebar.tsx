@@ -3,7 +3,6 @@ import {
   Folder,
   Puzzle,
   Rocket,
-  Plug,
   Settings as IconSettings,
   ChevronsLeft,
   ChevronsRight,
@@ -81,25 +80,6 @@ export default function Sidebar() {
           </Link>
         )}
 
-        {collapsed ? (
-          <Tooltip label="Plugins" placement="right">
-            <Link
-              to="/plugins"
-              className="btn btn-secondary btn-secondary-borderless nav-item"
-            >
-              <Plug size={18} />
-              <span className="nav-label">Plugins</span>
-            </Link>
-          </Tooltip>
-        ) : (
-          <Link
-            to="/plugins"
-            className="btn btn-secondary btn-secondary-borderless nav-item"
-          >
-            <Plug size={18} />
-            <span className="nav-label">Plugins</span>
-          </Link>
-        )}
       </div>
       <div className="flex flex-col gap-2">
         {collapsed ? (

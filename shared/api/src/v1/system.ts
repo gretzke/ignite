@@ -11,6 +11,7 @@ export interface HealthData {
 export interface SystemInfoData {
   igniteHome: string;
   currentProfile: string;
+  devMode: boolean;
   profilePaths: {
     configPath: string;
     pluginsPath: string;
@@ -33,6 +34,7 @@ export const SystemInfoResponseSchema = createApiResponseSchema<SystemInfoData>(
   z.object({
     igniteHome: z.string(),
     currentProfile: z.string(),
+    devMode: z.boolean(),
     profilePaths: z.object({
       configPath: z.string(),
       pluginsPath: z.string(),

@@ -108,9 +108,15 @@ async function main(): Promise<void> {
       'specify workspace path (defaults to current directory)',
       process.cwd()
     )
+    .option('--dev', 'run in development mode (sets NODE_ENV=development)')
     .parse();
 
   const options = program.opts();
+
+  // Must happen before anything reads NODE_ENV (logger, auth token, home dir)
+  if (options.dev) {
+    process.env.NODE_ENV = 'development';
+  }
 
   // Extract and validate workspace path
   const currentEnv = process.env.IGNITE_WORKSPACE_PATH;

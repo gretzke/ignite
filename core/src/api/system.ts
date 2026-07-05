@@ -35,6 +35,7 @@ export const systemHandlers = {
         data: {
           igniteHome: fileSystem.getIgniteHome(),
           currentProfile: profileManager.getCurrentProfile(),
+          devMode: process.env.NODE_ENV === 'development',
           profilePaths: {
             configPath: profileManager.getCurrentProfilePaths().config,
             pluginsPath:

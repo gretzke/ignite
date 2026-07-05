@@ -2,16 +2,17 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import * as Tabs from '@radix-ui/react-tabs';
 import GeneralTab from './tabs/general/GeneralTab';
 import ProfilesTab from './tabs/profiles/ProfilesTab';
+import PluginsTab from './tabs/plugins/PluginsTab';
 
 export default function SettingsPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const hash = (location.hash || '').toLowerCase();
-  const activeTab: 'general' | 'profiles' =
-    hash === '#profiles' ? 'profiles' : 'general';
+  const activeTab: 'general' | 'profiles' | 'plugins' =
+    hash === '#profiles' ? 'profiles' : hash === '#plugins' ? 'plugins' : 'general';
   const onTabChange = (value: string) => {
-    if (value === 'profiles') navigate('/settings#profiles');
-    else navigate('/settings');
+    if (value === 'general') navigate('/settings');
+    else navigate(`/settings#${value}`);
   };
   return (
     <div className="text-[var(--text)]">
@@ -24,12 +25,18 @@ export default function SettingsPage() {
           <Tabs.Trigger value="profiles" className="tabs-trigger">
             Profiles
           </Tabs.Trigger>
+          <Tabs.Trigger value="plugins" className="tabs-trigger">
+            Plugins
+          </Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="general">
           <GeneralTab />
         </Tabs.Content>
         <Tabs.Content value="profiles">
           <ProfilesTab />
+        </Tabs.Content>
+        <Tabs.Content value="plugins">
+          <PluginsTab />
         </Tabs.Content>
       </Tabs.Root>
     </div>
