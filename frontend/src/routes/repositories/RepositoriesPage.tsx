@@ -16,10 +16,8 @@ import {
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
-import {
-  repositoriesApi,
-  type IFramework,
-} from '../../store/features/repositories/repositoriesSlice';
+import { repositoriesApi } from '../../store/features/repositories/repositoriesApi';
+import type { IFramework } from '../../store/features/repositories/repositoriesSlice';
 import { triggerToast } from '../../store/middleware/toastListener';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import { DirectoryPicker } from '../../components/DirectoryPicker';

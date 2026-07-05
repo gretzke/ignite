@@ -3,8 +3,8 @@ import {
   fetchProfilesSucceeded,
   setCurrentProfile,
 } from '../features/profiles/profilesSlice';
+import { repositoriesApi } from '../features/repositories/repositoriesApi';
 import {
-  repositoriesApi,
   setRepositories,
   addRepository,
 } from '../features/repositories/repositoriesSlice';
