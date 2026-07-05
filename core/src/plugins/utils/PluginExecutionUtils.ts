@@ -107,13 +107,13 @@ export class PluginExecutionUtils {
 
           stream.on('end', () => {
             const { stdout, stderr } = demux.result();
-            getLogger().debug(
-              `🔍 Plugin stdout (${pluginId}): "${stdout.slice(0, 2000)}"`
-            );
-            getLogger().debug(
-              `🔍 Plugin stderr (${pluginId}): "${stderr.slice(0, 2000)}"`
-            );
             try {
+              getLogger().debug(
+                `🔍 Plugin stdout (${pluginId}): "${stdout.slice(0, 2000)}"`
+              );
+              getLogger().debug(
+                `🔍 Plugin stderr (${pluginId}): "${stderr.slice(0, 2000)}"`
+              );
               settle(
                 resolve,
                 parsePluginOutput(stdout, stderr) as PluginResponse<TResult>

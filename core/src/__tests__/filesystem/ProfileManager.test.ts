@@ -57,7 +57,7 @@ describe('ProfileManager', () => {
       expect(globalConfig.currentProfile).toBe('new-profile');
     });
 
-    it('should list profiles in last used order', async () => {
+    it('should list profiles in filesystem id order, not last-used order', async () => {
       // Create profiles with delays to ensure different timestamps
       await profileManager.createProfile('profile1');
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -65,15 +65,15 @@ describe('ProfileManager', () => {
       await profileManager.createProfile('profile2');
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Switch to profile1 to update its lastUsed
+      // Switch to profile1 to update its lastUsed. This must NOT affect
+      // ordering: listProfiles() preserves fileSystem.listProfiles() id
+      // order and does not sort by lastUsed (see ProfileManager.listProfiles).
       await profileManager.switchProfile('profile1');
 
+      const expectedIds = await fileSystem.listProfiles();
       const profiles = await profileManager.listProfiles();
 
-      // profile1 should be first (most recent), then profile2, then default
-      expect(profiles[0].name).toBe('profile1');
-      expect(profiles[1].name).toBe('profile2');
-      expect(profiles[2].name).toBe('Default');
+      expect(profiles.map((p) => p.id)).toEqual(expectedIds);
     });
 
     it('should get current profile paths', () => {
