@@ -58,6 +58,10 @@ export class FileSystem {
     return path.join(this.igniteHome, 'cache');
   }
 
+  getJobsPath(): string {
+    return path.join(this.igniteHome, 'jobs');
+  }
+
   // === Profile Paths (keyed by immutable profile id) ===
 
   getProfilePath(profileId: string): string {
