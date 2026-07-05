@@ -97,6 +97,7 @@ export const ErrorCodes = {
 
   // Job errors
   INTERRUPTED: 'INTERRUPTED',
+  JOB_NOT_FOUND: 'JOB_NOT_FOUND',
 
   // Trust / auth errors
   TRUST_LIST_ERROR: 'TRUST_LIST_ERROR',
