@@ -9,11 +9,33 @@ export interface DemuxedOutput {
 
 // Docker exec streams are either multiplexed ([type,0,0,0,len32,payload]
 // frames) or raw (TTY). Mode is sniffed from the first 8 bytes.
-export function createDockerStreamDemuxer() {
+//
+// onChunk (optional) is invoked with each newly decoded payload at the
+// moment it's appended to stdout/stderr — for multiplexed frames as they're
+// parsed, and for raw-mode flushes (including the mode-sniff transition,
+// where any bytes buffered while sniffing flush in the same call that
+// decides 'raw'). Omitting it is a strict no-op: identical control flow,
+// nothing extra allocated or called.
+export function createDockerStreamDemuxer(
+  onChunk?: (stream: 'stdout' | 'stderr', text: string) => void
+) {
   let muxBuffer: Buffer = Buffer.alloc(0);
   let mode: 'unknown' | 'multiplexed' | 'raw' = 'unknown';
   let stdout = '';
   let stderr = '';
+
+  // Isolate the demuxer's state machine from a caller-supplied onChunk: a
+  // throwing callback (e.g. a buggy job-log sink) must not corrupt or abort
+  // stream handling. This module is otherwise I/O-free, so failures here are
+  // swallowed rather than logged.
+  const emit = (stream: 'stdout' | 'stderr', text: string): void => {
+    if (!onChunk) return;
+    try {
+      onChunk(stream, text);
+    } catch {
+      // swallow — see comment above
+    }
+  };
 
   return {
     push(chunk: Buffer): void {
@@ -29,8 +51,10 @@ export function createDockerStreamDemuxer() {
       }
 
       if (mode === 'raw') {
-        stdout += muxBuffer.toString('utf8');
+        const text = muxBuffer.toString('utf8');
+        stdout += text;
         muxBuffer = Buffer.alloc(0);
+        emit('stdout', text);
         return;
       }
 
@@ -43,15 +67,24 @@ export function createDockerStreamDemuxer() {
           muxBuffer[3] === 0;
         if (!headerValid) {
           mode = 'raw';
-          stdout += muxBuffer.toString('utf8');
+          const text = muxBuffer.toString('utf8');
+          stdout += text;
           muxBuffer = Buffer.alloc(0);
+          emit('stdout', text);
           break;
         }
         const len = muxBuffer.readUInt32BE(4);
         if (muxBuffer.length < 8 + len) break;
         const payload = muxBuffer.subarray(8, 8 + len);
-        if (streamType === 2) stderr += payload.toString('utf8');
-        else if (streamType === 1) stdout += payload.toString('utf8');
+        if (streamType === 2) {
+          const text = payload.toString('utf8');
+          stderr += text;
+          emit('stderr', text);
+        } else if (streamType === 1) {
+          const text = payload.toString('utf8');
+          stdout += text;
+          emit('stdout', text);
+        }
         muxBuffer = muxBuffer.subarray(8 + len);
       }
     },

@@ -51,6 +51,76 @@ describe('createDockerStreamDemuxer', () => {
     demux.push(frame(1, 'out'));
     expect(demux.result()).toEqual({ stdout: 'out', stderr: '' });
   });
+
+  it('invokes onChunk with each newly decoded payload in order for multiplexed frames', () => {
+    const calls: Array<[string, string]> = [];
+    const demux = createDockerStreamDemuxer((stream, text) =>
+      calls.push([stream, text])
+    );
+    demux.push(frame(1, 'out1'));
+    demux.push(frame(2, 'err1'));
+    demux.push(frame(1, 'out2'));
+    expect(calls).toEqual([
+      ['stdout', 'out1'],
+      ['stderr', 'err1'],
+      ['stdout', 'out2'],
+    ]);
+    // onChunk must not change the aggregated result.
+    expect(demux.result()).toEqual({ stdout: 'out1out2', stderr: 'err1' });
+  });
+
+  it('does not invoke onChunk for dropped stream-type 0 (stdin) frames', () => {
+    const calls: Array<[string, string]> = [];
+    const demux = createDockerStreamDemuxer((stream, text) =>
+      calls.push([stream, text])
+    );
+    demux.push(frame(0, 'x'));
+    demux.push(frame(1, 'out'));
+    expect(calls).toEqual([['stdout', 'out']]);
+  });
+
+  it('invokes onChunk once per push for raw-mode streams', () => {
+    const calls: Array<[string, string]> = [];
+    const demux = createDockerStreamDemuxer((stream, text) =>
+      calls.push([stream, text])
+    );
+    demux.push(Buffer.from('plain text output, no header'));
+    expect(calls).toEqual([['stdout', 'plain text output, no header']]);
+  });
+
+  it('flushes buffered pre-sniff bytes through onChunk in the same call that decides raw', () => {
+    const calls: Array<[string, string]> = [];
+    const demux = createDockerStreamDemuxer((stream, text) =>
+      calls.push([stream, text])
+    );
+    // Fewer than 8 bytes: mode stays 'unknown', nothing decoded/emitted yet.
+    demux.push(Buffer.from('abc'));
+    expect(calls).toEqual([]);
+    // Crosses the 8-byte sniff threshold with a non-header prefix: mode
+    // flips to 'raw' and the whole buffer (old + new bytes) flushes at once.
+    demux.push(Buffer.from('defgh right here'));
+    expect(calls).toEqual([['stdout', 'abcdefgh right here']]);
+    expect(demux.result().stdout).toBe('abcdefgh right here');
+  });
+
+  it('invokes onChunk for both the framed part and the raw tail on a mid-stream mode flip', () => {
+    const calls: Array<[string, string]> = [];
+    const demux = createDockerStreamDemuxer((stream, text) =>
+      calls.push([stream, text])
+    );
+    demux.push(frame(1, 'framed part'));
+    demux.push(Buffer.from('corrupt raw tail'));
+    expect(calls).toEqual([
+      ['stdout', 'framed part'],
+      ['stdout', 'corrupt raw tail'],
+    ]);
+  });
+
+  it('does not require onChunk (omitting it is a no-op)', () => {
+    const demux = createDockerStreamDemuxer();
+    expect(() => demux.push(frame(1, 'out1'))).not.toThrow();
+    expect(demux.result()).toEqual({ stdout: 'out1', stderr: '' });
+  });
 });
 
 describe('parsePluginOutput', () => {

@@ -74,6 +74,40 @@ describe('PluginExecutor with injected deps', () => {
     expect(deps.containerOrchestrator.stopContainer).toHaveBeenCalledTimes(1);
   });
 
+  it('threads opts.onOutput through to the injected executeOperation', async () => {
+    const { executor, executeOperation } = makeExecutor();
+    const onOutput = vi.fn();
+
+    await executor.execute('stub', 'detect', {}, { onOutput });
+
+    expect(executeOperation).toHaveBeenCalledTimes(1);
+    expect(executeOperation).toHaveBeenCalledWith(
+      PluginType.COMPILER,
+      'stub',
+      'detect',
+      {},
+      expect.any(String),
+      'builtin',
+      onOutput
+    );
+  });
+
+  it('passes onOutput as undefined when execute is called without opts (zero behavior change)', async () => {
+    const { executor, executeOperation } = makeExecutor();
+
+    await executor.execute('stub', 'detect', {});
+
+    expect(executeOperation).toHaveBeenCalledWith(
+      PluginType.COMPILER,
+      'stub',
+      'detect',
+      {},
+      expect.any(String),
+      'builtin',
+      undefined
+    );
+  });
+
   it('never injects git credentials for non-builtin plugins', async () => {
     const { executor, deps } = makeExecutor({
       registryLoader: {

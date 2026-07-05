@@ -40,7 +40,8 @@ export class PluginExecutionUtils {
     operation: string,
     options: unknown,
     containerName: string,
-    origin: PluginOrigin
+    origin: PluginOrigin,
+    onOutput?: (text: string) => void
   ): Promise<PluginResponse<TResult>> {
     const container = this.containerOrchestrator.getContainer(containerName);
 
@@ -101,7 +102,12 @@ export class PluginExecutionUtils {
             );
           }, timeoutMs);
 
-          const demux = createDockerStreamDemuxer();
+          // Both streams feed the same onOutput sink — job logs don't
+          // distinguish stdout/stderr, and the sentinel-framed result line
+          // is intentionally not filtered out here (by design; see task brief).
+          const demux = createDockerStreamDemuxer(
+            onOutput ? (_stream, text) => onOutput(text) : undefined
+          );
 
           stream.on('data', (chunk: Buffer) => demux.push(chunk));
 

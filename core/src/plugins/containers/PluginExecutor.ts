@@ -117,7 +117,8 @@ export class PluginExecutor {
   async execute(
     pluginId: string,
     operation: string,
-    options: Record<string, unknown>
+    options: Record<string, unknown>,
+    opts?: { onOutput?: (text: string) => void }
   ): Promise<PluginResponse<unknown>> {
     getLogger().info(`🔌 Executing ${pluginId}.${operation}`);
 
@@ -153,14 +154,16 @@ export class PluginExecutor {
           pluginConfig,
           operation,
           options,
-          grant
+          grant,
+          opts
         );
       case PluginLifecycle.EPHEMERAL:
         return await this.executeEphemeralPlugin(
           pluginConfig,
           operation,
           options,
-          grant
+          grant,
+          opts
         );
       default: {
         const _exhaustiveCheck: never = lifecycle;
@@ -174,7 +177,8 @@ export class PluginExecutor {
     pluginConfig: PluginConfig,
     operation: string,
     options: Record<string, unknown>,
-    grant: PermissionGrant
+    grant: PermissionGrant,
+    opts?: { onOutput?: (text: string) => void }
   ): Promise<PluginResponse<unknown>> {
     const pluginId = pluginConfig.metadata.id;
     getLogger().info(
@@ -208,7 +212,8 @@ export class PluginExecutor {
         pluginConfig,
         operation,
         options,
-        containerName
+        containerName,
+        opts
       );
     } finally {
       await this.deps.containerOrchestrator.stopContainer(containerName);
@@ -220,7 +225,8 @@ export class PluginExecutor {
     pluginConfig: PluginConfig,
     operation: string,
     options: Record<string, unknown>,
-    grant: PermissionGrant
+    grant: PermissionGrant,
+    opts?: { onOutput?: (text: string) => void }
   ): Promise<PluginResponse<unknown>> {
     const pluginId = pluginConfig.metadata.id;
     getLogger().info(`⚡ Executing ephemeral plugin: ${pluginId}.${operation}`);
@@ -240,7 +246,8 @@ export class PluginExecutor {
         pluginConfig,
         operation,
         cleanOptions,
-        ephemeralContainer
+        ephemeralContainer,
+        opts
       );
     } finally {
       await this.deps.containerOrchestrator.stopContainer(ephemeralContainer);
@@ -357,7 +364,8 @@ export class PluginExecutor {
     pluginConfig: PluginConfig,
     operation: string,
     options: Record<string, unknown>,
-    containerName: string
+    containerName: string,
+    opts?: { onOutput?: (text: string) => void }
   ): Promise<PluginResponse<unknown>> {
     try {
       // Call PluginExecutionUtils directly - no handler needed
@@ -367,7 +375,8 @@ export class PluginExecutor {
         operation,
         options,
         containerName,
-        pluginConfig.origin
+        pluginConfig.origin,
+        opts?.onOutput
       );
     } catch (error) {
       return {
