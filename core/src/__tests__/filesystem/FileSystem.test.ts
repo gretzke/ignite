@@ -153,4 +153,27 @@ describe('FileSystem', () => {
       );
     });
   });
+
+  describe('writeJsonFile atomicity', () => {
+    it('overwrites via temp+rename and leaves no temp residue', async () => {
+      const target = path.join(testDir, 'nested', 'data.json');
+      await fileSystem.writeJsonFile(target, { a: 1 });
+      await fileSystem.writeJsonFile(target, { a: 2 });
+
+      expect(await fileSystem.readJsonFile(target)).toEqual({ a: 2 });
+      const entries = await fs.readdir(path.dirname(target));
+      expect(entries).toEqual(['data.json']);
+    });
+
+    it('does not leave a temp file when serialization fails', async () => {
+      const target = path.join(testDir, 'cyclic.json');
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic; // JSON.stringify throws on cycles
+      await expect(fileSystem.writeJsonFile(target, cyclic)).rejects.toThrow(
+        /Failed to write JSON file/
+      );
+      const entries = await fs.readdir(testDir);
+      expect(entries.filter((e) => e.includes('cyclic'))).toEqual([]);
+    });
+  });
 });

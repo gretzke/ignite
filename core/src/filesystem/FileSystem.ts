@@ -281,15 +281,19 @@ export class FileSystem {
     }
   }
 
-  // Safely write JSON file
+  // Safely write JSON file (atomic: temp + rename, matching TrustManager)
   async writeJsonFile<T>(filePath: string, data: T): Promise<void> {
+    const tmpPath = `${filePath}.tmp`;
     try {
-      // Ensure parent directory exists
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: paths are constructed within ~/.ignite
       await fs.mkdir(path.dirname(filePath), { recursive: true });
+      const json = JSON.stringify(data, null, 2);
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: paths are constructed within ~/.ignite
-      await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
+      await fs.writeFile(tmpPath, json, 'utf8');
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: paths are constructed within ~/.ignite
+      await fs.rename(tmpPath, filePath);
     } catch (error) {
+      await fs.rm(tmpPath, { force: true }).catch(() => {});
       throw new Error(`Failed to write JSON file ${filePath}: ${error}`);
     }
   }
