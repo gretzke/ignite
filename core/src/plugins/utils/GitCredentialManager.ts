@@ -1,20 +1,18 @@
 import { promises as fs } from 'fs';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import path from 'path';
-import os from 'os';
 import { getLogger } from '../../utils/logger.js';
+import { isGitUrl, extractBaseHost } from '@ignite/plugin-types';
+import {
+  discoverSSHKeys as discoverSSHKeysImpl,
+  type SSHKeyInfo,
+} from '../git/sshKeyDiscovery.js';
+import {
+  testSSHKeyAgainstRepo as testSSHKeyAgainstRepoImpl,
+  extractRemoteUrl as extractRemoteUrlImpl,
+} from '../git/sshKeyTester.js';
+import { RepoPrivacyChecker } from '../git/RepoPrivacyChecker.js';
 
-const execFileAsync = promisify(execFile);
-
-// SSH key metadata - no private key content stored
-export interface SSHKeyInfo {
-  keyPath: string;
-  publicKeyPath: string;
-  keyType: string; // rsa, ed25519, ecdsa, etc.
-  isEncrypted: boolean;
-  fingerprint?: string;
-}
+export type { SSHKeyInfo };
 
 // Session cache for working SSH keys per repo
 export interface SessionKeyCache {
@@ -23,23 +21,34 @@ export interface SessionKeyCache {
   testedAt: number;
 }
 
-// Repository privacy status
-export interface RepoPrivacyInfo {
-  repoUrl: string;
-  isPublic: boolean | null; // null = unknown/error
-  checkedAt: number;
-  method: 'github_api' | 'git_test' | 'unknown';
+export interface GitCredentialManagerDeps {
+  discoverKeys: () => Promise<SSHKeyInfo[]>;
+  testKey: (keyPath: string, repoUrl: string) => Promise<boolean>;
+  extractRemoteUrl: (localPath: string) => Promise<string | null>;
+  privacy: Pick<RepoPrivacyChecker, 'isRepoPublic'>;
+  readFile: (p: string) => Promise<string>;
 }
 
 export class GitCredentialManager {
   private static instance: GitCredentialManager;
   private availableSSHKeys: SSHKeyInfo[] = [];
   private sessionKeyCache: Map<string, SessionKeyCache> = new Map();
-  private repoPrivacyCache: Map<string, RepoPrivacyInfo> = new Map();
   private initialized = false;
   private initializationPromise: Promise<void> | null = null;
+  private deps: GitCredentialManagerDeps;
 
-  private constructor() {}
+  private constructor(deps?: Partial<GitCredentialManagerDeps>) {
+    this.deps = {
+      discoverKeys: deps?.discoverKeys ?? discoverSSHKeysImpl,
+      testKey: deps?.testKey ?? testSSHKeyAgainstRepoImpl,
+      extractRemoteUrl: deps?.extractRemoteUrl ?? extractRemoteUrlImpl,
+      privacy: deps?.privacy ?? new RepoPrivacyChecker(),
+      readFile:
+        deps?.readFile ??
+        // eslint-disable-next-line security/detect-non-literal-fs-filename
+        ((p) => fs.readFile(p, 'utf8')),
+    };
+  }
 
   static async getInstance(): Promise<GitCredentialManager> {
     if (!GitCredentialManager.instance) {
@@ -49,6 +58,15 @@ export class GitCredentialManager {
     // Always ensure initialization is complete before returning
     await GitCredentialManager.instance.ensureInitialized();
     return GitCredentialManager.instance;
+  }
+
+  // Creates a non-singleton instance with injected deps, for tests.
+  static async createForTest(
+    deps?: Partial<GitCredentialManagerDeps>
+  ): Promise<GitCredentialManager> {
+    const instance = new GitCredentialManager(deps);
+    await instance.ensureInitialized();
+    return instance;
   }
 
   // Ensure initialization is complete (can be called multiple times safely)
@@ -79,7 +97,7 @@ export class GitCredentialManager {
     logger.info('🔑 Discovering SSH keys...');
 
     try {
-      this.availableSSHKeys = await this.discoverSSHKeys();
+      this.availableSSHKeys = await this.deps.discoverKeys();
 
       const totalKeys = this.availableSSHKeys.length;
       const availableKeys = this.availableSSHKeys.filter(
@@ -134,109 +152,6 @@ export class GitCredentialManager {
     } finally {
       // Clear the initialization promise
       this.initializationPromise = null;
-    }
-  }
-
-  // Discover all SSH keys in ~/.ssh directory
-  // Returns metadata only, no private key content
-  private async discoverSSHKeys(): Promise<SSHKeyInfo[]> {
-    const logger = getLogger();
-    const sshDir = path.join(os.homedir(), '.ssh');
-    const sshKeys: SSHKeyInfo[] = [];
-
-    try {
-      await fs.access(sshDir);
-      logger.debug(`🔍 Scanning SSH directory: ${sshDir}`);
-    } catch {
-      logger.debug('~/.ssh directory not found');
-      return [];
-    }
-
-    // Read all files in .ssh directory
-    // eslint-disable-next-line security/detect-non-literal-fs-filename
-    const sshFiles = await fs.readdir(sshDir);
-
-    // Find all private key files (files that have corresponding .pub files)
-    const privateKeyFiles = sshFiles.filter((file) => {
-      // Skip .pub files, known_hosts, config, etc.
-      if (
-        file.includes('.') ||
-        file === 'config' ||
-        file === 'known_hosts' ||
-        file === 'authorized_keys'
-      ) {
-        return false;
-      }
-
-      // Check if corresponding .pub file exists
-      return sshFiles.includes(`${file}.pub`);
-    });
-
-    for (const keyFile of privateKeyFiles) {
-      const keyPath = path.join(sshDir, keyFile);
-      const publicKeyPath = `${keyPath}.pub`;
-
-      try {
-        // Check if both private and public key are readable
-        await fs.access(keyPath, fs.constants.R_OK);
-        await fs.access(publicKeyPath, fs.constants.R_OK);
-
-        // Determine key type and encryption status
-        const keyType = this.extractKeyType(keyFile);
-        const isEncrypted = await this.isKeyEncrypted(keyPath);
-        const fingerprint = await this.getKeyFingerprint(publicKeyPath);
-
-        sshKeys.push({
-          keyPath,
-          publicKeyPath,
-          keyType,
-          isEncrypted,
-          fingerprint,
-        });
-
-        logger.debug(`📋 Discovered SSH key: ${keyFile} (${keyType})`);
-      } catch (error) {
-        logger.debug(
-          `❌ SSH key ${keyFile} not accessible: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-    }
-
-    return sshKeys;
-  }
-
-  // Extract key type from filename
-  private extractKeyType(keyName: string): string {
-    if (keyName.includes('ed25519')) return 'ed25519';
-    if (keyName.includes('rsa')) return 'rsa';
-    if (keyName.includes('ecdsa')) return 'ecdsa';
-    if (keyName.includes('dsa')) return 'dsa';
-    return 'unknown';
-  }
-
-  // Check if SSH private key is encrypted
-  private async isKeyEncrypted(keyPath: string): Promise<boolean> {
-    try {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename
-      const keyContent = await fs.readFile(keyPath, 'utf8');
-      return keyContent.includes('ENCRYPTED');
-    } catch {
-      return true; // Assume encrypted if we can't read it
-    }
-  }
-
-  // Get SSH key fingerprint from public key
-  private async getKeyFingerprint(
-    publicKeyPath: string
-  ): Promise<string | undefined> {
-    try {
-      const { stdout } = await execFileAsync('ssh-keygen', [
-        '-lf',
-        publicKeyPath,
-      ]);
-      return stdout.trim().split(' ')[1]; // Extract fingerprint part
-    } catch {
-      return undefined; // Fingerprint not available
     }
   }
 
@@ -295,114 +210,6 @@ export class GitCredentialManager {
     };
   }
 
-  // Extract base host from repository URL
-  private extractBaseHost(repoUrl: string): string | null {
-    try {
-      // Handle SSH URLs like git@github.com:owner/repo
-      if (repoUrl.startsWith('git@')) {
-        const match = repoUrl.match(/git@([^:]+):/);
-        return match ? match[1] : null;
-      }
-
-      // Handle HTTPS URLs
-      if (repoUrl.startsWith('http')) {
-        const url = new globalThis.URL(repoUrl);
-        return url.hostname;
-      }
-
-      // Handle other SSH formats like ssh://git@github.com/owner/repo
-      if (repoUrl.startsWith('ssh://')) {
-        const url = new globalThis.URL(repoUrl);
-        return url.hostname;
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  // Test SSH key against a specific repository URL
-  private async testSSHKeyAgainstRepo(
-    keyPath: string,
-    repoUrl: string
-  ): Promise<boolean> {
-    const logger = getLogger();
-
-    // Convert HTTPS URL to SSH format for testing (Git needs SSH URL to use SSH keys)
-    const testUrl = this.convertToSSHForTesting(repoUrl);
-
-    logger.debug(
-      `🔍 Testing SSH key ${path.basename(keyPath)} against: ${testUrl}`
-    );
-
-    try {
-      // Use git ls-remote to test if this key can access the specific repository
-      const { stdout } = await execFileAsync(
-        'git',
-        ['ls-remote', '--heads', testUrl],
-        {
-          timeout: 10000, // 10 second timeout
-          env: {
-            ...process.env,
-            GIT_SSH_COMMAND: `ssh -i ${keyPath} -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o BatchMode=yes`,
-          },
-        }
-      );
-
-      // If git ls-remote succeeds, this key has access to the repository
-      const hasAccess = stdout.trim().length > 0;
-      logger.debug(
-        `${hasAccess ? '✅' : '❌'} SSH key test result for ${path.basename(keyPath)}: ${hasAccess ? 'ACCESS_GRANTED' : 'NO_OUTPUT'}`
-      );
-      return hasAccess;
-    } catch (error) {
-      const errorMessage =
-        (error as { stderr?: string; message?: string }).stderr ||
-        (error instanceof Error ? error.message : String(error));
-
-      // Check for specific error types
-      if (
-        errorMessage.includes('Permission denied') ||
-        errorMessage.includes('Authentication failed') ||
-        errorMessage.includes('could not read') ||
-        errorMessage.includes('Repository not found')
-      ) {
-        // This key doesn't have access to this specific repository
-        logger.debug(
-          `❌ SSH key ${path.basename(keyPath)} denied access to ${testUrl}: ${errorMessage}`
-        );
-        return false;
-      }
-
-      if (
-        errorMessage.includes('not found') ||
-        errorMessage.includes('does not exist')
-      ) {
-        // Repository doesn't exist
-        logger.debug(`❌ Repository not found: ${testUrl}`);
-        return false;
-      }
-
-      // Other error - assume key doesn't work
-      logger.debug(`❌ SSH key test failed for ${testUrl}: ${errorMessage}`);
-      return false;
-    }
-  }
-
-  // Convert URL to SSH format for SSH key testing
-  private convertToSSHForTesting(url: string): string {
-    // For HTTPS URLs, convert to SSH format for testing
-    const httpsMatch = url.match(/^https:\/\/([^/]+)\/(.+?)(?:\.git)?(?:\/)?$/);
-    if (httpsMatch) {
-      const [, host, repoPath] = httpsMatch;
-      return `git@${host}:${repoPath}.git`;
-    }
-
-    // If already SSH format or unrecognized format, return as-is
-    return url;
-  }
-
   // Find working SSH key for a repository URL
   // Tests keys against the specific repository and returns the first working key
   // Uses session cache to avoid retesting keys
@@ -410,7 +217,7 @@ export class GitCredentialManager {
     const logger = getLogger();
 
     // Extract base host for caching purposes
-    const baseHost = this.extractBaseHost(repoUrl);
+    const baseHost = extractBaseHost(repoUrl);
     if (!baseHost) {
       logger.debug(`Could not extract base host from URL: ${repoUrl}`);
       return null;
@@ -457,7 +264,7 @@ export class GitCredentialManager {
       logger.debug(`🔑 Testing key: ${path.basename(key.keyPath)}`);
 
       try {
-        const works = await this.testSSHKeyAgainstRepo(key.keyPath, repoUrl);
+        const works = await this.deps.testKey(key.keyPath, repoUrl);
         if (works) {
           logger.info(
             `✅ Found working SSH key for ${repoUrl}: ${path.basename(key.keyPath)}`
@@ -550,26 +357,6 @@ export class GitCredentialManager {
     }
   }
 
-  // Extract remote URL from local repository path
-  private async extractRemoteUrl(localPath: string): Promise<string | null> {
-    try {
-      const { stdout } = await execFileAsync(
-        'git',
-        ['remote', 'get-url', 'origin'],
-        {
-          cwd: localPath,
-          timeout: 5000, // 5 second timeout
-        }
-      );
-      return stdout.trim();
-    } catch (error) {
-      getLogger().debug(
-        `Could not extract remote URL from ${localPath}: ${error instanceof Error ? error.message : String(error)}`
-      );
-      return null;
-    }
-  }
-
   // Find working SSH key for repository (handles both URLs and local paths)
   // For local repositories, extracts remote URL first
   async findWorkingSSHKeyForRepo(
@@ -579,9 +366,9 @@ export class GitCredentialManager {
     let targetUrl = pathOrUrl;
 
     // If it's a local path, extract the remote URL
-    if (!this.isUrl(pathOrUrl)) {
+    if (!isGitUrl(pathOrUrl)) {
       logger.debug(`📁 Local repository detected: ${pathOrUrl}`);
-      const remoteUrl = await this.extractRemoteUrl(pathOrUrl);
+      const remoteUrl = await this.deps.extractRemoteUrl(pathOrUrl);
 
       if (!remoteUrl) {
         logger.debug(
@@ -607,9 +394,9 @@ export class GitCredentialManager {
 
     // First, determine the target URL (handle local repos)
     let targetUrl = pathOrUrl;
-    if (!this.isUrl(pathOrUrl)) {
+    if (!isGitUrl(pathOrUrl)) {
       logger.debug(`📁 Local repository detected: ${pathOrUrl}`);
-      const remoteUrl = await this.extractRemoteUrl(pathOrUrl);
+      const remoteUrl = await this.deps.extractRemoteUrl(pathOrUrl);
 
       if (!remoteUrl) {
         logger.debug(
@@ -656,10 +443,8 @@ export class GitCredentialManager {
 
     try {
       // Read the actual key content for Docker container use
-      // eslint-disable-next-line security/detect-non-literal-fs-filename
-      const privateKey = await fs.readFile(workingKey.keyPath, 'utf8');
-      // eslint-disable-next-line security/detect-non-literal-fs-filename
-      const publicKey = await fs.readFile(workingKey.publicKeyPath, 'utf8');
+      const privateKey = await this.deps.readFile(workingKey.keyPath);
+      const publicKey = await this.deps.readFile(workingKey.publicKeyPath);
 
       logger.debug(
         `📤 Providing SSH credentials for container: ${path.basename(workingKey.keyPath)}`
@@ -685,8 +470,8 @@ export class GitCredentialManager {
   async hasSSHCredentialsForRepo(pathOrUrl: string): Promise<boolean> {
     // First, determine the target URL (handle local repos)
     let targetUrl = pathOrUrl;
-    if (!this.isUrl(pathOrUrl)) {
-      const remoteUrl = await this.extractRemoteUrl(pathOrUrl);
+    if (!isGitUrl(pathOrUrl)) {
+      const remoteUrl = await this.deps.extractRemoteUrl(pathOrUrl);
       if (!remoteUrl) {
         return false;
       }
@@ -704,195 +489,10 @@ export class GitCredentialManager {
     return workingKey !== null;
   }
 
-  // Check if string is a URL (vs local path)
-  private isUrl(pathOrUrl: string): boolean {
-    return (
-      pathOrUrl.startsWith('http') ||
-      pathOrUrl.startsWith('git@') ||
-      pathOrUrl.includes('://') ||
-      pathOrUrl.startsWith('ssh://')
-    );
-  }
-
   // Check if a repository is public or private
-  // Uses caching to avoid repeated checks
+  // Delegates to the injected RepoPrivacyChecker (which handles caching).
   async isRepoPublic(repoUrl: string): Promise<boolean | null> {
-    const normalizedUrl = this.normalizeRepoUrl(repoUrl);
-
-    // Check cache first
-    const cached = this.repoPrivacyCache.get(normalizedUrl);
-    if (cached && Date.now() - cached.checkedAt < 5 * 60 * 1000) {
-      // 5 minute cache
-      return cached.isPublic;
-    }
-
-    const logger = getLogger();
-    logger.debug(`🔍 Checking repository privacy: ${normalizedUrl}`);
-
-    let privacyInfo: RepoPrivacyInfo;
-
-    // Try GitHub API first (fastest and most reliable for GitHub repos)
-    if (this.isGitHubUrl(normalizedUrl)) {
-      const githubResult = await this.checkGitHubRepoPrivacy(normalizedUrl);
-      privacyInfo = {
-        repoUrl: normalizedUrl,
-        isPublic: githubResult,
-        checkedAt: Date.now(),
-        method: 'github_api',
-      };
-    } else {
-      // Fall back to git ls-remote test for non-GitHub repos
-      const gitResult = await this.checkRepoPrivacyWithGit(normalizedUrl);
-      privacyInfo = {
-        repoUrl: normalizedUrl,
-        isPublic: gitResult,
-        checkedAt: Date.now(),
-        method: 'git_test',
-      };
-    }
-
-    // Cache the result
-    this.repoPrivacyCache.set(normalizedUrl, privacyInfo);
-
-    logger.debug(
-      `📊 Repository privacy result: ${normalizedUrl} → ${privacyInfo.isPublic === null ? 'unknown' : privacyInfo.isPublic ? 'public' : 'private'} (${privacyInfo.method})`
-    );
-
-    return privacyInfo.isPublic;
-  }
-
-  // Normalize repository URL for consistent caching
-  private normalizeRepoUrl(repoUrl: string): string {
-    // Convert SSH to HTTPS format for consistency
-    if (repoUrl.startsWith('git@github.com:')) {
-      return repoUrl
-        .replace('git@github.com:', 'https://github.com/')
-        .replace(/\.git$/, '');
-    }
-    if (repoUrl.startsWith('git@gitlab.com:')) {
-      return repoUrl
-        .replace('git@gitlab.com:', 'https://gitlab.com/')
-        .replace(/\.git$/, '');
-    }
-
-    // Remove .git suffix for consistency
-    return repoUrl.replace(/\.git$/, '');
-  }
-
-  // Check if URL is a GitHub repository
-  private isGitHubUrl(repoUrl: string): boolean {
-    return repoUrl.includes('github.com');
-  }
-
-  // Check GitHub repository privacy using GitHub API
-  private async checkGitHubRepoPrivacy(
-    repoUrl: string
-  ): Promise<boolean | null> {
-    const logger = getLogger();
-
-    try {
-      const githubRepo = this.parseGitHubUrl(repoUrl);
-      if (!githubRepo) {
-        logger.debug('Could not parse GitHub URL');
-        return null;
-      }
-
-      const apiUrl = `https://api.github.com/repos/${githubRepo.owner}/${githubRepo.name}`;
-
-      // Use fetch with timeout
-      const controller = new globalThis.AbortController();
-      const timeoutId = globalThis.setTimeout(() => controller.abort(), 5000); // 5 second timeout
-
-      const response = await globalThis.fetch(apiUrl, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'ignite-cli',
-        },
-      });
-
-      globalThis.clearTimeout(timeoutId);
-
-      if (response.status === 404) {
-        // Could be private repo or doesn't exist
-        return false;
-      }
-
-      if (response.ok) {
-        const data = (await response.json()) as { private: boolean };
-        return !data.private; // GitHub API returns "private" field
-      }
-
-      logger.debug(`GitHub API returned status: ${response.status}`);
-      return null;
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        logger.debug('GitHub API request timed out');
-      } else {
-        logger.debug(
-          `GitHub API error: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-      return null;
-    }
-  }
-
-  // Parse GitHub URL to extract owner and repo name
-  private parseGitHubUrl(url: string): { owner: string; name: string } | null {
-    const patterns = [
-      /github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/,
-      /git@github\.com:([^/]+)\/([^/.]+)(?:\.git)?/,
-    ];
-
-    for (const pattern of patterns) {
-      const match = url.match(pattern);
-      if (match) {
-        return { owner: match[1], name: match[2] };
-      }
-    }
-    return null;
-  }
-
-  // Check repository privacy using git ls-remote (works for any Git host)
-  private async checkRepoPrivacyWithGit(
-    repoUrl: string
-  ): Promise<boolean | null> {
-    const logger = getLogger();
-
-    try {
-      // Try git ls-remote without credentials
-      await execFileAsync('git', ['ls-remote', '--heads', repoUrl], {
-        timeout: 10000, // 10 second timeout
-      });
-
-      // If this succeeds, repo is public
-      return true;
-    } catch (error) {
-      const errorMessage =
-        (error as { stderr?: string; message?: string }).stderr ||
-        (error instanceof Error ? error.message : String(error));
-
-      if (
-        errorMessage.includes('Authentication failed') ||
-        errorMessage.includes('Permission denied') ||
-        errorMessage.includes('could not read')
-      ) {
-        // Authentication required = private repo
-        return false;
-      }
-
-      if (
-        errorMessage.includes('not found') ||
-        errorMessage.includes('does not exist')
-      ) {
-        // Repository doesn't exist
-        logger.debug(`Repository not found: ${repoUrl}`);
-        return null;
-      }
-
-      // Other error - unknown status
-      logger.debug(`Git ls-remote error: ${errorMessage}`);
-      return null;
-    }
+    return this.deps.privacy.isRepoPublic(repoUrl);
   }
 
   // Get debug information about discovered SSH keys and session cache
