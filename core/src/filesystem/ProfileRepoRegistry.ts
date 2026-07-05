@@ -119,15 +119,19 @@ export class ProfileRepoRegistry {
         );
       }
     }
-    const list = await this.readList(profileId, kind);
+    // Deliberately NOT the tolerant readList(): a corrupt registry file must
+    // propagate as an error (old handler behavior → 500) instead of being
+    // silently overwritten with a fresh single-entry list.
+    const p = this.registryPath(profileId, kind);
+    let list: string[] = [];
+    if (await this.deps.fileSystem.fileExists(p)) {
+      list = await this.deps.fileSystem.readJsonFile<string[]>(p);
+    }
     if (list.includes(pathOrUrl)) {
       throw new Error(`Repository ${pathOrUrl} already exists`);
     }
     list.push(pathOrUrl);
-    await this.deps.fileSystem.writeJsonFile(
-      this.registryPath(profileId, kind),
-      list
-    );
+    await this.deps.fileSystem.writeJsonFile(p, list);
   }
 
   async remove(profileId: string, pathOrUrl: string): Promise<void> {

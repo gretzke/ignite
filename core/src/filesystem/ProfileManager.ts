@@ -122,11 +122,8 @@ export class ProfileManager {
       }
     }
 
-    // Sort by last used (most recent first)
-    profiles.sort(
-      (a, b) => new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime()
-    );
-
+    // No sorting: the wire contract preserves fileSystem.listProfiles() id
+    // order (the old /profiles handler never sorted).
     return profiles;
   }
 

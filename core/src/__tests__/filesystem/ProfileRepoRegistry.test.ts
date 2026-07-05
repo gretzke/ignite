@@ -61,6 +61,21 @@ describe('ProfileRepoRegistry', () => {
     ).toEqual(['https://github.com/a/b']);
   });
 
+  it('save propagates a corrupt registry file read error without overwriting', async () => {
+    const key = `/profiles/p1/repos/${RepoContainerKind.CLONED}.json`;
+    const corrupt = 'not json';
+    deps._store.set(key, corrupt);
+    deps.fileSystem.readJsonFile = async () => {
+      throw new Error(`Invalid JSON in file: ${key}`);
+    };
+    const registry = new ProfileRepoRegistry(deps);
+    await expect(
+      registry.save('p1', 'https://github.com/c/d')
+    ).rejects.toThrow(/Invalid JSON/);
+    // The corrupt file must not have been overwritten.
+    expect(deps._store.get(key)).toBe(corrupt);
+  });
+
   it('remove filters the entry and removes containers', async () => {
     deps._store.set(`/profiles/p1/repos/${RepoContainerKind.CLONED}.json`, [
       'https://github.com/a/b',
