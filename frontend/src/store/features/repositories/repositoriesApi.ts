@@ -383,18 +383,6 @@ export const repositoriesApi = {
   // Initialize a single repository
   initializeRepository: (pathOrUrl: string) => {
     // Extract repository name for better toast messages
-    const getRepoName = (path: string): string => {
-      if (path.startsWith('http')) {
-        // For URLs like https://github.com/owner/repo
-        const parts = path.split('/');
-        return parts[parts.length - 1] || path;
-      } else {
-        // For local paths, get the last directory name
-        const parts = path.replace(/\\/g, '/').split('/');
-        return parts[parts.length - 1] || path;
-      }
-    };
-
     const repoName = getRepoName(pathOrUrl);
 
     return [

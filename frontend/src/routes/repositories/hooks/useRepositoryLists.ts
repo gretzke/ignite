@@ -1,0 +1,72 @@
+import { useAppSelector } from '../../../store/hooks';
+import {
+  selectRepositories,
+  selectRepositoriesData,
+  selectFailedRepositories,
+} from '../../../store/features/repositories/repositoriesSlice';
+import { getRepoName } from '../../../utils/repo';
+
+// Derived view model for the repositories page: transforms the raw API data
+// into display-ready lists and handles current-workspace matching.
+export function useRepositoryLists() {
+  const repositories = useAppSelector(selectRepositories);
+  const repositoriesData = useAppSelector(selectRepositoriesData);
+  const failedRepositories = useAppSelector(selectFailedRepositories);
+
+  const sessionPath = repositories?.session;
+  const localRepoPaths = repositories?.local || [];
+
+  // Check if current workspace matches any local repo
+  const matchingLocalRepoIndex = sessionPath
+    ? localRepoPaths.findIndex((path) => path === sessionPath)
+    : -1;
+
+  const hasMatchingLocalRepo = matchingLocalRepoIndex !== -1;
+
+  // Current workspace (only show if it doesn't match a local repo and is not failed)
+  const currentWorkspace =
+    sessionPath &&
+    !hasMatchingLocalRepo &&
+    !failedRepositories.includes(sessionPath)
+      ? {
+          name: 'Current Workspace',
+          path: sessionPath,
+          saved: false,
+          frameworks: repositoriesData[sessionPath]?.frameworks,
+        }
+      : null;
+
+  // Transform local repos and handle current workspace matching, filter out failed ones
+  const localRepos = localRepoPaths
+    .filter((path) => !failedRepositories.includes(path))
+    .map((path, index) => {
+      const isCurrentWorkspace = path === sessionPath;
+      return {
+        name: isCurrentWorkspace
+          ? `${getRepoName(path)} (Current Workspace)`
+          : getRepoName(path),
+        path,
+        frameworks: repositoriesData[path]?.frameworks,
+        isCurrentWorkspace,
+        originalIndex: index,
+      };
+    });
+
+  // Sort local repos to put current workspace match at the top
+  localRepos.sort((a, b) => {
+    if (a.isCurrentWorkspace && !b.isCurrentWorkspace) return -1;
+    if (!a.isCurrentWorkspace && b.isCurrentWorkspace) return 1;
+    return a.originalIndex - b.originalIndex; // Maintain original order for others
+  });
+
+  const clonedRepos =
+    repositories?.cloned
+      .filter((path) => !failedRepositories.includes(path))
+      .map((path) => ({
+        name: getRepoName(path),
+        path,
+        frameworks: repositoriesData[path]?.frameworks,
+      })) || [];
+
+  return { currentWorkspace, localRepos, clonedRepos, sessionPath };
+}
