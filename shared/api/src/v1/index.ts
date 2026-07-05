@@ -8,12 +8,14 @@ export * from "./profiles.js";
 export * from "./plugins/index.js";
 export * from "./plugins/compiler/index.js";
 export * from "./plugins/repo-manager/index.js";
+export * from "./filesystem.js";
 
 import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
 import { pluginRoutes } from "./plugins/index.js";
 import { compilerRoutes } from "./plugins/compiler/index.js";
 import { repoManagerRoutes } from "./plugins/repo-manager/index.js";
+import { filesystemRoutes } from "./filesystem.js";
 
 export interface IApiError {
   statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 499 | 500 | 503;
@@ -46,6 +48,7 @@ const allRoutes = {
   ...pluginRoutes,
   ...compilerRoutes,
   ...repoManagerRoutes,
+  ...filesystemRoutes,
 } as const;
 
 export const v1Routes = allRoutes satisfies ValidateRoutes<typeof allRoutes>;
