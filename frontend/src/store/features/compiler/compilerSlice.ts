@@ -4,6 +4,8 @@ import { triggerToast } from '../../middleware/toastListener';
 import { ApiError } from '@ignite/api/client';
 import { formatApiError } from '../../middleware/apiGate';
 import { getRepoName } from '../../../utils/repo';
+import { jobStarted } from '../jobs/jobsSlice';
+import { wsSend } from '../../middleware/websocket';
 import type { ArtifactLocation } from '@ignite/api';
 
 // 'idle' = framework detected but not compiled this session; compilation is
@@ -106,9 +108,11 @@ export const {
 } = compilerSlice.actions;
 
 // Explicit user-triggered clean compile: install dependencies, then compile.
-// installDependencies sets status to 'compiling' on success, which the effects
-// middleware turns into a compileProject dispatch. Returns an array of actions
-// for the caller to dispatch (same pattern as repositoriesApi.detectFrameworks).
+// installDependencies starts a compiler.install job; jobsEffects routes the
+// job's terminal event to setCompilationStatus('compiling'), which the
+// existing compilerEffects listener turns into a compileProject dispatch.
+// Returns an array of actions for the caller to dispatch (same pattern as
+// repositoriesApi.detectFrameworks).
 export const cleanCompile = ({
   pathOrUrl,
   pluginId,
@@ -135,13 +139,21 @@ export const installDependencies = ({
   apiDispatchAction({
     endpoint: 'install',
     body: { pathOrUrl, pluginId },
-    onSuccess: () => [
-      setCompilationStatus({
-        repoPath: pathOrUrl,
-        frameworkId: pluginId,
-        status: 'compiling',
-      }),
-    ],
+    // Request succeeded means only that the compiler.install job was
+    // created — track it and subscribe for its events. The actual
+    // 'compiling'/'error' status transition happens in jobsEffects once the
+    // job reaches a terminal state.
+    onSuccess: (data: unknown) => {
+      const { jobId } = data as { jobId: string };
+      return [
+        jobStarted({
+          jobId,
+          type: 'compiler.install',
+          params: { pathOrUrl, pluginId },
+        }),
+        wsSend({ type: 'subscribe', jobId }),
+      ];
+    },
     onError: (error: ApiError) => [
       setCompilationStatus({
         repoPath: pathOrUrl,
@@ -167,13 +179,19 @@ export const compileProject = ({
   apiDispatchAction({
     endpoint: 'compile',
     body: { pathOrUrl, pluginId },
-    onSuccess: () => [
-      setCompilationStatus({
-        repoPath: pathOrUrl,
-        frameworkId: pluginId,
-        status: 'ready',
-      }),
-    ],
+    // Same pattern as installDependencies: 'ready'/'error' transitions are
+    // driven by jobsEffects once the compiler.compile job finishes.
+    onSuccess: (data: unknown) => {
+      const { jobId } = data as { jobId: string };
+      return [
+        jobStarted({
+          jobId,
+          type: 'compiler.compile',
+          params: { pathOrUrl, pluginId },
+        }),
+        wsSend({ type: 'subscribe', jobId }),
+      ];
+    },
     onError: (error: ApiError) => [
       setCompilationStatus({
         repoPath: pathOrUrl,

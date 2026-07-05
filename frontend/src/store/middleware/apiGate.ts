@@ -128,19 +128,35 @@ apiGate.startListening({
       }
     };
 
-    // Wait for connection: proceed only when CONNECTED; abort on DISCONNECTED
+    // Wait for connection: proceed only when CONNECTED; abort on DISCONNECTED.
+    // Uses the listener middleware's own condition() instead of polling: it
+    // resolves as soon as a dispatched action leaves the state out of
+    // RECONNECTING (i.e. websocketMiddleware's setStatus transitions), or
+    // rejects if this listener task itself gets cancelled — which we treat
+    // the same as api.signal firing.
     const waitForConnection = async (): Promise<
       'connected' | 'disconnected' | 'aborted'
     > => {
-      const signal = api.signal;
-      while (!signal.aborted) {
-        const state = api.getState() as RootState;
-        const status = state.connection.status;
-        if (status === ConnectionStatus.CONNECTED) return 'connected';
-        if (status === ConnectionStatus.DISCONNECTED) return 'disconnected';
-        await new Promise((r) => setTimeout(r, 250));
+      const currentStatus = (api.getState() as RootState).connection.status;
+      if (currentStatus === ConnectionStatus.CONNECTED) return 'connected';
+      if (currentStatus === ConnectionStatus.DISCONNECTED) return 'disconnected';
+
+      try {
+        const settled = await api.condition(
+          (_action, currentState) =>
+            (currentState as RootState).connection.status !==
+            ConnectionStatus.RECONNECTING
+        );
+        if (!settled || api.signal.aborted) return 'aborted';
+        const finalStatus = (api.getState() as RootState).connection.status;
+        return finalStatus === ConnectionStatus.CONNECTED
+          ? 'connected'
+          : 'disconnected';
+      } catch {
+        // condition() rejects if this listener task was cancelled while
+        // waiting (e.g. middleware torn down mid-flight).
+        return 'aborted';
       }
-      return 'aborted';
     };
 
     const gate = await waitForConnection();

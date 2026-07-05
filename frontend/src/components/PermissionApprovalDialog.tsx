@@ -9,6 +9,8 @@ import {
 } from '../store/features/plugins/trustSlice';
 import { apiClient, apiDispatchAction } from '../store/api/client';
 import { triggerToast } from '../store/middleware/toastListener';
+import { jobStarted } from '../store/features/jobs/jobsSlice';
+import { wsSend } from '../store/middleware/websocket';
 import type { ApiError } from '@ignite/api/client';
 import type { ListPluginTrustData } from '@ignite/api';
 
@@ -55,6 +57,26 @@ export default function PermissionApprovalDialog() {
                 params: retry.params,
                 query: retry.query,
                 body: retry.body,
+                // The retried call has no onSuccess of its own (RetryCall
+                // only carries endpoint/params/query/body — callbacks
+                // aren't serializable), so a job-based retry (e.g.
+                // installPlugin) would otherwise never get tracked or
+                // subscribed to. Seed a placeholder job here; jobsEffects'
+                // terminal routing reads job.type from the WS snapshot, not
+                // this placeholder, so an empty type is safe.
+                onSuccess: (data: unknown) => {
+                  if (
+                    data &&
+                    typeof data === 'object' &&
+                    typeof (data as { jobId?: unknown }).jobId === 'string'
+                  ) {
+                    const { jobId } = data as { jobId: string };
+                    return [
+                      jobStarted({ jobId, type: '', params: {} }),
+                      wsSend({ type: 'subscribe', jobId }),
+                    ];
+                  }
+                },
               })
             );
           }

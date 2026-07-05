@@ -4,6 +4,8 @@ import { triggerToast } from '../../middleware/toastListener';
 import { ApiError } from '@ignite/api/client';
 import { formatApiError } from '../../middleware/apiGate';
 import { getRepoName } from '../../../utils/repo';
+import { jobStarted } from '../jobs/jobsSlice';
+import { wsSend } from '../../middleware/websocket';
 import {
   clearRepositories,
   setRepositories,
@@ -14,7 +16,6 @@ import {
   setRepositoryBranches,
   startFrameworkDetection,
   setRepositoryFrameworks,
-  type IFramework,
   type IRepository,
 } from './repositoriesSlice';
 
@@ -494,19 +495,24 @@ export const repositoriesApi = {
   detectFrameworks: (pathOrUrl: string) => {
     const repoName = pathOrUrl.split('/').pop() || pathOrUrl;
 
-    // Return an array of actions: start detection, then API call
+    // Return an array of actions: start detection, then API call. Request
+    // success only means the compiler.detect job was created; the actual
+    // frameworks list arrives via jobsEffects once the job's terminal event
+    // (with its result) is routed to setRepositoryFrameworks.
     return [
       startFrameworkDetection(pathOrUrl),
       apiDispatchAction({
         endpoint: 'detect',
         body: { pathOrUrl },
         onSuccess: (data: unknown) => {
-          const typedData = data as { frameworks: IFramework[] };
+          const { jobId } = data as { jobId: string };
           return [
-            setRepositoryFrameworks({
-              pathOrUrl,
-              frameworks: typedData.frameworks,
+            jobStarted({
+              jobId,
+              type: 'compiler.detect',
+              params: { pathOrUrl },
             }),
+            wsSend({ type: 'subscribe', jobId }),
           ];
         },
         onError: (error: ApiError) => {

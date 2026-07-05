@@ -2,6 +2,8 @@ import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import { apiClient } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
 import { formatApiError } from '../../middleware/apiGate';
+import { jobStarted } from '../jobs/jobsSlice';
+import { wsSend } from '../../middleware/websocket';
 import type { RootState } from '../../store';
 
 export interface PluginRow {
@@ -151,20 +153,23 @@ export const pluginsApi = {
       },
     });
   },
+  // Request success only means the plugin.install job was created; the
+  // "Plugin installed" toast + list refresh now happen in jobsEffects once
+  // the job reaches a terminal state (also handles PERMISSION_REQUIRED
+  // denials, which surface as failed jobs rather than HTTP errors).
   install(contextDir: string, dockerfile?: string) {
+    const source = dockerfile
+      ? ({ kind: 'local', contextDir, dockerfile } as const)
+      : ({ kind: 'local', contextDir } as const);
     return apiClient.dispatch.installPlugin({
-      body: {
-        source: dockerfile
-          ? { kind: 'local', contextDir, dockerfile }
-          : { kind: 'local', contextDir },
-      },
-      onSuccess: () => [
-        triggerToast({
-          title: 'Plugin installed',
-          variant: 'success',
-          duration: 3000,
+      body: { source },
+      onSuccess: (data) => [
+        jobStarted({
+          jobId: data.jobId,
+          type: 'plugin.install',
+          params: { source },
         }),
-        ...pluginsApi.refresh(),
+        wsSend({ type: 'subscribe', jobId: data.jobId }),
       ],
       onError: (error) => {
         const { title, description } = formatApiError(error);
@@ -175,15 +180,18 @@ export const pluginsApi = {
     });
   },
   installGit(url: string, ref?: string) {
+    const source = ref
+      ? ({ kind: 'git', url, ref } as const)
+      : ({ kind: 'git', url } as const);
     return apiClient.dispatch.installPlugin({
-      body: { source: ref ? { kind: 'git', url, ref } : { kind: 'git', url } },
-      onSuccess: () => [
-        triggerToast({
-          title: 'Plugin installed',
-          variant: 'success',
-          duration: 3000,
+      body: { source },
+      onSuccess: (data) => [
+        jobStarted({
+          jobId: data.jobId,
+          type: 'plugin.install',
+          params: { source },
         }),
-        ...pluginsApi.refresh(),
+        wsSend({ type: 'subscribe', jobId: data.jobId }),
       ],
       onError: (error) => {
         const { title, description } = formatApiError(error);

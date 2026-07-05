@@ -19,6 +19,7 @@ import { apiGate } from './middleware/apiGate';
 import { uiEffects } from './middleware/uiEffects';
 import { repositoriesEffects } from './middleware/repositoriesEffects';
 import { compilerEffects } from './middleware/compilerEffects';
+import { jobsEffects } from './middleware/jobsEffects';
 
 export const store = configureStore({
   reducer: {
@@ -40,7 +41,8 @@ export const store = configureStore({
         uiEffects.middleware,
         toastListener.middleware,
         repositoriesEffects.middleware,
-        compilerEffects.middleware
+        compilerEffects.middleware,
+        jobsEffects.middleware
       )
       .concat(websocketMiddleware),
 });

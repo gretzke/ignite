@@ -8,6 +8,13 @@ import {
 import type { AppDispatch } from '../store';
 
 // Create a listener middleware for compiler effects
+//
+// Both actions below are now dispatched by jobsEffects once the
+// corresponding job (compiler.detect / compiler.install / compiler.compile)
+// reaches a terminal state, not directly from an HTTP onSuccess — but the
+// action shapes are unchanged, so this file still owns "what happens next"
+// for the compile chain (detect -> load artifacts; install -> compile ->
+// reload artifacts).
 export const compilerEffects = createListenerMiddleware();
 
 // On framework detection, load any artifacts from a previous compile but do
