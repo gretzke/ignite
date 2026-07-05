@@ -28,6 +28,8 @@ export function DirectoryPicker({
   const lastRequestedRef = useRef<string | null>(null);
   const immediateRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   const fetchChain = useCallback(
     (path: string) => {
@@ -41,6 +43,11 @@ export function DirectoryPicker({
             setError(
               data.requestedPathExists ? '' : 'Directory does not exist'
             );
+            // Pre-fill the empty input with the starting directory
+            if (path.trim() === '' && data.requestedPathExists) {
+              lastRequestedRef.current = data.resolvedPath;
+              onChangeRef.current(data.resolvedPath);
+            }
           },
           onError: (apiError) => {
             if (lastRequestedRef.current !== path) return;
@@ -101,11 +108,8 @@ export function DirectoryPicker({
 
       <div
         ref={scrollRef}
-        className="flex overflow-x-auto rounded-lg mt-3"
-        style={{
-          border: '1px solid var(--border-weak, rgba(255,255,255,0.1))',
-          height: 224,
-        }}
+        className="dir-picker-columns flex overflow-x-auto rounded-lg mt-3"
+        style={{ height: 224 }}
       >
         {(chain?.columns ?? []).map((column) => {
           const visibleEntries = column.entries.filter(
@@ -114,11 +118,7 @@ export function DirectoryPicker({
           return (
             <div
               key={column.path}
-              className="w-48 shrink-0 overflow-y-auto py-1"
-              style={{
-                borderRight:
-                  '1px solid var(--border-weak, rgba(255,255,255,0.1))',
-              }}
+              className="dir-picker-column w-48 shrink-0 overflow-y-auto py-1"
             >
               {visibleEntries.length === 0 && (
                 <div className="text-xs opacity-50 px-2 py-1">
@@ -136,8 +136,8 @@ export function DirectoryPicker({
                     key={entry.name}
                     type="button"
                     onClick={() => handleEntryClick(column.path, entry.name)}
-                    className={`flex w-full items-center gap-1.5 px-2 py-1 text-left text-sm hover:bg-white/10 ${
-                      selected ? 'bg-white/15' : ''
+                    className={`dir-picker-entry flex w-full items-center gap-1.5 px-2 py-1 text-left text-sm ${
+                      selected ? 'dir-picker-entry-selected' : ''
                     }`}
                     title={entryPath}
                   >

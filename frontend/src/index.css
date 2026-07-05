@@ -776,4 +776,18 @@
   .theme-dark .select-option-selected {
     background-color: color-mix(in oklch, var(--text) 15%, transparent);
   }
+
+  /* Directory picker miller columns */
+  .dir-picker-columns {
+    border: 1px solid color-mix(in oklch, var(--text) 15%, transparent);
+  }
+  .dir-picker-column {
+    border-right: 1px solid color-mix(in oklch, var(--text) 10%, transparent);
+  }
+  .dir-picker-entry:hover {
+    background-color: color-mix(in oklch, var(--text) 8%, transparent);
+  }
+  .dir-picker-entry-selected {
+    background-color: color-mix(in oklch, var(--text) 12%, transparent);
+  }
 }
