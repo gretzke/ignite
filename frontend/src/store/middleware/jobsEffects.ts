@@ -10,6 +10,7 @@ import {
   jobSnapshotReceived,
   jobsLoaded,
   selectJob,
+  selectActiveJobs,
 } from '../features/jobs/jobsSlice';
 import {
   setStatus,
@@ -247,7 +248,11 @@ jobsEffects.startListening({
 
 // Terminal-event routing, step 2: route whenever a full record lands, be it
 // a live WS 'job-snapshot' frame, the GET /jobs/:jobId fetch above, or a
-// GET /jobs?active=true list entry on reconnect.
+// jobsLoaded batch from the reconnect listener below. The jobsLoaded branch
+// is exercised by the reconnect path's finished-while-disconnected recovery:
+// GET /jobs?active=true entries are never terminal, but the per-job GET
+// /jobs/:jobId fetches for jobs that vanished from the active list deliver
+// terminal records through jobsLoaded([job]).
 jobsEffects.startListening({
   matcher: isAnyOf(jobSnapshotReceived, jobsLoaded),
   effect: async (action, listenerApi) => {
@@ -267,7 +272,10 @@ jobsEffects.startListening({
 });
 
 // Reconnect resubscription: replay any events missed while disconnected and
-// re-establish live subscriptions for jobs still active on the server.
+// re-establish live subscriptions for jobs still active on the server. Jobs
+// that went terminal entirely during the outage are NOT in the active list —
+// they are recovered by diffing it against our tracked non-terminal views
+// and fetching each missing job's full record individually.
 jobsEffects.startListening({
   actionCreator: setStatus,
   effect: async (action, listenerApi) => {
@@ -278,13 +286,48 @@ jobsEffects.startListening({
         query: { active: 'true' },
         onSuccess: (data) => {
           const actions: UnknownAction[] = [jobsLoaded(data.jobs)];
+          const serverActiveIds = new Set<string>();
           for (const job of data.jobs) {
+            serverActiveIds.add(job.id);
             const lastSeq = job.events.reduce(
               (max, event) => Math.max(max, event.seq),
               0
             );
             actions.push(
               wsSend({ type: 'subscribe', jobId: job.id, afterSeq: lastSeq })
+            );
+          }
+
+          // A job we still track as queued/running but the server no longer
+          // lists as active has necessarily gone terminal while we were
+          // disconnected (its terminal state event + snapshot were never
+          // delivered). Fetch its full record; the resulting jobsLoaded
+          // flows through the terminal-routing listener above exactly once
+          // (handledJobIds guard). A false positive from a job started after
+          // the server built this list is harmless: the fetched record is
+          // non-terminal and routeTerminalJob no-ops.
+          const trackedActive = selectActiveJobs(
+            listenerApi.getState() as RootState
+          );
+          for (const view of trackedActive) {
+            if (serverActiveIds.has(view.id)) continue;
+            const jobId = view.id;
+            actions.push(
+              apiClient.dispatch.getJob({
+                params: { jobId },
+                onSuccess: (jobData) => [jobsLoaded([jobData.job])],
+                onError: (error) => {
+                  const { title, description } = formatApiError(error);
+                  return [
+                    triggerToast({
+                      title,
+                      description,
+                      variant: 'error',
+                      duration: 5000,
+                    }),
+                  ];
+                },
+              })
             );
           }
           return actions;
