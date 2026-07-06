@@ -55,7 +55,14 @@ export function createJobsHandlers(deps?: Partial<JobsHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<ListJobsData>> => {
       const { active } = request.query;
-      const jobs = d.jobs.list(active === 'true' ? { active: true } : undefined);
+      // Both documented values filter; only an absent param means "all jobs".
+      const filter =
+        active === 'true'
+          ? { active: true }
+          : active === 'false'
+            ? { active: false }
+            : undefined;
+      const jobs = d.jobs.list(filter);
       return reply.status(200).send({ data: { jobs } });
     },
 

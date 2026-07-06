@@ -293,9 +293,12 @@ export class FileSystem {
     }
   }
 
-  // Safely write JSON file (atomic: temp + rename, matching TrustManager)
+  // Safely write JSON file (atomic: temp + rename, matching TrustManager).
+  // Unique temp suffix: concurrent writers to the same path must not share
+  // one temp file (interleaved writes, or a rename race throwing ENOENT for
+  // a write that actually succeeded).
   async writeJsonFile<T>(filePath: string, data: T): Promise<void> {
-    const tmpPath = `${filePath}.tmp`;
+    const tmpPath = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
     try {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: paths are constructed within ~/.ignite
       await fs.mkdir(path.dirname(filePath), { recursive: true });

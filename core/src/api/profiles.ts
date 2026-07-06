@@ -280,6 +280,18 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         await d.repoRegistry.save(request.params.id, request.body.pathOrUrl);
         return reply.status(204).send(null);
       } catch (error) {
+        // Saving an identity that's already registered is a client conflict,
+        // not a server fault.
+        if (
+          (error as { code?: string })?.code === ErrorCodes.REPO_ALREADY_EXISTS
+        ) {
+          return reply.status(409).send({
+            statusCode: 409,
+            error: 'Conflict',
+            code: ErrorCodes.REPO_ALREADY_EXISTS,
+            message: error instanceof Error ? error.message : String(error),
+          }) as unknown as null;
+        }
         return sendCaughtError(
           reply,
           error,

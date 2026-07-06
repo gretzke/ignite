@@ -127,24 +127,35 @@ export class ProfileManager {
     return profiles;
   }
 
-  // List config of every archived profile; unreadable entries are skipped.
+  // List config of every archived profile; unreadable entries are skipped
+  // INDIVIDUALLY — one corrupt config.json must not hide every other
+  // archived profile. Only a missing/unreadable archive root yields [].
   async listArchivedProfiles(): Promise<ProfileConfig[]> {
     const archivedRoot = this.fileSystem.getArchivedProfilesPath();
     const profiles: ProfileConfig[] = [];
+    let entries: string[];
     try {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: derived from ~/.ignite
-      const entries = await fs.readdir(archivedRoot);
-      for (const id of entries) {
+      entries = await fs.readdir(archivedRoot);
+    } catch {
+      return [];
+    }
+    for (const id of entries) {
+      try {
         const p = path.join(archivedRoot, id);
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: derived from ~/.ignite
         const stat = await fs.stat(p);
         if (stat.isDirectory()) {
           const cfgPath = path.join(p, 'config.json');
-          profiles.push(await this.fileSystem.readJsonFile<ProfileConfig>(cfgPath));
+          profiles.push(
+            await this.fileSystem.readJsonFile<ProfileConfig>(cfgPath)
+          );
         }
+      } catch (error) {
+        getLogger().warn(
+          `Skipping unreadable archived profile '${id}': ${String(error)}`
+        );
       }
-    } catch {
-      return [];
     }
     return profiles;
   }

@@ -147,9 +147,11 @@ export class TrustManager {
   }
 
   // Atomic write (temp + rename) so a crash can't leave a half-written store.
+  // Unique temp suffix so concurrent writers can't interleave on one temp
+  // file (see FileSystem.writeJsonFile).
   private async writeTrustFile(entries: TrustFile): Promise<void> {
     await fs.mkdir(path.dirname(this.trustFilePath), { recursive: true });
-    const tmpPath = `${this.trustFilePath}.tmp`;
+    const tmpPath = `${this.trustFilePath}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
     await fs.writeFile(tmpPath, JSON.stringify(entries, null, 2), 'utf8');
     await fs.rename(tmpPath, this.trustFilePath);
   }

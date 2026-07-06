@@ -94,7 +94,7 @@ describe('jobs handlers', () => {
       expect(deps.jobs.list).toHaveBeenCalledWith({ active: true });
     });
 
-    it('does not filter when active=false', async () => {
+    it('filters to terminal jobs when active=false', async () => {
       const deps = makeDeps();
       const handlers = createJobsHandlers(deps);
       const reply = makeReply();
@@ -103,7 +103,7 @@ describe('jobs handlers', () => {
         reply as never
       );
       expect(reply.statusCode).toBe(200);
-      expect(deps.jobs.list).toHaveBeenCalledWith(undefined);
+      expect(deps.jobs.list).toHaveBeenCalledWith({ active: false });
     });
   });
 

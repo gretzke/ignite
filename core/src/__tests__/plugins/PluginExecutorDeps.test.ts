@@ -83,7 +83,8 @@ describe('PluginExecutor with injected deps', () => {
       {},
       expect.any(String),
       'builtin',
-      onOutput
+      onOutput,
+      undefined
     );
   });
 
@@ -99,6 +100,7 @@ describe('PluginExecutor with injected deps', () => {
       {},
       expect.any(String),
       'builtin',
+      undefined,
       undefined
     );
   });
