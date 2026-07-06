@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { getLogger } from '../../utils/logger.js';
 import {
   PluginRegistryLoader,
@@ -56,8 +57,18 @@ export function missingPermission(
 //
 // Ephemeral Plugin Lifecycle (processing plugins):
 // - Short-lived containers (AutoRemove=true)
-// - Created with VolumesFrom=[repoContainer] when requiresRepo=true
+// - Bind-mounts the host workspace directly at /workspace when
+//   requiresRepo=true (grant enforcement downgrades the bind to :ro)
 // - Automatically removed after operation completion
+
+// Threaded through execute() -> the lifecycle-specific executor. Ephemeral
+// plugins that requiresRepo use workspacePath to bind-mount the host
+// workspace directly (Phase 3); the persistent (repo-container) path ignores
+// it — that tier is deleted in Task 4.
+export interface ExecuteOpts {
+  onOutput?: (text: string) => void;
+  workspacePath?: string;
+}
 
 // Injectable dependencies (tests pass fakes; production uses real singletons).
 export interface PluginExecutorDeps {
@@ -118,7 +129,7 @@ export class PluginExecutor {
     pluginId: string,
     operation: string,
     options: Record<string, unknown>,
-    opts?: { onOutput?: (text: string) => void }
+    opts?: ExecuteOpts
   ): Promise<PluginResponse<unknown>> {
     getLogger().info(`🔌 Executing ${pluginId}.${operation}`);
 
@@ -178,7 +189,7 @@ export class PluginExecutor {
     operation: string,
     options: Record<string, unknown>,
     grant: PermissionGrant,
-    opts?: { onOutput?: (text: string) => void }
+    opts?: ExecuteOpts
   ): Promise<PluginResponse<unknown>> {
     const pluginId = pluginConfig.metadata.id;
     getLogger().info(
@@ -226,26 +237,26 @@ export class PluginExecutor {
     operation: string,
     options: Record<string, unknown>,
     grant: PermissionGrant,
-    opts?: { onOutput?: (text: string) => void }
+    opts?: ExecuteOpts
   ): Promise<PluginResponse<unknown>> {
     const pluginId = pluginConfig.metadata.id;
     getLogger().info(`⚡ Executing ephemeral plugin: ${pluginId}.${operation}`);
 
-    // Create ephemeral container with repo dependency resolution
+    // Create ephemeral container, binding the host workspace directly when
+    // the plugin requiresRepo (Phase 3: no more repo-container VolumesFrom).
     const ephemeralContainer = await this.createEphemeralContainer(
       pluginConfig,
-      options,
-      grant
+      grant,
+      opts?.workspacePath
     );
 
     // Execute with resolved ephemeral container; always stop it afterwards
     // (AutoRemove=true, so Docker cleans it up once stopped)
-    const { ...cleanOptions } = this.extractPathInfo(options);
     try {
       return await this.executeOperationDirect(
         pluginConfig,
         operation,
-        cleanOptions,
+        options,
         ephemeralContainer,
         opts
       );
@@ -254,11 +265,14 @@ export class PluginExecutor {
     }
   }
 
-  // Create ephemeral container with AutoRemove=true and VolumesFrom repo if needed
+  // Create ephemeral container with AutoRemove=true, bind-mounting the host
+  // workspace directly when the plugin requiresRepo (grant enforcement — the
+  // orchestrator downgrades to :ro without hostWrite — mirrors the old
+  // VolumesFrom rule this replaces).
   private async createEphemeralContainer(
     pluginConfig: PluginConfig,
-    options: Record<string, unknown>,
-    grant: PermissionGrant
+    grant: PermissionGrant,
+    workspacePath?: string
   ): Promise<string> {
     const pluginId = pluginConfig.metadata.id;
 
@@ -284,32 +298,33 @@ export class PluginExecutor {
       'ignite.cacheVolume': cacheVolume,
     };
 
-    let volumesFrom: string[] | undefined;
+    let workspaceBind: { hostPath: string } | undefined;
 
-    // Add VolumesFrom if repo dependency is required
+    // requiresRepo now means "needs the host workspace bind-mounted".
     if (pluginConfig.requiresRepo) {
-      const { pathOrUrl } = this.extractPathInfo(options);
-
-      if (!pathOrUrl) {
+      if (!workspacePath) {
         throw new Error(
-          `Repository path required for ephemeral plugin: ${pluginConfig.metadata.id}`
+          `Workspace path required for ephemeral plugin: ${pluginId}`
         );
       }
-
-      const repoContainer = await RepoContainerUtils.findExistingRepoContainer(
-        pathOrUrl,
-        (name) => this.deps.containerOrchestrator.containerExists(name)
-      );
-      if (!repoContainer) {
-        throw new Error(`No repository container found for ${pathOrUrl}`);
-      }
-
-      volumesFrom = [repoContainer];
-      labels['ignite.repoContainer'] = repoContainer;
-
+      workspaceBind = { hostPath: workspacePath };
+      labels['ignite.workspace'] = workspacePath;
       getLogger().info(
-        `🔗 Ephemeral container will use volumes from: ${repoContainer}`
+        `🔗 Ephemeral container will bind-mount workspace: ${workspacePath}`
       );
+    }
+
+    const env = [`${PLUGIN_CACHE_ENV}=${PLUGIN_CACHE_MOUNT}`];
+    let user: string | undefined;
+    // Docker Desktop (macOS/Windows) runs the daemon in a VM and remaps
+    // container-root-owned files to the host user transparently, so image
+    // default is fine there. Native Linux Docker has no such remap: a
+    // root-run compiler would leave root-owned artifacts in the bind-mounted
+    // workspace. Untested on Linux — flag if this surfaces ownership issues.
+    if (process.platform === 'linux') {
+      const { uid, gid } = os.userInfo();
+      user = `${uid}:${gid}`;
+      env.push('HOME=/tmp');
     }
 
     const containerName = await this.deps.containerOrchestrator.createContainer(
@@ -320,8 +335,9 @@ export class PluginExecutor {
         labels,
         binds: [`${cacheVolume}:${PLUGIN_CACHE_MOUNT}`],
         volumes: { [PLUGIN_CACHE_MOUNT]: {} },
-        env: [`${PLUGIN_CACHE_ENV}=${PLUGIN_CACHE_MOUNT}`],
-        volumesFrom,
+        env,
+        workspaceBind,
+        user,
         grant,
       }
     );
@@ -365,7 +381,7 @@ export class PluginExecutor {
     operation: string,
     options: Record<string, unknown>,
     containerName: string,
-    opts?: { onOutput?: (text: string) => void }
+    opts?: ExecuteOpts
   ): Promise<PluginResponse<unknown>> {
     try {
       // Call PluginExecutionUtils directly - no handler needed

@@ -6,6 +6,7 @@ import {
   type CompilerExecutorLike,
   type CompilerJobManagerLike,
   type CompilerRegistryLoaderLike,
+  type CompilerRepoServiceLike,
 } from '../../api/plugins/compiler/index.js';
 import { ErrorCodes } from '../../types/errors.js';
 import {
@@ -80,11 +81,26 @@ function makeFakeRegistry(
   };
 }
 
+// Deterministic fake: appends '-workspace' to the pathOrUrl so tests can
+// assert the resolved value (not just that *some* string was passed) reached
+// executor.execute.
+function makeFakeRepos(
+  overrides: Partial<CompilerRepoServiceLike> = {}
+): CompilerRepoServiceLike {
+  return {
+    resolveWorkspacePath: vi.fn(
+      async (pathOrUrl: string) => `${pathOrUrl}-workspace`
+    ),
+    ...overrides,
+  };
+}
+
 describe('compiler API handlers (jobs)', () => {
   let app: FastifyInstance;
   let fakeJobs: ReturnType<typeof makeFakeJobs>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let registryLoader: CompilerRegistryLoaderLike;
+  let repos: CompilerRepoServiceLike;
 
   beforeEach(async () => {
     fakeJobs = makeFakeJobs();
@@ -94,17 +110,21 @@ describe('compiler API handlers (jobs)', () => {
       hardhat: hardhatConfig,
       gitrepo: nonCompilerConfig,
     });
+    repos = makeFakeRepos();
 
     const handlers = createCompilerHandlers({
       jobs: fakeJobs,
       executor: executor as unknown as CompilerExecutorLike,
       registryLoader,
+      repos,
     });
 
     app = fastify();
     app.post('/api/v1/detect', handlers.detect);
     app.post('/api/v1/install', handlers.install);
     app.post('/api/v1/compile', handlers.compile);
+    app.post('/api/v1/artifacts/list', handlers.listArtifacts);
+    app.post('/api/v1/artifacts/data', handlers.getArtifactData);
     await app.ready();
   });
 
@@ -152,14 +172,52 @@ describe('compiler API handlers (jobs)', () => {
         'waffle',
         'detect',
         { pathOrUrl: '/repo' },
-        { onOutput: expect.any(Function) }
+        { onOutput: expect.any(Function), workspacePath: '/repo-workspace' }
       );
       expect(executor.execute).toHaveBeenCalledWith(
         'hardhat',
         'detect',
         { pathOrUrl: '/repo' },
-        { onOutput: expect.any(Function) }
+        { onOutput: expect.any(Function), workspacePath: '/repo-workspace' }
       );
+    });
+
+    it('resolves workspacePath once via RepoService, before the job is created', async () => {
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/detect',
+        payload: { pathOrUrl: '/repo' },
+      });
+
+      expect(repos.resolveWorkspacePath).toHaveBeenCalledTimes(1);
+      expect(repos.resolveWorkspacePath).toHaveBeenCalledWith('/repo');
+    });
+
+    it('returns 400 synchronously when the workspace cannot be resolved (no job created)', async () => {
+      repos = makeFakeRepos({
+        resolveWorkspacePath: vi.fn(async () => {
+          throw new Error('no active profile');
+        }),
+      });
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/detect', handlers.detect);
+      await localApp.ready();
+
+      const res = await localApp.inject({
+        method: 'POST',
+        url: '/api/v1/detect',
+        payload: { pathOrUrl: '/repo' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().code).toBe(ErrorCodes.INIT_ERROR);
+      expect(fakeJobs.start).not.toHaveBeenCalled();
     });
 
     it('wires onOutput through to ctx.log', async () => {
@@ -247,8 +305,35 @@ describe('compiler API handlers (jobs)', () => {
         'waffle',
         'install',
         { pathOrUrl: '/repo' },
-        { onOutput: expect.any(Function) }
+        { onOutput: expect.any(Function), workspacePath: '/repo-workspace' }
       );
+    });
+
+    it('returns 400 synchronously when the workspace cannot be resolved (no job created)', async () => {
+      repos = makeFakeRepos({
+        resolveWorkspacePath: vi.fn(async () => {
+          throw new Error('no active profile');
+        }),
+      });
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/install', handlers.install);
+      await localApp.ready();
+
+      const res = await localApp.inject({
+        method: 'POST',
+        url: '/api/v1/install',
+        payload: { pathOrUrl: '/repo', pluginId: 'waffle' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().code).toBe(ErrorCodes.INIT_ERROR);
+      expect(fakeJobs.start).not.toHaveBeenCalled();
     });
 
     it('runner rejects with { code, message, details } when the executor reports failure', async () => {
@@ -304,7 +389,7 @@ describe('compiler API handlers (jobs)', () => {
         'waffle',
         'compile',
         { pathOrUrl: '/repo' },
-        { onOutput: expect.any(Function) }
+        { onOutput: expect.any(Function), workspacePath: '/repo-workspace' }
       );
     });
 
@@ -335,6 +420,116 @@ describe('compiler API handlers (jobs)', () => {
       });
       expect(res.statusCode).toBe(400);
       expect(fakeJobs.start).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listArtifacts', () => {
+    it('resolves workspacePath and passes it through executor.execute', async () => {
+      executor.execute.mockResolvedValue({
+        success: true,
+        data: { artifacts: [] },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/artifacts/list',
+        payload: { pathOrUrl: '/repo', pluginId: 'waffle' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(repos.resolveWorkspacePath).toHaveBeenCalledWith('/repo');
+      expect(executor.execute).toHaveBeenCalledWith(
+        'waffle',
+        'listArtifacts',
+        { pathOrUrl: '/repo' },
+        { workspacePath: '/repo-workspace' }
+      );
+    });
+
+    it('returns 400 synchronously when the workspace cannot be resolved', async () => {
+      repos = makeFakeRepos({
+        resolveWorkspacePath: vi.fn(async () => {
+          throw new Error('no active profile');
+        }),
+      });
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/artifacts/list', handlers.listArtifacts);
+      await localApp.ready();
+
+      const res = await localApp.inject({
+        method: 'POST',
+        url: '/api/v1/artifacts/list',
+        payload: { pathOrUrl: '/repo', pluginId: 'waffle' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().code).toBe(ErrorCodes.INIT_ERROR);
+      expect(executor.execute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getArtifactData', () => {
+    it('resolves workspacePath and passes it through executor.execute', async () => {
+      executor.execute.mockResolvedValue({
+        success: true,
+        data: { content: 'abi json' },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/artifacts/data',
+        payload: {
+          pathOrUrl: '/repo',
+          pluginId: 'waffle',
+          artifactPath: 'out/Foo.json',
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(repos.resolveWorkspacePath).toHaveBeenCalledWith('/repo');
+      expect(executor.execute).toHaveBeenCalledWith(
+        'waffle',
+        'getArtifactData',
+        { pathOrUrl: '/repo', artifactPath: 'out/Foo.json' },
+        { workspacePath: '/repo-workspace' }
+      );
+    });
+
+    it('returns 400 synchronously when the workspace cannot be resolved', async () => {
+      repos = makeFakeRepos({
+        resolveWorkspacePath: vi.fn(async () => {
+          throw new Error('no active profile');
+        }),
+      });
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/artifacts/data', handlers.getArtifactData);
+      await localApp.ready();
+
+      const res = await localApp.inject({
+        method: 'POST',
+        url: '/api/v1/artifacts/data',
+        payload: {
+          pathOrUrl: '/repo',
+          pluginId: 'waffle',
+          artifactPath: 'out/Foo.json',
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().code).toBe(ErrorCodes.INIT_ERROR);
+      expect(executor.execute).not.toHaveBeenCalled();
     });
   });
 });

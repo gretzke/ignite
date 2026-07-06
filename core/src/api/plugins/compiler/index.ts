@@ -15,6 +15,7 @@ import { PluginType } from '@ignite/plugin-types/types';
 import { PluginExecutor } from '../../../plugins/containers/PluginExecutor.js';
 import { PluginRegistryLoader } from '../../../assets/PluginRegistryLoader.js';
 import { JobManager } from '../../../jobs/JobManager.js';
+import { RepoService } from '../../../repos/RepoService.js';
 import { getLogger } from '../../../utils/logger.js';
 import { ErrorCodes } from '../../../types/errors.js';
 import {
@@ -38,10 +39,15 @@ export interface CompilerJobManagerLike {
   start: JobManager['start'];
 }
 
+export interface CompilerRepoServiceLike {
+  resolveWorkspacePath: RepoService['resolveWorkspacePath'];
+}
+
 export interface CompilerHandlerDeps {
   jobs: CompilerJobManagerLike;
   executor: CompilerExecutorLike;
   registryLoader: CompilerRegistryLoaderLike;
+  repos: CompilerRepoServiceLike;
 }
 
 export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
@@ -49,6 +55,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
     jobs: deps?.jobs ?? JobManager.getInstance(),
     executor: deps?.executor ?? PluginExecutor.getInstance(),
     registryLoader: deps?.registryLoader ?? PluginRegistryLoader.getInstance(),
+    repos: deps?.repos ?? RepoService.getInstance(),
   };
 
   // Returns true (and has already sent a 400) if pluginId does not resolve
@@ -87,6 +94,31 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
     }
   }
 
+  // Resolves pathOrUrl to the host workspace dir the ephemeral compiler
+  // container will bind-mount. Same "return sentinel, don't return the
+  // FastifyReply" reasoning as rejectNonCompilerPlugin above: a nested async
+  // helper can't safely propagate an early `return reply` through await.
+  // Failure here (e.g. no active profile to resolve a cloned repo's
+  // workspace under) is a client-fixable 400, not a 500 — the caller passed
+  // an identity the server cannot currently resolve to a workspace.
+  async function resolveWorkspaceOr400(
+    reply: FastifyReply,
+    pathOrUrl: string
+  ): Promise<string | null> {
+    try {
+      return await d.repos.resolveWorkspacePath(pathOrUrl);
+    } catch (error) {
+      sendBadRequest(
+        reply,
+        ErrorCodes.INIT_ERROR,
+        `Failed to resolve workspace for repository '${pathOrUrl}': ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return null;
+    }
+  }
+
   return {
     detect: async (
       request: FastifyRequest<{
@@ -99,6 +131,13 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         request.body.pathOrUrl ||
         process.env.IGNITE_WORKSPACE_PATH ||
         process.cwd();
+
+      // Resolve once, outside the job runner's per-plugin fan-out — every
+      // compiler plugin binds the same workspace.
+      const workspacePath = await resolveWorkspaceOr400(reply, hostPath);
+      if (workspacePath === null) {
+        return reply as unknown as IApiResponse<JobStartedData>;
+      }
 
       const job = d.jobs.start(
         'compiler.detect',
@@ -116,7 +155,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
                 pluginConfig.metadata.id,
                 'detect',
                 { pathOrUrl: hostPath },
-                { onOutput: (t) => ctx.log(t) }
+                { onOutput: (t) => ctx.log(t), workspacePath }
               );
 
               if (result.success && (result.data as DetectionResult).detected) {
@@ -160,6 +199,11 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         return reply as unknown as IApiResponse<JobStartedData>;
       }
 
+      const workspacePath = await resolveWorkspaceOr400(reply, pathOrUrl);
+      if (workspacePath === null) {
+        return reply as unknown as IApiResponse<JobStartedData>;
+      }
+
       const job = d.jobs.start(
         'compiler.install',
         { pathOrUrl, pluginId },
@@ -168,7 +212,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
             pluginId,
             'install',
             { pathOrUrl },
-            { onOutput: (t) => ctx.log(t) }
+            { onOutput: (t) => ctx.log(t), workspacePath }
           );
 
           if (!result.success) {
@@ -200,6 +244,11 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         return reply as unknown as IApiResponse<JobStartedData>;
       }
 
+      const workspacePath = await resolveWorkspaceOr400(reply, pathOrUrl);
+      if (workspacePath === null) {
+        return reply as unknown as IApiResponse<JobStartedData>;
+      }
+
       const job = d.jobs.start(
         'compiler.compile',
         { pathOrUrl, pluginId },
@@ -208,7 +257,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
             pluginId,
             'compile',
             { pathOrUrl },
-            { onOutput: (t) => ctx.log(t) }
+            { onOutput: (t) => ctx.log(t), workspacePath }
           );
 
           if (!result.success) {
@@ -245,9 +294,17 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         const hostPath =
           pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
 
-        const result = await d.executor.execute(pluginId, 'listArtifacts', {
-          pathOrUrl: hostPath,
-        });
+        const workspacePath = await resolveWorkspaceOr400(reply, hostPath);
+        if (workspacePath === null) {
+          return reply as unknown as IApiResponse<ArtifactListResult>;
+        }
+
+        const result = await d.executor.execute(
+          pluginId,
+          'listArtifacts',
+          { pathOrUrl: hostPath },
+          { workspacePath }
+        );
 
         if (!result.success) {
           return sendPluginError(
@@ -289,10 +346,17 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         const hostPath =
           pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
 
-        const result = await d.executor.execute(pluginId, 'getArtifactData', {
-          pathOrUrl: hostPath,
-          artifactPath,
-        });
+        const workspacePath = await resolveWorkspaceOr400(reply, hostPath);
+        if (workspacePath === null) {
+          return reply as unknown as IApiResponse<ArtifactData>;
+        }
+
+        const result = await d.executor.execute(
+          pluginId,
+          'getArtifactData',
+          { pathOrUrl: hostPath, artifactPath },
+          { workspacePath }
+        );
 
         if (!result.success) {
           const notFound =

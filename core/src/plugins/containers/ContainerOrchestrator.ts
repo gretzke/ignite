@@ -30,8 +30,13 @@ export interface ContainerCreateOptions {
   binds?: string[];
   volumes?: Record<string, object>; // Named volumes: { '/path': {} }
   volumesFrom?: string[];
+  // Host workspace directory to bind at /workspace. Kept separate from
+  // `binds` so the orchestrator — not the caller — owns the `:ro` decision,
+  // mirroring the VolumesFrom grant rule below.
+  workspaceBind?: { hostPath: string };
   cmd?: string[];
   env?: string[]; // Container environment, e.g. ['KEY=value']
+  user?: string; // Docker "user:group" (e.g. '1000:1000'); image default if unset
 }
 
 // Centralized container orchestrator - the ONLY way to create Docker containers
@@ -62,8 +67,10 @@ export class ContainerOrchestrator {
       binds,
       volumes,
       volumesFrom,
+      workspaceBind,
       cmd = ['sleep', 'infinity'],
       env,
+      user,
     } = options;
 
     getLogger().info(`🚀 Creating ${lifecycle} container: ${name}`);
@@ -76,6 +83,16 @@ export class ContainerOrchestrator {
       'ignite.created': new Date().toISOString(),
     };
 
+    // Without hostWrite, the workspace bind is mounted read-only — same rule
+    // as the VolumesFrom downgrade below, extended to direct workspace binds
+    // (Phase 3: compiler containers bind-mount the host workspace directly
+    // instead of sharing a repo container's volume).
+    const allBinds = [...(binds ?? [])];
+    if (workspaceBind) {
+      const suffix = grant.hostWrite ? '' : ':ro';
+      allBinds.push(`${workspaceBind.hostPath}:/workspace${suffix}`);
+    }
+
     const createOptions: Docker.ContainerCreateOptions = {
       Image: image,
       name,
@@ -83,9 +100,10 @@ export class ContainerOrchestrator {
       Volumes: volumes,
       Cmd: cmd,
       Env: env,
+      User: user,
       HostConfig: {
         AutoRemove: lifecycle === ContainerLifecycle.EPHEMERAL, // Only ephemeral containers auto-remove
-        Binds: binds,
+        Binds: allBinds.length > 0 ? allBinds : undefined,
         // Without hostWrite, shared repo volumes are mounted read-only.
         VolumesFrom: volumesFrom?.map((source) =>
           grant.hostWrite ? source : `${source}:ro`

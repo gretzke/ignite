@@ -50,6 +50,62 @@ describe('ContainerOrchestrator grant enforcement', () => {
   });
 });
 
+describe('ContainerOrchestrator workspaceBind grant enforcement (Phase 3)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    createContainerMock.mockClear();
+  });
+
+  async function createWithWorkspaceBind(grant: typeof NATIVE_GRANT) {
+    const { ContainerOrchestrator, ContainerLifecycle } = await import(
+      '../../plugins/containers/ContainerOrchestrator.js'
+    );
+    await ContainerOrchestrator.getInstance().createContainer({
+      image: 'ignite/test:latest',
+      name: 'ignite-workspace-test',
+      lifecycle: ContainerLifecycle.EPHEMERAL,
+      binds: ['ignite-cache-vol:/cache'],
+      workspaceBind: { hostPath: '/host/my-repo' },
+      grant,
+    });
+    return createContainerMock.mock.calls[0][0] as {
+      HostConfig: { Binds?: string[] };
+    };
+  }
+
+  it('mounts the workspace read-only for an untrusted (no hostWrite) grant', async () => {
+    const opts = await createWithWorkspaceBind(UNTRUSTED_GRANT);
+    expect(opts.HostConfig.Binds).toEqual([
+      'ignite-cache-vol:/cache',
+      '/host/my-repo:/workspace:ro',
+    ]);
+  });
+
+  it('mounts the workspace read-write when the grant has hostWrite', async () => {
+    const opts = await createWithWorkspaceBind(NATIVE_GRANT);
+    expect(opts.HostConfig.Binds).toEqual([
+      'ignite-cache-vol:/cache',
+      '/host/my-repo:/workspace',
+    ]);
+  });
+
+  it('omits Binds entirely when neither binds nor workspaceBind is given', async () => {
+    const { ContainerOrchestrator, ContainerLifecycle } = await import(
+      '../../plugins/containers/ContainerOrchestrator.js'
+    );
+    await ContainerOrchestrator.getInstance().createContainer({
+      image: 'ignite/test:latest',
+      name: 'ignite-no-binds-test',
+      lifecycle: ContainerLifecycle.EPHEMERAL,
+      grant: NATIVE_GRANT,
+    });
+    const opts = createContainerMock.mock.calls[0][0] as {
+      HostConfig: { Binds?: string[] };
+    };
+    expect(opts.HostConfig.Binds).toBeUndefined();
+  });
+});
+
 describe('missingPermission', () => {
   it('maps compile to hostWrite and verify to net', async () => {
     const { missingPermission } = await import(

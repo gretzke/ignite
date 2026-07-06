@@ -128,4 +128,95 @@ describe('PluginExecutor with injected deps', () => {
       .catch(() => {});
     expect(deps.getSSHCredentialsForContainer).not.toHaveBeenCalled();
   });
+
+  describe('ephemeral workspace bind-mount (Phase 3)', () => {
+    function makeRequiresRepoExecutor(overrides: Record<string, unknown> = {}) {
+      return makeExecutor({
+        registryLoader: {
+          getPluginConfig: async () => ({
+            metadata: {
+              id: 'stub-compiler',
+              type: PluginType.COMPILER,
+              baseImage: 'img:latest',
+            },
+            lifecycle: PluginLifecycle.EPHEMERAL,
+            requiresRepo: true,
+            origin: 'builtin',
+          }),
+        },
+        ...overrides,
+      });
+    }
+
+    it('threads opts.workspacePath into createContainer as workspaceBind, never touching repo-container resolution', async () => {
+      const { executor, deps } = makeRequiresRepoExecutor();
+
+      await executor.execute(
+        'stub-compiler',
+        'compile',
+        { pathOrUrl: '/repo' },
+        { workspacePath: '/host/workspace' }
+      );
+
+      const createContainer = deps.containerOrchestrator
+        .createContainer as ReturnType<typeof vi.fn>;
+      expect(createContainer).toHaveBeenCalledTimes(1);
+      const call = createContainer.mock.calls[0][0];
+      expect(call.workspaceBind).toEqual({ hostPath: '/host/workspace' });
+      expect(call.volumesFrom).toBeUndefined();
+      // The ephemeral path must never resolve or check a repo container.
+      expect(deps.containerOrchestrator.containerExists).not.toHaveBeenCalled();
+    });
+
+    it('rejects execute() when requiresRepo is true but no workspacePath is provided', async () => {
+      const { executor } = makeRequiresRepoExecutor();
+
+      await expect(
+        executor.execute('stub-compiler', 'compile', { pathOrUrl: '/repo' })
+      ).rejects.toThrow(/[Ww]orkspace path required/);
+    });
+
+    it('sets Linux User/HOME env only on process.platform === "linux"', async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      try {
+        const { executor, deps } = makeRequiresRepoExecutor();
+        await executor.execute(
+          'stub-compiler',
+          'compile',
+          { pathOrUrl: '/repo' },
+          { workspacePath: '/host/workspace' }
+        );
+        const createContainer = deps.containerOrchestrator
+          .createContainer as ReturnType<typeof vi.fn>;
+        const call = createContainer.mock.calls[0][0];
+        expect(typeof call.user).toBe('string');
+        expect(call.user).toMatch(/^\d+:\d+$/);
+        expect(call.env).toContain('HOME=/tmp');
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform });
+      }
+    });
+
+    it('leaves User unset on non-Linux platforms (e.g. Docker Desktop)', async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      try {
+        const { executor, deps } = makeRequiresRepoExecutor();
+        await executor.execute(
+          'stub-compiler',
+          'compile',
+          { pathOrUrl: '/repo' },
+          { workspacePath: '/host/workspace' }
+        );
+        const createContainer = deps.containerOrchestrator
+          .createContainer as ReturnType<typeof vi.fn>;
+        const call = createContainer.mock.calls[0][0];
+        expect(call.user).toBeUndefined();
+        expect(call.env).not.toContain('HOME=/tmp');
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform });
+      }
+    });
+  });
 });
