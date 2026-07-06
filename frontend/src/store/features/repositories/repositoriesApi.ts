@@ -13,7 +13,6 @@ import {
   addRepository,
   removeRepositoryAction,
   setRepositoryInfo,
-  setRepositoryBranches,
   startFrameworkDetection,
   setRepositoryFrameworks,
   type IRepository,
@@ -381,7 +380,14 @@ export const repositoriesApi = {
     });
   },
 
-  // Initialize a single repository
+  // Initialize a single repository. Request success only means the
+  // repo.init job was created; the actual init outcome (and the
+  // getRepoInfo -> getBranches -> detectFrameworks chain, or the
+  // failed-repo handling) arrives via jobsEffects once the job's terminal
+  // event is routed (see routeTerminalJob's 'repo.init' case). The
+  // synchronous onError here only covers pre-flight rejections (e.g. a
+  // bad clone URL) that the route still returns as an HTTP error instead
+  // of starting a job.
   initializeRepository: (pathOrUrl: string) => {
     // Extract repository name for better toast messages
     const repoName = getRepoName(pathOrUrl);
@@ -389,85 +395,16 @@ export const repositoriesApi = {
     return [
       apiClient.dispatch.init({
         body: { pathOrUrl },
-        onSuccess: () => {
-          // After successful initialization, get repository info
-          const getInfoAction = apiClient.dispatch.getRepoInfo({
-            body: { pathOrUrl },
-            onSuccess: (repoInfo) => {
-              // After getting repo info, get branches
-              const getBranchesAction = apiClient.dispatch.getBranches({
-                body: { pathOrUrl },
-                onSuccess: (branchesData) => {
-                  const frameworkDetectionActions =
-                    repositoriesApi.detectFrameworks(pathOrUrl);
-                  return [
-                    setRepositoryInitialized({
-                      pathOrUrl,
-                      success: true,
-                    }),
-                    setRepositoryInfo({
-                      pathOrUrl,
-                      info: repoInfo,
-                    }),
-                    setRepositoryBranches({
-                      pathOrUrl,
-                      branches: branchesData.branches,
-                    }),
-                    // Trigger framework detection after successful initialization
-                    ...frameworkDetectionActions,
-                  ];
-                },
-                onError: (error) => {
-                  const { description } = formatApiError(error);
-                  const frameworkDetectionActions =
-                    repositoriesApi.detectFrameworks(pathOrUrl);
-                  // Still mark as initialized and store info, but warn about branches failure
-                  return [
-                    setRepositoryInitialized({
-                      pathOrUrl,
-                      success: true,
-                    }),
-                    setRepositoryInfo({
-                      pathOrUrl,
-                      info: repoInfo,
-                    }),
-                    triggerToast({
-                      title: 'Branches Warning',
-                      description: `${repoName} initialized but failed to get branches: ${description}`,
-                      variant: 'warning',
-                      duration: 5000,
-                    }),
-                    // Trigger framework detection even if branches failed
-                    ...frameworkDetectionActions,
-                  ];
-                },
-              });
-
-              return [getBranchesAction];
-            },
-            onError: (error) => {
-              const { description } = formatApiError(error);
-              const frameworkDetectionActions =
-                repositoriesApi.detectFrameworks(pathOrUrl);
-              // Still mark as initialized since init succeeded, but warn about info failure
-              return [
-                setRepositoryInitialized({
-                  pathOrUrl,
-                  success: true,
-                }),
-                triggerToast({
-                  title: 'Repository Info Warning',
-                  description: `${repoName} initialized but failed to get repo info: ${description}`,
-                  variant: 'warning',
-                  duration: 5000,
-                }),
-                // Trigger framework detection even if repo info failed
-                ...frameworkDetectionActions,
-              ];
-            },
-          });
-
-          return [getInfoAction];
+        onSuccess: (data) => {
+          const { jobId } = data as { jobId: string };
+          return [
+            jobStarted({
+              jobId,
+              type: 'repo.init',
+              params: { pathOrUrl },
+            }),
+            wsSend({ type: 'subscribe', jobId }),
+          ];
         },
         onError: (error) => {
           const { description } = formatApiError(error);

@@ -18,8 +18,12 @@ import {
 } from '../features/connection/connectionSlice';
 import {
   setRepositoryFrameworks,
+  setRepositoryInitialized,
+  setRepositoryInfo,
+  setRepositoryBranches,
   type IFramework,
 } from '../features/repositories/repositoriesSlice';
+import { repositoriesApi } from '../features/repositories/repositoriesApi';
 import { setCompilationStatus } from '../features/compiler/compilerSlice';
 import {
   permissionRequired,
@@ -29,17 +33,19 @@ import { pluginsApi } from '../features/plugins/pluginsSlice';
 import { getRepoName } from '../../utils/repo';
 import type { AppDispatch, RootState } from '../store';
 
-// Job-driven compiler/plugin flow. This is the sole place that turns a
-// terminal job (detect/install/compile/plugin.install) into the state
-// transitions the rest of the app already reacts to (setRepositoryFrameworks,
-// setCompilationStatus, plugin list refresh, permission dialog). Routing
-// table: compiler.detect -> setRepositoryFrameworks (success) or empty
-// frameworks + toast (failure); compiler.install -> status 'compiling'
-// (success) or PERMISSION_REQUIRED dialog / status 'error' + toast
-// (failure); compiler.compile -> status 'ready' (success) or the same
-// PERMISSION_REQUIRED-vs-error split (failure); plugin.install -> refresh
-// plugin list + toast (success) or PERMISSION_REQUIRED dialog / error toast
-// (failure).
+// Job-driven compiler/plugin/repo flow. This is the sole place that turns a
+// terminal job (repo.init/detect/install/compile/plugin.install) into the
+// state transitions the rest of the app already reacts to
+// (setRepositoryInitialized, setRepositoryFrameworks, setCompilationStatus,
+// plugin list refresh, permission dialog). Routing table: repo.init ->
+// getRepoInfo -> getBranches -> detectFrameworks chain, marking the repo
+// initialized (success) or failed + toast (failure); compiler.detect ->
+// setRepositoryFrameworks (success) or empty frameworks + toast (failure);
+// compiler.install -> status 'compiling' (success) or PERMISSION_REQUIRED
+// dialog / status 'error' + toast (failure); compiler.compile -> status
+// 'ready' (success) or the same PERMISSION_REQUIRED-vs-error split
+// (failure); plugin.install -> refresh plugin list + toast (success) or
+// PERMISSION_REQUIRED dialog / error toast (failure).
 export const jobsEffects = createListenerMiddleware();
 
 // PluginExecutor's grant gate (core/src/plugins/containers/PluginExecutor.ts)
@@ -103,6 +109,87 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
     job.error?.message ?? 'Operation did not complete successfully';
 
   switch (job.type) {
+    case 'repo.init': {
+      const pathOrUrl = job.params.pathOrUrl as string;
+      const repoName = getRepoName(pathOrUrl);
+
+      if (!succeeded) {
+        dispatch(setRepositoryInitialized({ pathOrUrl, success: false }));
+        dispatch(
+          triggerToast({
+            title: 'Initialization Failed',
+            description: `Failed to initialize ${repoName}: ${errorMessage}`,
+            variant: 'error',
+            duration: 10000,
+          })
+        );
+        break;
+      }
+
+      // Mirror the old synchronous init onSuccess chain (now driven off
+      // the repo.init job's terminal success): getRepoInfo -> getBranches
+      // -> detectFrameworks. Every branch still marks the repo
+      // initialized — info/branches failures only downgrade to a warning
+      // toast, same as before.
+      dispatch(
+        apiClient.dispatch.getRepoInfo({
+          body: { pathOrUrl },
+          onSuccess: (repoInfo) => {
+            const getBranchesAction = apiClient.dispatch.getBranches({
+              body: { pathOrUrl },
+              onSuccess: (branchesData) => {
+                const frameworkDetectionActions =
+                  repositoriesApi.detectFrameworks(pathOrUrl);
+                return [
+                  setRepositoryInitialized({ pathOrUrl, success: true }),
+                  setRepositoryInfo({ pathOrUrl, info: repoInfo }),
+                  setRepositoryBranches({
+                    pathOrUrl,
+                    branches: branchesData.branches,
+                  }),
+                  ...frameworkDetectionActions,
+                ];
+              },
+              onError: (error) => {
+                const { description } = formatApiError(error);
+                const frameworkDetectionActions =
+                  repositoriesApi.detectFrameworks(pathOrUrl);
+                return [
+                  setRepositoryInitialized({ pathOrUrl, success: true }),
+                  setRepositoryInfo({ pathOrUrl, info: repoInfo }),
+                  triggerToast({
+                    title: 'Branches Warning',
+                    description: `${repoName} initialized but failed to get branches: ${description}`,
+                    variant: 'warning',
+                    duration: 5000,
+                  }),
+                  ...frameworkDetectionActions,
+                ];
+              },
+            });
+
+            return [getBranchesAction];
+          },
+          onError: (error) => {
+            const { description } = formatApiError(error);
+            const frameworkDetectionActions =
+              repositoriesApi.detectFrameworks(pathOrUrl);
+            return [
+              setRepositoryInitialized({ pathOrUrl, success: true }),
+              triggerToast({
+                title: 'Repository Info Warning',
+                description: `${repoName} initialized but failed to get repo info: ${description}`,
+                variant: 'warning',
+                duration: 5000,
+              }),
+              ...frameworkDetectionActions,
+            ];
+          },
+        })
+      );
+      break;
+    }
+
     case 'compiler.detect': {
       const pathOrUrl = job.params.pathOrUrl as string;
       if (succeeded) {
