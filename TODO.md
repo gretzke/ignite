@@ -14,19 +14,17 @@ blocking current functionality.
   `getGrant` reconstruction, the trust API schemas, `PermissionApprovalDialog`, and
   `PluginsTab`. Deferred until the first explorer/verifier plugin exists (building it now
   would be unused surface).
-- **`frontend` plugin runtime class (browser).** For signer/wallet plugins (MetaMask,
-  WalletConnect, hardware wallets) that must run in the browser, not a container. Arrives
-  with the signer milestone. Today only `container` and `declarative` runtimes exist.
-- **Third-party declarative plugin installs.** Declarative plugins are native/built-in only.
-  Allowing third-party declarative installs needs a non-image install path (the current
-  install backends all build a Docker image).
+- **Plugin runtime classes (Phase 4 — NOT started).** There is no `runtime` field in
+  `PluginMetadata` and no `PluginRuntime` dispatch interface yet; every plugin implicitly
+  runs as a container, and `PluginType.REPO_MANAGER` still lingers in the type enum after
+  the Phase 3 deletion. Phase 4 introduces `runtime: container | declarative` (then
+  `frontend` with the signer milestone for MetaMask/WalletConnect/hardware wallets, which
+  must run in the browser, not a container). Third-party declarative installs additionally
+  need a non-image install path (the current install backends all build a Docker image).
 - **Version migration paths.** Migrate CLI/plugin state when new versions are detected.
 
 ## Jobs system (Phase 2 follow-ups)
 
-- **Kill-on-cancel.** `cancelJob` only transitions state + discards the runner result; it does
-  not kill the underlying container exec / git op. Post-cancel runner output also still
-  appends log events to the already-terminal record.
 - **Third-party install job log streaming.** `PluginInstaller.install` has no output callback,
   so `plugin.install` jobs carry no live build logs (the compiler `onOutput` path does).
 - **Reconnect 404 hardening.** If a tracked-active job was pruned server-side (newest-50 cap)
@@ -48,24 +46,22 @@ blocking current functionality.
 
 ## State / infrastructure
 
-- **Atomic-write temp-file collisions.** `FileSystem.writeJsonFile` and `TrustManager.writeTrustFile`
-  use a fixed `${path}.tmp`. Concurrent same-path writers can interleave, and a rename race can
-  throw ENOENT for a write that previously silently succeeded. Use a unique suffix
-  (`${path}.${pid}.${ts}.tmp`).
-- **Core lint baseline.** `npm run lint` in `core/` has 13 pre-existing problems — 9 are `no-undef`
-  errors for `setTimeout`/`clearTimeout`/`NodeJS` globals (finalizeImage, IsolatedBuilder,
-  runCommand, TrustManager) from a missing env config in `eslint.config.mjs`. Fix the env globals so
-  future "lint clean" claims are verifiable, and record the baseline.
-- **id-vs-name test-fixture bug.** ~13 baseline test failures in `ProfileManager`/`FileSystem` tests
-  stem from an id-vs-name fixture mismatch; fixing the fixture turns them green.
+- **Core lint baseline.** Fixed 2026-07-06: Node runtime globals added to `eslint.config.mjs`;
+  `npm run lint` in `core/` is now 0 errors / 5 warnings (`security/detect-child-process` +
+  `no-explicit-any` warns, all deliberate).
+- **Baseline test failures in `ProfileManager`/`FileSystem` (13).** Two entangled causes:
+  the tests encode an older profile contract (FileSystem auto-creating the default profile;
+  id-vs-name expectations), and `FileSystem.getInstance(customHome)` silently ignores a new
+  `customHome` once an instance exists, so per-test temp dirs never take effect — the other
+  manager singletons (`ProfileManager`, `PluginManager`) cache cross-references the same way.
+  Fixing this properly needs a test-side reset helper for ALL filesystem singletons plus
+  rewriting the stale expectations; re-rooting FileSystem alone breaks tests that accidentally
+  depended on consistently-stale singletons (attempted and reverted 2026-07-06).
 - **Error-helper coverage.** Extend the API error helpers for 403 / typed-400 responses and convert
   the remaining inline-IApiError-literal handler sites to use them.
 
 ## Plugin install / build
 
-- **Surface plugin `getInfo` errors.** `finalizeImage.parsePluginMetadata` reports "missing id/type"
-  when a plugin's `getInfo` returns `{ success:false, error }`; check `success===false` and surface
-  `error.message` instead (two-line diagnostic win now that the parser understands envelopes).
 - **IsolatedBuilder robustness.** `waitForSquidReady` polls a baked-in dir rather than a real listen
   check in one path; no post-restart ACL re-verification (mitigated: ACL written before restart).
 
