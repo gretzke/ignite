@@ -21,6 +21,7 @@ import { createWsHandler } from './api/ws.js';
 import { StaticAssetHandler } from './assets/StaticAssetHandler.js';
 import { validatePluginImages } from './plugins/utils/ImageValidator.js';
 import { PluginRegistryLoader } from './assets/PluginRegistryLoader.js';
+import { AssetManager } from './assets/AssetManager.js';
 import { RepoLifecycle } from './repos/RepoLifecycle.js';
 import { JobManager } from './jobs/JobManager.js';
 
@@ -85,6 +86,43 @@ async function ignite(workspacePath: string): Promise<{
   };
 }
 
+// Load the built-in plugin catalog, tolerating a concurrent dev build.
+async function loadPluginCatalog(): Promise<void> {
+  const loader = PluginRegistryLoader.getInstance();
+  if (process.env.NODE_ENV !== 'development') {
+    await loader.getAllPlugins();
+    return;
+  }
+
+  const REGISTRY_ASSET = 'plugins/dist/plugin-registry.json';
+  const deadline = Date.now() + 60_000;
+  let waiting = false;
+  for (;;) {
+    // Poll for existence first so the loader doesn't log a load failure
+    // every attempt while the plugins build is still running.
+    if (AssetManager.getInstance().exists(REGISTRY_ASSET)) {
+      try {
+        await loader.getAllPlugins();
+        return;
+      } catch (error) {
+        // Partially-written registry (the build is mid-write) parses as
+        // corrupt; keep retrying until the deadline.
+        if (Date.now() >= deadline) throw error;
+      }
+    } else if (Date.now() >= deadline) {
+      await loader.getAllPlugins(); // throws with the actionable message
+      return;
+    }
+    if (!waiting) {
+      waiting = true;
+      getLogger().warn(
+        '⏳ Plugin catalog not built yet — waiting for the plugins build (npm run dev builds core and plugins concurrently)...'
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
 // Parse CLI arguments and perform pre-startup checks
 async function main(): Promise<void> {
   const program = new Command();
@@ -144,7 +182,14 @@ async function main(): Promise<void> {
     // Without this check the server comes up and every detect/compile quietly
     // reports "no frameworks" (the exact failure mode of running against a
     // tree whose plugin build artifacts were cleaned).
-    await PluginRegistryLoader.getInstance().getAllPlugins();
+    //
+    // Development is the exception: `npm run dev` builds core and plugins
+    // CONCURRENTLY, so the catalog is legitimately absent while the plugins
+    // watcher rewrites dist/ — and core's nodemon deliberately ignores
+    // ../plugins/dist, so a boot-race crash would never auto-restart. Wait
+    // (bounded) for the build to produce the catalog instead of losing the
+    // race; after the deadline it is a real failure and stays fatal.
+    await loadPluginCatalog();
 
     // Warn early about missing or stale plugin images
     await validatePluginImages();
