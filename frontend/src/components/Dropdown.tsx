@@ -30,6 +30,7 @@ export interface DropdownProps {
   sideOffset?: number; // px between trigger and menu (default 8)
   portal?: boolean; // render in a portal (default true)
   anchor?: 'left' | 'right'; // anchor position (default: 'right')
+  matchTriggerWidth?: boolean; // menu at least as wide as the trigger
   menuClassName?: string;
   menuStyle?: React.CSSProperties; // extra styles merged into positioned container
 }
@@ -40,6 +41,7 @@ export default function Dropdown({
   sideOffset = 8,
   portal = true,
   anchor = 'right',
+  matchTriggerWidth = false,
   menuClassName,
   menuStyle,
 }: DropdownProps) {
@@ -63,10 +65,14 @@ export default function Dropdown({
       }),
       shift({ padding: 6 }),
       size({
-        apply({ availableHeight, elements }) {
+        apply({ availableHeight, rects, elements }) {
           // Constrain height to available space
           Object.assign(elements.floating.style, {
             maxHeight: `${Math.max(200, availableHeight - 20)}px`,
+            // A menu narrower than its trigger reads as detached
+            ...(matchTriggerWidth
+              ? { minWidth: `${rects.reference.width}px` }
+              : {}),
           });
         },
       }),

@@ -25,7 +25,7 @@ export function LocalRepoModal({
           style={{ background: 'transparent' }}
         />
         <Dialog.Content
-          className="dialog-content glass-surface"
+          className="dialog-content glass-overlay"
           style={{
             maxWidth: 720,
             width: '90vw',
@@ -102,7 +102,7 @@ export function CloneRepoModal({
           style={{ background: 'transparent' }}
         />
         <Dialog.Content
-          className="dialog-content glass-surface"
+          className="dialog-content glass-overlay"
           style={{
             maxWidth: 460,
             width: '90vw',
@@ -129,7 +129,7 @@ export function CloneRepoModal({
               autoFocus
             />
             {urlError && (
-              <div className="text-xs text-red-400 mt-1">{urlError}</div>
+              <div className="text-xs text-err mt-1">{urlError}</div>
             )}
           </div>
 
@@ -185,7 +185,7 @@ export function CommitHashModal({
           style={{ background: 'transparent' }}
         />
         <Dialog.Content
-          className="dialog-content glass-surface"
+          className="dialog-content glass-overlay"
           style={{
             maxWidth: 460,
             width: '90vw',
@@ -211,7 +211,7 @@ export function CommitHashModal({
               autoFocus
             />
             {commitHashError && (
-              <div className="text-xs text-red-400 mt-1">
+              <div className="text-xs text-err mt-1">
                 {commitHashError}
               </div>
             )}

@@ -55,7 +55,9 @@ export default function TopBar() {
   return (
     <div className="glass-surface glass-topbar">
       <div className="flex items-center gap-2">
-        <span aria-hidden>🚀</span>
+        <span aria-hidden className="brand-mark">
+          🚀
+        </span>
         <span className="font-semibold">Ignite</span>
       </div>
       <div className="flex items-center gap-3 relative" ref={anchorRef}>
@@ -123,13 +125,10 @@ export default function TopBar() {
               button
             );
           }}
-          menuClassName="tooltip-content"
+          menuClassName="glass-overlay"
           menuStyle={{
             padding: 12,
             minWidth: 240,
-            background:
-              'color-mix(in oklch, var(--bg-base) calc(var(--glass-milk) + 20%), transparent)',
-            borderColor: 'color-mix(in oklch, #fff 28%, transparent)',
           }}
         >
           {({ close }) => (
@@ -180,10 +179,7 @@ export default function TopBar() {
               </div>
               <div
                 className="h-px my-2"
-                style={{
-                  background:
-                    'color-mix(in oklch, var(--text) 18%, transparent)',
-                }}
+                style={{ background: 'var(--hairline)' }}
               />
               <Link
                 to="/settings#profiles"

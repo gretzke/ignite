@@ -90,45 +90,45 @@ export default function StatusCard({
     switch (status) {
       case 'ready':
         return {
-          icon: <CheckCircle size={24} className="text-green-500" />,
-          color: 'text-green-500',
-          bgColor: 'bg-green-500/10',
-          borderColor: 'border-green-500/20',
+          icon: <CheckCircle size={24} className="text-ok" />,
+          color: 'text-ok',
+          bgColor: 'bg-ok/10',
+          borderColor: 'border-ok/20',
         };
       case 'installing':
         return {
-          icon: <Loader2 size={24} className="text-blue-500 animate-spin" />,
-          color: 'text-blue-500',
-          bgColor: 'bg-blue-500/10',
-          borderColor: 'border-blue-500/20',
+          icon: <Loader2 size={24} className="text-info animate-spin" />,
+          color: 'text-info',
+          bgColor: 'bg-info/10',
+          borderColor: 'border-info/20',
         };
       case 'compiling':
         return {
-          icon: <Clock size={24} className="text-yellow-500" />,
-          color: 'text-yellow-500',
-          bgColor: 'bg-yellow-500/10',
-          borderColor: 'border-yellow-500/20',
+          icon: <Clock size={24} className="text-warn" />,
+          color: 'text-warn',
+          bgColor: 'bg-warn/10',
+          borderColor: 'border-warn/20',
         };
       case 'loading':
         return {
-          icon: <Loader2 size={24} className="text-gray-400 animate-spin" />,
-          color: 'text-gray-400',
-          bgColor: 'bg-gray-500/10',
-          borderColor: 'border-gray-500/20',
+          icon: <Loader2 size={24} className="text-muted animate-spin" />,
+          color: 'text-muted',
+          bgColor: 'bg-muted/10',
+          borderColor: 'border-muted/20',
         };
       case 'error':
         return {
-          icon: <AlertCircle size={24} className="text-red-500" />,
-          color: 'text-red-500',
-          bgColor: 'bg-red-500/10',
-          borderColor: 'border-red-500/20',
+          icon: <AlertCircle size={24} className="text-err" />,
+          color: 'text-err',
+          bgColor: 'bg-err/10',
+          borderColor: 'border-err/20',
         };
       default:
         return {
-          icon: <Clock size={24} className="text-gray-500" />,
-          color: 'text-gray-500',
-          bgColor: 'bg-gray-500/10',
-          borderColor: 'border-gray-500/20',
+          icon: <Clock size={24} className="text-muted" />,
+          color: 'text-muted',
+          bgColor: 'bg-muted/10',
+          borderColor: 'border-muted/20',
         };
     }
   };
@@ -152,7 +152,7 @@ export default function StatusCard({
 
       {/* Framework details */}
       {frameworks.length > 0 && (
-        <div className="mt-6 pt-6 border-t border-white/10">
+        <div className="mt-6 pt-6 border-t border-[var(--hairline)]">
           <div className="space-y-3">
             {frameworks.map((framework) => {
               const compilation = compilations[framework.id];
@@ -171,14 +171,14 @@ export default function StatusCard({
                     <div
                       className={`w-2 h-2 rounded-full ${
                         frameworkStatus === 'ready'
-                          ? 'bg-green-500'
+                          ? 'bg-ok'
                           : frameworkStatus === 'installing'
-                            ? 'bg-blue-500'
+                            ? 'bg-info'
                             : frameworkStatus === 'compiling'
-                              ? 'bg-yellow-500'
+                              ? 'bg-warn'
                               : frameworkStatus === 'error'
-                                ? 'bg-red-500'
-                                : 'bg-gray-500'
+                                ? 'bg-err'
+                                : 'bg-muted'
                       }`}
                     />
                     <span className="text-sm font-medium">
@@ -187,7 +187,9 @@ export default function StatusCard({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {(frameworkStatus !== 'idle' || frameworks.length > 1) && (
+                    {/* Per-framework status is redundant with the header
+                        unless multiple frameworks can differ */}
+                    {frameworks.length > 1 && (
                       <span className={`text-xs ${frameworkDisplay.color}`}>
                         {frameworkStatus === 'idle' && 'Not compiled'}
                         {frameworkStatus === 'installing' && 'Installing...'}
@@ -201,7 +203,7 @@ export default function StatusCard({
                     {frameworkStatus === 'error' && compilation?.error && (
                       <button
                         type="button"
-                        className="text-xs text-red-400 hover:text-red-300 cursor-pointer"
+                        className="text-xs text-err hover:opacity-80 cursor-pointer"
                         aria-label="View error details"
                         onClick={() =>
                           setErrorDetails({
@@ -248,13 +250,13 @@ export default function StatusCard({
             style={{ background: 'transparent' }}
           />
           <Dialog.Content
-            className="dialog-content glass-surface"
+            className="dialog-content glass-overlay"
             style={{ maxWidth: 680, width: '90vw', padding: 16 }}
           >
             <Dialog.Title className="text-lg font-medium mb-3">
               {errorDetails?.frameworkName} compilation error
             </Dialog.Title>
-            <pre className="bg-[var(--surface-2)] p-4 rounded-lg text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap text-[var(--text)]">
+            <pre className="code-surface p-4 text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap text-[var(--text)]">
               {errorDetails?.error}
             </pre>
             <div className="flex items-center justify-end mt-4">

@@ -234,15 +234,17 @@ export default function RepositoriesPage() {
 
       {/* Local repos */}
       {repositories && (
-        <div className="mt-4">
-          <div className="text-xs opacity-70 mb-2">Local</div>
-          <div className="flex flex-col gap-2">
-            {localRepos.length === 0 ? (
-              <div className="card-milky p-4">
-                <div className="text-sm opacity-70">No local repositories</div>
+        <div className="mt-5">
+          <div className="eyebrow mb-2">Local · {localRepos.length}</div>
+          {localRepos.length === 0 ? (
+            <div className="glass-list">
+              <div className="list-row text-sm text-muted">
+                No local repositories
               </div>
-            ) : (
-              localRepos.map((r, index) => (
+            </div>
+          ) : (
+            <div className="glass-list">
+              {localRepos.map((r, index) => (
                 <RepoCard
                   key={`local-${index}`}
                   repo={r}
@@ -253,23 +255,25 @@ export default function RepositoriesPage() {
                   onCheckoutCommit={handleCheckoutCommit}
                   onResetRepo={setResetRepoPath}
                 />
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {/* Cloned repos */}
       {repositories && (
-        <div className="mt-4">
-          <div className="text-xs opacity-70 mb-2">Cloned</div>
-          <div className="flex flex-col gap-2">
-            {clonedRepos.length === 0 ? (
-              <div className="card-milky p-4">
-                <div className="text-sm opacity-70">No cloned repositories</div>
+        <div className="mt-5">
+          <div className="eyebrow mb-2">Cloned · {clonedRepos.length}</div>
+          {clonedRepos.length === 0 ? (
+            <div className="glass-list">
+              <div className="list-row text-sm text-muted">
+                No cloned repositories
               </div>
-            ) : (
-              clonedRepos.map((r, index) => (
+            </div>
+          ) : (
+            <div className="glass-list">
+              {clonedRepos.map((r, index) => (
                 <RepoCard
                   key={`cloned-${index}`}
                   repo={r}
@@ -280,19 +284,19 @@ export default function RepositoriesPage() {
                   onCheckoutCommit={handleCheckoutCommit}
                   onResetRepo={setResetRepoPath}
                 />
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {/* Failed Repositories */}
       {failedRepositories.length > 0 && (
-        <div className="mt-4">
-          <div className="text-xs opacity-70 mb-2 text-red-500">
-            Failed to Initialize
+        <div className="mt-5">
+          <div className="eyebrow mb-2 text-err">
+            Failed to initialize · {failedRepositories.length}
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="glass-list">
             {failedRepositories.map((path, index) => (
               <FailedRepoCard
                 key={`failed-${index}`}

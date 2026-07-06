@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import {
+  useNavigate,
+  useLocation,
+  useSearchParams,
+  Link,
+} from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { ArrowLeft, Copy, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Copy, Check, Loader2 } from 'lucide-react';
+import { getRepoName } from '../../../../utils/repo';
 import type { RootState, AppDispatch } from '../../../../store/store';
 import { filesApi } from '../../../../store/features/files/filesSlice';
 import { useSelector as useCompilerSelector } from 'react-redux';
@@ -53,6 +59,7 @@ interface CodeSectionProps {
   content: string;
   showCopy?: boolean;
   language?: string;
+  showLineNumbers?: boolean;
 }
 
 function CodeSection({
@@ -60,6 +67,7 @@ function CodeSection({
   content,
   showCopy = false,
   language,
+  showLineNumbers = false,
 }: CodeSectionProps) {
   return (
     <div className="card-milky p-4 mb-4">
@@ -71,9 +79,13 @@ function CodeSection({
       </div>
       <div className="relative">
         {language ? (
-          <SyntaxHighlighter code={content} language={language} />
+          <SyntaxHighlighter
+            code={content}
+            language={language}
+            showLineNumbers={showLineNumbers}
+          />
         ) : (
-          <pre className="bg-[var(--surface-2)] p-4 rounded-lg text-xs font-mono overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap text-[var(--text)]">
+          <pre className="code-surface p-4 text-xs font-mono overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap text-[var(--text)]">
             {content}
           </pre>
         )}
@@ -179,7 +191,7 @@ export default function FilePage() {
     frameworkData?.artifacts,
   ]);
 
-  const handleBackClick = () => {
+  const backToRepoUrl = (() => {
     const params = new URLSearchParams();
     if (frameworkId) {
       params.set('framework', frameworkId);
@@ -188,8 +200,11 @@ export default function FilePage() {
       params.set('path', directoryPath);
     }
     const queryString = params.toString();
-    const queryParams = queryString ? `?${queryString}` : '';
-    navigate(`/repositories/${urlRepoPath}${queryParams}`);
+    return `/repositories/${urlRepoPath}${queryString ? `?${queryString}` : ''}`;
+  })();
+
+  const handleBackClick = () => {
+    navigate(backToRepoUrl);
   };
 
   const fileLoading = fileData?.loading || false;
@@ -207,25 +222,35 @@ export default function FilePage() {
 
   return (
     <div className="text-[var(--text)]">
-      {/* Header with back button */}
+      {/* Header: back button + clickable breadcrumb */}
       <div className="flex items-center gap-3 mb-6">
         <button
           onClick={handleBackClick}
-          className="btn btn-secondary btn-secondary-borderless"
+          className="btn btn-secondary btn-icon"
           aria-label="Back to repository"
         >
-          <ArrowLeft size={16} />
+          <ArrowLeft size={18} />
         </button>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <h2 className="page-title mb-0">{decodedFilePath}</h2>
+            <nav className="breadcrumb" aria-label="Breadcrumb">
+              <Link to="/repositories">Repositories</Link>
+              <ChevronRight size={13} className="breadcrumb-sep" />
+              <Link to={backToRepoUrl}>{getRepoName(decodedRepoPath)}</Link>
+              <ChevronRight size={13} className="breadcrumb-sep" />
+              <span className="breadcrumb-current">
+                {decodedFilePath.split('/').pop()}
+              </span>
+            </nav>
             {frameworkId && (
-              <span className="text-xs rounded-full pill-primary px-2 py-1">
+              <span className="pill pill-primary rounded-full px-2 py-1 lowercase">
                 {frameworkId}
               </span>
             )}
           </div>
-          <p className="text-xs opacity-70 mt-1">{decodedRepoPath}</p>
+          <p className="mono-data text-muted mt-1 truncate">
+            {decodedFilePath}
+          </p>
         </div>
       </div>
 
@@ -291,7 +316,7 @@ export default function FilePage() {
       {error && !isLoading && (
         <div className="card-milky p-6">
           <div className="text-center">
-            <h3 className="text-lg font-medium mb-2 text-red-400">
+            <h3 className="text-lg font-medium mb-2 text-err">
               Error Loading File
             </h3>
             <p className="text-sm opacity-70">{error}</p>
@@ -307,6 +332,7 @@ export default function FilePage() {
             title="Source Code"
             content={content}
             language={decodedFilePath.endsWith('.sol') ? 'solidity' : undefined}
+            showLineNumbers
           />
 
           {/* ABI */}

@@ -1,4 +1,4 @@
-import { RotateCcw, X } from 'lucide-react';
+import { FolderX, RotateCcw, X } from 'lucide-react';
 import Tooltip from '../../../components/Tooltip';
 
 interface FailedRepoCardProps {
@@ -15,18 +15,27 @@ export default function FailedRepoCard({
   const repoName = path.split('/').pop() || path;
 
   return (
-    <div className="card-milky p-4 border-l-4 border-red-500">
+    <div className="list-row" style={{ boxShadow: 'inset 2px 0 0 var(--err)' }}>
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="size-8 rounded-[var(--radius)] border border-red-500/20 bg-red-500/10 backdrop-blur-sm flex items-center justify-center text-sm">
-            ❌
+          <div
+            className="icon-tile text-err"
+            style={{
+              background: 'color-mix(in oklch, var(--err) 12%, transparent)',
+              borderColor: 'color-mix(in oklch, var(--err) 25%, transparent)',
+            }}
+          >
+            <FolderX size={16} />
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-medium truncate text-red-500">
-              {repoName}
+            <div className="text-sm font-semibold truncate">{repoName}</div>
+            <div className="mono-data text-muted truncate">{path}</div>
+            <div className="mt-1">
+              <span className="chip chip-err">
+                <span className="chip-dot" />
+                Initialization failed
+              </span>
             </div>
-            <div className="text-xs opacity-70 truncate">{path}</div>
-            <div className="text-xs text-red-500">Initialization failed</div>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">

@@ -7,9 +7,21 @@ import {
   ChevronsLeft,
   ChevronsRight,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../store';
 import { setSidebarCollapsed } from '../store/features/app/appSlice';
+
+const NAV_ITEMS = [
+  { to: '/repositories', label: 'Repositories', Icon: Folder },
+  { to: '/workflows', label: 'Workflows', Icon: Puzzle },
+  { to: '/deployments', label: 'Deployments', Icon: Rocket },
+] as const;
+
+function navClass({ isActive }: { isActive: boolean }) {
+  return `btn btn-secondary btn-secondary-borderless nav-item${
+    isActive ? ' active' : ''
+  }`;
+}
 
 export default function Sidebar() {
   const dispatch = useAppDispatch();
@@ -20,77 +32,32 @@ export default function Sidebar() {
       className={`glass-surface glass-sidebar ${collapsed ? 'collapsed' : ''}`}
     >
       <div className="nav-list">
-        {collapsed ? (
-          <Tooltip label="Repositories" placement="right">
-            <Link
-              to="/repositories"
-              className="btn btn-secondary btn-secondary-borderless nav-item"
-            >
-              <Folder size={18} />
-              <span className="nav-label">Repositories</span>
-            </Link>
-          </Tooltip>
-        ) : (
-          <Link
-            to="/repositories"
-            className="btn btn-secondary btn-secondary-borderless nav-item"
-          >
-            <Folder size={18} />
-            <span className="nav-label">Repositories</span>
-          </Link>
-        )}
-
-        {collapsed ? (
-          <Tooltip label="Workflows" placement="right">
-            <Link
-              to="/workflows"
-              className="btn btn-secondary btn-secondary-borderless nav-item"
-            >
-              <Puzzle size={18} />
-              <span className="nav-label">Workflows</span>
-            </Link>
-          </Tooltip>
-        ) : (
-          <Link
-            to="/workflows"
-            className="btn btn-secondary btn-secondary-borderless nav-item"
-          >
-            <Puzzle size={18} />
-            <span className="nav-label">Workflows</span>
-          </Link>
-        )}
-
-        {collapsed ? (
-          <Tooltip label="Deployments" placement="right">
-            <Link
-              to="/deployments"
-              className="btn btn-secondary btn-secondary-borderless nav-item"
-            >
-              <Rocket size={18} />
-              <span className="nav-label">Deployments</span>
-            </Link>
-          </Tooltip>
-        ) : (
-          <Link
-            to="/deployments"
-            className="btn btn-secondary btn-secondary-borderless nav-item"
-          >
-            <Rocket size={18} />
-            <span className="nav-label">Deployments</span>
-          </Link>
-        )}
-
+        {NAV_ITEMS.map(({ to, label, Icon }) => {
+          const link = (
+            <NavLink key={to} to={to} className={navClass}>
+              <Icon size={18} />
+              <span className="nav-label">{label}</span>
+            </NavLink>
+          );
+          return collapsed ? (
+            <Tooltip key={to} label={label} placement="right">
+              {link}
+            </Tooltip>
+          ) : (
+            link
+          );
+        })}
       </div>
       <div className="flex flex-col gap-2">
         {collapsed ? (
           <>
             <Tooltip label="Settings" placement="right">
-              <Link
+              <NavLink
                 to="/settings"
-                className="btn btn-secondary btn-secondary-borderless btn-block nav-item"
+                className={(s) => `${navClass(s)} btn-block`}
               >
                 <IconSettings size={18} />
-              </Link>
+              </NavLink>
             </Tooltip>
             <Tooltip label="Expand" placement="right">
               <button
@@ -104,18 +71,22 @@ export default function Sidebar() {
           </>
         ) : (
           <div className="flex items-center gap-2">
-            <Link
+            <NavLink
               to="/settings"
-              className="btn btn-secondary btn-secondary-borderless nav-item nav-item-center"
+              className={({ isActive }) =>
+                `btn btn-secondary nav-item nav-item-center${
+                  isActive ? ' active' : ''
+                }`
+              }
               style={{ flex: 1 }}
             >
               <IconSettings size={18} />
               <span className="nav-label">Settings</span>
-            </Link>
+            </NavLink>
             <Tooltip label="Collapse" placement="top">
               <button
                 type="button"
-                className="btn btn-secondary btn-secondary-borderless"
+                className="btn btn-secondary"
                 style={{ width: 44, paddingLeft: 0, paddingRight: 0 }}
                 onClick={onToggle}
               >

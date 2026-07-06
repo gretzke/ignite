@@ -7,6 +7,7 @@ interface SyntaxHighlighterProps {
   code: string;
   language: string;
   className?: string;
+  showLineNumbers?: boolean;
 }
 
 // Theme mapping from Redux theme to Shiki theme
@@ -19,6 +20,7 @@ export function SyntaxHighlighter({
   code,
   language,
   className = '',
+  showLineNumbers = false,
 }: SyntaxHighlighterProps) {
   const [highlighter, setHighlighter] = useState<Highlighter | null>(null);
   const [highlightedCode, setHighlightedCode] = useState<string>('');
@@ -81,21 +83,11 @@ export function SyntaxHighlighter({
     updateHighlighting();
   }, [highlighter, code, reduxTheme]);
 
-  if (isLoading) {
+  if (isLoading || !highlighter || !highlightedCode) {
+    // Plain code while shiki loads (or if highlighting fails)
     return (
       <pre
-        className={`bg-[var(--surface-2)] p-4 rounded-lg text-xs font-mono overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap text-[var(--text)] ${className}`}
-      >
-        {code}
-      </pre>
-    );
-  }
-
-  if (!highlighter || !highlightedCode) {
-    // Fallback to unstyled code if highlighting fails
-    return (
-      <pre
-        className={`bg-[var(--surface-2)] p-4 rounded-lg text-xs font-mono overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap text-[var(--text)] ${className}`}
+        className={`code-surface p-4 text-xs font-mono overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap text-[var(--text)] ${className}`}
       >
         {code}
       </pre>
@@ -104,7 +96,9 @@ export function SyntaxHighlighter({
 
   return (
     <div
-      className={`bg-[var(--surface-2)] p-4 rounded-lg text-xs font-mono overflow-x-auto max-h-96 overflow-y-auto [&>pre]:!bg-transparent [&>pre]:!p-0 [&>pre]:!m-0 [&>pre]:!border-0 [&>pre]:!rounded-none ${className}`}
+      className={`code-surface p-4 text-xs font-mono overflow-x-auto max-h-96 overflow-y-auto [&>pre]:!bg-transparent [&>pre]:!p-0 [&>pre]:!m-0 [&>pre]:!border-0 [&>pre]:!rounded-none ${
+        showLineNumbers ? 'code-line-numbers' : ''
+      } ${className}`}
       dangerouslySetInnerHTML={{ __html: highlightedCode }}
     />
   );

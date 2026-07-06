@@ -30,20 +30,17 @@ export default function AddRepoDropdown({
           <Plus size={16} />
         </button>
       )}
-      menuClassName="tooltip-content"
+      menuClassName="glass-overlay"
       menuStyle={{
         padding: 12,
         minWidth: 160,
-        background:
-          'color-mix(in oklch, var(--bg-base) calc(var(--glass-milk) + 20%), transparent)',
-        borderColor: 'color-mix(in oklch, #fff 28%, transparent)',
       }}
     >
       {({ close }) => (
         <div className="flex flex-col gap-2">
           <button
             type="button"
-            className="btn btn-secondary card-milky flex items-center justify-start gap-2 w-full text-sm"
+            className="btn btn-secondary flex items-center justify-start gap-2 w-full text-sm"
             onClick={() => {
               onAddLocal();
               close();
@@ -54,7 +51,7 @@ export default function AddRepoDropdown({
           </button>
           <button
             type="button"
-            className="btn btn-secondary card-milky flex items-center justify-start gap-2 w-full text-sm"
+            className="btn btn-secondary flex items-center justify-start gap-2 w-full text-sm"
             onClick={() => {
               onClone();
               close();

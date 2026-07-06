@@ -43,7 +43,7 @@ export default function GeneralTab() {
 
   return (
     <div>
-      <div className="text-sm opacity-70 mb-2">UI</div>
+      <div className="eyebrow mb-3">UI</div>
       <div className="flex flex-col gap-4 mb-3">
         <div className="flex items-center justify-between">
           <div className="text-base font-medium">Dark Mode</div>
@@ -61,7 +61,7 @@ export default function GeneralTab() {
         </div>
       </div>
 
-      <div className="text-sm opacity-70 mb-2 mt-8">Danger Zone</div>
+      <div className="eyebrow mb-3 mt-8 text-err">Danger Zone</div>
       <div className="flex items-center justify-between gap-6">
         <div>
           <div className="text-base font-medium">Factory Reset</div>

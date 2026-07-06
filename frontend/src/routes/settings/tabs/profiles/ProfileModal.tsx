@@ -247,7 +247,7 @@ export default function ProfileModal({
           style={{ background: 'transparent' }}
         />
         <Dialog.Content
-          className="dialog-content glass-surface"
+          className="dialog-content glass-overlay"
           style={{
             maxWidth: '90vw',
             padding: 16,
@@ -502,7 +502,7 @@ export default function ProfileModal({
                 style={{ background: 'transparent', zIndex: 1002 }}
               />
               <Dialog.Content
-                className="dialog-content glass-surface"
+                className="dialog-content glass-overlay"
                 style={{
                   padding: 16,
                   zIndex: 1003,

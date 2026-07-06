@@ -104,7 +104,7 @@ export function DirectoryPicker({
         autoFocus={autoFocus}
         spellCheck={false}
       />
-      {error && <div className="text-xs text-red-400 mt-1">{error}</div>}
+      {error && <div className="text-xs text-err mt-1">{error}</div>}
 
       <div
         ref={scrollRef}
@@ -146,7 +146,7 @@ export function DirectoryPicker({
                     {entry.isGitRepo && (
                       <GitBranch
                         size={12}
-                        className="ml-auto shrink-0 text-emerald-400"
+                        className="ml-auto shrink-0 text-ok"
                         aria-label="Git repository"
                       />
                     )}

@@ -92,19 +92,21 @@ export default function Select({
       anchor={anchor}
       portal={portal}
       sideOffset={8}
-      menuClassName="glass-surface"
+      matchTriggerWidth={!renderTrigger}
+      menuClassName="glass-overlay"
       menuStyle={{
         padding: 0,
         width: maxOptionWidth,
         // In-place menus can't use backdrop blur (the parent dialog already
-        // owns the backdrop), so fall back to an explicit translucent fill —
-        // same recipe as the header dropdowns.
+        // owns the backdrop) and can overflow the dialog bounds, so use a
+        // near-opaque fill instead of translucent glass.
         ...(portal
           ? {}
           : {
-              background:
-                'color-mix(in oklch, var(--bg-base) calc(var(--glass-milk) + 20%), transparent)',
-              borderColor: 'color-mix(in oklch, #fff 28%, transparent)',
+              background: 'color-mix(in oklch, var(--bg-base) 94%, #fff 6%)',
+              borderColor: 'var(--ovl-brd)',
+              backdropFilter: 'none',
+              WebkitBackdropFilter: 'none',
             }),
         maxHeight: 320,
         zIndex: 9999,
@@ -495,7 +497,7 @@ function SelectContent({
     <div onClick={(e) => e.stopPropagation()}>
       {/* Search field for large lists */}
       {showSearch && (
-        <div className="p-3 border-b border-white/10">
+        <div className="p-3 border-b border-[var(--hairline)]">
           <div className="relative">
             <Search
               size={16}
@@ -503,7 +505,7 @@ function SelectContent({
             />
             <input
               type="text"
-              placeholder="Search branches..."
+              placeholder="Search…"
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);

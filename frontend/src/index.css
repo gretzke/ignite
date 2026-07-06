@@ -1,80 +1,345 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import 'tailwindcss';
+
+@theme {
+  --font-sans:
+    Manrope, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji',
+    'Segoe UI Emoji';
+  --font-mono:
+    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+}
+
+/* Semantic color utilities (text-ok, bg-err/10, border-warn/30, …).
+   `inline` so utilities reference the runtime vars, which re-resolve
+   per theme class. */
+@theme inline {
+  --color-accent: var(--accent);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-err: var(--err);
+  --color-info: var(--info);
+  --color-muted: var(--text-muted);
+}
 
 @layer theme {
   :root {
-    /* Typography */
-    --font-sans:
-      Manrope, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
-      'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji',
-      'Segoe UI Emoji';
-    /* Global radius token for surfaces & controls */
-    --radius: 14px;
-    /* User-selected primary profile color (placeholder default) */
+    /* Radius scale: cards vs controls. --radius kept as the card alias so
+       existing var(--radius) call sites stay valid. */
+    --radius: 16px;
+    --r-card: 16px;
+    --r-ctrl: 9px;
+
+    /* User-selected raw profile color (set from React on <html>) */
     --profile-color: oklch(0.69 0.17 260);
-    /* Primary alias for easier usage */
-    --primary: var(--profile-color);
+    /* Normalized accent: fallback is the raw color; hue-only override below */
+    --accent: var(--profile-color);
+    /* Legacy alias */
+    --primary: var(--accent);
 
-    /* Semantic colors */
-    --color-error: #ef4444;
+    /* Ambient gradient strengths (subtle: the base tint carries identity) */
+    --grad-strength-1: 16%;
+    --grad-strength-2: 12%;
 
-    /* Base gradient strengths (prominent by default; tweakable) */
-    --grad-strength-1: 30%;
-    --grad-strength-2: 30%;
+    /* Ambient shapes (optional layer, quieter than before) */
+    --shape-fill-strength: 8%;
+    --shape-glow-1: 6%;
+    --shape-glow-2: 3%;
+    --blob-size-lg: 52rem;
+    --blob-size-md: 42rem;
+    --blob-size-sm: 32rem;
 
-    /* Shape appearance and sizes */
-    --shape-fill-strength: 15%;
-    --shape-glow-1: 10%;
-    --shape-glow-2: 5%;
-    --blob-size-lg: 52rem; /* ~832px */
-    --blob-size-md: 42rem; /* ~672px */
-    --blob-size-sm: 32rem; /* ~512px */
-    /* Glass tokens */
-    --radius: 14px;
+    /* Legacy compat token (milky surfaces now come from the card tier) */
     --glass-milk: 14%;
-    /* Backdrop blur tokens to avoid minifiers dropping standard property */
-    --bf-strong: blur(40px) saturate(110%);
-    --bf-medium: blur(14px) saturate(110%);
+  }
 
-    :focus-visible {
-      outline: none;
+  /* Hue-normalized accent: take only the hue from the picked profile color,
+     pin lightness/chroma per theme for consistent contrast. */
+  @supports (color: oklch(from red l c h)) {
+    .theme-dark {
+      --accent: oklch(from var(--profile-color) 0.74 0.145 h);
+    }
+    .theme-light {
+      --accent: oklch(from var(--profile-color) 0.52 0.16 h);
     }
   }
 
-  .theme-light {
-    --bg-base: #ffffff;
-    --text: #0a0a0a;
-  }
   .theme-dark {
-    --bg-base: #000000;
-    --text: #ffffff;
+    /* The base itself carries a 7% profile tint — glass needs something
+       colored behind it to refract. */
+    --bg-base: color-mix(in oklch, var(--accent) 7%, #0b0d12);
+    --text: #edeff3;
+    --text-muted: color-mix(in oklch, #edeff3 60%, transparent);
+
+    /* Semantic roles */
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --err: #f87171;
+    --info: var(--accent);
+
+    /* Glass tier: pane (chrome — top bar, sidebar, inputs, list containers) */
+    --pane-bg: linear-gradient(
+      rgba(255, 255, 255, 0.055),
+      rgba(255, 255, 255, 0.03)
+    );
+    --pane-brd: rgba(255, 255, 255, 0.1);
+    --pane-hi: rgba(255, 255, 255, 0.09);
+    --pane-blur: blur(12px) saturate(150%);
+    --pane-shadow: 0 4px 16px -10px rgba(0, 0, 0, 0.5);
+
+    /* Controls (buttons, inputs): border that reads on any surface */
+    --ctrl-brd: rgba(255, 255, 255, 0.12);
+
+    /* Glass tier: card (content surfaces) */
+    --card-bg: linear-gradient(
+      155deg,
+      rgba(255, 255, 255, 0.09),
+      rgba(255, 255, 255, 0.035)
+    );
+    --card-brd: rgba(255, 255, 255, 0.14);
+    --card-hi: rgba(255, 255, 255, 0.16);
+    --card-blur: blur(20px) saturate(170%);
+    --card-shadow: 0 16px 40px -20px rgba(0, 0, 0, 0.55);
+
+    /* Glass tier: overlay (dialogs, menus, toasts, tooltips) */
+    --ovl-bg: linear-gradient(
+      155deg,
+      rgba(255, 255, 255, 0.13),
+      rgba(255, 255, 255, 0.06)
+    );
+    --ovl-brd: rgba(255, 255, 255, 0.2);
+    --ovl-hi: rgba(255, 255, 255, 0.22);
+    --ovl-blur: blur(28px) saturate(180%);
+    --ovl-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.7);
+
+    /* Hairline separators inside panes */
+    --hairline: color-mix(in oklch, var(--text) 8%, transparent);
+
+    --grain-opacity: 0.05;
+  }
+
+  .theme-light {
+    --bg-base: color-mix(in oklch, var(--accent) 5%, #f3f5f8);
+    --text: #15171d;
+    --text-muted: color-mix(in oklch, #15171d 58%, transparent);
+
+    --ok: #15803d;
+    --warn: #a16207;
+    --err: #b91c1c;
+    --info: var(--accent);
+
+    /* Light glass needs a faint dark outline ring (baked into the shadow
+       vars) — white borders alone disappear on white-ish surfaces. */
+    --pane-bg: linear-gradient(
+      rgba(255, 255, 255, 0.45),
+      rgba(255, 255, 255, 0.28)
+    );
+    --pane-brd: rgba(255, 255, 255, 0.65);
+    --pane-hi: rgba(255, 255, 255, 0.8);
+    --pane-blur: blur(12px) saturate(140%);
+    --pane-shadow:
+      0 0 0 1px color-mix(in oklch, #15171d 7%, transparent),
+      0 4px 16px -10px rgba(45, 55, 75, 0.18);
+
+    --ctrl-brd: color-mix(in oklch, #15171d 14%, transparent);
+
+    --card-bg: linear-gradient(
+      155deg,
+      rgba(255, 255, 255, 0.58),
+      rgba(255, 255, 255, 0.34)
+    );
+    --card-brd: rgba(255, 255, 255, 0.8);
+    --card-hi: rgba(255, 255, 255, 0.95);
+    --card-blur: blur(20px) saturate(150%);
+    --card-shadow:
+      0 0 0 1px color-mix(in oklch, #15171d 6%, transparent),
+      0 16px 40px -22px rgba(45, 55, 75, 0.3);
+
+    --ovl-bg: linear-gradient(
+      155deg,
+      rgba(255, 255, 255, 0.68),
+      rgba(255, 255, 255, 0.44)
+    );
+    --ovl-brd: rgba(255, 255, 255, 0.9);
+    --ovl-hi: #ffffff;
+    --ovl-blur: blur(28px) saturate(150%);
+    --ovl-shadow:
+      0 0 0 1px color-mix(in oklch, #15171d 8%, transparent),
+      0 24px 60px -26px rgba(45, 55, 75, 0.4);
+
+    --hairline: color-mix(in oklch, var(--text) 9%, transparent);
+
+    --grain-opacity: 0.035;
+  }
+
+  /* Legacy alias kept for existing call sites */
+  :root {
+    --color-error: var(--err, #ef4444);
   }
 }
 
 @layer components {
-  /* Main content title style for pages */
-  .page-title {
-    font-size: 1.125rem; /* text-lg */
-    font-weight: 600; /* font-semibold */
-    margin-bottom: 1rem; /* mb-4 */
-    color: var(--text);
+  /* Global font application */
+  html,
+  body,
+  button,
+  input,
+  select,
+  textarea {
+    font-family: var(--font-sans);
   }
 
-  /* Radix Tabs styling (top underline indicator, minimal look) */
+  /* Visible keyboard focus everywhere (inputs get their own treatment) */
+  :focus-visible {
+    outline: 2px solid color-mix(in oklch, var(--accent) 65%, transparent);
+    outline-offset: 2px;
+  }
+
+  /* ---------- Typography roles ---------- */
+  .page-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  /* Section eyebrow: mono, uppercase, tracked — for list section labels */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  /* Machine text: paths, addresses, hashes, versions */
+  .mono-data {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- Glass tiers ----------
+     pane   → chrome: top bar, sidebar, inputs, list containers
+     card   → content surfaces (default for .glass-surface consumers is pane;
+              .glass-main and .card-milky resolve to card)
+     overlay→ dialogs, dropdown menus, toasts, tooltips */
+  .glass-pane,
+  .glass-surface {
+    background: var(--pane-bg);
+    border: 1px solid var(--pane-brd);
+    -webkit-backdrop-filter: var(--pane-blur);
+    backdrop-filter: var(--pane-blur);
+    box-shadow:
+      inset 0 1px 0 var(--pane-hi),
+      var(--pane-shadow);
+    border-radius: var(--r-card);
+    color: var(--text);
+  }
+  .glass-card,
+  .card-milky,
+  .artifact-browser-glass {
+    background: var(--card-bg);
+    border: 1px solid var(--card-brd);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
+    box-shadow:
+      inset 0 1px 0 var(--card-hi),
+      var(--card-shadow);
+    border-radius: var(--r-card);
+    color: var(--text);
+  }
+  .glass-overlay {
+    background: var(--ovl-bg);
+    border: 1px solid var(--ovl-brd);
+    -webkit-backdrop-filter: var(--ovl-blur);
+    backdrop-filter: var(--ovl-blur);
+    box-shadow:
+      inset 0 1px 0 var(--ovl-hi),
+      var(--ovl-shadow);
+    border-radius: var(--r-card);
+    color: var(--text);
+    /* Overlays always float above chrome (.glass-main is z-10) — portalled
+       menus relied on tooltip-content's z-index before this tier existed. */
+    z-index: 9999;
+  }
+  .artifact-browser-glass {
+    padding: 1.5rem;
+  }
+
+  /* Hairline-divided list inside a pane (repo lists, plugin lists) */
+  .glass-list {
+    background: var(--pane-bg);
+    border: 1px solid var(--pane-brd);
+    -webkit-backdrop-filter: var(--pane-blur);
+    backdrop-filter: var(--pane-blur);
+    box-shadow: inset 0 1px 0 var(--pane-hi);
+    border-radius: var(--r-card);
+    overflow: hidden;
+  }
+  .glass-list > * + * {
+    border-top: 1px solid var(--hairline);
+  }
+  /* Interactive row inside a glass-list */
+  .list-row {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 12px 16px;
+    color: var(--text);
+  }
+  .list-row.clickable {
+    cursor: pointer;
+    transition: background-color 120ms ease;
+  }
+  .list-row.clickable:hover {
+    background: color-mix(in oklch, var(--text) 6%, transparent);
+  }
+  .glass-card.clickable {
+    cursor: pointer;
+    transition: border-color 120ms ease, box-shadow 150ms ease;
+  }
+  .glass-card.clickable:hover {
+    border-color: color-mix(in oklch, var(--accent) 40%, var(--card-brd));
+  }
+  .list-row:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* Small leading icon tile for rows */
+  .icon-tile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    background: color-mix(in oklch, var(--text) 7%, transparent);
+    border: 1px solid color-mix(in oklch, var(--text) 12%, transparent);
+    font-size: 14px;
+  }
+
+  /* ---------- Tabs (accent underline) ---------- */
   .tabs-list {
     display: flex;
     align-items: center;
     gap: 10px;
     margin-bottom: 16px;
-    border-bottom: 1px solid color-mix(in oklch, var(--text) 16%, transparent);
+    border-bottom: 1px solid var(--hairline);
   }
   .tabs-trigger {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     background: transparent;
     border: 0;
-    color: color-mix(in oklch, var(--text) 78%, transparent);
+    color: var(--text-muted);
     padding: 8px 12px;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
+    font-weight: 500;
     cursor: pointer;
     outline: none;
   }
@@ -91,26 +356,14 @@
     bottom: -1px;
     height: 2px;
     width: 0;
-    background: var(--profile-color);
+    background: var(--accent);
     transition: width 160ms ease;
   }
   .tabs-trigger[data-state='active']::after {
     width: 100%;
   }
 
-  /* Artifact Browser Glass Styling */
-  .artifact-browser-glass {
-    background: rgba(255, 255, 255, 0.02);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: var(--radius);
-    padding: 1.5rem;
-    box-shadow:
-      0 8px 32px rgba(0, 0, 0, 0.12),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  }
-
-  /* Radix Switch iOS-like styling */
+  /* ---------- Switch ---------- */
   .switch-root {
     width: 42px;
     height: 26px;
@@ -121,7 +374,7 @@
     transition: background-color 120ms ease;
   }
   .switch-root[data-state='checked'] {
-    background-color: var(--profile-color);
+    background-color: var(--accent);
   }
   .switch-thumb {
     display: block;
@@ -137,11 +390,14 @@
     transform: translateX(18px);
   }
 
-  /* Dialog overlay/content layering */
+  /* ---------- Dialog layering ---------- */
   .dialog-overlay {
     position: fixed;
     inset: 0;
     z-index: 1000;
+    background: color-mix(in oklch, #05060a 35%, transparent);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
   }
   .dialog-content {
     position: fixed;
@@ -154,42 +410,69 @@
     height: fit-content;
     z-index: 1001;
   }
-  /* Global font application */
-  html,
-  body,
-  button,
-  input,
-  select,
-  textarea {
-    font-family: var(--font-sans);
-  }
-  /* Milky glass card */
-  .card-milky {
-    border-radius: var(--radius);
-    border: 1px solid color-mix(in oklch, #fff 28%, transparent);
-    background: color-mix(
-      in oklch,
-      var(--bg-base) calc(var(--glass-milk) + 40%),
-      transparent
-    );
-    /* Put prefixed first, standard last; use CSS var value */
-    -webkit-backdrop-filter: var(--bf-strong);
-    backdrop-filter: var(--bf-strong);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
-    color: var(--text);
-  }
+
+  /* ---------- Pills & badges ---------- */
   .pill {
-    background: color-mix(in oklch, var(--text) 8%, transparent);
-    color: var(--text);
-    border: 1px solid color-mix(in oklch, var(--text) 15%, transparent);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: color-mix(in oklch, var(--text) 7%, transparent);
+    color: var(--text-muted);
+    border: 1px solid color-mix(in oklch, var(--text) 13%, transparent);
+  }
+  .pill-primary {
+    background: color-mix(in oklch, var(--accent) 14%, transparent);
+    color: var(--accent);
+    border: 1px solid color-mix(in oklch, var(--accent) 28%, transparent);
   }
 
-  /* Primary pill variant using profile color */
-  .pill-primary {
-    background: color-mix(in oklch, var(--profile-color) 15%, transparent);
-    color: var(--profile-color);
-    border: 1px solid color-mix(in oklch, var(--profile-color) 25%, transparent);
+  /* Semantic status chips: dot + label, tinted capsule */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    white-space: nowrap;
+    --chip-color: var(--text-muted);
+    color: var(--chip-color);
+    background: color-mix(in oklch, var(--chip-color) 13%, transparent);
+    border: 1px solid color-mix(in oklch, var(--chip-color) 28%, transparent);
   }
+  .chip-ok {
+    --chip-color: var(--ok);
+  }
+  .chip-warn {
+    --chip-color: var(--warn);
+  }
+  .chip-err {
+    --chip-color: var(--err);
+  }
+  .chip-info {
+    --chip-color: var(--info);
+  }
+  .chip .chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 9999px;
+    background: var(--chip-color);
+    flex-shrink: 0;
+  }
+  .chip .chip-dot.pulse {
+    animation: chip-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes chip-pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .chip .chip-dot.pulse {
+      animation: none;
+    }
+  }
+
   /* Shared profile logo avatar style */
   .profile-logo {
     display: inline-flex;
@@ -200,16 +483,18 @@
     font-weight: 700;
     border: 1px solid rgba(255, 255, 255, 0.4);
   }
-  /* Buttons */
+
+  /* ---------- Buttons ---------- */
   .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 0.4rem;
-    padding: 0.7rem 1rem;
-    font-size: 0.875rem;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
     line-height: 1;
-    border-radius: var(--radius);
+    border-radius: var(--r-ctrl);
     border: 1px solid transparent;
     cursor: pointer;
     user-select: none;
@@ -217,7 +502,8 @@
     transition:
       opacity 120ms ease,
       transform 80ms ease,
-      box-shadow 150ms ease;
+      box-shadow 150ms ease,
+      background-color 120ms ease;
   }
   .btn-block {
     width: 100%;
@@ -226,72 +512,79 @@
     transform: translateY(0.5px);
   }
 
+  /* Primary: glass-lit accent — vertical gradient + specular inner edge */
   .btn-primary {
-    background: var(--profile-color);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--accent) 88%, white 12%),
+      var(--accent)
+    );
     color: #ffffff;
-    border-color: color-mix(in oklch, #fff 35%, transparent);
-    box-shadow: 0 6px 20px
-      color-mix(in oklch, var(--profile-color) 35%, transparent);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 4px 14px -4px color-mix(in oklch, var(--accent) 55%, transparent);
   }
   .btn-primary:hover {
-    opacity: 0.96;
-    box-shadow: 0 8px 22px
-      color-mix(in oklch, var(--profile-color) 45%, transparent);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 6px 18px -4px color-mix(in oklch, var(--accent) 65%, transparent);
   }
 
+  /* Secondary: pane-tier glass with a control border that reads anywhere */
   .btn-secondary {
-    /* Milky glass: translucent white layer + blur for refraction */
-    background: color-mix(
-      in oklch,
-      var(--bg-base) var(--glass-milk),
-      transparent
-    );
+    background: var(--pane-bg);
     color: var(--text);
-    border-color: color-mix(in oklch, #fff 30%, transparent);
-    -webkit-backdrop-filter: var(--bf-medium);
-    backdrop-filter: var(--bf-medium);
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    border-color: var(--ctrl-brd);
+    -webkit-backdrop-filter: var(--pane-blur);
+    backdrop-filter: var(--pane-blur);
+    box-shadow: inset 0 1px 0 var(--pane-hi);
   }
   .btn-secondary:hover {
-    opacity: 0.98;
-    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
+    background: color-mix(in oklch, var(--text) 8%, transparent);
   }
 
   /* Borderless variant for secondary buttons */
   .btn-secondary-borderless {
     border-color: transparent;
+    box-shadow: none;
+    background: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .btn-secondary-borderless:hover {
+    background: color-mix(in oklch, var(--text) 8%, transparent);
   }
 
+  /* Destructive: tinted outline — a filled red button next to glass shouts
+     louder than the action deserves */
   .btn-danger {
-    background: var(--color-error);
-    color: #ffffff;
-    border-color: color-mix(in oklch, #fff 35%, transparent);
-    box-shadow: 0 6px 20px
-      color-mix(in oklch, var(--color-error) 35%, transparent);
+    background: color-mix(in oklch, var(--err) 14%, transparent);
+    color: var(--err);
+    border-color: color-mix(in oklch, var(--err) 32%, transparent);
   }
   .btn-danger:hover {
-    opacity: 0.96;
-    box-shadow: 0 8px 22px
-      color-mix(in oklch, var(--color-error) 45%, transparent);
+    background: color-mix(in oklch, var(--err) 22%, transparent);
   }
 
-  /* Generic floating glass surface: transparent, blurred, white border, shadow */
-  .glass-surface {
-    background: color-mix(in oklch, #fff 6%, transparent);
-    border: 1px solid color-mix(in oklch, #fff 28%, transparent);
-    -webkit-backdrop-filter: var(--bf-medium);
-    backdrop-filter: var(--bf-medium);
-    border-radius: var(--radius);
-    color: var(--text);
-  }
-  .theme-light .glass-surface {
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
-  }
-  .theme-dark .glass-surface {
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  /* ---------- App chrome ---------- */
+  /* Brand mark: small accent-gradient tile with a specular top edge */
+  .brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    font-size: 12px;
+    line-height: 1;
+    background: linear-gradient(
+      145deg,
+      color-mix(in oklch, var(--accent) 85%, white 15%),
+      var(--accent)
+    );
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
   }
 
-  /* Top bar layout helper (use together with .glass-surface) */
   .glass-topbar {
     position: fixed;
     top: 12px;
@@ -306,7 +599,6 @@
     color: var(--text);
   }
 
-  /* Sidebar layout helper (use together with .glass-surface) */
   .glass-sidebar {
     position: fixed;
     top: 80px; /* below topbar */
@@ -323,7 +615,7 @@
   .glass-sidebar .nav-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
   }
   .glass-sidebar .nav-item {
     display: inline-flex;
@@ -332,6 +624,16 @@
     width: 100%;
     justify-content: flex-start;
     text-align: left;
+    color: var(--text-muted);
+  }
+  .glass-sidebar .nav-item:hover {
+    color: var(--text);
+  }
+  /* Active route: accent tint + inset accent bar instead of another milk layer */
+  .glass-sidebar .btn.nav-item.active {
+    background: color-mix(in oklch, var(--accent) 16%, transparent);
+    color: var(--text);
+    box-shadow: inset 2px 0 0 var(--accent);
   }
   .glass-sidebar .nav-item-center {
     justify-content: center;
@@ -342,7 +644,7 @@
     line-height: 1;
   }
   .glass-sidebar .nav-label {
-    font-size: 0.9rem;
+    font-size: 0.85rem;
   }
 
   /* Collapsed state */
@@ -362,7 +664,7 @@
     width: auto;
   }
 
-  /* Main view card (use together with .glass-surface) */
+  /* Main view surface: card tier */
   .glass-main {
     position: fixed;
     top: 80px; /* below topbar */
@@ -374,54 +676,58 @@
     z-index: 10;
     display: flex;
     flex-direction: column;
+    background: var(--card-bg);
+    border: 1px solid var(--card-brd);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
+    box-shadow:
+      inset 0 1px 0 var(--card-hi),
+      var(--card-shadow);
   }
-  /* Radix Tooltip styling (glass, theme-aware) */
+
+  /* ---------- Tooltip (overlay tier, solid-mix bg so the arrow matches) ---------- */
   .tooltip-content {
-    /* Unified background token so arrow matches exactly */
-    --tooltip-bg: color-mix(in oklch, var(--bg-base) 50%, transparent);
+    --tooltip-bg: color-mix(in oklch, var(--bg-base) 72%, transparent);
     background: var(--tooltip-bg);
     color: var(--text);
-    border: 1px solid color-mix(in oklch, #fff 40%, transparent);
-    -webkit-backdrop-filter: var(--bf-medium);
-    backdrop-filter: var(--bf-medium);
+    border: 1px solid var(--ovl-brd);
+    -webkit-backdrop-filter: var(--ovl-blur);
+    backdrop-filter: var(--ovl-blur);
     padding: 6px 10px;
     font-size: 12px;
-    border-radius: var(--radius);
+    border-radius: 10px;
     white-space: nowrap;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--ovl-shadow);
     z-index: 9999;
   }
-  /* Text input styling with milky glass background */
+  .tooltip-arrow {
+    fill: var(--tooltip-bg, color-mix(in oklch, var(--bg-base) 72%, transparent)) !important;
+    stroke: var(--ovl-brd) !important;
+    stroke-width: 1px;
+    filter: none;
+  }
+
+  /* ---------- Inputs ---------- */
   .input-glass {
-    padding: 10px 12px;
+    padding: 9px 12px;
     width: 100%;
-    border-radius: var(--radius);
-    border: 1px solid color-mix(in oklch, #fff 28%, transparent);
-    background: color-mix(
-      in oklch,
-      var(--bg-base) calc(var(--glass-milk) + 40%),
-      transparent
-    );
-    -webkit-backdrop-filter: var(--bf-strong);
-    backdrop-filter: var(--bf-strong);
+    border-radius: var(--r-ctrl);
+    border: 1px solid var(--ctrl-brd);
+    background: var(--pane-bg);
+    -webkit-backdrop-filter: var(--pane-blur);
+    backdrop-filter: var(--pane-blur);
+    box-shadow: inset 0 1px 0 var(--pane-hi);
     color: var(--text);
     font-size: 0.875rem;
   }
   .input-glass::placeholder {
-    opacity: 0.5;
-  }
-  .theme-light .input-glass {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  }
-  .theme-dark .input-glass {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+    color: var(--text-muted);
   }
 
-  /* Inputs: make focus outlines follow the primary profile color */
   input,
   select,
   textarea {
-    caret-color: var(--profile-color);
+    caret-color: var(--accent);
   }
   input:focus,
   input:focus-visible,
@@ -429,20 +735,12 @@
   select:focus-visible,
   textarea:focus,
   textarea:focus-visible {
-    outline: 1px solid
-      color-mix(in oklch, var(--profile-color) 40%, transparent);
-    outline-offset: 0px;
-    box-shadow: 0 0 0 3px
-      color-mix(in oklch, var(--profile-color) 25%, transparent);
-    border-color: color-mix(in oklch, var(--profile-color) 60%, #fff 30%);
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
+    border-color: color-mix(in oklch, var(--accent) 60%, transparent);
   }
-  .tooltip-arrow {
-    fill: color-mix(in oklch, var(--bg-base) 50%, transparent) !important;
-    stroke: color-mix(in oklch, #fff 40%, transparent) !important;
-    stroke-width: 1px;
-    filter: none;
-  }
-  /* Radix Toast viewport and glass toasts */
+
+  /* ---------- Toasts (overlay tier) ---------- */
   .toast-viewport {
     position: fixed;
     bottom: 16px;
@@ -461,13 +759,15 @@
     gap: 10px;
     align-items: start;
     padding: 12px 12px 16px 12px;
-    border-radius: var(--radius);
+    border-radius: var(--r-card);
     color: var(--text);
-    background: color-mix(in oklch, #fff 10%, transparent);
-    border: 1px solid color-mix(in oklch, #fff 28%, transparent);
-    -webkit-backdrop-filter: var(--bf-medium);
-    backdrop-filter: var(--bf-medium);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    background: var(--ovl-bg);
+    border: 1px solid var(--ovl-brd);
+    -webkit-backdrop-filter: var(--ovl-blur);
+    backdrop-filter: var(--ovl-blur);
+    box-shadow:
+      inset 0 1px 0 var(--ovl-hi),
+      var(--ovl-shadow);
     overflow: hidden;
   }
 
@@ -481,13 +781,13 @@
   .toast-desc {
     margin-top: 2px;
     font-size: 0.85rem;
-    opacity: 0.9;
+    color: var(--text-muted);
   }
   .toast-close {
     appearance: none;
     border: 0;
     background: transparent;
-    color: color-mix(in oklch, var(--text) 70%, transparent);
+    color: var(--text-muted);
     padding: 2px 6px;
     border-radius: 8px;
     cursor: pointer;
@@ -501,10 +801,10 @@
     left: 0;
     right: 0;
     bottom: 0;
-    height: 4px;
+    height: 3px;
     background: color-mix(
       in oklch,
-      var(--toast-accent, var(--profile-color)) 50%,
+      var(--toast-accent, var(--accent)) 30%,
       transparent
     );
     pointer-events: none;
@@ -514,8 +814,8 @@
     left: 0;
     right: 0;
     bottom: 0;
-    height: 4px;
-    background: var(--toast-accent, var(--profile-color));
+    height: 3px;
+    background: var(--toast-accent, var(--accent));
     overflow: hidden;
   }
   .toast-progress.determinate {
@@ -540,7 +840,7 @@
     width: 40%;
     background: color-mix(
       in oklch,
-      var(--toast-accent, var(--profile-color)) 65%,
+      var(--toast-accent, var(--accent)) 65%,
       transparent
     );
     animation: toast-indeterminate 1.2s ease-in-out infinite;
@@ -560,42 +860,39 @@
     --toast-accent: color-mix(in oklch, var(--text) 40%, transparent);
   }
   .toast--info {
-    --toast-accent: var(--profile-color);
+    --toast-accent: var(--info);
   }
   .toast--success {
-    --toast-accent: #22c55e;
+    --toast-accent: var(--ok);
   }
   .toast--warning {
-    --toast-accent: #f59e0b;
+    --toast-accent: var(--warn);
   }
   .toast--error {
-    --toast-accent: var(--color-error);
+    --toast-accent: var(--err);
   }
-  /* Connection status dot (with subtle glow) */
+
+  /* ---------- Connection status dot (ring instead of glow blob) ---------- */
   .status-dot {
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
     border-radius: 9999px;
-    border: 1px solid color-mix(in oklch, #fff 40%, transparent);
   }
   .status-dot.connected {
-    background: #22c55e;
-    box-shadow: 0 0 10px rgba(34, 197, 94, 0.6);
+    background: var(--ok);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok) 22%, transparent);
   }
   .status-dot.reconnecting,
   .status-dot.connecting {
-    background: #facc15;
-    box-shadow: 0 0 10px rgba(250, 204, 21, 0.5);
+    background: var(--warn);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--warn) 22%, transparent);
   }
   .status-dot.disconnected {
-    background: var(--color-error);
-    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+    background: var(--err);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--err) 22%, transparent);
   }
-  /*
-    Ambient base gradient (very faint). Usage later:
-    <div class="ambient-gradient" aria-hidden="true" />
-    Not applied by default to keep page blank during technical prep.
-  */
+
+  /* ---------- Ambient background ---------- */
   .ambient-gradient {
     position: fixed;
     inset: 0;
@@ -603,65 +900,62 @@
     z-index: 0;
     background:
       radial-gradient(
-        100vw 100vh at 0% 0%,
+        120% 120% at 0% 0%,
         color-mix(
           in oklch,
-          var(--profile-color) var(--grad-strength-1),
+          var(--accent) var(--grad-strength-1),
           transparent
         ),
-        transparent 72%
+        transparent 70%
       ),
       radial-gradient(
-        100vw 100vh at 100% 100%,
+        120% 120% at 100% 100%,
         color-mix(
           in oklch,
-          var(--profile-color) var(--grad-strength-2),
+          var(--accent) var(--grad-strength-2),
           transparent
         ),
-        transparent 72%
+        transparent 70%
       );
   }
+  /* Fine static grain: makes the glass feel physical, costs nothing */
+  .ambient-gradient::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: var(--grain-opacity, 0.05);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
 
-  /* Container for animated/floating blobs (shapes) */
+  /* Container for optional floating blobs (settings toggle; quieter now) */
   .ambient-shapes {
     position: fixed;
     inset: 0;
     pointer-events: none;
     z-index: 0;
     display: grid;
-    /* grid to keep DOM order independent if needed later */
   }
   .ambient-shapes [data-blob] {
     position: absolute;
     border-radius: 9999px;
-    /* Faint fill with soft blurred edge via outer glow (no ring color band) */
     background: radial-gradient(
       closest-side,
       color-mix(
           in oklch,
-          var(--profile-color) var(--shape-fill-strength),
+          var(--accent) var(--shape-fill-strength),
           transparent
         )
         0 50%,
-      var(--bg-base) 150%
+      transparent 100%
     );
     box-shadow:
       0 0 60px 20px
-        color-mix(
-          in oklch,
-          var(--profile-color) var(--shape-glow-1),
-          transparent
-        ),
+        color-mix(in oklch, var(--accent) var(--shape-glow-1), transparent),
       0 0 140px 40px
-        color-mix(
-          in oklch,
-          var(--profile-color) var(--shape-glow-2),
-          transparent
-        );
+        color-mix(in oklch, var(--accent) var(--shape-glow-2), transparent);
     will-change: transform;
     transform: translate3d(0, 0, 0);
   }
-  /* Suggested base placements; fine-tuned later in UI assembly */
   .ambient-shapes [data-blob='a'] {
     width: var(--blob-size-lg);
     height: var(--blob-size-lg);
@@ -681,7 +975,6 @@
     bottom: -10%;
   }
 
-  /* Animation controls (toggleable) */
   @keyframes blob-drift-a {
     0% {
       transform: translate3d(0, 0, 0) scale(1);
@@ -716,7 +1009,6 @@
     }
   }
 
-  /* Attach animations only when [data-anim="on"] is present on a parent */
   [data-anim='on'] .ambient-shapes [data-blob='a'] {
     animation: blob-drift-a 60s ease-in-out infinite;
   }
@@ -727,81 +1019,156 @@
     animation: blob-drift-c 120s ease-in-out infinite;
   }
 
-  /* Shapes visibility toggle. Default in app will be ON, but keeping switch for settings */
   [data-shapes='off'] .ambient-shapes {
     display: none;
   }
 
-  /* Respect reduced motion at the OS level */
   @media (prefers-reduced-motion: reduce) {
     [data-anim='on'] .ambient-shapes [data-blob] {
       animation: none !important;
     }
   }
 
-  /* Global transparent scrollbar styling */
-  * {
+  /* ---------- Scrollbars ----------
+     Specifying scrollbar-width/-color (any value) makes Chromium ignore
+     ::-webkit-scrollbar styling on that element, so containers that need
+     always-visible classic scrollbars (directory picker) are excluded. */
+  *:not(.dir-picker-columns):not(.dir-picker-column) {
     scrollbar-width: thin;
     scrollbar-color: color-mix(in oklch, var(--text) 20%, transparent)
       transparent;
   }
-
-  /* WebKit scrollbar styling for Chrome/Safari/Edge */
   *::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
-
   *::-webkit-scrollbar-track {
     background: transparent;
   }
-
   *::-webkit-scrollbar-thumb {
     background-color: color-mix(in oklch, var(--text) 20%, transparent);
     border-radius: 4px;
     border: none;
   }
-
   *::-webkit-scrollbar-thumb:hover {
     background-color: color-mix(in oklch, var(--text) 30%, transparent);
   }
-
   *::-webkit-scrollbar-corner {
     background: transparent;
   }
 
-  /* Select option highlighting - theme-aware */
+  /* ---------- Select options ---------- */
   .select-option-highlighted {
     background-color: color-mix(in oklch, var(--text) 8%, transparent);
   }
-  .theme-light .select-option-highlighted {
-    background-color: color-mix(in oklch, var(--text) 6%, transparent);
-  }
-  .theme-dark .select-option-highlighted {
-    background-color: color-mix(in oklch, var(--text) 8%, transparent);
-  }
-
   .select-option-selected {
-    background-color: color-mix(in oklch, var(--text) 15%, transparent);
-  }
-  .theme-light .select-option-selected {
-    background-color: color-mix(in oklch, var(--text) 10%, transparent);
-  }
-  .theme-dark .select-option-selected {
-    background-color: color-mix(in oklch, var(--text) 15%, transparent);
+    background-color: color-mix(in oklch, var(--text) 13%, transparent);
   }
 
-  /* Directory picker miller columns */
+  /* ---------- Breadcrumb page header ---------- */
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: 1rem;
+  }
+  .breadcrumb a {
+    color: var(--text-muted);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color 120ms ease;
+  }
+  .breadcrumb a:hover {
+    color: var(--text);
+  }
+  .breadcrumb .breadcrumb-sep {
+    color: color-mix(in oklch, var(--text) 30%, transparent);
+    flex-shrink: 0;
+  }
+  .breadcrumb .breadcrumb-current {
+    color: var(--text);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Square icon button (back arrows etc.) */
+  .btn-icon {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  /* ---------- Code blocks ---------- */
+  .code-surface {
+    background: var(--code-bg);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+  }
+  .theme-dark {
+    --code-bg: color-mix(in oklch, #05060a 45%, transparent);
+  }
+  .theme-light {
+    --code-bg: color-mix(in oklch, #ffffff 60%, transparent);
+  }
+  /* Line numbers for shiki output (spans with .line per source line) */
+  .code-line-numbers code {
+    counter-reset: line;
+  }
+  .code-line-numbers .line::before {
+    counter-increment: line;
+    content: counter(line);
+    display: inline-block;
+    width: 2.5em;
+    margin-right: 1.25em;
+    text-align: right;
+    color: color-mix(in oklch, var(--text) 35%, transparent);
+    user-select: none;
+  }
+
+  /* ---------- Directory picker miller columns ---------- */
   .dir-picker-columns {
-    border: 1px solid color-mix(in oklch, var(--text) 15%, transparent);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-ctrl);
   }
   .dir-picker-column {
-    border-right: 1px solid color-mix(in oklch, var(--text) 10%, transparent);
+    border-right: 1px solid var(--hairline);
+  }
+  /* Always-visible classic scrollbars (the global overlay scrollbars
+     auto-hide on macOS, which makes the columns feel unscrollable).
+     scrollbar-color inherits, so reset it to auto here — a non-auto
+     computed value makes Chromium ignore ::-webkit-scrollbar styling. */
+  .dir-picker-columns,
+  .dir-picker-column {
+    scrollbar-color: auto;
+  }
+  .dir-picker-columns::-webkit-scrollbar,
+  .dir-picker-column::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .dir-picker-columns::-webkit-scrollbar-track,
+  .dir-picker-column::-webkit-scrollbar-track {
+    background: color-mix(in oklch, var(--text) 5%, transparent);
+  }
+  .dir-picker-columns::-webkit-scrollbar-thumb,
+  .dir-picker-column::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklch, var(--text) 28%, transparent);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .dir-picker-columns::-webkit-scrollbar-thumb:hover,
+  .dir-picker-column::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in oklch, var(--text) 40%, transparent);
   }
   .dir-picker-entry:hover {
     background-color: color-mix(in oklch, var(--text) 8%, transparent);
   }
   .dir-picker-entry-selected {
-    background-color: color-mix(in oklch, var(--text) 12%, transparent);
+    background-color: color-mix(in oklch, var(--accent) 16%, transparent);
   }
 }

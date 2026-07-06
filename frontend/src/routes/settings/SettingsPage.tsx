@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import * as Tabs from '@radix-ui/react-tabs';
+import { SlidersHorizontal, Users, Plug } from 'lucide-react';
 import GeneralTab from './tabs/general/GeneralTab';
 import ProfilesTab from './tabs/profiles/ProfilesTab';
 import PluginsTab from './tabs/plugins/PluginsTab';
@@ -20,12 +21,15 @@ export default function SettingsPage() {
       <Tabs.Root value={activeTab} onValueChange={onTabChange}>
         <Tabs.List aria-label="Settings sections" className="tabs-list">
           <Tabs.Trigger value="general" className="tabs-trigger">
+            <SlidersHorizontal size={14} />
             General
           </Tabs.Trigger>
           <Tabs.Trigger value="profiles" className="tabs-trigger">
+            <Users size={14} />
             Profiles
           </Tabs.Trigger>
           <Tabs.Trigger value="plugins" className="tabs-trigger">
+            <Plug size={14} />
             Plugins
           </Tabs.Trigger>
         </Tabs.List>

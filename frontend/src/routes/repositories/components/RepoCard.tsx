@@ -4,6 +4,7 @@ import Select from '../../../components/Select';
 import {
   Bookmark,
   X,
+  FolderGit2,
   GitBranch,
   GitCommit,
   GitPullRequest,
@@ -71,24 +72,24 @@ function StatusIndicator({ path }: { path: string }) {
   switch (status) {
     case 'loading':
       return (
-        <div className="flex items-center gap-1">
-          <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-          <span className="text-xs text-blue-500">Initializing...</span>
-        </div>
+        <span className="chip chip-info">
+          <span className="chip-dot pulse" />
+          Initializing
+        </span>
       );
     case 'success':
       return (
-        <div className="flex items-center gap-1">
-          <div className="w-2 h-2 bg-green-500 rounded-full" />
-          <span className="text-xs text-green-500">Ready</span>
-        </div>
+        <span className="chip chip-ok">
+          <span className="chip-dot" />
+          Ready
+        </span>
       );
     case 'error':
       return (
-        <div className="flex items-center gap-1">
-          <div className="w-2 h-2 bg-red-500 rounded-full" />
-          <span className="text-xs text-red-500">Failed</span>
-        </div>
+        <span className="chip chip-err">
+          <span className="chip-dot" />
+          Failed
+        </span>
       );
     default:
       return null;
@@ -122,7 +123,7 @@ function DirtyIndicator({
       placement="top"
     >
       <div
-        className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+        className="flex items-center gap-1 cursor-pointer text-warn hover:opacity-80 transition-opacity"
         role="button"
         tabIndex={0}
         aria-label="Discard uncommitted changes"
@@ -137,8 +138,8 @@ function DirtyIndicator({
           }
         }}
       >
-        <FileEdit size={12} className="text-orange-400" />
-        <span className="text-xs text-orange-400">dirty</span>
+        <FileEdit size={12} />
+        <span className="mono-data">dirty</span>
       </div>
     </Tooltip>
   );
@@ -192,7 +193,7 @@ function BranchSelector({ path }: { path: string }) {
         return (
           <div
             ref={ref}
-            className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+            className="flex items-center gap-1 cursor-pointer text-muted hover:text-accent transition-colors"
             onClick={(e) => {
               e.stopPropagation();
               toggle();
@@ -215,8 +216,8 @@ function BranchSelector({ path }: { path: string }) {
             }`}
             {...(getReferenceProps ? getReferenceProps() : {})}
           >
-            <GitBranch size={12} className="text-blue-400" />
-            <span className="text-xs text-blue-400">
+            <GitBranch size={12} />
+            <span className="mono-data">
               {isDetachedHead
                 ? 'detached HEAD'
                 : finalDisplayLabel === 'Select branch...'
@@ -257,7 +258,7 @@ function CommitHashSelector({
 
   return (
     <div
-      className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+      className="flex items-center gap-1 cursor-pointer text-muted hover:text-accent transition-colors"
       onClick={(e) => {
         e.stopPropagation();
         handleCommitHashClick();
@@ -273,8 +274,8 @@ function CommitHashSelector({
       title="Checkout Commit"
       aria-label={`Checkout commit: ${displayHash}`}
     >
-      <GitCommit size={12} className="text-purple-400" />
-      <span className="text-xs text-purple-400">{displayHash}</span>
+      <GitCommit size={12} />
+      <span className="mono-data">{displayHash}</span>
     </div>
   );
 }
@@ -294,18 +295,18 @@ function FrameworkBadges({ path }: { path: string }) {
   if (frameworks === undefined) {
     // Detection in progress
     return (
-      <div className="flex items-center gap-1">
-        <div className="w-2 h-2 bg-[var(--primary)] rounded-full animate-pulse" />
-        <span className="text-xs text-[var(--primary)]">Detecting...</span>
-      </div>
+      <span className="chip chip-info">
+        <span className="chip-dot pulse" />
+        Detecting
+      </span>
     );
   }
 
   if (frameworks.length === 0) {
     // No frameworks detected
     return (
-      <span className="text-xs rounded-full pill px-2 py-0.5">
-        Unknown Framework
+      <span className="rounded-full pill px-2 py-0.5 lowercase">
+        unknown framework
       </span>
     );
   }
@@ -316,7 +317,7 @@ function FrameworkBadges({ path }: { path: string }) {
       {frameworks.map((framework) => (
         <span
           key={framework.id}
-          className="text-xs rounded-full pill-primary px-2 py-0.5"
+          className="pill rounded-full pill-primary px-2 py-0.5 lowercase"
         >
           {framework.name}
         </span>
@@ -368,16 +369,16 @@ export default function RepoCard({
   const CardContent = (
     <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-0">
-        <div className="size-8 rounded-[var(--radius)] border border-white/20 bg-white/10 backdrop-blur-sm flex items-center justify-center text-sm">
-          📁
+        <div className="icon-tile">
+          <FolderGit2 size={16} />
         </div>
         <div className="min-w-0">
-          <div className="text-sm font-medium truncate">{repo.name}</div>
-          <div className="text-xs opacity-70 truncate">
+          <div className="text-sm font-semibold truncate">{repo.name}</div>
+          <div className="mono-data text-muted truncate">
             {repo.path}{' '}
             {variant === 'current' && repo.saved === false ? '(unsaved)' : ''}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 mt-1">
             <StatusIndicator path={repo.path} />
             <BranchSelector path={repo.path} />
             <CommitHashSelector
@@ -465,16 +466,21 @@ export default function RepoCard({
     </div>
   );
 
+  // Current workspace reads as its own card; local/cloned entries render as
+  // hairline-divided rows inside the section's glass-list container.
+  const shellClass =
+    variant === 'current' ? 'glass-card p-4 w-full text-left' : 'list-row';
+
   return clickable ? (
     <button
       type="button"
-      className="card-milky p-4 cursor-pointer hover:bg-white/15 transition-colors w-full text-left"
+      className={`${shellClass} clickable`}
       onClick={() => handleRepoClick(repo.path)}
       aria-label={`Open ${repo.name} repository details`}
     >
       {CardContent}
     </button>
   ) : (
-    <div className="card-milky p-4">{CardContent}</div>
+    <div className={shellClass}>{CardContent}</div>
   );
 }

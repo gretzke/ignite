@@ -35,7 +35,7 @@ export default function ConfirmDialog({
           style={{ background: 'transparent' }}
         />
         <Dialog.Content
-          className="dialog-content glass-surface"
+          className="dialog-content glass-overlay"
           style={{
             maxWidth: 420,
             width: '90vw',

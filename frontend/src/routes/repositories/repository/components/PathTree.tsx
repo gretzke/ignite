@@ -54,27 +54,27 @@ function TreeNode({
 
   const getIcon = () => {
     if (isDirectory) {
-      return <Folder size={16} className="text-blue-400" />;
+      return <Folder size={16} className="text-info" />;
     }
 
     if (node.type === 'source') {
-      return <FileCode size={16} className="text-green-400" />;
+      return <FileCode size={16} className="text-ok" />;
     }
 
-    return <File size={16} className="text-orange-400" />;
+    return <File size={16} className="text-warn" />;
   };
 
   const getFileExtensionClass = () => {
-    if (node.type === 'source') return 'text-green-400';
-    if (node.type === 'artifact') return 'text-orange-400';
-    return 'text-gray-400';
+    if (node.type === 'source') return 'text-ok';
+    if (node.type === 'artifact') return 'text-warn';
+    return 'text-muted';
   };
 
   return (
     <div className="tree-node">
       <div
-        className={`tree-node-content flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-white/5 rounded ${
-          isSelected ? 'bg-white/10' : ''
+        className={`tree-node-content flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-[var(--hairline)] rounded ${
+          isSelected ? 'bg-[color-mix(in_oklch,var(--accent)_14%,transparent)]' : ''
         }`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
         onClick={handleClick}
@@ -83,7 +83,7 @@ function TreeNode({
         {isDirectory && hasChildren ? (
           <button
             onClick={handleToggleClick}
-            className="flex items-center justify-center w-4 h-4 hover:bg-white/10 rounded"
+            className="flex items-center justify-center w-4 h-4 hover:bg-[var(--hairline)] rounded"
           >
             {isExpanded ? (
               <ChevronDown size={14} />
@@ -105,7 +105,7 @@ function TreeNode({
 
         {/* Show artifact count for files with multiple artifacts */}
         {node.artifacts && node.artifacts.length > 1 && (
-          <span className="text-xs text-gray-400 ml-auto">
+          <span className="text-xs text-muted ml-auto">
             ({node.artifacts.length})
           </span>
         )}
@@ -149,7 +149,7 @@ export default function PathTree({
   // If tree is empty, show empty state
   if (!tree || Object.keys(tree.children).length === 0) {
     return (
-      <div className="flex items-center justify-center h-32 text-sm text-gray-400">
+      <div className="flex items-center justify-center h-32 text-sm text-muted">
         No artifacts found
       </div>
     );

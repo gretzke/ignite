@@ -1,5 +1,10 @@
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import {
+  useParams,
+  useNavigate,
+  useSearchParams,
+  Link,
+} from 'react-router-dom';
+import { ArrowLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useAppSelector, useAppDispatch } from '../../../store/hooks';
@@ -83,12 +88,18 @@ export default function RepositoryPage() {
         <div className="flex items-center gap-3 mb-6">
           <button
             onClick={() => navigate('/repositories')}
-            className="btn btn-secondary btn-secondary-borderless"
+            className="btn btn-secondary btn-icon"
             aria-label="Back to repositories"
           >
-            <ArrowLeft size={16} />
+            <ArrowLeft size={18} />
           </button>
-          <h2 className="page-title mb-0">{getRepoName(decodedPath)}</h2>
+          <nav className="breadcrumb" aria-label="Breadcrumb">
+            <Link to="/repositories">Repositories</Link>
+            <ChevronRight size={13} className="breadcrumb-sep" />
+            <span className="breadcrumb-current">
+              {getRepoName(decodedPath)}
+            </span>
+          </nav>
         </div>
 
         <div className="card-milky p-6">
@@ -114,14 +125,18 @@ export default function RepositoryPage() {
         <div className="flex items-center gap-3 mb-6">
           <button
             onClick={() => navigate('/repositories')}
-            className="btn btn-secondary btn-secondary-borderless"
+            className="btn btn-secondary btn-icon"
             aria-label="Back to repositories"
           >
-            <ArrowLeft size={16} />
+            <ArrowLeft size={18} />
           </button>
-          <h2 className="page-title mb-0">
-            {isSaved ? getRepoName(decodedPath) : 'Repository Not Found'}
-          </h2>
+          <nav className="breadcrumb" aria-label="Breadcrumb">
+            <Link to="/repositories">Repositories</Link>
+            <ChevronRight size={13} className="breadcrumb-sep" />
+            <span className="breadcrumb-current">
+              {isSaved ? getRepoName(decodedPath) : 'Repository Not Found'}
+            </span>
+          </nav>
         </div>
 
         <div className="card-milky p-6">
@@ -152,18 +167,22 @@ export default function RepositoryPage() {
 
   return (
     <div className="text-[var(--text)]">
-      {/* Header with back button */}
+      {/* Header: back button + clickable breadcrumb */}
       <div className="flex items-center gap-3 mb-6">
         <button
           onClick={() => navigate('/repositories')}
-          className="btn btn-secondary btn-secondary-borderless"
+          className="btn btn-secondary btn-icon"
           aria-label="Back to repositories"
         >
-          <ArrowLeft size={16} />
+          <ArrowLeft size={18} />
         </button>
-        <div>
-          <h2 className="page-title mb-0">{repoName}</h2>
-          <p className="text-xs opacity-70 mt-1">{decodedPath}</p>
+        <div className="min-w-0">
+          <nav className="breadcrumb" aria-label="Breadcrumb">
+            <Link to="/repositories">Repositories</Link>
+            <ChevronRight size={13} className="breadcrumb-sep" />
+            <span className="breadcrumb-current">{repoName}</span>
+          </nav>
+          <p className="mono-data text-muted mt-1 truncate">{decodedPath}</p>
         </div>
       </div>
 
@@ -182,7 +201,7 @@ export default function RepositoryPage() {
           // Single framework - no tabs needed
           <div className="p-6">
             <div className="flex items-center gap-2 mb-4">
-              <span className="text-xs rounded-full pill-primary px-3 py-1">
+              <span className="pill pill-primary rounded-full px-3 py-1 lowercase">
                 {frameworks[0].name}
               </span>
               <h3 className="text-lg font-medium">Artifacts</h3>

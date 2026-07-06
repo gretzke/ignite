@@ -81,7 +81,7 @@ export default function PluginPermissionsModal() {
           style={{ background: 'transparent' }}
         />
         <Dialog.Content
-          className="dialog-content glass-surface"
+          className="dialog-content glass-overlay"
           style={{ maxWidth: 520, width: '90vw', padding: 24 }}
         >
           <div className="flex items-center gap-3 mb-2">

@@ -192,7 +192,7 @@ export function InstallFromGitModal({
           style={{ background: 'transparent' }}
         />
         <Dialog.Content
-          className="dialog-content glass-surface"
+          className="dialog-content glass-overlay"
           style={{ maxWidth: 520, width: '90vw', padding: 16 }}
         >
           <Dialog.Title className="text-base font-semibold mb-2">
@@ -218,7 +218,7 @@ export function InstallFromGitModal({
               autoFocus={!manage}
             />
             {inspectError && (
-              <div className="text-xs text-red-400 mt-1">{inspectError}</div>
+              <div className="text-xs text-err mt-1">{inspectError}</div>
             )}
             {inspect?.github?.description && (
               <div className="text-xs opacity-70 mt-1 break-words">
@@ -372,7 +372,7 @@ export function InstallFromPathModal({
           style={{ background: 'transparent' }}
         />
         <Dialog.Content
-          className="dialog-content glass-surface"
+          className="dialog-content glass-overlay"
           style={{ maxWidth: 720, width: '90vw', padding: 16 }}
         >
           <Dialog.Title className="text-base font-semibold mb-2">

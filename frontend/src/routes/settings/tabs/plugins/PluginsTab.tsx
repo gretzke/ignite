@@ -99,7 +99,13 @@ function PluginCard({
       }}
     >
       <div className="flex items-center gap-3 min-w-0">
-        <div className="size-8 rounded-[var(--radius)] border border-[var(--profile-color)]/20 bg-[var(--profile-color)]/10 backdrop-blur-sm flex items-center justify-center shrink-0">
+        <div
+          className="icon-tile"
+          style={{
+            background: 'color-mix(in oklch, var(--accent) 12%, transparent)',
+            borderColor: 'color-mix(in oklch, var(--accent) 25%, transparent)',
+          }}
+        >
           <Plug size={16} />
         </div>
         <div className="min-w-0">
@@ -326,20 +332,17 @@ export default function PluginsTab() {
                   <Plus size={16} />
                 </button>
               )}
-              menuClassName="tooltip-content"
+              menuClassName="glass-overlay"
               menuStyle={{
                 padding: 12,
                 minWidth: 180,
-                background:
-                  'color-mix(in oklch, var(--bg-base) calc(var(--glass-milk) + 20%), transparent)',
-                borderColor: 'color-mix(in oklch, #fff 28%, transparent)',
               }}
             >
               {({ close }) => (
                 <div className="flex flex-col gap-2">
                   <button
                     type="button"
-                    className="btn btn-secondary card-milky flex items-center justify-start gap-2 w-full text-sm"
+                    className="btn btn-secondary flex items-center justify-start gap-2 w-full text-sm"
                     onClick={() => {
                       openInstall();
                       close();
@@ -350,7 +353,7 @@ export default function PluginsTab() {
                   </button>
                   <button
                     type="button"
-                    className="btn btn-secondary card-milky flex items-center justify-start gap-2 w-full text-sm"
+                    className="btn btn-secondary flex items-center justify-start gap-2 w-full text-sm"
                     onClick={() => {
                       setPathModalOpen(true);
                       close();
