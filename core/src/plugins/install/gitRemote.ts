@@ -265,14 +265,16 @@ export function deriveTrack(
   if (!ref) {
     return { mode: 'branch', branch: remote.defaultBranch ?? 'main' };
   }
-  if (/^[0-9a-f]{40}$/i.test(ref)) {
-    return { mode: 'commit' };
-  }
+  // Known refs win over the sha heuristic so a branch that happens to look
+  // hex-ish (e.g. "deadbee") still tracks as a branch.
   if (remote.releases.some((release) => release.tag === ref)) {
     return { mode: 'release', version: ref };
   }
   if (remote.branches.includes(ref)) {
     return { mode: 'branch', branch: ref };
+  }
+  if (/^[0-9a-f]{7,40}$/i.test(ref)) {
+    return { mode: 'commit' };
   }
   if (tags && ref in tags) {
     return { mode: 'commit' };

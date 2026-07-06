@@ -47,7 +47,7 @@ export interface InstallHandlerDeps {
 async function resweepCurrentProfile(): Promise<void> {
   try {
     const profileManager = await ProfileManager.getInstance();
-    RepoLifecycle.getInstance().resweepProfile(
+    await RepoLifecycle.getInstance().resweepProfile(
       profileManager.getCurrentProfile()
     );
   } catch (error) {

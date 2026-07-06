@@ -134,9 +134,26 @@ export class RepoLifecycle {
   // so every repo re-detects against the new catalog immediately instead of
   // on the next CLI restart. Repos with a lifecycle job already in flight
   // are skipped by the per-repo activeJobs guard and picked up next trigger.
-  resweepProfile(profileId: string): void {
-    this.sweptProfiles.delete(profileId);
-    this.ensureProfileSwept(profileId);
+  // Unlike ensureProfileSwept this AWAITS job creation: callers (the plugin
+  // install/update job runners) finish only after the sweep jobs exist, so a
+  // client that lists active jobs on the install's terminal event reliably
+  // discovers them.
+  async resweepProfile(profileId: string): Promise<void> {
+    this.sweptProfiles.add(profileId);
+    try {
+      const { local, cloned } = await this.deps.registry.list(profileId);
+      for (const record of [...local, ...cloned]) {
+        this.startLifecycle(record.pathOrUrl, profileId, 'sweep');
+      }
+      const session = this.deps.sessionPath();
+      if (session) {
+        this.startLifecycle(session, profileId, 'sweep');
+      }
+    } catch (error) {
+      getLogger().error(
+        `Failed to re-sweep profile '${profileId}': ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   // Start (or return the already-running) lifecycle job for one repo.

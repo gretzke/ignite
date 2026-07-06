@@ -109,6 +109,9 @@ export function InstallFromGitModal({
                 setVersion(manage.currentRef);
               } else if (stable.length > 0) {
                 setVersion(stable[0].tag);
+              } else if (data.defaultBranch) {
+                // No releases: the default branch is what will be installed.
+                setBranch(data.defaultBranch);
               }
             },
             onError: (error) => {
@@ -160,7 +163,7 @@ export function InstallFromGitModal({
   const target = resolveTarget();
   const canSubmit =
     target !== null &&
-    (!commit.trim() || /^[0-9a-f]{40}$/i.test(commit.trim()));
+    (!commit.trim() || /^[0-9a-f]{7,40}$/i.test(commit.trim()));
 
   const handleSubmit = () => {
     if (!target || !canSubmit) return;
@@ -173,12 +176,11 @@ export function InstallFromGitModal({
   };
 
   const summary = (() => {
-    if (commit.trim()) return `Pinned to commit ${commit.trim().slice(0, 12)}…`;
-    if (branch) return `Tracks branch "${branch}" — updates follow its head`;
-    if (releases.length > 0 && version)
-      return `Installs release ${version} — updates offered when a newer release is published`;
+    if (commit.trim()) return `Pinned to commit ${commit.trim().slice(0, 12)}`;
+    if (branch) return `Installs the latest commit on "${branch}"`;
+    if (releases.length > 0 && version) return `Installs release ${version}`;
     if (inspect)
-      return `No releases found — installs the latest commit on "${defaultBranch}" and updates follow that branch`;
+      return `No releases found — installs the latest commit on "${defaultBranch}"`;
     return '';
   })();
 
@@ -247,6 +249,7 @@ export function InstallFromGitModal({
                 value={version}
                 onValueChange={setVersion}
                 anchor="left"
+                portal={false}
               />
             </div>
           )}
@@ -255,7 +258,7 @@ export function InstallFromGitModal({
             <div className="mb-3">
               <button
                 type="button"
-                className="btn btn-secondary btn-secondary-borderless flex items-center gap-1 text-sm px-0"
+                className="flex items-center gap-1 text-sm opacity-70 hover:opacity-100 bg-transparent border-0 p-0 cursor-pointer text-[var(--text)]"
                 onClick={() => setAdvancedOpen((v) => !v)}
               >
                 {advancedOpen ? (
@@ -273,7 +276,9 @@ export function InstallFromGitModal({
                     </label>
                     <Select
                       options={[
-                        { value: '', label: '— none —' },
+                        ...(releases.length > 0
+                          ? [{ value: '', label: '— none (use version) —' }]
+                          : []),
                         ...branches.map((name) => ({
                           value: name,
                           label:
@@ -286,6 +291,7 @@ export function InstallFromGitModal({
                       value={branch}
                       onValueChange={setBranch}
                       anchor="left"
+                      portal={false}
                     />
                   </div>
                   <div>
@@ -294,14 +300,15 @@ export function InstallFromGitModal({
                     </label>
                     <input
                       type="text"
-                      placeholder="full 40-character commit sha (optional)"
+                      placeholder="commit sha"
                       value={commit}
                       onChange={(e) => setCommit(e.target.value)}
                       className="input-glass font-mono text-xs"
                       spellCheck={false}
                     />
                     <div className="text-xs opacity-60 mt-1">
-                      A pinned commit never prompts for updates.
+                      A pinned commit never prompts for updates — click the
+                      plugin card to switch back to a release or branch later.
                     </div>
                   </div>
                 </div>

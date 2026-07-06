@@ -16,6 +16,10 @@ export interface SelectProps {
   disabled?: boolean;
   className?: string;
   anchor?: 'left' | 'right'; // Dropdown anchor position (default: 'right')
+  // Render the menu in place instead of a portal. Required inside modal Radix
+  // dialogs: the portal'd menu lands outside the dialog, where Radix blocks
+  // pointer events, so option clicks would dismiss instead of selecting.
+  portal?: boolean;
   renderTrigger?: (props: {
     ref: (node: HTMLElement | null) => void;
     open: boolean;
@@ -35,6 +39,7 @@ export default function Select({
   disabled = false,
   className = '',
   anchor = 'right',
+  portal = true,
   renderTrigger,
 }: SelectProps) {
   // Show search if more than 10 options
@@ -85,6 +90,7 @@ export default function Select({
   return (
     <Dropdown
       anchor={anchor}
+      portal={portal}
       sideOffset={8}
       menuClassName="glass-surface"
       menuStyle={{

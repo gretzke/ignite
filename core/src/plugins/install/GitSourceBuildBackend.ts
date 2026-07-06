@@ -111,17 +111,28 @@ export class GitSourceBuildBackend implements PluginBuildBackend {
           'FETCH_HEAD',
         ],
       ];
-      for (const args of steps) {
-        const result = await runCommand('git', args, {
-          env,
-          timeoutMs: CLONE_TIMEOUT_MS,
-        });
-        if (result.code !== 0) {
-          throw new Error(
-            `git ${args.join(' ')} failed (exit ${result.code}): ${result.stderr.trim()}`
-          );
-        }
-      }
+      await this.runSteps(steps, env);
+      return;
+    }
+
+    // Abbreviated sha: servers only allow fetching FULL shas over the wire,
+    // so resolve the abbreviation locally — clone the whole repo (no
+    // --depth) and checkout. Plugin repos are small; correctness beats the
+    // extra bytes here.
+    if (ref && /^[0-9a-f]{7,39}$/i.test(ref)) {
+      const steps: string[][] = [
+        [
+          '-c',
+          'core.hooksPath=/dev/null',
+          'clone',
+          '--no-tags',
+          '--',
+          url,
+          dir,
+        ],
+        ['-C', dir, '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', ref],
+      ];
+      await this.runSteps(steps, env);
       return;
     }
 
@@ -143,6 +154,23 @@ export class GitSourceBuildBackend implements PluginBuildBackend {
       throw new Error(
         `git clone failed (exit ${result.code}): ${result.stderr.trim()}`
       );
+    }
+  }
+
+  private async runSteps(
+    steps: string[][],
+    env: NodeJS.ProcessEnv
+  ): Promise<void> {
+    for (const args of steps) {
+      const result = await runCommand('git', args, {
+        env,
+        timeoutMs: CLONE_TIMEOUT_MS,
+      });
+      if (result.code !== 0) {
+        throw new Error(
+          `git ${args.join(' ')} failed (exit ${result.code}): ${result.stderr.trim()}`
+        );
+      }
     }
   }
 }

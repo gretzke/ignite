@@ -33,6 +33,7 @@ import {
   pluginsApi,
   openPermissionsModal,
 } from '../features/plugins/pluginsSlice';
+import { discoverActiveJobs } from '../features/jobs/discoverJobs';
 import { getRepoName } from '../../utils/repo';
 import type { AppDispatch, RootState } from '../store';
 
@@ -372,12 +373,18 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
       if (succeeded) {
         dispatch(
           triggerToast({
+            id: `plugin-job-${job.id}`,
             title: 'Plugin installed',
+            description: '',
             variant: 'success',
             duration: 3000,
+            permanent: false,
           })
         );
         pluginsApi.refresh().forEach((a) => dispatch(a));
+        // The install triggered a server-side re-detection sweep; attach to
+        // those jobs so repo cards update without a reload.
+        dispatch(discoverActiveJobs());
         // Fresh install: prompt for the manifest-requested permissions
         // (every one of them is "new"). Grants are all-denied until the user
         // saves the modal.
@@ -408,6 +415,16 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
       const perm = permissionDetails(job);
       if (perm) {
         dispatch(
+          triggerToast({
+            id: `plugin-job-${job.id}`,
+            title: 'Permission required',
+            description: '',
+            variant: 'warning',
+            duration: 3000,
+            permanent: false,
+          })
+        );
+        dispatch(
           permissionRequired({
             pluginId: perm.pluginId,
             permission: perm.permission,
@@ -420,10 +437,12 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
       } else {
         dispatch(
           triggerToast({
+            id: `plugin-job-${job.id}`,
             title: 'Plugin Install Failed',
             description: errorMessage,
             variant: 'error',
             duration: 6000,
+            permanent: false,
           })
         );
       }
@@ -440,15 +459,18 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
           | undefined;
         dispatch(
           triggerToast({
+            id: `plugin-job-${job.id}`,
             title: 'Plugin updated',
             description: result?.plugin?.version
               ? `Now at version ${result.plugin.version}`
-              : undefined,
+              : '',
             variant: 'success',
             duration: 3000,
+            permanent: false,
           })
         );
         pluginsApi.refresh().forEach((a) => dispatch(a));
+        dispatch(discoverActiveJobs());
         // The new version requests permissions the old one didn't: they
         // start denied — surface them in the permissions modal.
         const newPermissions = result?.newPermissions ?? [];
@@ -463,10 +485,12 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
       } else {
         dispatch(
           triggerToast({
+            id: `plugin-job-${job.id}`,
             title: 'Plugin Update Failed',
             description: errorMessage,
             variant: 'error',
             duration: 6000,
+            permanent: false,
           })
         );
       }

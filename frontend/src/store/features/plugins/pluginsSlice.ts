@@ -8,6 +8,7 @@ import { apiClient } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
 import { formatApiError } from '../../middleware/apiGate';
 import { jobStarted } from '../jobs/jobsSlice';
+import { discoverActiveJobs } from '../jobs/discoverJobs';
 import { wsSend } from '../../middleware/websocket';
 import type { RootState } from '../../store';
 
@@ -142,8 +143,7 @@ export const {
   setVersions,
   setStorePlugins,
 } = pluginsSlice.actions;
-export const selectPluginRows = (s: RootState) =>
-  Object.values(s.plugins.rows);
+export const selectPluginRows = (s: RootState) => Object.values(s.plugins.rows);
 export const selectPluginsLoading = (s: RootState) => s.plugins.loading;
 export const selectDevMode = (s: RootState) => s.plugins.devMode;
 export const selectPermissionsModal = (s: RootState) =>
@@ -229,7 +229,12 @@ export const pluginsApi = {
       onError: (error) => {
         const { title, description } = formatApiError(error);
         return [
-          triggerToast({ title, description, variant: 'error', duration: 5000 }),
+          triggerToast({
+            title,
+            description,
+            variant: 'error',
+            duration: 5000,
+          }),
         ];
       },
     });
@@ -246,7 +251,12 @@ export const pluginsApi = {
       onError: (error) => {
         const { title, description } = formatApiError(error);
         return [
-          triggerToast({ title, description, variant: 'error', duration: 5000 }),
+          triggerToast({
+            title,
+            description,
+            variant: 'error',
+            duration: 5000,
+          }),
         ];
       },
     });
@@ -268,11 +278,24 @@ export const pluginsApi = {
           params: { source },
         }),
         wsSend({ type: 'subscribe', jobId: data.jobId }),
+        triggerToast({
+          id: `plugin-job-${data.jobId}`,
+          title: 'Installing plugin…',
+          description:
+            'Building the plugin image. This can take a few minutes.',
+          variant: 'info',
+          permanent: true,
+        }),
       ],
       onError: (error) => {
         const { title, description } = formatApiError(error);
         return [
-          triggerToast({ title, description, variant: 'error', duration: 6000 }),
+          triggerToast({
+            title,
+            description,
+            variant: 'error',
+            duration: 6000,
+          }),
         ];
       },
     });
@@ -288,11 +311,24 @@ export const pluginsApi = {
           params: { source },
         }),
         wsSend({ type: 'subscribe', jobId: data.jobId }),
+        triggerToast({
+          id: `plugin-job-${data.jobId}`,
+          title: 'Installing plugin…',
+          description:
+            'Building the plugin image. This can take a few minutes.',
+          variant: 'info',
+          permanent: true,
+        }),
       ],
       onError: (error) => {
         const { title, description } = formatApiError(error);
         return [
-          triggerToast({ title, description, variant: 'error', duration: 6000 }),
+          triggerToast({
+            title,
+            description,
+            variant: 'error',
+            duration: 6000,
+          }),
         ];
       },
     });
@@ -312,11 +348,24 @@ export const pluginsApi = {
           params: { pluginId },
         }),
         wsSend({ type: 'subscribe', jobId: data.jobId }),
+        triggerToast({
+          id: `plugin-job-${data.jobId}`,
+          title: 'Updating plugin…',
+          description:
+            'Rebuilding the plugin image. This can take a few minutes.',
+          variant: 'info',
+          permanent: true,
+        }),
       ],
       onError: (error) => {
         const { title, description } = formatApiError(error);
         return [
-          triggerToast({ title, description, variant: 'error', duration: 6000 }),
+          triggerToast({
+            title,
+            description,
+            variant: 'error',
+            duration: 6000,
+          }),
         ];
       },
     });
@@ -324,11 +373,21 @@ export const pluginsApi = {
   uninstall(pluginId: string) {
     return apiClient.dispatch.uninstallPlugin({
       params: { pluginId },
-      onSuccess: () => [removeRow(pluginId), ...pluginsApi.refresh()],
+      onSuccess: () => [
+        removeRow(pluginId),
+        ...pluginsApi.refresh(),
+        // Uninstall also triggers a server-side re-detection sweep.
+        discoverActiveJobs(),
+      ],
       onError: (error) => {
         const { title, description } = formatApiError(error);
         return [
-          triggerToast({ title, description, variant: 'error', duration: 5000 }),
+          triggerToast({
+            title,
+            description,
+            variant: 'error',
+            duration: 5000,
+          }),
         ];
       },
     });
