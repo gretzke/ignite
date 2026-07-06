@@ -1,6 +1,7 @@
 // Per-profile repo registry (local.json / cloned.json under the profile dir)
 // plus cleanup of the disk that backs a removed cloned repo.
 import path from 'path';
+import type { RepoRecord } from '@ignite/api';
 import { FileSystem } from './FileSystem.js';
 import { RepoService, RepoKind, deriveRepoKind } from '../repos/RepoService.js';
 import { isGitRepository } from '../utils/startup.js';
@@ -15,6 +16,14 @@ export interface ProfileRepoRegistryDeps {
   isGitRepository: (p: string) => boolean;
   removeClone: (pathOrUrl: string, profileId: string) => Promise<void>;
   sessionPath: () => string | null;
+}
+
+// On-disk entry: legacy registries stored bare pathOrUrl strings; current
+// registries store RepoRecord objects. Reads migrate transparently.
+type StoredEntry = string | RepoRecord;
+
+function toRecord(entry: StoredEntry): RepoRecord {
+  return typeof entry === 'string' ? { pathOrUrl: entry } : entry;
 }
 
 export class ProfileRepoRegistry {
@@ -40,11 +49,15 @@ export class ProfileRepoRegistry {
     );
   }
 
-  private async readList(profileId: string, kind: RepoKind): Promise<string[]> {
+  private async readList(
+    profileId: string,
+    kind: RepoKind
+  ): Promise<RepoRecord[]> {
     const p = this.registryPath(profileId, kind);
     try {
       if (await this.deps.fileSystem.fileExists(p)) {
-        return await this.deps.fileSystem.readJsonFile<string[]>(p);
+        const raw = await this.deps.fileSystem.readJsonFile<StoredEntry[]>(p);
+        return raw.map(toRecord);
       }
     } catch {
       // Corrupt registry file reads as empty, matching the old handler.
@@ -54,8 +67,8 @@ export class ProfileRepoRegistry {
 
   async list(profileId: string): Promise<{
     session: string | null;
-    local: string[];
-    cloned: string[];
+    local: RepoRecord[];
+    cloned: RepoRecord[];
   }> {
     return {
       session: this.deps.sessionPath(),
@@ -89,18 +102,44 @@ export class ProfileRepoRegistry {
     // propagate as an error (old handler behavior → 500) instead of being
     // silently overwritten with a fresh single-entry list.
     const p = this.registryPath(profileId, kind);
-    let list: string[] = [];
+    let records: RepoRecord[] = [];
     if (await this.deps.fileSystem.fileExists(p)) {
-      list = await this.deps.fileSystem.readJsonFile<string[]>(p);
+      const raw = await this.deps.fileSystem.readJsonFile<StoredEntry[]>(p);
+      records = raw.map(toRecord);
     }
-    if (list.includes(pathOrUrl)) {
+    if (records.some((r) => r.pathOrUrl === pathOrUrl)) {
       // Coded so the handler can map this to 409 instead of a generic 500.
       throw Object.assign(new Error(`Repository ${pathOrUrl} already exists`), {
         code: 'REPO_ALREADY_EXISTS',
       });
     }
-    list.push(pathOrUrl);
-    await this.deps.fileSystem.writeJsonFile(p, list);
+    records.push({ pathOrUrl });
+    await this.deps.fileSystem.writeJsonFile(p, records);
+  }
+
+  // Merge lifecycle results (frameworks, detectedAt) onto a registered repo's
+  // record. Best-effort by design: an unregistered repo (e.g. the session
+  // workspace) or a corrupt registry is a silent no-op — persisting derived
+  // state must never fail a lifecycle job.
+  async updateRepoState(
+    profileId: string,
+    pathOrUrl: string,
+    patch: Pick<RepoRecord, 'frameworks' | 'detectedAt'>
+  ): Promise<void> {
+    const kind = deriveRepoKind(pathOrUrl);
+    const p = this.registryPath(profileId, kind);
+    if (!(await this.deps.fileSystem.fileExists(p))) return;
+    let records: RepoRecord[];
+    try {
+      const raw = await this.deps.fileSystem.readJsonFile<StoredEntry[]>(p);
+      records = raw.map(toRecord);
+    } catch {
+      return;
+    }
+    const idx = records.findIndex((r) => r.pathOrUrl === pathOrUrl);
+    if (idx === -1) return;
+    records[idx] = { ...records[idx], ...patch };
+    await this.deps.fileSystem.writeJsonFile(p, records);
   }
 
   async remove(profileId: string, pathOrUrl: string): Promise<void> {
@@ -109,10 +148,10 @@ export class ProfileRepoRegistry {
     if (!(await this.deps.fileSystem.fileExists(p))) {
       throw new Error(`Repository ${pathOrUrl} not found`);
     }
-    const arr = await this.deps.fileSystem.readJsonFile<string[]>(p);
+    const raw = await this.deps.fileSystem.readJsonFile<StoredEntry[]>(p);
     await this.deps.fileSystem.writeJsonFile(
       p,
-      arr.filter((x) => x !== pathOrUrl)
+      raw.map(toRecord).filter((r) => r.pathOrUrl !== pathOrUrl)
     );
     // The clone is disposable host data we own; a LOCAL repo is the user's
     // own directory and is never ours to delete (removeClone no-ops there

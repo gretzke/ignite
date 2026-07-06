@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProfileRepoRegistry } from '../../filesystem/ProfileRepoRegistry.js';
+import type { RepoRecord } from '@ignite/api';
 import { RepoKind } from '../../repos/RepoService.js';
 
 function makeDeps(files: Record<string, unknown> = {}) {
@@ -58,7 +59,7 @@ describe('ProfileRepoRegistry', () => {
     );
     expect(
       deps._store.get(`/profiles/p1/repos/${RepoKind.CLONED}.json`)
-    ).toEqual(['https://github.com/a/b']);
+    ).toEqual([{ pathOrUrl: 'https://github.com/a/b' }]);
   });
 
   it('save propagates a corrupt registry file read error without overwriting', async () => {
@@ -85,7 +86,7 @@ describe('ProfileRepoRegistry', () => {
     await registry.remove('p1', 'https://github.com/a/b');
     expect(
       deps._store.get(`/profiles/p1/repos/${RepoKind.CLONED}.json`)
-    ).toEqual(['https://github.com/c/d']);
+    ).toEqual([{ pathOrUrl: 'https://github.com/c/d' }]);
     // profileId is threaded through so the ADDRESSED profile's clone is
     // deleted, not the currently-active profile's.
     expect(deps.removeClone).toHaveBeenCalledWith(
@@ -109,5 +110,58 @@ describe('ProfileRepoRegistry', () => {
   it('remove throws when the registry file is missing', async () => {
     const registry = new ProfileRepoRegistry(deps);
     await expect(registry.remove('p1', '/x')).rejects.toThrow(/not found/);
+  });
+
+  it('migrates legacy string[] registry entries to RepoRecord on read', async () => {
+    deps._store.set(`/profiles/p1/repos/${RepoKind.LOCAL}.json`, [
+      '/abs/path/repo',
+    ]);
+    const registry = new ProfileRepoRegistry(deps);
+    const { local } = await registry.list('p1');
+    expect(local).toEqual([{ pathOrUrl: '/abs/path/repo' }]);
+  });
+
+  it('save writes a RepoRecord and updateRepoState merges onto it', async () => {
+    const registry = new ProfileRepoRegistry(deps);
+    await registry.save('p1', '/abs/path/repo');
+    await registry.updateRepoState('p1', '/abs/path/repo', {
+      frameworks: [{ id: 'foundry', name: 'Foundry' }],
+      detectedAt: '2026-07-06T00:00:00.000Z',
+    });
+    const { local } = await registry.list('p1');
+    expect(local[0].frameworks?.[0].id).toBe('foundry');
+    expect(local[0].detectedAt).toBe('2026-07-06T00:00:00.000Z');
+  });
+
+  it('save rejects a duplicate against migrated legacy entries', async () => {
+    deps._store.set(`/profiles/p1/repos/${RepoKind.LOCAL}.json`, [
+      '/abs/path/repo',
+    ]);
+    const registry = new ProfileRepoRegistry(deps);
+    await expect(registry.save('p1', '/abs/path/repo')).rejects.toThrow(
+      /already exists/
+    );
+  });
+
+  it('updateRepoState is a no-op for an unregistered repo', async () => {
+    const registry = new ProfileRepoRegistry(deps);
+    await expect(
+      registry.updateRepoState('p1', '/not/registered', {
+        detectedAt: 'x',
+      } as Pick<RepoRecord, 'detectedAt'>)
+    ).resolves.toBeUndefined();
+  });
+
+  it('remove filters records regardless of legacy or record storage', async () => {
+    deps._store.set(`/profiles/p1/repos/${RepoKind.CLONED}.json`, [
+      'https://github.com/a/b',
+      { pathOrUrl: 'https://github.com/c/d', detectedAt: 'x' },
+    ]);
+    const registry = new ProfileRepoRegistry(deps);
+    await registry.remove('p1', 'https://github.com/a/b');
+    const { cloned } = await registry.list('p1');
+    expect(cloned).toEqual([
+      { pathOrUrl: 'https://github.com/c/d', detectedAt: 'x' },
+    ]);
   });
 });
