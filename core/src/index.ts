@@ -20,6 +20,7 @@ import { registerSessionAuth, resolveSessionToken } from './api/auth.js';
 import { createWsHandler } from './api/ws.js';
 import { StaticAssetHandler } from './assets/StaticAssetHandler.js';
 import { validatePluginImages } from './plugins/utils/ImageValidator.js';
+import { PluginRegistryLoader } from './assets/PluginRegistryLoader.js';
 import { JobManager } from './jobs/JobManager.js';
 import { runCommand } from './utils/runCommand.js';
 
@@ -196,6 +197,13 @@ async function main(): Promise<void> {
       pluginExecutor,
       sessionToken,
     } = await ignite(workspacePath);
+
+    // Fail fast on a missing/corrupt built-in plugin catalog: built-ins ship
+    // with the binary, so an unloadable catalog is a broken installation.
+    // Without this check the server comes up and every detect/compile quietly
+    // reports "no frameworks" (the exact failure mode of running against a
+    // tree whose plugin build artifacts were cleaned).
+    await PluginRegistryLoader.getInstance().getAllPlugins();
 
     // Warn early about missing or stale plugin images
     await validatePluginImages();

@@ -56,7 +56,9 @@ describe('PluginRegistryLoader', () => {
     const loader = freshLoader();
 
     state.exists = false;
-    expect(await loader.getAllPlugins()).toEqual({});
+    // A missing catalog is a broken installation: it must fail loudly, not
+    // degrade into an empty plugin list.
+    await expect(loader.getAllPlugins()).rejects.toThrow(/catalog unavailable/);
 
     // Registry file reappears (plugins build finished) — the next call must
     // pick it up instead of serving a permanently cached empty catalog.

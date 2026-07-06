@@ -26,17 +26,19 @@ function makeFakeJobs(): CompilerJobManagerLike & { started: StartedJob[] } {
   const started: StartedJob[] = [];
   return {
     started,
-    start: vi.fn((type: string, params: Record<string, unknown>, runner: JobRunner) => {
-      started.push({ type, params, runner });
-      return {
-        id: `job-${started.length - 1}`,
-        type,
-        params,
-        state: 'queued' as const,
-        createdAt: new Date().toISOString(),
-        events: [],
-      };
-    }) as CompilerJobManagerLike['start'],
+    start: vi.fn(
+      (type: string, params: Record<string, unknown>, runner: JobRunner) => {
+        started.push({ type, params, runner });
+        return {
+          id: `job-${started.length - 1}`,
+          type,
+          params,
+          state: 'queued' as const,
+          createdAt: new Date().toISOString(),
+          events: [],
+        };
+      }
+    ) as CompilerJobManagerLike['start'],
   };
 }
 
@@ -84,7 +86,7 @@ function makeFakeRepos(
   overrides: Partial<CompilerRepoServiceLike> = {}
 ): CompilerRepoServiceLike {
   return {
-    resolveWorkspacePath: vi.fn(
+    resolveExistingWorkspacePath: vi.fn(
       async (pathOrUrl: string) => `${pathOrUrl}-workspace`
     ),
     ...overrides,
@@ -143,7 +145,11 @@ describe('compiler API handlers (jobs)', () => {
 
     it('aggregates parallel per-plugin detects into { frameworks }', async () => {
       executor.execute.mockImplementation(
-        async (pluginId: string, op: string, options: Record<string, unknown>) => {
+        async (
+          pluginId: string,
+          op: string,
+          options: Record<string, unknown>
+        ) => {
           if (pluginId === 'waffle') {
             return { success: true, data: { detected: true } };
           }
@@ -163,19 +169,85 @@ describe('compiler API handlers (jobs)', () => {
       const { runner } = fakeJobs.started[0];
       const result = await runner(makeCtx());
 
-      expect(result).toEqual({ frameworks: [{ id: 'waffle', name: 'Waffle' }] });
+      expect(result).toEqual({
+        frameworks: [{ id: 'waffle', name: 'Waffle' }],
+      });
       expect(executor.execute).toHaveBeenCalledWith(
         'waffle',
         'detect',
         { pathOrUrl: '/repo' },
-        { onOutput: expect.any(Function), workspacePath: '/repo-workspace' }
+        {
+          onOutput: expect.any(Function),
+          workspacePath: '/repo-workspace',
+          signal: expect.any(AbortSignal),
+        }
       );
       expect(executor.execute).toHaveBeenCalledWith(
         'hardhat',
         'detect',
         { pathOrUrl: '/repo' },
-        { onOutput: expect.any(Function), workspacePath: '/repo-workspace' }
+        {
+          onOutput: expect.any(Function),
+          workspacePath: '/repo-workspace',
+          signal: expect.any(AbortSignal),
+        }
       );
+    });
+
+    it('fails the detect job when zero compiler plugins are available (broken catalog must be loud)', async () => {
+      // A missing/empty plugin catalog previously produced a "succeeded"
+      // job with frameworks: [] — every repo showed "Unknown Framework"
+      // with no diagnostic. Zero available compilers is an installation
+      // error, not an empty detection result.
+      registryLoader = makeFakeRegistry({});
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/detect', handlers.detect);
+      await localApp.ready();
+
+      await localApp.inject({
+        method: 'POST',
+        url: '/api/v1/detect',
+        payload: { pathOrUrl: '/repo' },
+      });
+
+      const { runner } = fakeJobs.started[0];
+      await expect(runner(makeCtx())).rejects.toMatchObject({
+        code: ErrorCodes.NO_COMPILER_PLUGINS,
+      });
+      expect(executor.execute).not.toHaveBeenCalled();
+    });
+
+    it('fails the detect job when the plugin catalog cannot be loaded', async () => {
+      registryLoader = {
+        ...makeFakeRegistry({}),
+        getPluginsByType: vi.fn(async () => {
+          throw new Error('Built-in plugin catalog unavailable');
+        }),
+      };
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/detect', handlers.detect);
+      await localApp.ready();
+
+      await localApp.inject({
+        method: 'POST',
+        url: '/api/v1/detect',
+        payload: { pathOrUrl: '/repo' },
+      });
+
+      const { runner } = fakeJobs.started[0];
+      await expect(runner(makeCtx())).rejects.toThrow(/catalog unavailable/);
     });
 
     it('resolves workspacePath once via RepoService, before the job is created', async () => {
@@ -185,13 +257,13 @@ describe('compiler API handlers (jobs)', () => {
         payload: { pathOrUrl: '/repo' },
       });
 
-      expect(repos.resolveWorkspacePath).toHaveBeenCalledTimes(1);
-      expect(repos.resolveWorkspacePath).toHaveBeenCalledWith('/repo');
+      expect(repos.resolveExistingWorkspacePath).toHaveBeenCalledTimes(1);
+      expect(repos.resolveExistingWorkspacePath).toHaveBeenCalledWith('/repo');
     });
 
     it('returns 400 synchronously when the workspace cannot be resolved (no job created)', async () => {
       repos = makeFakeRepos({
-        resolveWorkspacePath: vi.fn(async () => {
+        resolveExistingWorkspacePath: vi.fn(async () => {
           throw new Error('no active profile');
         }),
       });
@@ -301,13 +373,17 @@ describe('compiler API handlers (jobs)', () => {
         'waffle',
         'install',
         { pathOrUrl: '/repo' },
-        { onOutput: expect.any(Function), workspacePath: '/repo-workspace' }
+        {
+          onOutput: expect.any(Function),
+          workspacePath: '/repo-workspace',
+          signal: expect.any(AbortSignal),
+        }
       );
     });
 
     it('returns 400 synchronously when the workspace cannot be resolved (no job created)', async () => {
       repos = makeFakeRepos({
-        resolveWorkspacePath: vi.fn(async () => {
+        resolveExistingWorkspacePath: vi.fn(async () => {
           throw new Error('no active profile');
         }),
       });
@@ -385,7 +461,11 @@ describe('compiler API handlers (jobs)', () => {
         'waffle',
         'compile',
         { pathOrUrl: '/repo' },
-        { onOutput: expect.any(Function), workspacePath: '/repo-workspace' }
+        {
+          onOutput: expect.any(Function),
+          workspacePath: '/repo-workspace',
+          signal: expect.any(AbortSignal),
+        }
       );
     });
 
@@ -433,7 +513,7 @@ describe('compiler API handlers (jobs)', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(repos.resolveWorkspacePath).toHaveBeenCalledWith('/repo');
+      expect(repos.resolveExistingWorkspacePath).toHaveBeenCalledWith('/repo');
       expect(executor.execute).toHaveBeenCalledWith(
         'waffle',
         'listArtifacts',
@@ -444,7 +524,7 @@ describe('compiler API handlers (jobs)', () => {
 
     it('returns 400 synchronously when the workspace cannot be resolved', async () => {
       repos = makeFakeRepos({
-        resolveWorkspacePath: vi.fn(async () => {
+        resolveExistingWorkspacePath: vi.fn(async () => {
           throw new Error('no active profile');
         }),
       });
@@ -488,7 +568,7 @@ describe('compiler API handlers (jobs)', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(repos.resolveWorkspacePath).toHaveBeenCalledWith('/repo');
+      expect(repos.resolveExistingWorkspacePath).toHaveBeenCalledWith('/repo');
       expect(executor.execute).toHaveBeenCalledWith(
         'waffle',
         'getArtifactData',
@@ -499,7 +579,7 @@ describe('compiler API handlers (jobs)', () => {
 
     it('returns 400 synchronously when the workspace cannot be resolved', async () => {
       repos = makeFakeRepos({
-        resolveWorkspacePath: vi.fn(async () => {
+        resolveExistingWorkspacePath: vi.fn(async () => {
           throw new Error('no active profile');
         }),
       });

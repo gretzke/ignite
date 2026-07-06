@@ -57,16 +57,26 @@ export class PluginRegistryLoader {
           `✅ Built-in plugin catalog loaded: ${Object.keys(built).join(', ')}`
         );
         return built;
-      })().catch((error): Record<string, PluginConfig> => {
-        getLogger().error('❌ Failed to load built-in plugin catalog:', error);
+      })().catch((error): never => {
         // Allow a later call to retry rather than caching the failure. The
         // reset must live in a .catch attached to the promise: the load can
         // fail synchronously (exists() throws before any await), and a
         // try/catch inside the IIFE would reset builtinLoad before the
         // `this.builtinLoad = ...` assignment lands, which would overwrite
-        // the reset and cache the empty catalog forever.
+        // the reset and cache the failure forever.
         this.builtinLoad = undefined;
-        return {};
+        const message = error instanceof Error ? error.message : String(error);
+        getLogger().error(
+          `❌ Failed to load built-in plugin catalog: ${message}`
+        );
+        // Built-in plugins ship with the binary; a missing/corrupt catalog is
+        // a broken installation and must fail loudly, not degrade into an
+        // empty plugin list (which renders as "no frameworks detected").
+        throw new Error(
+          `Built-in plugin catalog unavailable: ${message}. The installation ` +
+            `is broken — reinstall Ignite (in development: run the plugin ` +
+            `build, e.g. 'npm run build:all').`
+        );
       });
     }
     return this.builtinLoad;

@@ -40,7 +40,7 @@ export interface CompilerJobManagerLike {
 }
 
 export interface CompilerRepoServiceLike {
-  resolveWorkspacePath: RepoService['resolveWorkspacePath'];
+  resolveExistingWorkspacePath: RepoService['resolveExistingWorkspacePath'];
 }
 
 export interface CompilerHandlerDeps {
@@ -95,18 +95,18 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
   }
 
   // Resolves pathOrUrl to the host workspace dir the ephemeral compiler
-  // container will bind-mount. Same "return sentinel, don't return the
-  // FastifyReply" reasoning as rejectNonCompilerPlugin above: a nested async
-  // helper can't safely propagate an early `return reply` through await.
-  // Failure here (e.g. no active profile to resolve a cloned repo's
-  // workspace under) is a client-fixable 400, not a 500 — the caller passed
-  // an identity the server cannot currently resolve to a workspace.
+  // container will bind-mount, requiring it to EXIST (a missing dir would be
+  // silently auto-created by the Docker daemon). Same "return sentinel,
+  // don't return the FastifyReply" reasoning as rejectNonCompilerPlugin
+  // above: a nested async helper can't safely propagate an early
+  // `return reply` through await. Failure here (unresolvable identity,
+  // uninitialized repo) is a client-fixable 400, not a 500.
   async function resolveWorkspaceOr400(
     reply: FastifyReply,
     pathOrUrl: string
   ): Promise<string | null> {
     try {
-      return await d.repos.resolveWorkspacePath(pathOrUrl);
+      return await d.repos.resolveExistingWorkspacePath(pathOrUrl);
     } catch (error) {
       sendBadRequest(
         reply,
@@ -147,31 +147,53 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
             PluginType.COMPILER
           );
 
+          // Zero available compilers is a broken installation (built-in
+          // plugins ship with the binary), not an empty detection result.
+          // Failing here is what surfaces a missing/corrupt plugin catalog
+          // to the user instead of rendering every repo as "no framework".
+          if (compilerPlugins.length === 0) {
+            throw Object.assign(
+              new Error(
+                'No compiler plugins are available — the plugin catalog is missing or corrupt. Reinstall Ignite (or in development, run the plugin build).'
+              ),
+              { code: ErrorCodes.NO_COMPILER_PLUGINS }
+            );
+          }
+
           // Run detection on all compiler plugins in parallel; a single
           // broken plugin must not fail detection for the others
-          const detectionPromises = compilerPlugins.map(async (pluginConfig) => {
-            try {
-              const result = await d.executor.execute(
-                pluginConfig.metadata.id,
-                'detect',
-                { pathOrUrl: hostPath },
-                { onOutput: (t) => ctx.log(t), workspacePath }
-              );
+          const detectionPromises = compilerPlugins.map(
+            async (pluginConfig) => {
+              try {
+                const result = await d.executor.execute(
+                  pluginConfig.metadata.id,
+                  'detect',
+                  { pathOrUrl: hostPath },
+                  {
+                    onOutput: (t) => ctx.log(t),
+                    workspacePath,
+                    signal: ctx.signal,
+                  }
+                );
 
-              if (result.success && (result.data as DetectionResult).detected) {
-                return {
-                  id: pluginConfig.metadata.id,
-                  name: pluginConfig.metadata.name,
-                };
+                if (
+                  result.success &&
+                  (result.data as DetectionResult).detected
+                ) {
+                  return {
+                    id: pluginConfig.metadata.id,
+                    name: pluginConfig.metadata.name,
+                  };
+                }
+                return null;
+              } catch (error) {
+                getLogger().error(
+                  `Failed to detect ${pluginConfig.metadata.id}: ${error}`
+                );
+                return null;
               }
-              return null;
-            } catch (error) {
-              getLogger().error(
-                `Failed to detect ${pluginConfig.metadata.id}: ${error}`
-              );
-              return null;
             }
-          });
+          );
 
           const detectionResults = await Promise.all(detectionPromises);
 
@@ -212,7 +234,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
             pluginId,
             'install',
             { pathOrUrl },
-            { onOutput: (t) => ctx.log(t), workspacePath }
+            { onOutput: (t) => ctx.log(t), workspacePath, signal: ctx.signal }
           );
 
           if (!result.success) {
@@ -257,7 +279,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
             pluginId,
             'compile',
             { pathOrUrl },
-            { onOutput: (t) => ctx.log(t), workspacePath }
+            { onOutput: (t) => ctx.log(t), workspacePath, signal: ctx.signal }
           );
 
           if (!result.success) {
