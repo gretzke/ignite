@@ -17,13 +17,12 @@ export class AssetManager {
       // Note: The parent directory where the project was cloned to must be named ignite when building the pkg
       this.basePath = '/snapshot/ignite';
     } else {
-      // In development, assets are relative to project root
-      if (typeof __dirname !== 'undefined') {
-        this.basePath = resolve(__dirname, '../../..');
-      } else {
-        // When running via tsx in `core`, cwd is .../ignite/core → project root is one level up
-        this.basePath = resolve(process.cwd(), '..');
-      }
+      // Development / plain-node: locate the monorepo root by walking up
+      // from both the module location (the bundle lives at core/dist/) and
+      // the cwd (tsx runs from core/) until a directory actually containing
+      // core/package.json appears — fixed offsets break the moment the
+      // entrypoint moves.
+      this.basePath = AssetManager.findProjectRoot();
     }
 
     getLogger().info(
@@ -36,6 +35,26 @@ export class AssetManager {
       AssetManager.instance = new AssetManager();
     }
     return AssetManager.instance;
+  }
+
+  private static findProjectRoot(): string {
+    const starts = [
+      typeof __dirname !== 'undefined' ? __dirname : undefined,
+      process.cwd(),
+    ].filter((s): s is string => Boolean(s));
+    for (const start of starts) {
+      let dir = start;
+      for (let depth = 0; depth < 6; depth++) {
+        if (existsSync(resolve(dir, 'core', 'package.json'))) {
+          return dir;
+        }
+        const parent = resolve(dir, '..');
+        if (parent === dir) break;
+        dir = parent;
+      }
+    }
+    // Last resort: the old fallback behavior (tsx running from core/).
+    return resolve(process.cwd(), '..');
   }
 
   // Check if an asset exists

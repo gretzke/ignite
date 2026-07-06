@@ -29,6 +29,16 @@ export default [
         Buffer: 'readonly',
         __dirname: 'readonly',
         __filename: 'readonly',
+        // Node runtime globals (previously missing, producing spurious
+        // no-undef errors for timer/abort APIs used without imports)
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        AbortSignal: 'readonly',
+        AbortController: 'readonly',
+        URL: 'readonly',
+        NodeJS: 'readonly',
       },
     },
     plugins: {
