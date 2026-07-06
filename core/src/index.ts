@@ -23,59 +23,6 @@ import { validatePluginImages } from './plugins/utils/ImageValidator.js';
 import { PluginRegistryLoader } from './assets/PluginRegistryLoader.js';
 import { RepoLifecycle } from './repos/RepoLifecycle.js';
 import { JobManager } from './jobs/JobManager.js';
-import { runCommand } from './utils/runCommand.js';
-
-// Best-effort cleanup of containers/volumes left behind by the pre-Phase-3
-// containerized repo-manager tier (deleted architecture: repos now live on
-// the host, managed by core's RepoService). Runs once at every startup;
-// idempotent (no-op once the leftovers are gone) and never throws.
-async function sweepLegacyRepoManagerResources(): Promise<void> {
-  // Bound every docker call: this runs (awaited) before app.listen(), and the
-  // try/catch only catches rejections — a hung docker CLI/daemon (a realistic
-  // failure mode here, see docs/docker-desktop-vm-crashes.md) would otherwise
-  // wedge startup forever. On timeout runCommand rejects, which the catch
-  // below swallows with a warn (sweep is best-effort).
-  const SWEEP_TIMEOUT_MS = 10_000;
-  try {
-    const containers = await runCommand(
-      'docker',
-      ['ps', '-aq', '--filter', 'label=ignite.type=repo-manager'],
-      { timeoutMs: SWEEP_TIMEOUT_MS }
-    );
-    const containerIds = containers.stdout
-      .split('\n')
-      .map((id) => id.trim())
-      .filter(Boolean);
-    if (containerIds.length > 0) {
-      await runCommand('docker', ['rm', '-f', ...containerIds], {
-        timeoutMs: SWEEP_TIMEOUT_MS,
-      });
-    }
-
-    const volumes = await runCommand(
-      'docker',
-      ['volume', 'ls', '-q', '--filter', 'name=ignite-cloned-'],
-      { timeoutMs: SWEEP_TIMEOUT_MS }
-    );
-    const volumeNames = volumes.stdout
-      .split('\n')
-      .map((name) => name.trim())
-      .filter(Boolean);
-    if (volumeNames.length > 0) {
-      await runCommand('docker', ['volume', 'rm', '-f', ...volumeNames], {
-        timeoutMs: SWEEP_TIMEOUT_MS,
-      });
-    }
-
-    if (containerIds.length > 0 || volumeNames.length > 0) {
-      getLogger().info(
-        `🧹 Legacy sweep: removed ${containerIds.length} repo-manager container(s), ${volumeNames.length} cloned-repo volume(s)`
-      );
-    }
-  } catch (error) {
-    getLogger().warn(`⚠️ Legacy repo-manager sweep failed: ${error}`);
-  }
-}
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -105,13 +52,6 @@ async function ignite(workspacePath: string): Promise<{
   const pluginManager = PluginManager.getInstance();
   const pluginExecutor = PluginExecutor.getInstance();
   await JobManager.getInstance().recover();
-
-  // One-time legacy sweep: earlier Ignite versions ran a containerized
-  // repo-manager tier (persistent containers + named clone volumes). Users
-  // upgrading from that architecture may have leftovers on disk; best-effort
-  // remove them so `docker ps -a` / `docker volume ls` stay clean. Never
-  // fatal — a failure here must not block startup.
-  await sweepLegacyRepoManagerResources();
 
   // Pre-startup checks
   app.log.info(`🔍 Workspace path: ${workspacePath}`);

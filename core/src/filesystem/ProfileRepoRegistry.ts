@@ -18,14 +18,6 @@ export interface ProfileRepoRegistryDeps {
   sessionPath: () => string | null;
 }
 
-// On-disk entry: legacy registries stored bare pathOrUrl strings; current
-// registries store RepoRecord objects. Reads migrate transparently.
-type StoredEntry = string | RepoRecord;
-
-function toRecord(entry: StoredEntry): RepoRecord {
-  return typeof entry === 'string' ? { pathOrUrl: entry } : entry;
-}
-
 export class ProfileRepoRegistry {
   private deps: ProfileRepoRegistryDeps;
 
@@ -56,8 +48,7 @@ export class ProfileRepoRegistry {
     const p = this.registryPath(profileId, kind);
     try {
       if (await this.deps.fileSystem.fileExists(p)) {
-        const raw = await this.deps.fileSystem.readJsonFile<StoredEntry[]>(p);
-        return raw.map(toRecord);
+        return await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
       }
     } catch {
       // Corrupt registry file reads as empty, matching the old handler.
@@ -104,8 +95,7 @@ export class ProfileRepoRegistry {
     const p = this.registryPath(profileId, kind);
     let records: RepoRecord[] = [];
     if (await this.deps.fileSystem.fileExists(p)) {
-      const raw = await this.deps.fileSystem.readJsonFile<StoredEntry[]>(p);
-      records = raw.map(toRecord);
+      records = await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
     }
     if (records.some((r) => r.pathOrUrl === pathOrUrl)) {
       // Coded so the handler can map this to 409 instead of a generic 500.
@@ -131,8 +121,7 @@ export class ProfileRepoRegistry {
     if (!(await this.deps.fileSystem.fileExists(p))) return;
     let records: RepoRecord[];
     try {
-      const raw = await this.deps.fileSystem.readJsonFile<StoredEntry[]>(p);
-      records = raw.map(toRecord);
+      records = await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
     } catch {
       return;
     }
@@ -148,10 +137,10 @@ export class ProfileRepoRegistry {
     if (!(await this.deps.fileSystem.fileExists(p))) {
       throw new Error(`Repository ${pathOrUrl} not found`);
     }
-    const raw = await this.deps.fileSystem.readJsonFile<StoredEntry[]>(p);
+    const records = await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
     await this.deps.fileSystem.writeJsonFile(
       p,
-      raw.map(toRecord).filter((r) => r.pathOrUrl !== pathOrUrl)
+      records.filter((r) => r.pathOrUrl !== pathOrUrl)
     );
     // The clone is disposable host data we own; a LOCAL repo is the user's
     // own directory and is never ours to delete (removeClone no-ops there

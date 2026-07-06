@@ -79,8 +79,8 @@ describe('ProfileRepoRegistry', () => {
 
   it('remove filters the entry and removes the clone', async () => {
     deps._store.set(`/profiles/p1/repos/${RepoKind.CLONED}.json`, [
-      'https://github.com/a/b',
-      'https://github.com/c/d',
+      { pathOrUrl: 'https://github.com/a/b' },
+      { pathOrUrl: 'https://github.com/c/d' },
     ]);
     const registry = new ProfileRepoRegistry(deps);
     await registry.remove('p1', 'https://github.com/a/b');
@@ -97,7 +97,7 @@ describe('ProfileRepoRegistry', () => {
 
   it('remove does not call removeClone for a LOCAL repo', async () => {
     deps._store.set(`/profiles/p1/repos/${RepoKind.LOCAL}.json`, [
-      '/abs/path/repo',
+      { pathOrUrl: '/abs/path/repo' },
     ]);
     const registry = new ProfileRepoRegistry(deps);
     await registry.remove('p1', '/abs/path/repo');
@@ -112,15 +112,6 @@ describe('ProfileRepoRegistry', () => {
     await expect(registry.remove('p1', '/x')).rejects.toThrow(/not found/);
   });
 
-  it('migrates legacy string[] registry entries to RepoRecord on read', async () => {
-    deps._store.set(`/profiles/p1/repos/${RepoKind.LOCAL}.json`, [
-      '/abs/path/repo',
-    ]);
-    const registry = new ProfileRepoRegistry(deps);
-    const { local } = await registry.list('p1');
-    expect(local).toEqual([{ pathOrUrl: '/abs/path/repo' }]);
-  });
-
   it('save writes a RepoRecord and updateRepoState merges onto it', async () => {
     const registry = new ProfileRepoRegistry(deps);
     await registry.save('p1', '/abs/path/repo');
@@ -133,16 +124,6 @@ describe('ProfileRepoRegistry', () => {
     expect(local[0].detectedAt).toBe('2026-07-06T00:00:00.000Z');
   });
 
-  it('save rejects a duplicate against migrated legacy entries', async () => {
-    deps._store.set(`/profiles/p1/repos/${RepoKind.LOCAL}.json`, [
-      '/abs/path/repo',
-    ]);
-    const registry = new ProfileRepoRegistry(deps);
-    await expect(registry.save('p1', '/abs/path/repo')).rejects.toThrow(
-      /already exists/
-    );
-  });
-
   it('updateRepoState is a no-op for an unregistered repo', async () => {
     const registry = new ProfileRepoRegistry(deps);
     await expect(
@@ -152,9 +133,9 @@ describe('ProfileRepoRegistry', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('remove filters records regardless of legacy or record storage', async () => {
+  it('remove keeps other records intact', async () => {
     deps._store.set(`/profiles/p1/repos/${RepoKind.CLONED}.json`, [
-      'https://github.com/a/b',
+      { pathOrUrl: 'https://github.com/a/b' },
       { pathOrUrl: 'https://github.com/c/d', detectedAt: 'x' },
     ]);
     const registry = new ProfileRepoRegistry(deps);
