@@ -66,7 +66,7 @@ export default function PluginStoreModal({
             </Dialog.Title>
           </div>
           <Dialog.Description className="text-sm opacity-80 mb-4">
-            Curated plugins for Ignite.
+            Curated plugins for Ignite
           </Dialog.Description>
 
           <div className="flex flex-col gap-3 mb-2">
