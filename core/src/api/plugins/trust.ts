@@ -20,10 +20,15 @@ type SetTrustBody = {
 };
 
 // Factory so tests can inject a TrustManager and plugin listing; the exported
-// trustHandlers below wire production defaults.
+// trustHandlers below wire production defaults. getRequestedPermissions
+// returns the permission ids a plugin's manifest declares — grants are
+// clamped to that set (an undeclared permission can never be granted).
 export function createTrustHandlers(
   manager: TrustManager,
-  listInstalledPluginIds: () => Promise<string[]>
+  listInstalledPluginIds: () => Promise<string[]>,
+  getRequestedPermissions: (
+    pluginId: string
+  ) => Promise<string[]> = getRequestedPermissionsFromRegistry
 ) {
   return {
     listPluginTrust: async (
@@ -86,6 +91,23 @@ export function createTrustHandlers(
           return reply.status(403).send(body);
         }
 
+        // Only manifest-requested permissions are grantable. This keeps the
+        // grant surface exactly what the user was shown at install time.
+        const requested = await getRequestedPermissions(pluginId);
+        const notRequested = (['hostWrite', 'net'] as const).filter(
+          (permission) =>
+            permissions[permission] && !requested.includes(permission)
+        );
+        if (notRequested.length > 0) {
+          const body: IApiError = {
+            statusCode: 400,
+            error: 'Bad Request',
+            code: ErrorCodes.PERMISSION_NOT_REQUESTED,
+            message: `Plugin ${pluginId} does not request the following permissions: ${notRequested.join(', ')}. Update the plugin if a newer version needs them.`,
+          };
+          return reply.status(400).send(body);
+        }
+
         const entry = await manager.setTrust(pluginId, trust, permissions);
         const body: IApiResponse<SetPluginTrustData> = {
           data: {
@@ -118,6 +140,18 @@ async function listInstalledPluginIds(): Promise<string[]> {
     PluginManager.getInstance().listPlugins(),
   ]);
   return [...new Set([...Object.keys(builtIn), ...Object.keys(installed)])];
+}
+
+async function getRequestedPermissionsFromRegistry(
+  pluginId: string
+): Promise<string[]> {
+  try {
+    const metadata = await PluginManager.getInstance().getPlugin(pluginId);
+    return (metadata.permissions ?? []).map((request) => request.id);
+  } catch {
+    // Fail-closed: unknown plugin → nothing is grantable.
+    return [];
+  }
 }
 
 export const trustHandlers = createTrustHandlers(

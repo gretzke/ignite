@@ -1,4 +1,5 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import type { PluginPermissionRequest } from '@ignite/api';
 import { apiClient } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
 import { formatApiError } from '../../middleware/apiGate';
@@ -13,15 +14,32 @@ export interface PluginRow {
   version?: string;
   trust: 'native' | 'trusted' | 'untrusted';
   permissions: { hostWrite: boolean; net: boolean };
+  // Manifest-declared permission requests (with user-facing descriptions).
+  // Only these can be granted.
+  requested: PluginPermissionRequest[];
+}
+
+// Drives the global permissions modal: opened from a plugin card, after an
+// install (every requested permission is new), or after an update (only the
+// newly requested ones are highlighted).
+export interface PermissionsModalState {
+  pluginId: string;
+  newPermissionIds: string[];
 }
 
 interface PluginsState {
   rows: Record<string, PluginRow>;
   loading: boolean;
   devMode: boolean;
+  permissionsModal: PermissionsModalState | null;
 }
 
-const initialState: PluginsState = { rows: {}, loading: false, devMode: false };
+const initialState: PluginsState = {
+  rows: {},
+  loading: false,
+  devMode: false,
+  permissionsModal: null,
+};
 
 const pluginsSlice = createSlice({
   name: 'plugins',
@@ -36,7 +54,15 @@ const pluginsSlice = createSlice({
     setMetadata(
       state,
       action: PayloadAction<
-        Record<string, { name: string; type: string; version: string }>
+        Record<
+          string,
+          {
+            name: string;
+            type: string;
+            version: string;
+            requested: PluginPermissionRequest[];
+          }
+        >
       >
     ) {
       for (const [id, m] of Object.entries(action.payload)) {
@@ -51,8 +77,15 @@ const pluginsSlice = createSlice({
           name: m.name,
           type: m.type,
           version: m.version,
+          requested: m.requested,
         };
       }
+    },
+    openPermissionsModal(state, action: PayloadAction<PermissionsModalState>) {
+      state.permissionsModal = action.payload;
+    },
+    closePermissionsModal(state) {
+      state.permissionsModal = null;
     },
     setTrust(
       state,
@@ -70,6 +103,7 @@ const pluginsSlice = createSlice({
           pluginId: t.pluginId,
           trust: t.trust,
           permissions: t.permissions,
+          requested: state.rows[t.pluginId]?.requested ?? [],
         };
       }
     },
@@ -79,12 +113,23 @@ const pluginsSlice = createSlice({
   },
 });
 
-export const { setLoading, setDevMode, setMetadata, setTrust, removeRow } =
-  pluginsSlice.actions;
+export const {
+  setLoading,
+  setDevMode,
+  setMetadata,
+  setTrust,
+  removeRow,
+  openPermissionsModal,
+  closePermissionsModal,
+} = pluginsSlice.actions;
 export const selectPluginRows = (s: RootState) =>
   Object.values(s.plugins.rows);
 export const selectPluginsLoading = (s: RootState) => s.plugins.loading;
 export const selectDevMode = (s: RootState) => s.plugins.devMode;
+export const selectPermissionsModal = (s: RootState) =>
+  s.plugins.permissionsModal;
+export const selectPluginRow = (s: RootState, pluginId: string) =>
+  s.plugins.rows[pluginId];
 export const pluginsReducer = pluginsSlice.reducer;
 
 // API actions using the enhanced client (following the repositories/profiles pattern)
@@ -101,7 +146,12 @@ export const pluginsApi = {
             Object.fromEntries(
               Object.entries(data.plugins).map(([id, m]) => [
                 id,
-                { name: m.name, type: m.type, version: m.version },
+                {
+                  name: m.name,
+                  type: m.type,
+                  version: m.version,
+                  requested: m.permissions ?? [],
+                },
               ])
             )
           ),
@@ -190,6 +240,28 @@ export const pluginsApi = {
           jobId: data.jobId,
           type: 'plugin.install',
           params: { source },
+        }),
+        wsSend({ type: 'subscribe', jobId: data.jobId }),
+      ],
+      onError: (error) => {
+        const { title, description } = formatApiError(error);
+        return [
+          triggerToast({ title, description, variant: 'error', duration: 6000 }),
+        ];
+      },
+    });
+  },
+  // Rebuild from the plugin's stored install source. Completion (and the
+  // new-permissions prompt) is handled in jobsEffects.
+  update(pluginId: string) {
+    return apiClient.dispatch.updatePlugin({
+      params: { pluginId },
+      body: {},
+      onSuccess: (data) => [
+        jobStarted({
+          jobId: data.jobId,
+          type: 'plugin.update',
+          params: { pluginId },
         }),
         wsSend({ type: 'subscribe', jobId: data.jobId }),
       ],

@@ -1,5 +1,6 @@
 import { FileSystem } from './FileSystem.js';
 import type { PluginMetadata, PluginType } from '@ignite/plugin-types/types';
+import type { PluginInstallSource } from '../plugins/install/types.js';
 import { PluginError, ErrorCodes } from '../types/errors.js';
 
 // Re-export types for external usage
@@ -64,16 +65,35 @@ export class PluginManager {
     return pluginId in registry.plugins;
   }
 
-  async addPlugin(metadata: PluginMetadata): Promise<void> {
+  async addPlugin(
+    metadata: PluginMetadata,
+    source?: PluginInstallSource
+  ): Promise<void> {
     const registry = await this.fileSystem.readPluginRegistry();
     registry.plugins[metadata.id] = metadata;
+    if (source) {
+      registry.sources = registry.sources ?? {};
+      registry.sources[metadata.id] = source;
+    }
     await this.fileSystem.writePluginRegistry(registry);
+  }
+
+  // The source a plugin was installed from; undefined for registries written
+  // before sources were recorded (those plugins cannot be updated in place).
+  async getInstallSource(
+    pluginId: string
+  ): Promise<PluginInstallSource | undefined> {
+    const registry = await this.fileSystem.readPluginRegistry();
+    return registry.sources?.[pluginId];
   }
 
   async removePlugin(pluginId: string): Promise<void> {
     const registry = await this.fileSystem.readPluginRegistry();
     if (pluginId in registry.plugins) {
       delete registry.plugins[pluginId];
+      if (registry.sources) {
+        delete registry.sources[pluginId];
+      }
       await this.fileSystem.writePluginRegistry(registry);
     }
   }

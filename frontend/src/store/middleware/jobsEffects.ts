@@ -29,7 +29,10 @@ import {
   permissionRequired,
   approvalCancelled,
 } from '../features/plugins/trustSlice';
-import { pluginsApi } from '../features/plugins/pluginsSlice';
+import {
+  pluginsApi,
+  openPermissionsModal,
+} from '../features/plugins/pluginsSlice';
 import { getRepoName } from '../../utils/repo';
 import type { AppDispatch, RootState } from '../store';
 
@@ -375,6 +378,22 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
           })
         );
         pluginsApi.refresh().forEach((a) => dispatch(a));
+        // Fresh install: prompt for the manifest-requested permissions
+        // (every one of them is "new"). Grants are all-denied until the user
+        // saves the modal.
+        const installed = (
+          job.result as
+            | { plugin?: { id?: string; permissions?: Array<{ id: string }> } }
+            | undefined
+        )?.plugin;
+        if (installed?.id && (installed.permissions?.length ?? 0) > 0) {
+          dispatch(
+            openPermissionsModal({
+              pluginId: installed.id,
+              newPermissionIds: (installed.permissions ?? []).map((p) => p.id),
+            })
+          );
+        }
         break;
       }
 
@@ -402,6 +421,49 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
         dispatch(
           triggerToast({
             title: 'Plugin Install Failed',
+            description: errorMessage,
+            variant: 'error',
+            duration: 6000,
+          })
+        );
+      }
+      break;
+    }
+
+    case 'plugin.update': {
+      if (succeeded) {
+        const result = job.result as
+          | {
+              plugin?: { id?: string; version?: string };
+              newPermissions?: Array<{ id: string }>;
+            }
+          | undefined;
+        dispatch(
+          triggerToast({
+            title: 'Plugin updated',
+            description: result?.plugin?.version
+              ? `Now at version ${result.plugin.version}`
+              : undefined,
+            variant: 'success',
+            duration: 3000,
+          })
+        );
+        pluginsApi.refresh().forEach((a) => dispatch(a));
+        // The new version requests permissions the old one didn't: they
+        // start denied — surface them in the permissions modal.
+        const newPermissions = result?.newPermissions ?? [];
+        if (result?.plugin?.id && newPermissions.length > 0) {
+          dispatch(
+            openPermissionsModal({
+              pluginId: result.plugin.id,
+              newPermissionIds: newPermissions.map((p) => p.id),
+            })
+          );
+        }
+      } else {
+        dispatch(
+          triggerToast({
+            title: 'Plugin Update Failed',
             description: errorMessage,
             variant: 'error',
             duration: 6000,

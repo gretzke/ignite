@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Folder, GitBranch, Plug, Plus, Trash2 } from 'lucide-react';
+import {
+  Folder,
+  GitBranch,
+  Plug,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react';
 import Dropdown from '../../../../components/Dropdown';
 import Tooltip from '../../../../components/Tooltip';
-import Switch from '../../../../components/Switch';
 import ConfirmDialog from '../../../../components/ConfirmDialog';
 import { useAppDispatch, useAppSelector } from '../../../../store';
 import {
+  openPermissionsModal,
   pluginsApi,
   selectDevMode,
   selectPluginRows,
@@ -17,6 +25,11 @@ import {
   InstallFromPathModal,
 } from './InstallPluginModal';
 
+const PERMISSION_TITLES: Record<string, string> = {
+  hostWrite: 'Host Write',
+  net: 'Network',
+};
+
 function PluginCard({
   plugin,
   onUninstall,
@@ -26,18 +39,9 @@ function PluginCard({
 }) {
   const dispatch = useAppDispatch();
   const isNative = plugin.trust === 'native';
-
-  const togglePermission = (key: 'hostWrite' | 'net', value: boolean) => {
-    const next = { ...plugin.permissions, [key]: value };
-    const anyOn = next.hostWrite || next.net;
-    dispatch(
-      pluginsApi.setPermissions(
-        plugin.pluginId,
-        anyOn ? 'trusted' : 'untrusted',
-        next
-      )
-    );
-  };
+  const granted = (['hostWrite', 'net'] as const).filter(
+    (p) => plugin.permissions[p]
+  );
 
   return (
     <div
@@ -63,6 +67,15 @@ function PluginCard({
                 Built-in
               </span>
             )}
+            {!isNative &&
+              granted.map((p) => (
+                <span
+                  key={p}
+                  className="text-xs rounded-full pill pill-primary px-2 py-0.5 shrink-0"
+                >
+                  {PERMISSION_TITLES[p]}
+                </span>
+              ))}
           </div>
           {plugin.version && (
             <div className="text-xs opacity-70 truncate">
@@ -72,27 +85,38 @@ function PluginCard({
         </div>
       </div>
       {!isNative && (
-        <div className="flex items-center gap-5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          <Tooltip label="Manage permissions" placement="top">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ width: 32, height: 32, padding: 0 }}
+              aria-label="Manage permissions"
+              onClick={() =>
+                dispatch(
+                  openPermissionsModal({
+                    pluginId: plugin.pluginId,
+                    newPermissionIds: [],
+                  })
+                )
+              }
+            >
+              <ShieldCheck size={14} />
+            </button>
+          </Tooltip>
           <Tooltip
-            label="Allow the plugin to write files to your machine"
+            label="Update plugin (rebuild from its install source)"
             placement="top"
           >
-            <div>
-              <Switch
-                label="Host Write"
-                checked={plugin.permissions.hostWrite}
-                onCheckedChange={(v) => togglePermission('hostWrite', v)}
-              />
-            </div>
-          </Tooltip>
-          <Tooltip label="Allow the plugin to access the network" placement="top">
-            <div>
-              <Switch
-                label="Network"
-                checked={plugin.permissions.net}
-                onCheckedChange={(v) => togglePermission('net', v)}
-              />
-            </div>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ width: 32, height: 32, padding: 0 }}
+              aria-label="Update plugin"
+              onClick={() => dispatch(pluginsApi.update(plugin.pluginId))}
+            >
+              <RefreshCw size={14} />
+            </button>
           </Tooltip>
           <Tooltip label="Uninstall plugin" placement="top">
             <button

@@ -130,6 +130,15 @@ export class RepoLifecycle {
     })();
   }
 
+  // The plugin catalog changed (install/update/uninstall): re-run the sweep
+  // so every repo re-detects against the new catalog immediately instead of
+  // on the next CLI restart. Repos with a lifecycle job already in flight
+  // are skipped by the per-repo activeJobs guard and picked up next trigger.
+  resweepProfile(profileId: string): void {
+    this.sweptProfiles.delete(profileId);
+    this.ensureProfileSwept(profileId);
+  }
+
   // Start (or return the already-running) lifecycle job for one repo.
   startLifecycle(
     pathOrUrl: string,

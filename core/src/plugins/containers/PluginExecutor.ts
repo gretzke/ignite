@@ -116,6 +116,33 @@ export class PluginExecutor {
 
     const denied = missingPermission(operation, grant);
     if (denied) {
+      // Installed plugins can only be granted permissions their manifest
+      // requests. A denied permission that was never requested is a hard
+      // failure (no approval prompt) — the plugin's own manifest says it
+      // shouldn't need it, so prompting would train users to approve
+      // undeclared capability escalations. Native plugins never reach here
+      // (all-granted), so an empty manifest only ever bites third-party code.
+      const requested =
+        pluginConfig.origin === 'installed'
+          ? new Set(
+              (pluginConfig.metadata.permissions ?? []).map(
+                (request) => request.id
+              )
+            )
+          : null;
+      if (requested && !requested.has(denied)) {
+        getLogger().warn(
+          `🔒 Denied ${pluginId}.${operation}: '${denied}' is not in the plugin's permission manifest`
+        );
+        return {
+          success: false,
+          error: {
+            code: ErrorCodes.PERMISSION_NOT_REQUESTED,
+            message: `Plugin ${pluginId} needs the '${denied}' permission to run '${operation}', but its manifest does not request it. The plugin may need an update that declares this permission.`,
+            details: { pluginId, permission: denied },
+          },
+        };
+      }
       getLogger().warn(
         `🔒 Denied ${pluginId}.${operation}: missing '${denied}' permission (trust: ${grant.trust})`
       );

@@ -30,17 +30,19 @@ function makeFakeJobs(): InstallJobManagerLike & {
   }> = [];
   return {
     started,
-    start: vi.fn((type: string, params: Record<string, unknown>, runner: JobRunner) => {
-      started.push({ type, params, runner });
-      return {
-        id: `job-${started.length - 1}`,
-        type,
-        params,
-        state: 'queued',
-        createdAt: new Date().toISOString(),
-        events: [],
-      };
-    }) as InstallJobManagerLike['start'],
+    start: vi.fn(
+      (type: string, params: Record<string, unknown>, runner: JobRunner) => {
+        started.push({ type, params, runner });
+        return {
+          id: `job-${started.length - 1}`,
+          type,
+          params,
+          state: 'queued',
+          createdAt: new Date().toISOString(),
+          events: [],
+        };
+      }
+    ) as InstallJobManagerLike['start'],
   };
 }
 
@@ -53,6 +55,7 @@ describe('install API handlers', () => {
   let fakeJobs: ReturnType<typeof makeFakeJobs>;
   const installer = {
     install: vi.fn(async () => waffleMeta),
+    update: vi.fn(async () => ({ plugin: waffleMeta, newPermissions: [] })),
     uninstall: vi.fn(async () => {}),
   };
 
@@ -66,6 +69,7 @@ describe('install API handlers', () => {
     );
     app = fastify();
     app.post('/api/v1/plugins/install', handlers.installPlugin);
+    app.post('/api/v1/plugins/:pluginId/update', handlers.updatePlugin);
     app.delete('/api/v1/plugins/:pluginId', handlers.uninstallPlugin);
     await app.ready();
   });
@@ -148,6 +152,66 @@ describe('install API handlers', () => {
     });
     expect(gitRes.statusCode).toBe(200);
     expect(gatedJobs.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts a plugin.update job and passes through an optional source', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/waffle/update',
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: { jobId: 'job-0' } });
+    expect(fakeJobs.start).toHaveBeenCalledWith(
+      'plugin.update',
+      { pluginId: 'waffle' },
+      expect.any(Function)
+    );
+
+    const { runner } = fakeJobs.started[0];
+    const result = await runner(makeCtx());
+    expect(result).toEqual({ plugin: waffleMeta, newPermissions: [] });
+    expect(installer.update).toHaveBeenCalledWith('waffle', undefined);
+
+    const withSource = await app.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/waffle/update',
+      payload: {
+        source: {
+          kind: 'git',
+          url: 'https://github.com/acme/waffle',
+          ref: 'v2',
+        },
+      },
+    });
+    expect(withSource.statusCode).toBe(200);
+    await fakeJobs.started[1].runner(makeCtx());
+    expect(installer.update).toHaveBeenCalledWith('waffle', {
+      kind: 'git',
+      url: 'https://github.com/acme/waffle',
+      ref: 'v2',
+    });
+  });
+
+  it('rejects an explicit local update source when local installs are not allowed', async () => {
+    const gatedJobs = makeFakeJobs();
+    const handlers = createInstallHandlers(
+      installer,
+      { allowLocalSource: () => false },
+      { jobs: gatedJobs }
+    );
+    const gated = fastify();
+    gated.post('/api/v1/plugins/:pluginId/update', handlers.updatePlugin);
+    await gated.ready();
+
+    const res = await gated.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/waffle/update',
+      payload: { source: { kind: 'local', contextDir: '/src/waffle' } },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('PLUGIN_INSTALL_REJECTED');
+    expect(gatedJobs.start).not.toHaveBeenCalled();
   });
 
   it('uninstalls a plugin', async () => {

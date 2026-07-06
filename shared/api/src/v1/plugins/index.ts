@@ -5,6 +5,14 @@ import { PluginType } from "@ignite/plugin-types/types";
 import { V1_BASE_PATH } from "../constants.js";
 import { createApiResponseSchema } from "../../utils/schema.js";
 
+// Re-export the manifest types so API consumers (frontend) don't need a
+// direct dependency on @ignite/plugin-types.
+export type {
+  PluginMetadata,
+  PluginPermissionId,
+  PluginPermissionRequest,
+} from "@ignite/plugin-types/types";
+
 // Interface definitions
 export interface ListPluginsData {
   plugins: {
@@ -19,12 +27,21 @@ export interface GetPluginData {
 // Zod schemas for validation
 const PluginTypeSchema = z.enum(PluginType);
 
+// Manifest-declared permission request. Descriptions are plugin-controlled
+// text shown in the grant dialog — length-capped here and rendered as plain
+// text by the frontend.
+export const PluginPermissionRequestSchema = z.object({
+  id: z.enum(["hostWrite", "net"]),
+  description: z.string().min(1).max(280),
+});
+
 export const PluginMetadataSchema = z.object({
   id: z.string(),
   type: PluginTypeSchema,
   name: z.string(),
   version: z.string(),
   baseImage: z.string(),
+  permissions: z.array(PluginPermissionRequestSchema).optional(),
 }) satisfies z.ZodType<PluginMetadata>;
 
 // Type-safe IApiResponse schemas that enforce interface compliance

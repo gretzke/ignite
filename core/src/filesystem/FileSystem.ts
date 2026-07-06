@@ -4,6 +4,7 @@ import fs from 'fs/promises';
 import crypto from 'crypto';
 import type { ProfileConfig, IgniteConfig } from '../types/index.js';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
+import type { PluginInstallSource } from '../plugins/install/types.js';
 import { FileSystemError, ErrorCodes } from '../types/errors.js';
 
 import { getLogger } from '../utils/logger.js';
@@ -12,6 +13,12 @@ import { getLogger } from '../utils/logger.js';
 export interface PluginRegistry {
   plugins: {
     [pluginId: string]: PluginMetadata;
+  };
+  // Install source per plugin id — binds a plugin's identity to where it was
+  // installed from, so updates can safely carry grants over. Absent for
+  // registries written before update support existed.
+  sources?: {
+    [pluginId: string]: PluginInstallSource;
   };
 }
 

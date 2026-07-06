@@ -26,6 +26,13 @@ export class StubCompilerPlugin extends CompilerPlugin {
       name: 'Stub Compiler',
       version: typeof PLUGIN_VERSION === 'string' ? PLUGIN_VERSION : '0.0.1',
       baseImage: 'ignite/installed_stub-compiler:0.0.1',
+      permissions: [
+        {
+          id: 'hostWrite',
+          description:
+            'Write marker files into the workspace to prove hostWrite works.',
+        },
+      ],
     };
   }
 

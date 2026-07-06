@@ -25,6 +25,18 @@ export const UninstallPluginParamsSchema = z.object({
   pluginId: z.string().min(1),
 });
 
+export const UpdatePluginParamsSchema = z.object({
+  pluginId: z.string().min(1),
+});
+
+// Update rebuilds from the plugin's stored install source. A source may be
+// supplied to change details within the same identity (e.g. a new git ref) —
+// the server rejects a source that doesn't match the stored one, so grants
+// can never be inherited by code from somewhere else.
+export const UpdatePluginBodySchema = z.object({
+  source: PluginInstallSourceSchema.optional(),
+});
+
 export const installRoutes = {
   installPlugin: {
     method: "POST" as const,
@@ -32,6 +44,16 @@ export const installRoutes = {
     schema: {
       tags: ["plugins"],
       body: InstallPluginBodySchema,
+      response: { 200: JobStartedResponseSchema },
+    },
+  },
+  updatePlugin: {
+    method: "POST" as const,
+    path: `${V1_BASE_PATH}/plugins/:pluginId/update`,
+    params: UpdatePluginParamsSchema,
+    schema: {
+      tags: ["plugins"],
+      body: UpdatePluginBodySchema,
       response: { 200: JobStartedResponseSchema },
     },
   },

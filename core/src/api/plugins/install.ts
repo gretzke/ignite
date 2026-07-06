@@ -2,17 +2,27 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { IApiResponse, JobStartedData } from '@ignite/api';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
-import { PluginInstaller } from '../../plugins/install/PluginInstaller.js';
+import {
+  PluginInstaller,
+  type PluginUpdateResult,
+} from '../../plugins/install/PluginInstaller.js';
 import { LocalFolderBuildBackend } from '../../plugins/install/LocalFolderBuildBackend.js';
 import { GitSourceBuildBackend } from '../../plugins/install/GitSourceBuildBackend.js';
 import { RoutingBuildBackend } from '../../plugins/install/RoutingBuildBackend.js';
 import type { PluginInstallSource } from '../../plugins/install/types.js';
 import { JobManager } from '../../jobs/JobManager.js';
+import { RepoLifecycle } from '../../repos/RepoLifecycle.js';
+import { ProfileManager } from '../../filesystem/ProfileManager.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
+import { getLogger } from '../../utils/logger.js';
 import { sendBadRequest, sendCaughtError } from '../utils/errors.js';
 
 interface InstallerLike {
   install(source: PluginInstallSource): Promise<PluginMetadata>;
+  update(
+    pluginId: string,
+    source?: PluginInstallSource
+  ): Promise<PluginUpdateResult>;
   uninstall(pluginId: string): Promise<void>;
 }
 
@@ -29,6 +39,21 @@ export interface InstallJobManagerLike {
 
 export interface InstallHandlerDeps {
   jobs: InstallJobManagerLike;
+  // Re-detect all repos after the plugin catalog changes so a freshly
+  // installed compiler is picked up without a CLI restart.
+  resweepRepos: () => Promise<void>;
+}
+
+async function resweepCurrentProfile(): Promise<void> {
+  try {
+    const profileManager = await ProfileManager.getInstance();
+    RepoLifecycle.getInstance().resweepProfile(
+      profileManager.getCurrentProfile()
+    );
+  } catch (error) {
+    // Detection staleness is not worth failing the install over.
+    getLogger().warn(`Could not re-sweep repos after catalog change: ${error}`);
+  }
 }
 
 export function createInstallHandlers(
@@ -40,6 +65,7 @@ export function createInstallHandlers(
 ) {
   const d: InstallHandlerDeps = {
     jobs: deps?.jobs ?? JobManager.getInstance(),
+    resweepRepos: deps?.resweepRepos ?? resweepCurrentProfile,
   };
 
   return {
@@ -60,8 +86,42 @@ export function createInstallHandlers(
 
       const job = d.jobs.start('plugin.install', { source }, async () => {
         const plugin = await installer.install(source);
+        await d.resweepRepos();
         return { plugin };
       });
+
+      return reply.status(200).send({ data: { jobId: job.id } });
+    },
+
+    updatePlugin: async (
+      request: FastifyRequest<{
+        Params: { pluginId: string };
+        Body: { source?: PluginInstallSource };
+      }>,
+      reply: FastifyReply
+    ): Promise<IApiResponse<JobStartedData>> => {
+      const { pluginId } = request.params;
+      const source = request.body?.source;
+      // Same dev-mode gate as install: an explicit local source is checked
+      // here; a stored local source is re-checked inside the job runner once
+      // it's loaded (the installer rejects mismatched sources anyway).
+      if (source?.kind === 'local' && !options.allowLocalSource()) {
+        return sendBadRequest(
+          reply,
+          ErrorCodes.PLUGIN_INSTALL_REJECTED,
+          'Updating plugins from a local path is only available in development mode'
+        );
+      }
+
+      const job = d.jobs.start(
+        'plugin.update',
+        { pluginId, ...(source ? { source } : {}) },
+        async () => {
+          const result = await installer.update(pluginId, source);
+          await d.resweepRepos();
+          return result;
+        }
+      );
 
       return reply.status(200).send({ data: { jobId: job.id } });
     },
@@ -72,6 +132,7 @@ export function createInstallHandlers(
     ): Promise<null> => {
       try {
         await installer.uninstall(request.params.pluginId);
+        await d.resweepRepos();
         return reply.status(204).send();
       } catch (error) {
         if (

@@ -17,7 +17,12 @@ describe('trust API handlers', () => {
       async (id) => id === 'local-repo'
     );
     const listInstalled = vi.fn(async () => ['local-repo', '@acme/foundry']);
-    const handlers = createTrustHandlers(manager, listInstalled);
+    // '@acme/foundry' declares both permissions in its manifest; grants are
+    // clamped to that set.
+    const requested = vi.fn(async (pluginId: string) =>
+      pluginId === '@acme/foundry' ? ['hostWrite', 'net'] : []
+    );
+    const handlers = createTrustHandlers(manager, listInstalled, requested);
 
     app = fastify();
     app.get('/api/v1/plugins/trust', handlers.listPluginTrust);
@@ -58,6 +63,49 @@ describe('trust API handlers', () => {
     expect(res.json().data.plugin.permissions.hostWrite).toBe(true);
     const grant = await manager.getGrant('@acme/foundry');
     expect(grant.hostWrite).toBe(true);
+  });
+
+  it('rejects granting a permission the plugin does not request', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-trust-api2-'));
+    const strictManager = new TrustManager(
+      path.join(dir, 'trust.json'),
+      async () => false
+    );
+    const handlers = createTrustHandlers(
+      strictManager,
+      vi.fn(async () => ['@acme/foundry']),
+      vi.fn(async () => ['hostWrite']) // net is not requested
+    );
+    const strictApp = fastify();
+    strictApp.post('/api/v1/plugins/:pluginId/trust', handlers.setPluginTrust);
+    await strictApp.ready();
+
+    const denied = await strictApp.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/@acme%2Ffoundry/trust',
+      payload: {
+        trust: 'trusted',
+        permissions: { hostWrite: true, net: true },
+      },
+    });
+    expect(denied.statusCode).toBe(400);
+    expect(denied.json().code).toBe('PERMISSION_NOT_REQUESTED');
+    // Grant unchanged (fail-closed).
+    const grant = await strictManager.getGrant('@acme/foundry');
+    expect(grant.net).toBe(false);
+    expect(grant.hostWrite).toBe(false);
+
+    // Denying a non-requested permission is fine — only granting is clamped.
+    const ok = await strictApp.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/@acme%2Ffoundry/trust',
+      payload: {
+        trust: 'trusted',
+        permissions: { hostWrite: true, net: false },
+      },
+    });
+    expect(ok.statusCode).toBe(200);
+    await strictApp.close();
   });
 
   it('refuses to modify native plugin trust', async () => {

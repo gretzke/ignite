@@ -233,6 +233,29 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('resweepProfile re-runs a completed sweep (plugin catalog changed)', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a' }],
+        responses: { foundry: { detect: NOT_DETECTED } },
+      });
+      lifecycle.ensureProfileSwept('p1');
+      await vi.waitFor(() => expect(jobs.started.length).toBe(1));
+      await jobs.runAll();
+      // A plain re-trigger is a no-op...
+      lifecycle.ensureProfileSwept('p1');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(jobs.started.length).toBe(1);
+      // ...but a resweep after an install re-detects everything.
+      lifecycle.resweepProfile('p1');
+      await vi.waitFor(() => expect(jobs.started.length).toBe(2));
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('add: install + compile for EVERY detected framework, fingerprint persisted', async () => {
     const dir = await createTestDirectory();
     try {

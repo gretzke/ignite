@@ -24,6 +24,14 @@ export default function PermissionApprovalDialog() {
   const dispatch = useAppDispatch();
   const pending = useAppSelector(selectPendingApproval);
   const inFlight = useAppSelector(selectApprovalInFlight);
+  // The plugin's own manifest justification for this permission, when known.
+  const manifestDescription = useAppSelector((s) =>
+    pending
+      ? s.plugins.rows[pending.pluginId]?.requested?.find(
+          (r) => r.id === pending.permission
+        )?.description
+      : undefined
+  );
 
   if (!pending) return null;
 
@@ -132,7 +140,13 @@ export default function PermissionApprovalDialog() {
         if (!open) dispatch(approvalCancelled());
       }}
       title={`Allow ${pluginId}?`}
-      description={`The plugin ${pluginId} wants to ${PERMISSION_COPY[permission]}. Only approve plugins you trust — this permission persists until you revoke it.`}
+      description={
+        `The plugin ${pluginId} wants to ${PERMISSION_COPY[permission]}.` +
+        (manifestDescription
+          ? ` The plugin says: "${manifestDescription}"` // manifest text, validated at install
+          : '') +
+        ' Only approve plugins you trust — this permission persists until you revoke it.'
+      }
       confirmText="Allow"
       variant="warning"
       onConfirm={handleApprove}

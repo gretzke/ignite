@@ -6,6 +6,7 @@ import { useAppDispatch, useAppSelector } from './store';
 import { startConnect } from './store/features/connection/connectionSlice';
 import { repositoriesApi } from './store/features/repositories/repositoriesApi';
 import PermissionApprovalDialog from './components/PermissionApprovalDialog';
+import PluginPermissionsModal from './components/PluginPermissionsModal';
 
 type CSSVars = React.CSSProperties & { ['--profile-color']?: string };
 
@@ -77,6 +78,9 @@ export default function App() {
 
       {/* Plugin permission approval prompt */}
       <PermissionApprovalDialog />
+
+      {/* Plugin permission request/management modal */}
+      <PluginPermissionsModal />
 
       {/* Ambient background layers */}
       <div className="ambient-gradient" aria-hidden="true" />

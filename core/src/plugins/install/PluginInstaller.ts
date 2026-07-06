@@ -1,10 +1,15 @@
 import Docker from 'dockerode';
 import { setTimeout as sleep } from 'node:timers/promises';
-import type { PluginMetadata } from '@ignite/plugin-types/types';
-import { PluginType } from '@ignite/plugin-types/types';
+import type {
+  PluginMetadata,
+  PluginPermissionRequest,
+} from '@ignite/plugin-types/types';
+import { PluginType, PLUGIN_PERMISSION_IDS } from '@ignite/plugin-types/types';
+import { normalizeRepoUrl } from '@ignite/plugin-types';
 import { PluginManager } from '../../filesystem/PluginManager.js';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 import { TrustManager } from '../trust/TrustManager.js';
+import type { PluginPermissions } from '../trust/TrustManager.js';
 import { getLogger } from '../../utils/logger.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 import { pluginCacheVolumeName } from '../utils/pluginCache.js';
@@ -14,12 +19,33 @@ import type { PluginBuildBackend, PluginInstallSource } from './types.js';
 export interface PluginInstallerDeps {
   pluginManager: Pick<
     PluginManager,
-    'addPlugin' | 'removePlugin' | 'hasPlugin' | 'getPlugin'
+    | 'addPlugin'
+    | 'removePlugin'
+    | 'hasPlugin'
+    | 'getPlugin'
+    | 'getInstallSource'
   >;
   loader: Pick<PluginRegistryLoader, 'isBuiltin'>;
-  trust: { revoke: (pluginId: string) => Promise<void> };
+  trust: {
+    revoke: (pluginId: string) => Promise<void>;
+    getGrant: (
+      pluginId: string
+    ) => Promise<{ trust: string } & PluginPermissions>;
+    setTrust: (
+      pluginId: string,
+      trust: 'trusted' | 'untrusted',
+      permissions: PluginPermissions
+    ) => Promise<unknown>;
+  };
   removeImage: (imageTag: string) => Promise<void>;
   removeVolume: (volumeName: string) => Promise<void>;
+}
+
+export interface PluginUpdateResult {
+  plugin: PluginMetadata;
+  // Permissions the new version requests that the previous one didn't —
+  // surfaced to the user post-update; they start denied.
+  newPermissions: PluginPermissionRequest[];
 }
 
 export class PluginInstaller {
@@ -100,9 +126,11 @@ export class PluginInstaller {
       }
 
       // Persisted metadata points at the tag we actually built, so execution
-      // resolves the right image regardless of what the plugin declared.
+      // resolves the right image regardless of what the plugin declared. The
+      // install source is recorded alongside so a later update can prove it
+      // comes from the same place before carrying grants over.
       const persisted: PluginMetadata = { ...metadata, baseImage: imageTag };
-      await this.deps.pluginManager.addPlugin(persisted);
+      await this.deps.pluginManager.addPlugin(persisted, source);
       getLogger().info(`✅ Installed plugin ${persisted.id} (${imageTag})`);
       return persisted;
     } catch (error) {
@@ -110,6 +138,122 @@ export class PluginInstaller {
       // clean it up here.
       await this.deps.removeImage(imageTag).catch(() => {});
       throw error;
+    }
+  }
+
+  // Update in place: rebuild from the plugin's recorded install source and
+  // carry grants over. Safe only because identity is bound to the SOURCE, not
+  // the self-declared id — a build from anywhere else is rejected, so foreign
+  // code can never inherit an existing grant. Grants are clamped to the new
+  // version's requested set; newly requested permissions start denied and are
+  // reported back for the post-update permission prompt.
+  async update(
+    pluginId: string,
+    source?: PluginInstallSource
+  ): Promise<PluginUpdateResult> {
+    if (await this.deps.loader.isBuiltin(pluginId)) {
+      throw new PluginError(
+        `Cannot update built-in plugin '${pluginId}'`,
+        ErrorCodes.PLUGIN_UPDATE_INVALID
+      );
+    }
+    if (!(await this.deps.pluginManager.hasPlugin(pluginId))) {
+      throw new PluginError(
+        `Plugin '${pluginId}' is not installed`,
+        ErrorCodes.PLUGIN_NOT_FOUND,
+        { pluginId }
+      );
+    }
+    const previous = await this.deps.pluginManager.getPlugin(pluginId);
+    const stored = await this.deps.pluginManager.getInstallSource(pluginId);
+    if (!stored) {
+      throw new PluginError(
+        `Plugin '${pluginId}' has no recorded install source; uninstall and reinstall it instead`,
+        ErrorCodes.PLUGIN_UPDATE_INVALID
+      );
+    }
+    const effective = source ?? stored;
+    this.assertSameSourceIdentity(pluginId, stored, effective);
+
+    const { imageTag, metadata } =
+      await this.backend.buildPluginImage(effective);
+    try {
+      this.validateMetadata(metadata);
+      if (metadata.id !== pluginId) {
+        throw new PluginError(
+          `Update built a plugin with id '${metadata.id}', expected '${pluginId}'`,
+          ErrorCodes.PLUGIN_UPDATE_INVALID
+        );
+      }
+
+      const previousRequested = new Set(
+        (previous.permissions ?? []).map((p) => p.id)
+      );
+      const requested = metadata.permissions ?? [];
+      const requestedIds = new Set(requested.map((p) => p.id));
+      const newPermissions = requested.filter(
+        (p) => !previousRequested.has(p.id)
+      );
+
+      // Clamp grants to the new requested set: a permission the new version
+      // no longer requests is revoked; new requests start denied.
+      const grant = await this.deps.trust.getGrant(pluginId);
+      const clamped: PluginPermissions = {
+        hostWrite: grant.hostWrite && requestedIds.has('hostWrite'),
+        net: grant.net && requestedIds.has('net'),
+      };
+
+      const persisted: PluginMetadata = { ...metadata, baseImage: imageTag };
+      await this.deps.pluginManager.addPlugin(persisted, effective);
+      await this.deps.trust.setTrust(
+        pluginId,
+        clamped.hostWrite || clamped.net ? 'trusted' : 'untrusted',
+        clamped
+      );
+
+      // Retagging already replaced the tag when the version is unchanged;
+      // only remove the previous image when it lives under a different tag.
+      if (previous.baseImage && previous.baseImage !== imageTag) {
+        await this.deps.removeImage(previous.baseImage);
+      }
+
+      getLogger().info(
+        `✅ Updated plugin ${pluginId} to ${persisted.version} (${imageTag})` +
+          (newPermissions.length > 0
+            ? `, requesting new permissions: ${newPermissions
+                .map((p) => p.id)
+                .join(', ')}`
+            : '')
+      );
+      return { plugin: persisted, newPermissions };
+    } catch (error) {
+      // Never remove the tag the still-installed previous version points at.
+      if (imageTag !== previous.baseImage) {
+        await this.deps.removeImage(imageTag).catch(() => {});
+      }
+      throw error;
+    }
+  }
+
+  // Same-source check for updates. Git identity is the normalized URL (a ref
+  // change is allowed — same repo); local identity is the exact context dir.
+  private assertSameSourceIdentity(
+    pluginId: string,
+    stored: PluginInstallSource,
+    candidate: PluginInstallSource
+  ): void {
+    const same =
+      stored.kind === candidate.kind &&
+      (stored.kind === 'git' && candidate.kind === 'git'
+        ? normalizeRepoUrl(stored.url) === normalizeRepoUrl(candidate.url)
+        : stored.kind === 'local' && candidate.kind === 'local'
+          ? stored.contextDir === candidate.contextDir
+          : false);
+    if (!same) {
+      throw new PluginError(
+        `Update source does not match the source '${pluginId}' was installed from`,
+        ErrorCodes.PLUGIN_UPDATE_INVALID
+      );
     }
   }
 
@@ -140,6 +284,56 @@ export class PluginInstaller {
         `Cannot install '${metadata.id}': repo-manager plugins are native infrastructure and cannot be installed as third-party plugins`,
         ErrorCodes.PLUGIN_INSTALL_INVALID
       );
+    }
+    this.validatePermissionRequests(metadata);
+  }
+
+  // The permission manifest is attacker-controlled input rendered in the
+  // grant dialog: only known permission ids, no duplicates, and descriptions
+  // that are short plain text.
+  private validatePermissionRequests(metadata: PluginMetadata): void {
+    const permissions = metadata.permissions;
+    if (permissions === undefined) return;
+    const invalid = (reason: string): PluginError =>
+      new PluginError(
+        `Invalid permission manifest for '${metadata.id}': ${reason}`,
+        ErrorCodes.PLUGIN_INSTALL_INVALID
+      );
+    if (!Array.isArray(permissions)) {
+      throw invalid('permissions must be an array');
+    }
+    if (permissions.length > PLUGIN_PERMISSION_IDS.length) {
+      throw invalid('too many permission requests');
+    }
+    const seen = new Set<string>();
+    for (const request of permissions) {
+      if (typeof request !== 'object' || request === null) {
+        throw invalid('each request must be an object');
+      }
+      if (!(PLUGIN_PERMISSION_IDS as readonly string[]).includes(request.id)) {
+        throw invalid(`unknown permission '${String(request.id)}'`);
+      }
+      if (seen.has(request.id)) {
+        throw invalid(`duplicate permission '${request.id}'`);
+      }
+      seen.add(request.id);
+      if (
+        typeof request.description !== 'string' ||
+        request.description.trim().length === 0 ||
+        request.description.length > 280
+      ) {
+        throw invalid(
+          `permission '${request.id}' needs a description of 1-280 characters`
+        );
+      }
+      // eslint-disable-next-line no-control-regex
+      if (
+        /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(request.description)
+      ) {
+        throw invalid(
+          `permission '${request.id}' description contains control characters`
+        );
+      }
     }
   }
 
