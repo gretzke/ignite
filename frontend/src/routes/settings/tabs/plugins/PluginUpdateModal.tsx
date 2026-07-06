@@ -147,7 +147,14 @@ export default function PluginUpdateModal({
                   style={{ maxHeight: 320 }}
                 >
                   {changelog.map((release) => (
-                    <div key={release.tag} className="card-milky p-3">
+                    // Shadow off: the scroll container clips card-milky's
+                    // large drop shadow at its edges, which reads as a
+                    // rendering glitch.
+                    <div
+                      key={release.tag}
+                      className="card-milky p-3"
+                      style={{ boxShadow: 'none' }}
+                    >
                       <div className="text-sm font-semibold">
                         {release.name ?? release.tag}
                       </div>
