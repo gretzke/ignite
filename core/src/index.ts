@@ -28,34 +28,41 @@ import { runCommand } from './utils/runCommand.js';
 // the host, managed by core's RepoService). Runs once at every startup;
 // idempotent (no-op once the leftovers are gone) and never throws.
 async function sweepLegacyRepoManagerResources(): Promise<void> {
+  // Bound every docker call: this runs (awaited) before app.listen(), and the
+  // try/catch only catches rejections — a hung docker CLI/daemon (a realistic
+  // failure mode here, see docs/docker-desktop-vm-crashes.md) would otherwise
+  // wedge startup forever. On timeout runCommand rejects, which the catch
+  // below swallows with a warn (sweep is best-effort).
+  const SWEEP_TIMEOUT_MS = 10_000;
   try {
-    const containers = await runCommand('docker', [
-      'ps',
-      '-aq',
-      '--filter',
-      'label=ignite.type=repo-manager',
-    ]);
+    const containers = await runCommand(
+      'docker',
+      ['ps', '-aq', '--filter', 'label=ignite.type=repo-manager'],
+      { timeoutMs: SWEEP_TIMEOUT_MS }
+    );
     const containerIds = containers.stdout
       .split('\n')
       .map((id) => id.trim())
       .filter(Boolean);
     if (containerIds.length > 0) {
-      await runCommand('docker', ['rm', '-f', ...containerIds]);
+      await runCommand('docker', ['rm', '-f', ...containerIds], {
+        timeoutMs: SWEEP_TIMEOUT_MS,
+      });
     }
 
-    const volumes = await runCommand('docker', [
-      'volume',
-      'ls',
-      '-q',
-      '--filter',
-      'name=ignite-cloned-',
-    ]);
+    const volumes = await runCommand(
+      'docker',
+      ['volume', 'ls', '-q', '--filter', 'name=ignite-cloned-'],
+      { timeoutMs: SWEEP_TIMEOUT_MS }
+    );
     const volumeNames = volumes.stdout
       .split('\n')
       .map((name) => name.trim())
       .filter(Boolean);
     if (volumeNames.length > 0) {
-      await runCommand('docker', ['volume', 'rm', '-f', ...volumeNames]);
+      await runCommand('docker', ['volume', 'rm', '-f', ...volumeNames], {
+        timeoutMs: SWEEP_TIMEOUT_MS,
+      });
     }
 
     if (containerIds.length > 0 || volumeNames.length > 0) {
