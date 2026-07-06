@@ -23,7 +23,10 @@ import {
   setRepositoryBranches,
   type IFramework,
 } from '../features/repositories/repositoriesSlice';
-import { repositoriesApi } from '../features/repositories/repositoriesApi';
+import {
+  repositoriesApi,
+  hydrateRepoGitState,
+} from '../features/repositories/repositoriesApi';
 import { setCompilationStatus } from '../features/compiler/compilerSlice';
 import {
   permissionRequired,
@@ -212,28 +215,7 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
             })),
           })
         );
-        dispatch(
-          apiClient.dispatch.getRepoInfo({
-            body: { pathOrUrl },
-            onSuccess: (repoInfo) => {
-              const getBranchesAction = apiClient.dispatch.getBranches({
-                body: { pathOrUrl },
-                onSuccess: (branchesData) => [
-                  setRepositoryInfo({ pathOrUrl, info: repoInfo }),
-                  setRepositoryBranches({
-                    pathOrUrl,
-                    branches: branchesData.branches,
-                  }),
-                ],
-                onError: () => [
-                  setRepositoryInfo({ pathOrUrl, info: repoInfo }),
-                ],
-              });
-              return [getBranchesAction];
-            },
-            onError: () => [],
-          })
-        );
+        dispatch(hydrateRepoGitState(pathOrUrl));
       } else {
         dispatch(setRepositoryInitialized({ pathOrUrl, success: false }));
         dispatch(

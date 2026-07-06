@@ -12,9 +12,36 @@ import {
   addRepository,
   removeRepositoryAction,
   setRepositoryInfo,
+  setRepositoryBranches,
   startFrameworkDetection,
   setRepositoryFrameworks,
 } from './repositoriesSlice';
+
+// Fetch live git state (branch/commit/dirty + branch list) for an
+// already-initialized repo. listRepos only carries persisted lifecycle
+// state, so every code path that renders a card from a fresh store must
+// dispatch this — otherwise the card sits on its placeholder until the
+// next git action. Failures are silent: a repo whose git info can't be
+// read still renders as initialized, matching the lifecycle-job routing.
+export const hydrateRepoGitState = (pathOrUrl: string) =>
+  apiClient.dispatch.getRepoInfo({
+    body: { pathOrUrl },
+    onSuccess: (repoInfo) => {
+      const getBranchesAction = apiClient.dispatch.getBranches({
+        body: { pathOrUrl },
+        onSuccess: (branchesData) => [
+          setRepositoryInfo({ pathOrUrl, info: repoInfo }),
+          setRepositoryBranches({
+            pathOrUrl,
+            branches: branchesData.branches,
+          }),
+        ],
+        onError: () => [setRepositoryInfo({ pathOrUrl, info: repoInfo })],
+      });
+      return [getBranchesAction];
+    },
+    onError: () => [],
+  });
 
 // API actions using the enhanced client (following profiles pattern)
 export const repositoriesApi = {
@@ -45,7 +72,13 @@ export const repositoriesApi = {
             }),
             wsSend({ type: 'subscribe', jobId: entry.activeJobId }),
           ]);
-        return [setRepositories(data), ...attachActions];
+        // Repos with no in-flight job get no terminal event to route their
+        // git info through — hydrate them directly (page reload after the
+        // startup sweep finished would otherwise show bare cards).
+        const hydrateActions = entries
+          .filter((entry) => entry.initialized && !entry.activeJobId)
+          .map((entry) => hydrateRepoGitState(entry.pathOrUrl));
+        return [setRepositories(data), ...attachActions, ...hydrateActions];
       },
       onError: (error) => {
         const { title, description } = formatApiError(error);
