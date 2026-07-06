@@ -13,6 +13,8 @@ import type { PluginPermissions } from '../trust/TrustManager.js';
 import { getLogger } from '../../utils/logger.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 import { pluginCacheVolumeName } from '../utils/pluginCache.js';
+import { deriveTrack, inspectGitRemote } from './gitRemote.js';
+import type { InspectGitRemoteData } from '@ignite/api';
 import type { PluginBuildBackend, PluginInstallSource } from './types.js';
 
 // Injectable dependencies (tests pass fakes; production uses real singletons).
@@ -39,6 +41,8 @@ export interface PluginInstallerDeps {
   };
   removeImage: (imageTag: string) => Promise<void>;
   removeVolume: (volumeName: string) => Promise<void>;
+  // Remote inspection for git sources (track derivation + description).
+  inspectRemote: (url: string) => Promise<InspectGitRemoteData>;
 }
 
 export interface PluginUpdateResult {
@@ -60,6 +64,7 @@ export class PluginInstaller {
       pluginManager: deps?.pluginManager ?? PluginManager.getInstance(),
       loader: deps?.loader ?? PluginRegistryLoader.getInstance(),
       trust: deps?.trust ?? TrustManager.getInstance(),
+      inspectRemote: deps?.inspectRemote ?? inspectGitRemote,
       removeImage:
         deps?.removeImage ??
         (async (imageTag: string) => {
@@ -100,7 +105,12 @@ export class PluginInstaller {
   }
 
   async install(source: PluginInstallSource): Promise<PluginMetadata> {
-    const { imageTag, metadata } = await this.backend.buildPluginImage(source);
+    source = await this.enrichGitSource(source);
+    const { imageTag, metadata, commit } =
+      await this.backend.buildPluginImage(source);
+    if (source.kind === 'git' && commit) {
+      source = { ...source, commit };
+    }
 
     try {
       this.validateMetadata(metadata);
@@ -172,11 +182,15 @@ export class PluginInstaller {
         ErrorCodes.PLUGIN_UPDATE_INVALID
       );
     }
-    const effective = source ?? stored;
+    let effective = source ?? stored;
     this.assertSameSourceIdentity(pluginId, stored, effective);
+    effective = await this.enrichGitSource(effective);
 
-    const { imageTag, metadata } =
+    const { imageTag, metadata, commit } =
       await this.backend.buildPluginImage(effective);
+    if (effective.kind === 'git' && commit) {
+      effective = { ...effective, commit };
+    }
     try {
       this.validateMetadata(metadata);
       if (metadata.id !== pluginId) {
@@ -233,6 +247,38 @@ export class PluginInstaller {
       }
       throw error;
     }
+  }
+
+  // Fill in server-derived context for git sources: what the install tracks
+  // (when the client didn't say) and the GitHub repo description. Best-effort
+  // — an offline install still works, it just loses the extras.
+  private async enrichGitSource(
+    source: PluginInstallSource
+  ): Promise<PluginInstallSource> {
+    if (source.kind !== 'git') return source;
+    let enriched = { ...source };
+    try {
+      const remote = await this.deps.inspectRemote(source.url);
+      if (!enriched.track) {
+        enriched.track = deriveTrack(enriched.ref, remote);
+      }
+      if (remote.github?.description) {
+        enriched.description = remote.github.description;
+      }
+    } catch (error) {
+      getLogger().warn(
+        `Could not inspect ${source.url} while installing: ${error}`
+      );
+      if (!enriched.track) {
+        // Offline fallback mirroring deriveTrack's shape rules.
+        enriched.track = enriched.ref
+          ? /^[0-9a-f]{40}$/i.test(enriched.ref)
+            ? { mode: 'commit' }
+            : { mode: 'branch', branch: enriched.ref }
+          : { mode: 'branch', branch: 'main' };
+      }
+    }
+    return enriched;
   }
 
   // Same-source check for updates. Git identity is the normalized URL (a ref

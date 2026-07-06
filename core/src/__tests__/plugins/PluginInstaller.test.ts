@@ -70,11 +70,29 @@ function makeDeps() {
     },
     removeImage: vi.fn(async () => {}),
     removeVolume: vi.fn(async () => {}),
+    inspectRemote: vi.fn(async () => ({
+      defaultBranch: 'main',
+      branches: ['main'],
+      releases: [],
+      github: {
+        owner: 'acme',
+        repo: 'waffle',
+        description: 'A waffle compiler',
+      },
+    })),
     store,
     sources,
     grants,
   };
 }
+
+// What enrichGitSource turns the bare gitSource into with makeDeps' remote.
+const enrichedGitSource = {
+  kind: 'git' as const,
+  url: 'https://github.com/acme/waffle',
+  track: { mode: 'branch' as const, branch: 'main' },
+  description: 'A waffle compiler',
+};
 
 function backendReturning(result: PluginBuildResult): PluginBuildBackend {
   return { buildPluginImage: vi.fn(async () => result) };
@@ -94,19 +112,34 @@ describe('PluginInstaller', () => {
     vi.clearAllMocks();
   });
 
-  it('builds, then registers the plugin with baseImage set to the built tag and the install source recorded', async () => {
+  it('builds, then registers the plugin with baseImage set to the built tag and the enriched install source recorded', async () => {
     const installer = new PluginInstaller(backend, deps);
     const meta = await installer.install(gitSource);
-    expect(backend.buildPluginImage).toHaveBeenCalledWith(gitSource);
+    // The build receives the enriched source (derived track + description).
+    expect(backend.buildPluginImage).toHaveBeenCalledWith(enrichedGitSource);
     expect(meta.baseImage).toBe('ignite/installed_waffle:1.0.0');
     expect(deps.pluginManager.addPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'waffle',
         baseImage: 'ignite/installed_waffle:1.0.0',
       }),
-      gitSource
+      enrichedGitSource
     );
-    expect(deps.sources.waffle).toEqual(gitSource);
+    expect(deps.sources.waffle).toEqual(enrichedGitSource);
+  });
+
+  it('records the built commit sha when the backend reports one', async () => {
+    const shaBackend = backendReturning({
+      imageTag: 'ignite/installed_waffle:1.0.0',
+      metadata: waffleMeta,
+      commit: 'a'.repeat(40),
+    });
+    const installer = new PluginInstaller(shaBackend, deps);
+    await installer.install(gitSource);
+    expect(deps.sources.waffle).toEqual({
+      ...enrichedGitSource,
+      commit: 'a'.repeat(40),
+    });
   });
 
   it('refuses to install over a built-in id, and removes the built image', async () => {
@@ -266,7 +299,7 @@ describe('PluginInstaller', () => {
         'ignite/installed_waffle:1.0.0'
       );
       expect(deps.store.waffle.baseImage).toBe('ignite/installed_waffle:2.0.0');
-      expect(deps.sources.waffle).toEqual(gitSource);
+      expect(deps.sources.waffle).toEqual(enrichedGitSource);
     });
 
     it('revokes a grant whose permission the new version no longer requests', async () => {

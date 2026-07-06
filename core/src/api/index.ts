@@ -18,6 +18,8 @@ import { installHandlers } from './plugins/install.js';
 import { compilerHandlers } from './plugins/compiler/index.js';
 import { repoManagerHandlers } from './plugins/repo-manager/index.js';
 import { filesystemHandlers } from './filesystem.js';
+import { versionsHandlers } from './plugins/versions.js';
+import { gitHandlers } from './git.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
@@ -84,6 +86,8 @@ async function registerRoutes(app: FastifyInstance) {
     ...compilerHandlers,
     ...repoManagerHandlers,
     ...filesystemHandlers,
+    ...versionsHandlers,
+    ...gitHandlers,
   };
 
   checkHandlers(allHandlers);

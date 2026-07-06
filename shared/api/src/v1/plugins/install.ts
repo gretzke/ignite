@@ -3,6 +3,15 @@ import { z } from "zod";
 import { V1_BASE_PATH } from "../constants.js";
 import { JobStartedResponseSchema } from "../jobs.js";
 
+// What a git install tracks — drives update semantics: a branch (update when
+// the remote head moves), a release (update when a newer semver tag exists),
+// or a pinned commit (never prompts to update).
+export const GitTrackSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("release"), version: z.string().min(1) }),
+  z.object({ mode: z.literal("branch"), branch: z.string().min(1) }),
+  z.object({ mode: z.literal("commit") }),
+]);
+
 // Discriminated union: local folder (Spec A) or git URL (Spec B).
 export const PluginInstallSourceSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -14,6 +23,9 @@ export const PluginInstallSourceSchema = z.discriminatedUnion("kind", [
     kind: z.literal("git"),
     url: z.string().min(1),
     ref: z.string().optional(),
+    track: GitTrackSchema.optional(),
+    // Resolved sha of the build — recorded server-side; clients don't send it.
+    commit: z.string().optional(),
   }),
 ]);
 

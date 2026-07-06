@@ -10,8 +10,10 @@ export * from "./plugins/trust.js";
 export * from "./plugins/install.js";
 export * from "./plugins/compiler/index.js";
 export * from "./plugins/repo-manager/index.js";
+export * from "./plugins/versions.js";
 export * from "./filesystem.js";
 export * from "./jobs.js";
+export * from "./git.js";
 
 import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
@@ -20,8 +22,10 @@ import { trustRoutes } from "./plugins/trust.js";
 import { installRoutes } from "./plugins/install.js";
 import { compilerRoutes } from "./plugins/compiler/index.js";
 import { repoManagerRoutes } from "./plugins/repo-manager/index.js";
+import { versionsRoutes } from "./plugins/versions.js";
 import { filesystemRoutes } from "./filesystem.js";
 import { jobsRoutes } from "./jobs.js";
+import { gitRoutes } from "./git.js";
 
 export interface IApiError {
   statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 499 | 500 | 503;
@@ -56,8 +60,10 @@ const allRoutes = {
   ...installRoutes,
   ...compilerRoutes,
   ...repoManagerRoutes,
+  ...versionsRoutes,
   ...filesystemRoutes,
   ...jobsRoutes,
+  ...gitRoutes,
 } as const;
 
 export const v1Routes = allRoutes satisfies ValidateRoutes<typeof allRoutes>;

@@ -1,5 +1,9 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import type { PluginPermissionRequest } from '@ignite/api';
+import type {
+  PluginPermissionRequest,
+  PluginVersionInfoData,
+  StorePluginData,
+} from '@ignite/api';
 import { apiClient } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
 import { formatApiError } from '../../middleware/apiGate';
@@ -32,6 +36,10 @@ interface PluginsState {
   loading: boolean;
   devMode: boolean;
   permissionsModal: PermissionsModalState | null;
+  // Version/update info per installed plugin (from /plugins/versions).
+  versions: Record<string, PluginVersionInfoData>;
+  // Curated store catalog; null until first fetched.
+  storePlugins: StorePluginData[] | null;
 }
 
 const initialState: PluginsState = {
@@ -39,6 +47,8 @@ const initialState: PluginsState = {
   loading: false,
   devMode: false,
   permissionsModal: null,
+  versions: {},
+  storePlugins: null,
 };
 
 const pluginsSlice = createSlice({
@@ -87,6 +97,14 @@ const pluginsSlice = createSlice({
     closePermissionsModal(state) {
       state.permissionsModal = null;
     },
+    setVersions(state, action: PayloadAction<PluginVersionInfoData[]>) {
+      state.versions = Object.fromEntries(
+        action.payload.map((info) => [info.pluginId, info])
+      );
+    },
+    setStorePlugins(state, action: PayloadAction<StorePluginData[]>) {
+      state.storePlugins = action.payload;
+    },
     setTrust(
       state,
       action: PayloadAction<
@@ -121,6 +139,8 @@ export const {
   removeRow,
   openPermissionsModal,
   closePermissionsModal,
+  setVersions,
+  setStorePlugins,
 } = pluginsSlice.actions;
 export const selectPluginRows = (s: RootState) =>
   Object.values(s.plugins.rows);
@@ -130,7 +150,19 @@ export const selectPermissionsModal = (s: RootState) =>
   s.plugins.permissionsModal;
 export const selectPluginRow = (s: RootState, pluginId: string) =>
   s.plugins.rows[pluginId];
+export const selectPluginVersions = (s: RootState) => s.plugins.versions;
+export const selectStorePlugins = (s: RootState) => s.plugins.storePlugins;
 export const pluginsReducer = pluginsSlice.reducer;
+
+// A git install target chosen in the install modal.
+export interface GitInstallTarget {
+  url: string;
+  ref?: string;
+  track?:
+    | { mode: 'release'; version: string }
+    | { mode: 'branch'; branch: string }
+    | { mode: 'commit' };
+}
 
 // API actions using the enhanced client (following the repositories/profiles pattern)
 export const pluginsApi = {
@@ -184,7 +216,23 @@ export const pluginsApi = {
           ];
         },
       }),
+      // Update-availability check: silent on failure (offline is fine).
+      apiClient.dispatch.pluginVersions({
+        onSuccess: (data) => [setVersions(data.plugins)],
+        onError: () => [],
+      }),
     ];
+  },
+  fetchStore() {
+    return apiClient.dispatch.pluginStore({
+      onSuccess: (data) => [setStorePlugins(data.plugins)],
+      onError: (error) => {
+        const { title, description } = formatApiError(error);
+        return [
+          triggerToast({ title, description, variant: 'error', duration: 5000 }),
+        ];
+      },
+    });
   },
   setPermissions(
     pluginId: string,
@@ -229,10 +277,8 @@ export const pluginsApi = {
       },
     });
   },
-  installGit(url: string, ref?: string) {
-    const source = ref
-      ? ({ kind: 'git', url, ref } as const)
-      : ({ kind: 'git', url } as const);
+  installGit(target: GitInstallTarget) {
+    const source = { kind: 'git' as const, ...target };
     return apiClient.dispatch.installPlugin({
       body: { source },
       onSuccess: (data) => [
@@ -251,12 +297,14 @@ export const pluginsApi = {
       },
     });
   },
-  // Rebuild from the plugin's stored install source. Completion (and the
-  // new-permissions prompt) is handled in jobsEffects.
-  update(pluginId: string) {
+  // Rebuild the plugin. Without a target: from its stored install source.
+  // With a target (update button, version switch): from the same repo at the
+  // given ref — the server rejects any other repo, so grants can't leak.
+  // Completion (and the new-permissions prompt) is handled in jobsEffects.
+  update(pluginId: string, target?: GitInstallTarget) {
     return apiClient.dispatch.updatePlugin({
       params: { pluginId },
-      body: {},
+      body: target ? { source: { kind: 'git' as const, ...target } } : {},
       onSuccess: (data) => [
         jobStarted({
           jobId: data.jobId,
