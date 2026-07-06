@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { RepoRecord } from '@ignite/api';
 import { createProfileHandlers } from '../../api/profiles.js';
 
 function makeReply() {
@@ -42,7 +43,11 @@ function makeDeps() {
       deleteProfile: vi.fn(async () => {}),
     }),
     repoRegistry: {
-      list: async () => ({ session: null, local: [], cloned: [] }),
+      list: async (): Promise<{
+        session: string | null;
+        local: RepoRecord[];
+        cloned: RepoRecord[];
+      }> => ({ session: null, local: [], cloned: [] }),
       save: vi.fn(async () => {}),
       remove: vi.fn(async () => {}),
     },
@@ -55,9 +60,11 @@ function makeDeps() {
         createdAt: new Date().toISOString(),
         events: [],
       })),
-      activeJobFor: vi.fn(() => undefined as string | undefined),
+      activeJobFor: vi.fn(
+        (_pathOrUrl: string): string | undefined => undefined
+      ),
       ensureProfileSwept: vi.fn(),
-      sessionState: vi.fn(() => null),
+      sessionState: vi.fn((): RepoRecord | null => null),
     },
     hasWorkspace: vi.fn(async () => true),
   };
