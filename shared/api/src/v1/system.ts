@@ -65,4 +65,12 @@ export const systemRoutes = {
       },
     },
   },
+  factoryReset: {
+    method: "POST" as const,
+    path: `${V1_BASE_PATH}/system/factory-reset`,
+    schema: {
+      tags: ["system"],
+      response: { 204: z.null() },
+    },
+  },
 } as const;

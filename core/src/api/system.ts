@@ -8,9 +8,28 @@ import type {
 } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
+import { factoryReset } from '../system/factoryReset.js';
 
 // System handlers object - matches shared API route structure
 export const systemHandlers = {
+  factoryReset: async (
+    _request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<null> => {
+    try {
+      await factoryReset();
+      return reply.status(204).send(null);
+    } catch (error) {
+      const body: IApiError = {
+        statusCode: 500,
+        error: 'Internal Server Error',
+        code: 'FACTORY_RESET_ERROR',
+        message: `Factory reset failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+      return reply.status(500).send(body) as unknown as null;
+    }
+  },
+
   health: async (
     _request: FastifyRequest,
     reply: FastifyReply

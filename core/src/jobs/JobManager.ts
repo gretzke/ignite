@@ -246,6 +246,19 @@ export class JobManager {
     );
   }
 
+  // Factory reset: cancel everything in flight (abort signals kill the
+  // underlying container execs / git processes) and forget all records so
+  // nothing re-persists into a wiped jobs directory.
+  cancelAllAndClear(): void {
+    for (const job of this.jobs.values()) {
+      if (job.record.state === 'queued' || job.record.state === 'running') {
+        job.cancelled = true;
+        job.abortController.abort();
+      }
+    }
+    this.jobs.clear();
+  }
+
   cancel(id: string): boolean {
     const job = this.jobs.get(id);
     if (!job) {

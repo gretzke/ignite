@@ -95,6 +95,15 @@ export class RepoLifecycle {
     RepoLifecycle.instance = undefined as unknown as RepoLifecycle;
   }
 
+  // Factory reset: forget all per-run state so the next trigger behaves
+  // like a first run (profiles re-sweep, session state re-derives).
+  resetState(): void {
+    this.sweptProfiles.clear();
+    this.activeJobs.clear();
+    this.sessionRecords.clear();
+    this.lastRecompile.clear();
+  }
+
   // Sweep a profile's repos (init + detect + persist) exactly once per CLI
   // run. Fire-and-forget: jobs run in the background and the UI attaches to
   // them via the jobs WS channel.

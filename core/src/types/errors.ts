@@ -109,6 +109,7 @@ export const ErrorCodes = {
 
   // System
   SYSTEM_INFO_ERROR: 'SYSTEM_INFO_ERROR',
+  FACTORY_RESET_ERROR: 'FACTORY_RESET_ERROR',
 
   // Compiler route errors
   NOT_A_COMPILER_PLUGIN: 'NOT_A_COMPILER_PLUGIN',
