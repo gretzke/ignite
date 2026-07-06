@@ -34,7 +34,14 @@ export default function StatusCard({
 
   // Calculate overall status
   const getOverallStatus = (): {
-    status: 'ready' | 'installing' | 'compiling' | 'error' | 'pending' | 'idle';
+    status:
+      | 'ready'
+      | 'installing'
+      | 'compiling'
+      | 'error'
+      | 'pending'
+      | 'loading'
+      | 'idle';
     message: string;
   } => {
     if (frameworks.length === 0) {
@@ -56,6 +63,12 @@ export default function StatusCard({
     // If any framework is compiling
     if (statuses.some((s) => s === 'compiling')) {
       return { status: 'compiling', message: 'Compiling contracts...' };
+    }
+
+    // Artifact listing still in flight (or effects not run yet): we don't
+    // know the build state, so don't claim "Not compiled".
+    if (statuses.some((s) => s === 'loading' || s === undefined)) {
+      return { status: 'loading', message: 'Checking build status...' };
     }
 
     // If all frameworks are ready
@@ -95,6 +108,13 @@ export default function StatusCard({
           color: 'text-yellow-500',
           bgColor: 'bg-yellow-500/10',
           borderColor: 'border-yellow-500/20',
+        };
+      case 'loading':
+        return {
+          icon: <Loader2 size={24} className="text-gray-400 animate-spin" />,
+          color: 'text-gray-400',
+          bgColor: 'bg-gray-500/10',
+          borderColor: 'border-gray-500/20',
         };
       case 'error':
         return {

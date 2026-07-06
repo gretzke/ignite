@@ -8,10 +8,12 @@ import { jobStarted } from '../jobs/jobsSlice';
 import { wsSend } from '../../middleware/websocket';
 import type { ArtifactLocation } from '@ignite/api';
 
-// 'idle' = framework detected but not compiled this session; compilation is
-// user-triggered (Clean compile button) instead of running on every startup
+// 'loading' = artifact listing in flight (we don't yet know whether a
+// previous compile left artifacts); 'idle' = checked and not compiled;
+// compilation is user-triggered (Clean compile button) instead of running
+// on every startup
 export type CompilationStatus =
-  'idle' | 'installing' | 'compiling' | 'ready' | 'error';
+  'loading' | 'idle' | 'installing' | 'compiling' | 'ready' | 'error';
 
 export interface IFrameworkCompilation {
   status: CompilationStatus;
@@ -86,10 +88,18 @@ const compilerSlice = createSlice({
         state.compilations[repoPath] = {};
       }
 
-      if (!state.compilations[repoPath][frameworkId]) {
-        // Artifacts on disk mean the framework was compiled (possibly in an
-        // earlier session); an empty listing means it wasn't.
+      // Artifacts on disk mean the framework was compiled (possibly in an
+      // earlier session); an empty listing means it wasn't. Only resolve
+      // from the pre-knowledge states — never clobber an in-flight
+      // install/compile or an error the user hasn't seen yet.
+      const existing = state.compilations[repoPath][frameworkId];
+      if (
+        !existing ||
+        existing.status === 'loading' ||
+        existing.status === 'idle'
+      ) {
         state.compilations[repoPath][frameworkId] = {
+          ...existing,
           status: artifacts.length > 0 ? 'ready' : 'idle',
         };
       }

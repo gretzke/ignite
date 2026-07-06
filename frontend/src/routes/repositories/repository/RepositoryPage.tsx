@@ -6,7 +6,10 @@ import { useAppSelector, useAppDispatch } from '../../../store/hooks';
 import { getRepoName } from '../../../utils/repo';
 import StatusCard from './components/StatusCard';
 import ArtifactBrowser from './components/ArtifactBrowser';
-import { listArtifacts } from '../../../store/features/compiler/compilerSlice';
+import {
+  listArtifacts,
+  setCompilationStatus,
+} from '../../../store/features/compiler/compilerSlice';
 
 export default function RepositoryPage() {
   const { repoPath } = useParams<{ repoPath: string }>();
@@ -36,6 +39,16 @@ export default function RepositoryPage() {
         // Check if artifacts are already loaded
         const compilationData = repoCompilations[framework.id];
         if (!compilationData || compilationData.artifacts === undefined) {
+          // Spinner while we find out whether artifacts already exist
+          if (!compilationData) {
+            dispatch(
+              setCompilationStatus({
+                repoPath: decodedPath,
+                frameworkId: framework.id,
+                status: 'loading',
+              })
+            );
+          }
           dispatch(
             listArtifacts({ pathOrUrl: decodedPath, pluginId: framework.id })
           );

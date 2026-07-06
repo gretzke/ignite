@@ -33,11 +33,14 @@ compilerEffects.startListening({
     for (const framework of frameworks) {
       const { id: pluginId } = framework;
 
+      // 'loading' until the artifact listing resolves the real state
+      // (setArtifacts flips it to 'ready' or 'idle') — the card shows a
+      // spinner instead of flashing "Not compiled".
       dispatch(
         setCompilationStatus({
           repoPath: pathOrUrl,
           frameworkId: pluginId,
-          status: 'idle',
+          status: 'loading',
         })
       );
 
