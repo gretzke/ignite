@@ -100,13 +100,13 @@ export const repositoriesApi = {
     return triggerToast({
       apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
       loading: {
-        title: 'Switching Branch...',
-        description: `Switching ${repoName} to branch "${branch}"`,
+        title: 'Switching Branch…',
+        description: `${repoName} → "${branch}"`,
         variant: 'info',
       },
       onSuccess: () => ({
         title: 'Branch Switched',
-        description: `Successfully switched ${repoName} to branch "${branch}"`,
+        description: `${repoName} is now on "${branch}"`,
         variant: 'success',
         duration: 4000,
       }),
@@ -161,13 +161,13 @@ export const repositoriesApi = {
     return triggerToast({
       apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
       loading: {
-        title: 'Checking Out Commit...',
-        description: `Checking out ${repoName} to commit "${shortCommit}"`,
+        title: 'Checking Out Commit…',
+        description: `${repoName} → ${shortCommit}`,
         variant: 'info',
       },
       onSuccess: () => ({
         title: 'Commit Checked Out',
-        description: `Successfully checked out ${repoName} to commit "${shortCommit}"`,
+        description: `${repoName} is now at ${shortCommit}`,
         variant: 'success',
         duration: 4000,
       }),
@@ -221,13 +221,13 @@ export const repositoriesApi = {
     return triggerToast({
       apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
       loading: {
-        title: 'Pulling Changes...',
-        description: `Pulling latest changes for ${repoName}`,
+        title: 'Pulling Changes…',
+        description: repoName,
         variant: 'info',
       },
       onSuccess: () => ({
         title: 'Changes Pulled',
-        description: `Successfully pulled latest changes for ${repoName}`,
+        description: repoName,
         variant: 'success',
         duration: 4000,
       }),
@@ -282,7 +282,7 @@ export const repositoriesApi = {
     return triggerToast({
       apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
       loading: {
-        title: 'Discarding Changes...',
+        title: 'Discarding Changes…',
         description: `Resetting ${repoName} to the last commit`,
         variant: 'info',
       },
@@ -325,8 +325,7 @@ export const repositoriesApi = {
           wsSend({ type: 'subscribe', jobId }),
           triggerToast({
             title: 'Repository added',
-            description:
-              'Setting up the repository (initialize, detect, install, compile)…',
+            description: 'Setting up the repository…',
             variant: 'info',
             duration: 4000,
           }),
@@ -355,7 +354,6 @@ export const repositoriesApi = {
           removeRepositoryAction(pathOrUrl),
           triggerToast({
             title: 'Repository removed',
-            description: 'Repository has been removed successfully',
             variant: 'success',
             duration: 3000,
           }),

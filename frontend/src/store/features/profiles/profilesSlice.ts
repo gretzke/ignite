@@ -90,7 +90,6 @@ export const profilesApi = {
       },
       onSuccess: () => ({
         title: 'Profile switched',
-        description: 'Successfully switched to the selected profile',
         variant: 'success',
         duration: 3000,
       }),
@@ -131,8 +130,7 @@ export const profilesApi = {
         variant: 'info',
       },
       onSuccess: () => ({
-        title: 'Profile created',
-        description: `"${profileData.name}" was created successfully`,
+        title: `Profile "${profileData.name}" created`,
         variant: 'success',
         duration: 4000,
       }),
@@ -177,8 +175,7 @@ export const profilesApi = {
         variant: 'info',
       },
       onSuccess: () => ({
-        title: 'Profile updated',
-        description: `"${profileName}" was updated successfully`,
+        title: `Profile "${profileName}" updated`,
         variant: 'success',
         duration: 4000,
       }),
@@ -220,7 +217,6 @@ export const profilesApi = {
       },
       onSuccess: () => ({
         title: 'Profile deleted',
-        description: 'Profile was deleted successfully',
         variant: 'success',
         duration: 4000,
       }),
@@ -257,7 +253,6 @@ export const profilesApi = {
       },
       onSuccess: () => ({
         title: 'Profile archived',
-        description: 'Profile was archived successfully',
         variant: 'success',
         duration: 4000,
       }),
@@ -306,7 +301,6 @@ export const profilesApi = {
       },
       onSuccess: () => ({
         title: 'Profile restored',
-        description: 'Profile was restored successfully',
         variant: 'success',
         duration: 4000,
       }),
