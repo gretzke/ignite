@@ -93,7 +93,7 @@ describe('PluginRegistryLoader union resolution', () => {
     );
     for (const r of results) {
       expect(Object.keys(r)).toContain('foundry');
-      expect(Object.keys(r)).toContain('local-repo');
+      expect(Object.keys(r)).toContain('hardhat');
     }
   });
 });

@@ -48,8 +48,8 @@ describe('ContainerOrchestrator.cleanupDetached', () => {
   it('hands container shutdown to a detached process and stops tracking', () => {
     const orchestrator = freshOrchestrator();
     const managed = seedContainers(orchestrator, {
-      'ignite-repo-local-foo-abc-default': ContainerLifecycle.PERSISTENT,
-      'ignite-repo-local-bar-def-default-session': ContainerLifecycle.SESSION,
+      'ignite-ephemeral-foo-abc': ContainerLifecycle.EPHEMERAL,
+      'ignite-ephemeral-bar-def': ContainerLifecycle.EPHEMERAL,
     });
 
     orchestrator.cleanupDetached();
@@ -62,12 +62,12 @@ describe('ContainerOrchestrator.cleanupDetached', () => {
     expect(spawned.unref).toHaveBeenCalled();
 
     const script = args.join(' ');
-    // Both containers get stopped...
-    expect(script).toContain('ignite-repo-local-foo-abc-default');
-    expect(script).toContain('ignite-repo-local-bar-def-default-session');
-    // ...but only the session container is removed
-    expect(script).toMatch(/rm[^;]*ignite-repo-local-bar-def-default-session/);
-    expect(script).not.toMatch(/rm[^;]*ignite-repo-local-foo-abc-default /);
+    // Every (ephemeral) container is both stopped and removed — nothing
+    // persists across CLI sessions anymore.
+    expect(script).toContain('ignite-ephemeral-foo-abc');
+    expect(script).toContain('ignite-ephemeral-bar-def');
+    expect(script).toMatch(/rm[^;]*ignite-ephemeral-foo-abc/);
+    expect(script).toMatch(/rm[^;]*ignite-ephemeral-bar-def/);
 
     expect(managed.size).toBe(0);
   });

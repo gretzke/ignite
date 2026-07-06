@@ -26,27 +26,23 @@ describe('ContainerOrchestrator grant enforcement', () => {
       image: 'ignite/test:latest',
       name: 'ignite-test',
       lifecycle: ContainerLifecycle.EPHEMERAL,
-      volumesFrom: ['ignite-repo-abc'],
       grant,
     });
     return createContainerMock.mock.calls[0][0] as {
       HostConfig: {
         NetworkMode?: string;
-        VolumesFrom?: string[];
       };
     };
   }
 
-  it('denies network and downgrades volumes to read-only without permissions', async () => {
+  it('denies network without permissions', async () => {
     const opts = await createWith(UNTRUSTED_GRANT);
     expect(opts.HostConfig.NetworkMode).toBe('none');
-    expect(opts.HostConfig.VolumesFrom).toEqual(['ignite-repo-abc:ro']);
   });
 
-  it('grants bridge network and read-write volumes to native plugins', async () => {
+  it('grants bridge network to native plugins', async () => {
     const opts = await createWith(NATIVE_GRANT);
     expect(opts.HostConfig.NetworkMode).toBe('bridge');
-    expect(opts.HostConfig.VolumesFrom).toEqual(['ignite-repo-abc']);
   });
 });
 

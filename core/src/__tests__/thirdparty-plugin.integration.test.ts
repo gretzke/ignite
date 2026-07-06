@@ -15,10 +15,6 @@ import { PluginInstaller } from '../plugins/install/PluginInstaller.js';
 import { LocalFolderBuildBackend } from '../plugins/install/LocalFolderBuildBackend.js';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
 import { TrustManager } from '../plugins/trust/TrustManager.js';
-import {
-  RepoContainerUtils,
-  RepoContainerKind,
-} from '../plugins/utils/RepoContainerUtils.js';
 
 const execFileAsync = promisify(execFile);
 const docker = new Docker();
@@ -33,7 +29,7 @@ const PLUGINS_DIR = path.resolve(__dirname, '../../../plugins');
 // of the developer's real Ignite install, so an interrupted run that skips
 // afterAll can't poison the next run's PERMISSION_REQUIRED assertion. It only
 // redirects the JSON stores; Docker containers/images are global, so the real
-// compile path (local-repo init → repo container → VolumesFrom) is unaffected.
+// compile path (host workspace bind-mount) is unaffected.
 const IGNITE_HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-e2e-'));
 FileSystem.getInstance(IGNITE_HOME);
 
@@ -41,7 +37,6 @@ async function dockerAndBaseReady(): Promise<boolean> {
   try {
     await docker.ping();
     await docker.getImage('ignite/shared:latest').inspect();
-    await docker.getImage('ignite/base_repo-manager:latest').inspect();
     return true;
   } catch {
     return false;
@@ -59,20 +54,12 @@ describe.skipIf(!ready)('third-party plugin runtime (Docker)', () => {
   };
 
   let workspace: string | undefined;
-  let repoContainerName: string | undefined;
 
   afterAll(async () => {
     try {
       await installer.uninstall('stub-compiler');
     } catch {
       /* best effort */
-    }
-    if (repoContainerName) {
-      try {
-        await docker.getContainer(repoContainerName).remove({ force: true });
-      } catch {
-        /* best effort */
-      }
     }
     if (workspace) {
       await fs.rm(workspace, { recursive: true, force: true }).catch(() => {});
@@ -106,34 +93,19 @@ describe.skipIf(!ready)('third-party plugin runtime (Docker)', () => {
       net: false,
     });
 
-    // Full path (base_repo-manager is present, so we exercise it rather than
-    // falling back to a gate-only assertion): stand up a real repo container
-    // via the native `local-repo` plugin's `init` operation — the same
-    // operation the frontend triggers when a repo is first opened — so the
-    // ephemeral compiler container has a persistent container to
-    // VolumesFrom, matching how compiles work in production.
+    // Host workspace dir, bind-mounted directly into the ephemeral compiler
+    // container (Phase 3 deleted the repo-container/VolumesFrom tier — no
+    // `local-repo init` step needed to stand one up).
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'stub-ws-'));
     await execFileAsync('git', ['init', '-q'], { cwd: workspace });
 
-    repoContainerName = await RepoContainerUtils.deriveRepoContainerName(
-      RepoContainerKind.LOCAL,
-      workspace,
-      false
-    );
-
-    const initResult = await PluginExecutor.getInstance().execute(
-      'local-repo',
-      'init',
-      { pathOrUrl: workspace }
-    );
-    expect(initResult.success).toBe(true);
-
     // Now the compile runs from the self-contained image, with hostWrite
-    // approved, against the real repo container's shared volume.
+    // approved, against the host workspace bind-mounted read-write.
     const ok = await PluginExecutor.getInstance().execute(
       'stub-compiler',
       'compile',
-      { pathOrUrl: workspace }
+      { pathOrUrl: workspace },
+      { workspacePath: workspace }
     );
     expect(ok.success).toBe(true);
 
@@ -160,7 +132,8 @@ describe.skipIf(!ready)('third-party plugin runtime (Docker)', () => {
     const again = await PluginExecutor.getInstance().execute(
       'stub-compiler',
       'compile',
-      { pathOrUrl: workspace }
+      { pathOrUrl: workspace },
+      { workspacePath: workspace }
     );
     expect(again.success).toBe(true);
     expect((await readCount()).trim()).toBe('2');

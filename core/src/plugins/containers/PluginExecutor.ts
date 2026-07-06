@@ -1,25 +1,12 @@
 import os from 'node:os';
 import { getLogger } from '../../utils/logger.js';
-import {
-  PluginRegistryLoader,
-  PluginLifecycle,
-  PluginConfig,
-} from '../../assets/PluginRegistryLoader.js';
+import { PluginRegistryLoader, PluginConfig } from '../../assets/PluginRegistryLoader.js';
 import {
   ContainerOrchestrator,
   ContainerLifecycle,
 } from './ContainerOrchestrator.js';
-import {
-  RepoContainerKind,
-  RepoContainerUtils,
-} from '../utils/RepoContainerUtils.js';
 import type { PluginResponse } from '@ignite/plugin-types/types';
-import { PluginType } from '@ignite/plugin-types/types';
 import { PluginExecutionUtils } from '../utils/PluginExecutionUtils.js';
-import { hashWorkspacePath } from '../../utils/startup.js';
-import { GitCredentialManager } from '../utils/GitCredentialManager.js';
-import { KeyedMutex } from '../../utils/KeyedMutex.js';
-import { setTimeout } from 'node:timers/promises';
 import {
   TrustManager,
   type PermissionGrant,
@@ -50,21 +37,14 @@ export function missingPermission(
   return null;
 }
 
-// Persistent Plugin Lifecycle (repo plugins):
-// - Long-lived containers (AutoRemove=false)
-// - Exception: Session containers (current IGNITE_WORKSPACE_PATH) are removed on shutdown
-// - Regular containers are stopped (not removed) on shutdown for data persistence
-//
-// Ephemeral Plugin Lifecycle (processing plugins):
-// - Short-lived containers (AutoRemove=true)
-// - Bind-mounts the host workspace directly at /workspace when
-//   requiresRepo=true (grant enforcement downgrades the bind to :ro)
-// - Automatically removed after operation completion
+// Every plugin is EPHEMERAL (Phase 3 deleted the persistent/repo-container
+// tier): short-lived containers (AutoRemove=true), bind-mounting the host
+// workspace directly at /workspace when requiresRepo=true (grant enforcement
+// downgrades the bind to :ro), automatically removed after the operation
+// completes.
 
-// Threaded through execute() -> the lifecycle-specific executor. Ephemeral
-// plugins that requiresRepo use workspacePath to bind-mount the host
-// workspace directly (Phase 3); the persistent (repo-container) path ignores
-// it — that tier is deleted in Task 4.
+// Threaded through execute() -> executeEphemeralPlugin. Plugins that
+// requiresRepo use workspacePath to bind-mount the host workspace directly.
 export interface ExecuteOpts {
   onOutput?: (text: string) => void;
   workspacePath?: string;
@@ -75,18 +55,13 @@ export interface PluginExecutorDeps {
   containerOrchestrator: Pick<
     ContainerOrchestrator,
     | 'createContainer'
-    | 'startContainer'
     | 'stopContainer'
-    | 'containerExists'
     | 'getContainer'
     | 'cleanup'
     | 'cleanupDetached'
   >;
   registryLoader: Pick<PluginRegistryLoader, 'getPluginConfig'>;
   trust: Pick<TrustManager, 'getGrant'>;
-  getSSHCredentialsForContainer: (
-    pathOrUrl: string
-  ) => Promise<{ privateKey: string; publicKey: string } | null>;
   executeOperation: (typeof PluginExecutionUtils)['executeOperation'];
 }
 
@@ -94,8 +69,6 @@ export interface PluginExecutorDeps {
 export class PluginExecutor {
   private static instance: PluginExecutor;
   private deps: PluginExecutorDeps;
-  // Serializes repo-container resolution per repo to avoid check-then-create races
-  private repoContainerMutex = new KeyedMutex();
 
   constructor(deps?: Partial<PluginExecutorDeps>) {
     this.deps = {
@@ -104,12 +77,6 @@ export class PluginExecutor {
       registryLoader:
         deps?.registryLoader ?? PluginRegistryLoader.getInstance(),
       trust: deps?.trust ?? TrustManager.getInstance(),
-      getSSHCredentialsForContainer:
-        deps?.getSSHCredentialsForContainer ??
-        (async (pathOrUrl: string) =>
-          (
-            await GitCredentialManager.getInstance()
-          ).getSSHCredentialsForContainer(pathOrUrl)),
       executeOperation:
         deps?.executeOperation ??
         PluginExecutionUtils.executeOperation.bind(PluginExecutionUtils),
@@ -124,7 +91,8 @@ export class PluginExecutor {
     return PluginExecutor.instance;
   }
 
-  // Execute a single plugin operation with lifecycle-based container management
+  // Execute a single plugin operation. Every plugin runs in an ephemeral
+  // container (Phase 3 deleted the persistent/repo-container lifecycle).
   async execute(
     pluginId: string,
     operation: string,
@@ -133,12 +101,8 @@ export class PluginExecutor {
   ): Promise<PluginResponse<unknown>> {
     getLogger().info(`🔌 Executing ${pluginId}.${operation}`);
 
-    // Get plugin config for type and lifecycle info
     const pluginConfig =
       await this.deps.registryLoader.getPluginConfig(pluginId);
-    const lifecycle = pluginConfig.lifecycle;
-
-    getLogger().info(`🔄 Plugin ${pluginId} lifecycle: ${lifecycle}`);
 
     // Resolve the trust grant once; everything downstream enforces it.
     const grant = await this.deps.trust.getGrant(pluginId);
@@ -158,77 +122,13 @@ export class PluginExecutor {
       };
     }
 
-    // Execute based on plugin lifecycle from metadata
-    switch (lifecycle) {
-      case PluginLifecycle.PERSISTENT:
-        return await this.executePersistentPlugin(
-          pluginConfig,
-          operation,
-          options,
-          grant,
-          opts
-        );
-      case PluginLifecycle.EPHEMERAL:
-        return await this.executeEphemeralPlugin(
-          pluginConfig,
-          operation,
-          options,
-          grant,
-          opts
-        );
-      default: {
-        const _exhaustiveCheck: never = lifecycle;
-        throw new Error(`Unsupported plugin lifecycle: ${lifecycle}`);
-      }
-    }
-  }
-
-  // Execute persistent plugin - long-lived containers, tracked lifecycle
-  private async executePersistentPlugin(
-    pluginConfig: PluginConfig,
-    operation: string,
-    options: Record<string, unknown>,
-    grant: PermissionGrant,
-    opts?: ExecuteOpts
-  ): Promise<PluginResponse<unknown>> {
-    const pluginId = pluginConfig.metadata.id;
-    getLogger().info(
-      `📁 Executing persistent plugin: ${pluginId}.${operation}`
+    return await this.executeEphemeralPlugin(
+      pluginConfig,
+      operation,
+      options,
+      grant,
+      opts
     );
-
-    // Extract pathOrUrl and resolve container for repo plugins
-    const { pathOrUrl } = this.extractPathInfo(options);
-
-    // Inject credentials for repo-manager plugins. Restricted to built-in
-    // origin: PluginInstaller.install() already rejects installing a
-    // REPO_MANAGER-typed plugin, but this is defense-in-depth against any
-    // future bypass of that check (a third-party plugin self-declares its
-    // type via getInfo, so it must never be trusted to gate credentials).
-    if (
-      pluginConfig.origin === 'builtin' &&
-      pluginConfig.metadata.type === PluginType.REPO_MANAGER
-    ) {
-      options = await this.injectGitCredentials(options, pathOrUrl);
-    }
-
-    const containerName = await this.resolveRepoContainer(
-      pluginId,
-      pathOrUrl,
-      grant
-    );
-
-    // Always release the container reference, even if execution throws
-    try {
-      return await this.executeOperationDirect(
-        pluginConfig,
-        operation,
-        options,
-        containerName,
-        opts
-      );
-    } finally {
-      await this.deps.containerOrchestrator.stopContainer(containerName);
-    }
   }
 
   // Execute ephemeral plugin - short-lived containers, auto-cleanup
@@ -403,198 +303,6 @@ export class PluginExecutor {
         },
       };
     }
-  }
-
-  // Extract pathOrUrl from options for container resolution
-  private extractPathInfo(options: Record<string, unknown>): {
-    pathOrUrl?: string;
-    [key: string]: unknown;
-  } {
-    const { pathOrUrl, ...cleanOptions } = options;
-    return { pathOrUrl: pathOrUrl as string | undefined, ...cleanOptions };
-  }
-
-  // Resolve repository container for persistent plugins.
-  // Serialized per repo path: concurrent requests would otherwise both pass the
-  // containerExists() check and race to create the same container.
-  private async resolveRepoContainer(
-    pluginId: string,
-    pathOrUrl: string | undefined,
-    grant: PermissionGrant
-  ): Promise<string> {
-    if (!pathOrUrl) {
-      throw new Error(
-        `Repository path required for persistent plugin: ${pluginId}`
-      );
-    }
-
-    return this.repoContainerMutex.run(pathOrUrl, () =>
-      this.resolveRepoContainerLocked(pluginId, pathOrUrl, grant)
-    );
-  }
-
-  private async resolveRepoContainerLocked(
-    pluginId: string,
-    pathOrUrl: string,
-    grant: PermissionGrant
-  ): Promise<string> {
-    const kind = RepoContainerUtils.deriveRepoKind(pathOrUrl);
-    const isSession = RepoContainerUtils.isSessionLocal(kind, pathOrUrl);
-
-    // Reuse fast path: prefer an existing persistent container over session.
-    const existing = await RepoContainerUtils.findExistingRepoContainer(
-      pathOrUrl,
-      (name) => this.deps.containerOrchestrator.containerExists(name)
-    );
-    if (existing) {
-      return await this.deps.containerOrchestrator.startContainer(existing);
-    }
-
-    // Strategy: Prefer persistent over session containers
-    let containerName: string;
-    let preferredLifecycle: ContainerLifecycle;
-
-    if (isSession) {
-      // No persistent container exists, use session
-      containerName = await RepoContainerUtils.deriveRepoContainerName(
-        kind,
-        pathOrUrl,
-        true
-      );
-      preferredLifecycle = ContainerLifecycle.SESSION;
-      getLogger().info(
-        `📁 Using session container for temporary workspace: ${containerName}`
-      );
-    } else {
-      // Non-session path - always use persistent
-      containerName = await RepoContainerUtils.deriveRepoContainerName(
-        kind,
-        pathOrUrl,
-        false
-      );
-      preferredLifecycle = ContainerLifecycle.PERSISTENT;
-    }
-
-    // Container doesn't exist, create new one
-    try {
-      return await this.createRepoContainer(
-        kind,
-        pathOrUrl,
-        containerName,
-        preferredLifecycle,
-        pluginId,
-        grant
-      );
-    } catch (error: unknown) {
-      // Handle race condition - another request might have created the container
-      if (
-        (typeof error === 'object' &&
-          error !== null &&
-          'statusCode' in error &&
-          error.statusCode === 409) ||
-        (error instanceof Error && error.message?.includes('already in use'))
-      ) {
-        getLogger().info(
-          `🔄 Container ${containerName} created by concurrent request, attempting to use it`
-        );
-        // Wait a bit and try to start the container created by concurrent request
-        await setTimeout(100);
-        return await this.deps.containerOrchestrator.startContainer(
-          containerName
-        );
-      }
-      throw error;
-    }
-  }
-
-  // Create a new repository container with the specified lifecycle
-  private async createRepoContainer(
-    kind: RepoContainerKind,
-    pathOrUrl: string,
-    containerName: string,
-    lifecycle: ContainerLifecycle,
-    pluginId: string,
-    grant: PermissionGrant
-  ): Promise<string> {
-    const baseImage = 'ignite/base_repo-manager:latest';
-    const labels: Record<string, string> = {
-      'ignite.type': 'repo-manager',
-      'ignite.repoKind': kind,
-      'ignite.plugin': pluginId,
-      'ignite.image': baseImage,
-      'ignite.workspace': '/workspace',
-      'ignite.repoId': hashWorkspacePath(pathOrUrl),
-    };
-
-    if (kind === RepoContainerKind.LOCAL) {
-      labels['ignite.sourcePath'] = pathOrUrl;
-    } else {
-      labels['ignite.sourceUrl'] = pathOrUrl;
-    }
-
-    // Configure volume mounting based on repository type
-    let binds: string[] | undefined;
-    let volumes: Record<string, object> | undefined;
-
-    if (kind === RepoContainerKind.LOCAL) {
-      // Local repos: use bind mounts for direct host access
-      binds = [`${pathOrUrl}:/workspace`];
-    } else {
-      // Cloned repos: use named volumes for isolation and sharing
-      const volumeName = `ignite-cloned-${hashWorkspacePath(pathOrUrl)}`;
-      binds = [`${volumeName}:/workspace`];
-      volumes = { '/workspace': {} };
-
-      getLogger().info(`🗄️ Using named volume for cloned repo: ${volumeName}`);
-    }
-
-    return await this.deps.containerOrchestrator.createContainer({
-      image: baseImage,
-      name: containerName,
-      lifecycle,
-      labels,
-      binds,
-      volumes,
-      grant,
-    });
-  }
-
-  // Inject Git credentials into repo-manager operation options
-  private async injectGitCredentials(
-    options: Record<string, unknown>,
-    pathOrUrl?: string
-  ): Promise<Record<string, unknown>> {
-    if (!pathOrUrl) {
-      getLogger().debug('No pathOrUrl provided, skipping credential injection');
-      return options;
-    }
-
-    // Get SSH credentials for this repository (if available)
-    const sshCredentials =
-      await this.deps.getSSHCredentialsForContainer(pathOrUrl);
-
-    if (!sshCredentials) {
-      getLogger().debug(
-        'Repo public or no SSH credentials available for repository:',
-        pathOrUrl
-      );
-      return options;
-    }
-
-    getLogger().debug('Injecting SSH credentials for repository:', pathOrUrl);
-
-    // Create credentials object matching the plugin interface
-    const gitCredentials = {
-      type: 'ssh' as const,
-      privateKey: sshCredentials.privateKey,
-      publicKey: sshCredentials.publicKey,
-    };
-
-    // Inject credentials into options
-    return {
-      ...options,
-      gitCredentials,
-    };
   }
 
   // Cleanup

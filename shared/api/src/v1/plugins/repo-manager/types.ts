@@ -15,11 +15,20 @@ export interface GetFileRequest extends PathOptions {
   filePath: string;
 }
 
-// API-response types reuse plugin operation results
-import type {
-  RepoGetBranchesResult,
-  RepoInfoResult,
-  RepoGetFileResult,
-} from "@ignite/plugin-types/base/repo-manager";
+// API-response types — previously re-exported from the (now-deleted)
+// containerized repo-manager plugin's base types; RepoService is the sole
+// producer now, so these live here as the shared wire contract.
+export interface RepoGetBranchesResult {
+  branches: string[];
+}
 
-export type { RepoGetBranchesResult, RepoInfoResult, RepoGetFileResult };
+export interface RepoInfoResult {
+  branch: string | null;
+  commit: string;
+  dirty: boolean;
+  upToDate: boolean;
+}
+
+export interface RepoGetFileResult {
+  content: string;
+}

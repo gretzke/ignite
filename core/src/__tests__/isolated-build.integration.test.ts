@@ -26,9 +26,6 @@ const { PluginExecutor } = await import(
   '../plugins/containers/PluginExecutor.js'
 );
 const { TrustManager } = await import('../plugins/trust/TrustManager.js');
-const { RepoContainerUtils, RepoContainerKind } = await import(
-  '../plugins/utils/RepoContainerUtils.js'
-);
 
 const docker = new Docker();
 const FIXTURE = path.join(
@@ -37,20 +34,11 @@ const FIXTURE = path.join(
   'git-plugin'
 );
 
-// Two independent readiness gates so we skip only what genuinely needs a
-// missing prerequisite (the brief's constraint is "skip only if Docker
-// absent"):
-//   - dockerReady:    just `docker.ping()`. The isolated build, the
-//     install-through-build + PERMISSION_REQUIRED gate, and BOTH
-//     egress-enforcement proofs need only Docker + internet, so they run
-//     whenever Docker is present.
-//   - repoImageReady: dockerReady AND ignite/base_repo-manager present. Only
-//     the FULL post-approval compile (which stands up a real repo container
-//     to VolumesFrom) needs that native image. It's built lazily at first
-//     repo-open, so a fresh machine/CI with Docker but no prior Ignite
-//     session won't have it — in that case we fall back to the brief's
-//     documented "gate passes (no longer PERMISSION_REQUIRED)" assertion
-//     rather than skipping the whole file.
+// The only prerequisite left (Phase 3 deleted the native base_repo-manager
+// image + repo-container tier): Docker itself. Compiler containers now
+// bind-mount the host workspace directly, so every assertion below —
+// including the full post-approval compile — runs whenever Docker is
+// present.
 async function pingReady(): Promise<boolean> {
   try {
     await docker.ping();
@@ -59,26 +47,18 @@ async function pingReady(): Promise<boolean> {
     return false;
   }
 }
-async function baseImageReady(): Promise<boolean> {
-  try {
-    await docker.getImage('ignite/base_repo-manager:latest').inspect();
-    return true;
-  } catch {
-    return false;
-  }
-}
 const dockerReady = await pingReady();
-const repoImageReady = dockerReady && (await baseImageReady());
 
 describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
   let repoDir: string;
-  let repoContainerName: string | undefined;
   const installer = new PluginInstaller(new GitSourceBuildBackend());
 
   beforeAll(async () => {
     // Turn the fixture into a local git repo so we can install from a file://
     // URL, then run the real install-through-isolated-build once so every
-    // assertion below shares the same installed plugin.
+    // assertion below shares the same installed plugin. This directory also
+    // doubles as the host workspace the ephemeral compiler container binds
+    // (LOCAL repos: the host path IS the workspace).
     repoDir = await mkdtemp(path.join(tmpdir(), 'ignite-gitrepo-'));
     await cp(FIXTURE, repoDir, { recursive: true });
     const run = (args: string[]) =>
@@ -96,13 +76,6 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
     } catch {
       /* best effort */
     }
-    if (repoContainerName) {
-      try {
-        await docker.getContainer(repoContainerName).remove({ force: true });
-      } catch {
-        /* best effort */
-      }
-    }
     await rm(repoDir, { recursive: true, force: true }).catch(() => {});
     await rm(IGNITE_HOME, { recursive: true, force: true }).catch(() => {});
   });
@@ -116,7 +89,9 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
     // The built image exists on the host after the isolated build + load.
     await docker.getImage(meta.baseImage).inspect();
 
-    // Untrusted by default → compile denied, no container created.
+    // Untrusted by default → compile denied, no container created. The gate
+    // lives in PluginExecutor.execute before any container/workspace work,
+    // so it fires even without a workspacePath.
     const denied = await PluginExecutor.getInstance().execute(
       'git-fixture',
       'compile',
@@ -132,35 +107,23 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
     }
 
     // Approve hostWrite → the permission gate now passes: compile is no
-    // longer PERMISSION_REQUIRED. (The full compile itself needs a repo
-    // container and is asserted in the repoImageReady-gated test below; this
-    // Docker-only assertion is the brief's documented gate-passes fallback.)
+    // longer PERMISSION_REQUIRED.
     await TrustManager.getInstance().setTrust('git-fixture', 'trusted', {
       hostWrite: true,
       net: false,
     });
-    // The gate lives in PluginExecutor.execute before any container work: on
-    // denial it RETURNS { success:false, PERMISSION_REQUIRED }; once past it,
-    // downstream ephemeral-container setup fails here (no repo container is
-    // wired up in this Docker-only test) by THROWING. Either way the gate
-    // passed, so treat a throw as "not a permission denial" and only fail if
-    // we actually get PERMISSION_REQUIRED back.
-    const afterApproval = await PluginExecutor.getInstance()
-      .execute('git-fixture', 'compile', { pathOrUrl: repoDir })
-      .catch((err: unknown) => ({
-        success: false as const,
-        error: { code: 'THREW_PAST_GATE', message: String(err) },
-      }));
+    const afterApproval = await PluginExecutor.getInstance().execute(
+      'git-fixture',
+      'compile',
+      { pathOrUrl: repoDir },
+      { workspacePath: repoDir }
+    );
     if (!afterApproval.success) {
       expect(afterApproval.error.code).not.toBe('PERMISSION_REQUIRED');
     }
   }, 600_000);
 
-  // FULL post-approval compile — the only assertion that needs the native
-  // base_repo-manager image (to stand up a real repo container to
-  // VolumesFrom). Skipped (not failed) when that lazily-built image is
-  // absent; the gate-passes fallback above still runs in that case.
-  it.skipIf(!repoImageReady)(
+  it(
     'runs a full compile after approval, writing the workspace marker',
     async () => {
       // Idempotent: the gate test above already approved, but assert trust
@@ -170,29 +133,14 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
         net: false,
       });
 
-      // Stand up a real repo container via the native `local-repo` plugin's
-      // `init` operation — the same operation the frontend triggers when a
-      // repo is first opened — matching how
-      // thirdparty-plugin.integration.test.ts proves Spec A's compile path.
-      repoContainerName = await RepoContainerUtils.deriveRepoContainerName(
-        RepoContainerKind.LOCAL,
-        repoDir,
-        false
-      );
-      const initResult = await PluginExecutor.getInstance().execute(
-        'local-repo',
-        'init',
-        { pathOrUrl: repoDir }
-      );
-      expect(initResult.success).toBe(true);
-
       // The compile runs from the isolated-build image, with hostWrite
-      // approved, against the real repo container's shared volume, and
-      // succeeds end-to-end.
+      // approved, against the host workspace directly bind-mounted (no repo
+      // container — Phase 3 deleted that tier).
       const ok = await PluginExecutor.getInstance().execute(
         'git-fixture',
         'compile',
-        { pathOrUrl: repoDir }
+        { pathOrUrl: repoDir },
+        { workspacePath: repoDir }
       );
       expect(ok.success).toBe(true);
 

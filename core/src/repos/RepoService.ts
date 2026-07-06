@@ -8,7 +8,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { URL } from 'node:url';
 import { parseGitHubUrl, normalizeRepoUrl } from '@ignite/plugin-types';
-import type { RepoInfoResult } from '@ignite/plugin-types/base/repo-manager';
+import type { RepoInfoResult } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { hashWorkspacePath } from '../utils/startup.js';
@@ -20,10 +20,8 @@ export enum RepoKind {
   CLONED = 'cloned',
 }
 
-// Copied verbatim from core/src/plugins/utils/RepoContainerUtils.ts
-// (RepoContainerUtils.deriveRepoKind), with RepoContainerKind renamed to
-// RepoKind. Do NOT modify RepoContainerUtils to match — it is deleted
-// wholesale in Task 4 once nothing references it anymore.
+// Ported from the now-deleted RepoContainerUtils.deriveRepoKind (Phase 3
+// Task 4), with RepoContainerKind renamed to RepoKind.
 export function deriveRepoKind(pathOrUrl: string): RepoKind {
   // Windows paths like C:\...
   if (/^[A-Za-z]:\\/.test(pathOrUrl)) return RepoKind.LOCAL;

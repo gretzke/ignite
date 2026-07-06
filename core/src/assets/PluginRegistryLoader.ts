@@ -3,16 +3,12 @@ import { AssetManager } from './AssetManager.js';
 import { PluginManager } from '../filesystem/PluginManager.js';
 import { getLogger } from '../utils/logger.js';
 
-export enum PluginLifecycle {
-  PERSISTENT = 'persistent',
-  EPHEMERAL = 'ephemeral',
-}
-
 export type PluginOrigin = 'builtin' | 'installed';
 
+// Every plugin is EPHEMERAL (Phase 3 deleted the persistent repo-manager
+// tier), so PluginConfig no longer carries a lifecycle field.
 export interface PluginConfig {
   metadata: PluginMetadata;
-  lifecycle: PluginLifecycle;
   requiresRepo: boolean;
   origin: PluginOrigin;
 }
@@ -129,17 +125,8 @@ export class PluginRegistryLoader {
     metadata: PluginMetadata,
     origin: PluginOrigin
   ): PluginConfig {
-    if (metadata.type === PluginType.REPO_MANAGER) {
-      return {
-        metadata,
-        lifecycle: PluginLifecycle.PERSISTENT,
-        requiresRepo: false,
-        origin,
-      };
-    }
     return {
       metadata,
-      lifecycle: PluginLifecycle.EPHEMERAL,
       requiresRepo: this.determineRepoRequirement(pluginId, metadata),
       origin,
     };

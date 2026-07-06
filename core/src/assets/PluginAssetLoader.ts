@@ -19,8 +19,8 @@ export class PluginAssetLoader {
   }
 
   // Load a plugin's JavaScript code
-  // @param pluginType - The plugin type (e.g., 'compiler', 'repo-manager')
-  // @param pluginId - The plugin ID (e.g., 'foundry', 'local-repo')
+  // @param pluginType - The plugin type (e.g., 'compiler')
+  // @param pluginId - The plugin ID (e.g., 'foundry', 'hardhat')
   // @returns The plugin JavaScript code as a string
   async loadPlugin(pluginType: string, pluginId: string): Promise<string> {
     const assetPath = `plugins/dist/compressed/${pluginType}_${pluginId}.js.gz`;

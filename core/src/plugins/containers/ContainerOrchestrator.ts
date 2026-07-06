@@ -3,10 +3,10 @@ import Docker from 'dockerode';
 import { getLogger } from '../../utils/logger.js';
 import type { PermissionGrant } from '../trust/TrustManager.js';
 
-// Container lifecycle types
+// Container lifecycle types. Phase 3 deleted the persistent/session repo-
+// container tier: every container is now EPHEMERAL, created once for a
+// single operation and torn down (AutoRemove) immediately after.
 export enum ContainerLifecycle {
-  PERSISTENT = 'persistent', // Saved repos - preserved across CLI sessions
-  SESSION = 'session', // Current workspace - removed on CLI shutdown
   EPHEMERAL = 'ephemeral', // Processing containers - removed immediately after use
 }
 
@@ -29,10 +29,8 @@ export interface ContainerCreateOptions {
   labels?: Record<string, string>;
   binds?: string[];
   volumes?: Record<string, object>; // Named volumes: { '/path': {} }
-  volumesFrom?: string[];
   // Host workspace directory to bind at /workspace. Kept separate from
-  // `binds` so the orchestrator — not the caller — owns the `:ro` decision,
-  // mirroring the VolumesFrom grant rule below.
+  // `binds` so the orchestrator — not the caller — owns the `:ro` decision.
   workspaceBind?: { hostPath: string };
   cmd?: string[];
   env?: string[]; // Container environment, e.g. ['KEY=value']
@@ -45,7 +43,6 @@ export class ContainerOrchestrator {
   private static instance: ContainerOrchestrator;
   private docker = new Docker();
   private managedContainers = new Map<string, ContainerLifecycle>(); // containerName -> lifecycle
-  private containerRefCounts = new Map<string, number>(); // containerName -> reference count
 
   private constructor() {}
 
@@ -66,7 +63,6 @@ export class ContainerOrchestrator {
       labels = {},
       binds,
       volumes,
-      volumesFrom,
       workspaceBind,
       cmd = ['sleep', 'infinity'],
       env,
@@ -83,10 +79,7 @@ export class ContainerOrchestrator {
       'ignite.created': new Date().toISOString(),
     };
 
-    // Without hostWrite, the workspace bind is mounted read-only — same rule
-    // as the VolumesFrom downgrade below, extended to direct workspace binds
-    // (Phase 3: compiler containers bind-mount the host workspace directly
-    // instead of sharing a repo container's volume).
+    // Without hostWrite, the workspace bind is mounted read-only.
     const allBinds = [...(binds ?? [])];
     if (workspaceBind) {
       const suffix = grant.hostWrite ? '' : ':ro';
@@ -104,10 +97,6 @@ export class ContainerOrchestrator {
       HostConfig: {
         AutoRemove: lifecycle === ContainerLifecycle.EPHEMERAL, // Only ephemeral containers auto-remove
         Binds: allBinds.length > 0 ? allBinds : undefined,
-        // Without hostWrite, shared repo volumes are mounted read-only.
-        VolumesFrom: volumesFrom?.map((source) =>
-          grant.hostWrite ? source : `${source}:ro`
-        ),
         // Without net, the container gets no network stack at all.
         NetworkMode: grant.net ? 'bridge' : 'none',
       },
@@ -120,10 +109,7 @@ export class ContainerOrchestrator {
       // Track the container for lifecycle management
       this.managedContainers.set(name, lifecycle);
 
-      // Initialize reference count
-      this.containerRefCounts.set(name, 1);
-
-      getLogger().info(`✅ ${lifecycle} container started: ${name} (refs: 1)`);
+      getLogger().info(`✅ ${lifecycle} container started: ${name}`);
       return name;
     } catch (error) {
       const statusCode = (error as { statusCode?: number })?.statusCode;
@@ -163,13 +149,7 @@ export class ContainerOrchestrator {
         this.managedContainers.set(name, lifecycle);
       }
 
-      // Increment reference count
-      const currentCount = this.containerRefCounts.get(name) || 0;
-      this.containerRefCounts.set(name, currentCount + 1);
-
-      getLogger().info(
-        `🔄 Restarted container: ${name} (refs: ${currentCount + 1})`
-      );
+      getLogger().info(`🔄 Restarted container: ${name}`);
       return name;
     } catch (error: unknown) {
       // Handle case where container is already running (HTTP 304)
@@ -181,7 +161,7 @@ export class ContainerOrchestrator {
       ) {
         getLogger().info(`✅ Container ${name} is already running`);
 
-        // Still need to update tracking and reference count
+        // Still need to update tracking
         const container = this.docker.getContainer(name);
         const info = await container.inspect();
         const lifecycle = info.Config?.Labels?.[
@@ -191,13 +171,7 @@ export class ContainerOrchestrator {
           this.managedContainers.set(name, lifecycle);
         }
 
-        // Increment reference count
-        const currentCount = this.containerRefCounts.get(name) || 0;
-        this.containerRefCounts.set(name, currentCount + 1);
-
-        getLogger().info(
-          `🔄 Using already running container: ${name} (refs: ${currentCount + 1})`
-        );
+        getLogger().info(`🔄 Using already running container: ${name}`);
         return name;
       }
 
@@ -206,39 +180,18 @@ export class ContainerOrchestrator {
     }
   }
 
-  // Stop a container (but don't remove unless it's ephemeral with AutoRemove)
+  // Stop a container. Ephemeral containers (AutoRemove=true) disappear once
+  // stopped; there is no other lifecycle left to preserve.
   async stopContainer(name: string): Promise<void> {
     try {
-      // Decrement reference count
-      const currentCount = this.containerRefCounts.get(name) || 0;
-      const newCount = Math.max(0, currentCount - 1);
-      this.containerRefCounts.set(name, newCount);
+      const container = this.docker.getContainer(name);
+      await container.stop({ t: STOP_GRACE_SECONDS });
 
+      const lifecycle = this.managedContainers.get(name);
+      this.managedContainers.delete(name);
       getLogger().info(
-        `📉 Container ${name} ref count: ${currentCount} -> ${newCount}`
+        `🛑 Stopped ${lifecycle ?? 'untracked'} container (auto-removed): ${name}`
       );
-
-      // Only actually stop the container if reference count reaches zero
-      if (newCount === 0) {
-        const container = this.docker.getContainer(name);
-        await container.stop({ t: STOP_GRACE_SECONDS });
-
-        const lifecycle = this.managedContainers.get(name);
-        if (lifecycle === ContainerLifecycle.EPHEMERAL) {
-          // Ephemeral containers auto-remove, so untrack them
-          this.managedContainers.delete(name);
-          this.containerRefCounts.delete(name);
-          getLogger().info(
-            `🛑 Stopped ephemeral container (auto-removed): ${name}`
-          );
-        } else {
-          getLogger().info(`🛑 Stopped ${lifecycle} container: ${name}`);
-        }
-      } else {
-        getLogger().info(
-          `⏸️ Container ${name} still in use (refs: ${newCount}), not stopping`
-        );
-      }
     } catch (error) {
       getLogger().warn(`⚠️ Failed to stop container ${name}:`, error);
     }
@@ -257,34 +210,22 @@ export class ContainerOrchestrator {
 
   // Fast-path cleanup for CLI shutdown: hand the container stops to a
   // detached `docker` process so the CLI can exit immediately instead of
-  // waiting out every container's stop grace period. Same semantics as
-  // cleanup(): everything is stopped, only session/ephemeral containers are
-  // removed, and the stop keeps STOP_GRACE_SECONDS (an instant kill can
-  // crash Docker Desktop's VM, see docs/docker-desktop-vm-crashes.md).
+  // waiting out every container's stop grace period. Every tracked container
+  // is ephemeral, so everything is both stopped and removed; the stop keeps
+  // STOP_GRACE_SECONDS (an instant kill can crash Docker Desktop's VM, see
+  // docs/docker-desktop-vm-crashes.md).
   cleanupDetached(): void {
     if (this.managedContainers.size === 0) {
       return;
     }
 
-    const stopNames: string[] = [];
-    const removeNames: string[] = [];
-    for (const [containerName, lifecycle] of this.managedContainers.entries()) {
-      stopNames.push(containerName);
-      if (
-        lifecycle === ContainerLifecycle.SESSION ||
-        lifecycle === ContainerLifecycle.EPHEMERAL
-      ) {
-        removeNames.push(containerName);
-      }
-    }
+    const names = [...this.managedContainers.keys()];
 
-    // Container names are derived by RepoContainerUtils (alphanumerics and
-    // dashes only), so plain space-joining is shell-safe here.
+    // Container names are alphanumerics and dashes only, so plain
+    // space-joining is shell-safe here.
     const script = [
-      `docker stop -t ${STOP_GRACE_SECONDS} ${stopNames.join(' ')} >/dev/null 2>&1`,
-      removeNames.length > 0
-        ? `docker rm -f ${removeNames.join(' ')} >/dev/null 2>&1`
-        : ':',
+      `docker stop -t ${STOP_GRACE_SECONDS} ${names.join(' ')} >/dev/null 2>&1`,
+      `docker rm -f ${names.join(' ')} >/dev/null 2>&1`,
     ].join('; ');
 
     try {
@@ -294,10 +235,9 @@ export class ContainerOrchestrator {
       });
       child.unref();
       getLogger().info(
-        `🧹 Detached shutdown of ${stopNames.length} container(s) started`
+        `🧹 Detached shutdown of ${names.length} container(s) started`
       );
       this.managedContainers.clear();
-      this.containerRefCounts.clear();
     } catch (error) {
       // Leaving containers running is an acceptable fallback; they are
       // reconciled the next time the CLI starts.
@@ -305,7 +245,8 @@ export class ContainerOrchestrator {
     }
   }
 
-  // Cleanup on CLI shutdown - remove ephemeral and session containers, preserve persistent
+  // Cleanup on CLI shutdown - every tracked container is ephemeral, so all
+  // are stopped and removed; nothing persists.
   async cleanup(): Promise<void> {
     if (this.managedContainers.size === 0) {
       getLogger().info('🧹 No managed containers to clean up');
@@ -318,21 +259,17 @@ export class ContainerOrchestrator {
 
     const cleanupPromises: Promise<void>[] = [];
 
-    for (const [containerName, lifecycle] of this.managedContainers.entries()) {
-      cleanupPromises.push(this.cleanupContainer(containerName, lifecycle));
+    for (const containerName of this.managedContainers.keys()) {
+      cleanupPromises.push(this.cleanupContainer(containerName));
     }
 
     await Promise.all(cleanupPromises);
     this.managedContainers.clear();
-    this.containerRefCounts.clear();
 
     getLogger().info('✅ Container cleanup completed');
   }
 
-  private async cleanupContainer(
-    containerName: string,
-    lifecycle: ContainerLifecycle
-  ): Promise<void> {
+  private async cleanupContainer(containerName: string): Promise<void> {
     try {
       const container = this.docker.getContainer(containerName);
 
@@ -344,32 +281,13 @@ export class ContainerOrchestrator {
         getLogger().debug(`Container ${containerName} already stopped`);
       }
 
-      // Handle removal based on lifecycle
-      if (
-        lifecycle === ContainerLifecycle.SESSION ||
-        lifecycle === ContainerLifecycle.EPHEMERAL
-      ) {
-        try {
-          await container.remove({ force: true });
-          getLogger().info(
-            `🧽 Removed ${lifecycle} container: ${containerName}`
-          );
-        } catch (removeError) {
-          // Ephemeral containers might already be auto-removed
-          if (lifecycle === ContainerLifecycle.EPHEMERAL) {
-            getLogger().info(
-              `🧽 Ephemeral container already auto-removed: ${containerName}`
-            );
-          } else {
-            getLogger().warn(
-              `Failed to remove ${lifecycle} container ${containerName}:`,
-              removeError
-            );
-          }
-        }
-      } else {
+      try {
+        await container.remove({ force: true });
+        getLogger().info(`🧽 Removed container: ${containerName}`);
+      } catch {
+        // Ephemeral containers might already be auto-removed
         getLogger().info(
-          `💾 Preserved ${lifecycle} container: ${containerName}`
+          `🧽 Container already auto-removed: ${containerName}`
         );
       }
     } catch (error) {

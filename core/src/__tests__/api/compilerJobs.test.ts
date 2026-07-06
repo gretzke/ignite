@@ -9,10 +9,7 @@ import {
   type CompilerRepoServiceLike,
 } from '../../api/plugins/compiler/index.js';
 import { ErrorCodes } from '../../types/errors.js';
-import {
-  PluginLifecycle,
-  type PluginConfig,
-} from '../../assets/PluginRegistryLoader.js';
+import type { PluginConfig } from '../../assets/PluginRegistryLoader.js';
 import type { JobContext, JobRunner } from '../../jobs/JobManager.js';
 
 function makeCtx(log: (line: string) => void = () => {}): JobContext {
@@ -52,7 +49,6 @@ function makeConfig(id: string, name: string, type: PluginType): PluginConfig {
       version: '1.0.0',
       baseImage: `ignite/installed_${id}:1.0.0`,
     },
-    lifecycle: PluginLifecycle.EPHEMERAL,
     requiresRepo: false,
     origin: 'builtin',
   };

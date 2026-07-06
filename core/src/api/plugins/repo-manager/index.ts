@@ -2,16 +2,17 @@
 // `init` is the one job-backed op (cloning is slow/network-bound); every
 // other op is fast on host disk and stays synchronous.
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import {
-  RepoCheckoutBranchOptions,
-  RepoCheckoutCommitOptions,
+import type { PathOptions } from '@ignite/plugin-types';
+import type {
+  IApiResponse,
+  JobStartedData,
+  CheckoutBranchRequest,
+  CheckoutCommitRequest,
+  GetFileRequest,
   RepoGetBranchesResult,
   RepoInfoResult,
-  RepoGetFileOptions,
   RepoGetFileResult,
-} from '@ignite/plugin-types/base/repo-manager';
-import type { PathOptions } from '@ignite/plugin-types';
-import type { IApiResponse, JobStartedData } from '@ignite/api';
+} from '@ignite/api';
 import type { z } from 'zod';
 import {
   RepoService,
@@ -132,7 +133,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
 
     checkoutBranch: async (
       request: FastifyRequest<{
-        Body: PathOptions & RepoCheckoutBranchOptions;
+        Body: CheckoutBranchRequest;
       }>,
       reply: FastifyReply
     ): Promise<z.ZodNull> => {
@@ -151,7 +152,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
 
     checkoutCommit: async (
       request: FastifyRequest<{
-        Body: PathOptions & RepoCheckoutCommitOptions;
+        Body: CheckoutCommitRequest;
       }>,
       reply: FastifyReply
     ): Promise<z.ZodNull> => {
@@ -217,7 +218,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
     },
 
     getFile: async (
-      request: FastifyRequest<{ Body: PathOptions & RepoGetFileOptions }>,
+      request: FastifyRequest<{ Body: GetFileRequest }>,
       reply: FastifyReply
     ): Promise<IApiResponse<RepoGetFileResult>> => {
       const { pathOrUrl, filePath } = request.body;

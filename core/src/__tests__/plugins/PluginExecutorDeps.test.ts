@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PluginExecutor } from '../../plugins/containers/PluginExecutor.js';
-import { PluginLifecycle } from '../../assets/PluginRegistryLoader.js';
 import { PluginType } from '@ignite/plugin-types/types';
 
 const GRANT_NONE = { trust: 'untrusted', hostWrite: false, net: false };
@@ -16,7 +15,6 @@ function makeExecutor(overrides: Record<string, unknown> = {}) {
           type: PluginType.COMPILER,
           baseImage: 'img:latest',
         },
-        lifecycle: PluginLifecycle.EPHEMERAL,
         requiresRepo: false,
         origin: 'builtin',
       }),
@@ -24,9 +22,7 @@ function makeExecutor(overrides: Record<string, unknown> = {}) {
     trust: { getGrant: async () => GRANT_ALL },
     containerOrchestrator: {
       createContainer: vi.fn(async (opts: { name: string }) => opts.name),
-      startContainer: vi.fn(async (name: string) => name),
       stopContainer: vi.fn(async () => {}),
-      containerExists: vi.fn(async () => false),
       getContainer: vi.fn(() => ({
         exec: vi.fn(async () => ({
           start: vi.fn(async () => ({
@@ -40,7 +36,6 @@ function makeExecutor(overrides: Record<string, unknown> = {}) {
       cleanup: vi.fn(async () => {}),
       cleanupDetached: vi.fn(),
     },
-    getSSHCredentialsForContainer: vi.fn(async () => null),
     executeOperation,
     ...overrides,
   };
@@ -108,27 +103,6 @@ describe('PluginExecutor with injected deps', () => {
     );
   });
 
-  it('never injects git credentials for non-builtin plugins', async () => {
-    const { executor, deps } = makeExecutor({
-      registryLoader: {
-        getPluginConfig: async () => ({
-          metadata: {
-            id: 'thirdparty',
-            type: PluginType.REPO_MANAGER,
-            baseImage: 'img:latest',
-          },
-          lifecycle: PluginLifecycle.PERSISTENT,
-          requiresRepo: true,
-          origin: 'installed',
-        }),
-      },
-    });
-    await executor
-      .execute('thirdparty', 'info', { pathOrUrl: '/repo' })
-      .catch(() => {});
-    expect(deps.getSSHCredentialsForContainer).not.toHaveBeenCalled();
-  });
-
   describe('ephemeral workspace bind-mount (Phase 3)', () => {
     function makeRequiresRepoExecutor(overrides: Record<string, unknown> = {}) {
       return makeExecutor({
@@ -139,7 +113,6 @@ describe('PluginExecutor with injected deps', () => {
               type: PluginType.COMPILER,
               baseImage: 'img:latest',
             },
-            lifecycle: PluginLifecycle.EPHEMERAL,
             requiresRepo: true,
             origin: 'builtin',
           }),
@@ -148,7 +121,7 @@ describe('PluginExecutor with injected deps', () => {
       });
     }
 
-    it('threads opts.workspacePath into createContainer as workspaceBind, never touching repo-container resolution', async () => {
+    it('threads opts.workspacePath into createContainer as workspaceBind', async () => {
       const { executor, deps } = makeRequiresRepoExecutor();
 
       await executor.execute(
@@ -164,8 +137,6 @@ describe('PluginExecutor with injected deps', () => {
       const call = createContainer.mock.calls[0][0];
       expect(call.workspaceBind).toEqual({ hostPath: '/host/workspace' });
       expect(call.volumesFrom).toBeUndefined();
-      // The ephemeral path must never resolve or check a repo container.
-      expect(deps.containerOrchestrator.containerExists).not.toHaveBeenCalled();
     });
 
     it('rejects execute() when requiresRepo is true but no workspacePath is provided', async () => {

@@ -1,11 +1,11 @@
 // Generic type-safe plugin execution system
 import type { PluginResponse } from "./types.js";
 import type { CompilerOperations } from "./base/compiler/types.js";
-import type { RepoManagerOperations } from "./base/repo-manager/types.js";
 import { frameResult } from "./utils/protocol.js";
 
-// Union of all operation types
-type AllOperations = CompilerOperations & RepoManagerOperations;
+// Every plugin is now a compiler plugin (the repo-manager tier was deleted —
+// repos are host data managed by core's RepoService).
+type AllOperations = CompilerOperations;
 
 // Generic plugin execution interface
 export type IPluginExecutor<T extends keyof AllOperations> = {

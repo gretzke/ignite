@@ -8,7 +8,7 @@ import { FileSystem } from './filesystem/FileSystem.js';
 import { ProfileManager } from './filesystem/ProfileManager.js';
 import { PluginManager } from './filesystem/PluginManager.js';
 import { PluginExecutor } from './plugins/containers/PluginExecutor.js';
-import { setGlobalLogger } from './utils/logger.js';
+import { setGlobalLogger, getLogger } from './utils/logger.js';
 import {
   openBrowser,
   getVersion,
@@ -21,6 +21,52 @@ import { createWsHandler } from './api/ws.js';
 import { StaticAssetHandler } from './assets/StaticAssetHandler.js';
 import { validatePluginImages } from './plugins/utils/ImageValidator.js';
 import { JobManager } from './jobs/JobManager.js';
+import { runCommand } from './utils/runCommand.js';
+
+// Best-effort cleanup of containers/volumes left behind by the pre-Phase-3
+// containerized repo-manager tier (deleted architecture: repos now live on
+// the host, managed by core's RepoService). Runs once at every startup;
+// idempotent (no-op once the leftovers are gone) and never throws.
+async function sweepLegacyRepoManagerResources(): Promise<void> {
+  try {
+    const containers = await runCommand('docker', [
+      'ps',
+      '-aq',
+      '--filter',
+      'label=ignite.type=repo-manager',
+    ]);
+    const containerIds = containers.stdout
+      .split('\n')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (containerIds.length > 0) {
+      await runCommand('docker', ['rm', '-f', ...containerIds]);
+    }
+
+    const volumes = await runCommand('docker', [
+      'volume',
+      'ls',
+      '-q',
+      '--filter',
+      'name=ignite-cloned-',
+    ]);
+    const volumeNames = volumes.stdout
+      .split('\n')
+      .map((name) => name.trim())
+      .filter(Boolean);
+    if (volumeNames.length > 0) {
+      await runCommand('docker', ['volume', 'rm', '-f', ...volumeNames]);
+    }
+
+    if (containerIds.length > 0 || volumeNames.length > 0) {
+      getLogger().info(
+        `🧹 Legacy sweep: removed ${containerIds.length} repo-manager container(s), ${volumeNames.length} cloned-repo volume(s)`
+      );
+    }
+  } catch (error) {
+    getLogger().warn(`⚠️ Legacy repo-manager sweep failed: ${error}`);
+  }
+}
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -50,6 +96,13 @@ async function ignite(workspacePath: string): Promise<{
   const pluginManager = PluginManager.getInstance();
   const pluginExecutor = PluginExecutor.getInstance();
   await JobManager.getInstance().recover();
+
+  // One-time legacy sweep: earlier Ignite versions ran a containerized
+  // repo-manager tier (persistent containers + named clone volumes). Users
+  // upgrading from that architecture may have leftovers on disk; best-effort
+  // remove them so `docker ps -a` / `docker volume ls` stay clean. Never
+  // fatal — a failure here must not block startup.
+  await sweepLegacyRepoManagerResources();
 
   // Pre-startup checks
   app.log.info(`🔍 Workspace path: ${workspacePath}`);

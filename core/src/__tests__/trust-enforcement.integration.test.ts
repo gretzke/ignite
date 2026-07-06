@@ -53,7 +53,7 @@ describe.skipIf(!available)('trust enforcement (Docker)', () => {
     await ContainerOrchestrator.getInstance().createContainer({
       image: IMAGE,
       name,
-      lifecycle: ContainerLifecycle.PERSISTENT,
+      lifecycle: ContainerLifecycle.EPHEMERAL,
       cmd: ['sleep', '30'],
       grant,
     });
