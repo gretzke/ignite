@@ -132,7 +132,7 @@ export default function StatusCard({
 
       {/* Framework details */}
       {frameworks.length > 0 && (
-        <div className="pt-6 border-t border-white/10">
+        <div className="mt-6 pt-6 border-t border-white/10">
           <div className="space-y-3">
             {frameworks.map((framework) => {
               const compilation = compilations[framework.id];
@@ -167,13 +167,15 @@ export default function StatusCard({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <span className={`text-xs ${frameworkDisplay.color}`}>
-                      {frameworkStatus === 'idle' && 'Not compiled'}
-                      {frameworkStatus === 'installing' && 'Installing...'}
-                      {frameworkStatus === 'compiling' && 'Compiling...'}
-                      {frameworkStatus === 'ready' && 'Ready'}
-                      {frameworkStatus === 'error' && 'Error'}
-                    </span>
+                    {(frameworkStatus !== 'idle' || frameworks.length > 1) && (
+                      <span className={`text-xs ${frameworkDisplay.color}`}>
+                        {frameworkStatus === 'idle' && 'Not compiled'}
+                        {frameworkStatus === 'installing' && 'Installing...'}
+                        {frameworkStatus === 'compiling' && 'Compiling...'}
+                        {frameworkStatus === 'ready' && 'Ready'}
+                        {frameworkStatus === 'error' && 'Error'}
+                      </span>
+                    )}
 
                     {/* Show error details if available */}
                     {frameworkStatus === 'error' && compilation?.error && (
