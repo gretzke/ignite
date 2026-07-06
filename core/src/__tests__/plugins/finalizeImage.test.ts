@@ -2,20 +2,34 @@ import { describe, it, expect } from 'vitest';
 import { RESULT_BEGIN, RESULT_END } from '@ignite/plugin-types';
 import { parsePluginMetadata } from '../../plugins/install/finalizeImage.js';
 
+const wrap = (json: string): string => `${RESULT_BEGIN}${json}${RESULT_END}`;
+
 describe('parsePluginMetadata', () => {
-  it('parses a bare metadata JSON object', () => {
+  it('parses a sentinel-framed bare metadata object', () => {
     const meta = parsePluginMetadata(
-      '{"id":"waffle","type":"compiler","name":"W","version":"1.0.0","baseImage":"x"}'
+      wrap(
+        '{"id":"waffle","type":"compiler","name":"W","version":"1.0.0","baseImage":"x"}'
+      )
     );
     expect(meta.id).toBe('waffle');
     expect(meta.type).toBe('compiler');
   });
 
-  it('unwraps a { data } envelope (getInfo shape)', () => {
+  it('unwraps a { data } envelope (getInfo shape), ignoring surrounding noise', () => {
     const meta = parsePluginMetadata(
-      'noise\n{"data":{"id":"waffle","type":"compiler","name":"W","version":"1.0.0","baseImage":"x"}}\n'
+      `noise\n${wrap(
+        '{"data":{"id":"waffle","type":"compiler","name":"W","version":"1.0.0","baseImage":"x"}}'
+      )}\n`
     );
     expect(meta.id).toBe('waffle');
+  });
+
+  it('throws for un-framed output (no legacy bare-JSON fallback)', () => {
+    expect(() =>
+      parsePluginMetadata(
+        '{"id":"waffle","type":"compiler","name":"W","version":"1.0.0","baseImage":"x"}'
+      )
+    ).toThrow(/could not read plugin metadata/i);
   });
 
   it('throws when no JSON object is present', () => {
@@ -25,9 +39,17 @@ describe('parsePluginMetadata', () => {
   });
 
   it('throws when id or type is missing', () => {
-    expect(() => parsePluginMetadata('{"id":"waffle"}')).toThrow(
+    expect(() => parsePluginMetadata(wrap('{"id":"waffle"}'))).toThrow(
       /missing id\/type/i
     );
+  });
+
+  it('surfaces the plugin error when getInfo reports success:false', () => {
+    expect(() =>
+      parsePluginMetadata(
+        wrap('{"success":false,"error":{"code":"BOOM","message":"exploded"}}')
+      )
+    ).toThrow(/getInfo reported an error: exploded/);
   });
 
   it('prefers a sentinel-framed envelope over stray braces in the log', () => {

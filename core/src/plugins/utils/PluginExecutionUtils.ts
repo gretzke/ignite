@@ -8,6 +8,7 @@ import { getLogger } from '../../utils/logger.js';
 import type { PluginOrigin } from '../../assets/PluginRegistryLoader.js';
 import {
   createDockerStreamDemuxer,
+  createSentinelLogFilter,
   parsePluginOutput,
 } from './pluginTransport.js';
 import { INSTALLED_PLUGIN_ENTRYPOINT } from '../install/types.js';
@@ -28,7 +29,9 @@ export class PluginExecutionUtils {
       return ['node', INSTALLED_PLUGIN_ENTRYPOINT];
     }
     if (pluginCode === null) {
-      throw new Error('Built-in plugin execution requires injected bundle code');
+      throw new Error(
+        'Built-in plugin execution requires injected bundle code'
+      );
     }
     return ['node', '-e', pluginCode];
   }
@@ -41,8 +44,14 @@ export class PluginExecutionUtils {
     options: unknown,
     containerName: string,
     origin: PluginOrigin,
-    onOutput?: (text: string) => void
+    onOutput?: (text: string) => void,
+    signal?: AbortSignal
   ): Promise<PluginResponse<TResult>> {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new Error(`${pluginId}.${operation} aborted before start`);
+    }
     const container = this.containerOrchestrator.getContainer(containerName);
 
     // Built-in bundles are injected from the host; installed plugins run the
@@ -72,8 +81,10 @@ export class PluginExecutionUtils {
 
     return new Promise((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let removeAbortListener: (() => void) | undefined;
       const settle = <T>(fn: (value: T) => void, value: T) => {
         if (timer) clearTimeout(timer);
+        removeAbortListener?.();
         fn(value);
       };
 
@@ -86,16 +97,34 @@ export class PluginExecutionUtils {
           }
 
           if (!stream) {
-            settle(
-              reject,
-              new Error('No stream returned from container exec')
-            );
+            settle(reject, new Error('No stream returned from container exec'));
             return;
+          }
+
+          // Job cancellation: destroy the exec stream and reject. The caller
+          // (PluginExecutor) stops the ephemeral container in its finally,
+          // which kills the exec'd plugin process (AutoRemove then reaps the
+          // container) — cancel must not leave a zombie writing to the
+          // mounted workspace.
+          if (signal) {
+            const onAbort = (): void => {
+              stream.destroy();
+              settle(
+                reject,
+                signal.reason instanceof Error
+                  ? signal.reason
+                  : new Error(`Plugin ${pluginId}.${operation} cancelled`)
+              );
+            };
+            signal.addEventListener('abort', onAbort, { once: true });
+            removeAbortListener = () =>
+              signal.removeEventListener('abort', onAbort);
           }
 
           timer = setTimeout(() => {
             stream.destroy();
-            reject(
+            settle(
+              reject,
               new Error(
                 `Plugin ${pluginId}.${operation} timed out after ${timeoutMs}ms`
               )
@@ -103,10 +132,13 @@ export class PluginExecutionUtils {
           }, timeoutMs);
 
           // Both streams feed the same onOutput sink — job logs don't
-          // distinguish stdout/stderr, and the sentinel-framed result line
-          // is intentionally not filtered out here (by design; see task brief).
+          // distinguish stdout/stderr. The sentinel-framed result block is a
+          // protocol detail, so it is filtered out of user-visible job logs.
+          const logSink = onOutput
+            ? createSentinelLogFilter(onOutput)
+            : undefined;
           const demux = createDockerStreamDemuxer(
-            onOutput ? (_stream, text) => onOutput(text) : undefined
+            logSink ? (_stream, text) => logSink(text) : undefined
           );
 
           stream.on('data', (chunk: Buffer) => demux.push(chunk));

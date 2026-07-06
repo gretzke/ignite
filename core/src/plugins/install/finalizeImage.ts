@@ -10,9 +10,9 @@ import { parsePluginOutput } from '../utils/pluginTransport.js';
 const DESCRIBE_TIMEOUT_MS = 30_000;
 
 // Pure: extract and validate the metadata JSON emitted by the image's getInfo
-// operation via the shared sentinel-first parser (legacy brace-regex fallback
-// for images built before the framing protocol). Accepts a bare metadata
-// object or a { data: metadata } envelope.
+// operation via the shared sentinel-only parser. Accepts a bare metadata
+// object or a { data: metadata } envelope; a { success: false } envelope
+// surfaces the plugin's own error instead of a generic missing-id complaint.
 export function parsePluginMetadata(logText: string): PluginMetadata {
   let parsed: unknown;
   try {
@@ -22,7 +22,16 @@ export function parsePluginMetadata(logText: string): PluginMetadata {
       `Could not read plugin metadata from image output: ${error}`
     );
   }
-  const envelope = parsed as { data?: unknown } | null;
+  const envelope = parsed as {
+    success?: boolean;
+    data?: unknown;
+    error?: { message?: string };
+  } | null;
+  if (envelope?.success === false) {
+    throw new Error(
+      `Plugin getInfo reported an error: ${envelope.error?.message ?? 'unknown error'}`
+    );
+  }
   const meta = (envelope?.data ?? parsed) as Partial<PluginMetadata> | null;
   if (!meta?.id || !meta?.type) {
     throw new Error('Plugin metadata missing id/type in image output');
@@ -104,6 +113,9 @@ export async function finalizeBuiltImage(
       .tag({ repo: `ignite/installed_${metadata.id}`, tag: metadata.version });
     return { imageTag, metadata: { ...metadata, baseImage: imageTag } };
   } finally {
-    await docker.getImage(tempTag).remove({ force: true }).catch(() => {});
+    await docker
+      .getImage(tempTag)
+      .remove({ force: true })
+      .catch(() => {});
   }
 }

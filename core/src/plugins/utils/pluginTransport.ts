@@ -89,14 +89,106 @@ export function createDockerStreamDemuxer(
       }
     },
     result(): DemuxedOutput {
+      // Flush anything still buffered at stream end rather than dropping it:
+      // a stream that ended before the 8-byte mode sniff (short raw output —
+      // '{}' is a complete plugin response), or a truncated trailing
+      // multiplexed frame whose payload is still worth salvaging for
+      // diagnostics. Buffer is cleared so the flush happens exactly once.
+      if (muxBuffer.length > 0) {
+        if (mode === 'multiplexed') {
+          // Partial frame: decode whatever payload bytes arrived after the
+          // header. A partial header alone (<8 bytes) carries no payload.
+          if (muxBuffer.length > 8) {
+            const streamType = muxBuffer[0];
+            const text = muxBuffer.subarray(8).toString('utf8');
+            if (streamType === 2) {
+              stderr += text;
+              emit('stderr', text);
+            } else if (streamType === 1) {
+              stdout += text;
+              emit('stdout', text);
+            }
+          }
+        } else {
+          // 'unknown': the whole stream was shorter than the sniff window,
+          // which can only be raw output.
+          const text = muxBuffer.toString('utf8');
+          stdout += text;
+          emit('stdout', text);
+        }
+        muxBuffer = Buffer.alloc(0);
+      }
       return { stdout, stderr };
     },
   };
 }
 
-// Extract the plugin's JSON result: prefer the last sentinel-framed block;
-// fall back to the legacy control-char-strip + brace-regex for plugin images
-// built before the sentinel protocol. Throws on unparseable output.
+// Returns the length of the longest suffix of `text` that is a proper
+// prefix of `needle` — i.e. the bytes that might be the start of `needle`
+// split across a chunk boundary.
+function partialSuffixLength(text: string, needle: string): number {
+  const max = Math.min(text.length, needle.length - 1);
+  for (let i = max; i > 0; i--) {
+    if (needle.startsWith(text.slice(text.length - i))) return i;
+  }
+  return 0;
+}
+
+// Wraps a job-log sink so the sentinel-framed result block (a protocol
+// detail, not tool output) never reaches user-visible logs, even when the
+// block spans chunk boundaries. Whitespace-only chunks are dropped — they
+// render as empty log lines. Text held back as a possible sentinel prefix
+// is emitted as soon as it is disproven.
+export function createSentinelLogFilter(
+  onText: (text: string) => void
+): (text: string) => void {
+  let pending = '';
+  let suppressing = false;
+
+  const emit = (text: string): void => {
+    if (text.trim().length === 0) return;
+    onText(text);
+  };
+
+  return (chunk: string): void => {
+    let buf = pending + chunk;
+    pending = '';
+
+    for (;;) {
+      if (suppressing) {
+        const end = buf.indexOf(RESULT_END);
+        if (end === -1) {
+          // Still inside the block: retain only a possible partial
+          // RESULT_END at the tail so we can detect completion next chunk;
+          // everything else is suppressed.
+          pending = buf.slice(
+            buf.length - partialSuffixLength(buf, RESULT_END)
+          );
+          return;
+        }
+        buf = buf.slice(end + RESULT_END.length);
+        suppressing = false;
+        continue;
+      }
+
+      const begin = buf.indexOf(RESULT_BEGIN);
+      if (begin === -1) {
+        const hold = partialSuffixLength(buf, RESULT_BEGIN);
+        if (buf.length - hold > 0) emit(buf.slice(0, buf.length - hold));
+        pending = hold > 0 ? buf.slice(buf.length - hold) : '';
+        return;
+      }
+      if (begin > 0) emit(buf.slice(0, begin));
+      buf = buf.slice(begin + RESULT_BEGIN.length);
+      suppressing = true;
+    }
+  };
+}
+
+// Extract the plugin's JSON result from the last sentinel-framed block.
+// Sentinel framing is the only supported protocol: every plugin (built-in or
+// installed) must be bundled with a runPluginCLI that emits it. Throws when
+// no complete block is present.
 export function parsePluginOutput(stdout: string, stderr: string): unknown {
   // Scan backwards for the last COMPLETE sentinel block: a dangling
   // RESULT_BEGIN (e.g. an async console.log racing shutdown, or a plugin
@@ -121,26 +213,11 @@ export function parsePluginOutput(stdout: string, stderr: string): unknown {
     begin = begin > 0 ? stdout.lastIndexOf(RESULT_BEGIN, begin - 1) : -1;
   }
 
-  // Legacy path — matches the old inline implementation byte-for-byte.
-  const cleanOutput = stdout
-    .split('')
-    .filter((char) => {
-      const code = char.charCodeAt(0);
-      return (code >= 32 && code <= 126) || code >= 160;
-    })
-    .join('')
-    .trim();
-  const jsonMatch = cleanOutput.match(/\{.*\}/s);
-  if (jsonMatch) {
-    try {
-      return JSON.parse(jsonMatch[0]);
-    } catch (parseError) {
-      throw new Error(
-        `JSON parse error: ${parseError}. Clean output: "${cleanOutput}"`
-      );
-    }
-  }
   throw new Error(
-    `Invalid plugin output format. Clean output: "${cleanOutput}", stderr: "${stderr}"`
+    `No sentinel-framed result in plugin output. The plugin must print its ` +
+      `result between ${RESULT_BEGIN} and ${RESULT_END} (bundles built with ` +
+      `@ignite/plugin-types runPluginCLI do this automatically — rebuild the ` +
+      `plugin against a current @ignite/plugin-types). ` +
+      `stdout tail: "${stdout.slice(-500)}", stderr tail: "${stderr.slice(-500)}"`
   );
 }

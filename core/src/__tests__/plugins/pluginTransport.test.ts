@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   createDockerStreamDemuxer,
+  createSentinelLogFilter,
   parsePluginOutput,
 } from '../../plugins/utils/pluginTransport.js';
 import { RESULT_BEGIN, RESULT_END } from '@ignite/plugin-types';
@@ -50,6 +51,57 @@ describe('createDockerStreamDemuxer', () => {
     demux.push(frame(0, 'x'));
     demux.push(frame(1, 'out'));
     expect(demux.result()).toEqual({ stdout: 'out', stderr: '' });
+  });
+
+  it('flushes a stream shorter than the 8-byte sniff window at result()', () => {
+    // A raw/TTY container whose entire output is shorter than the mode
+    // sniff must not be silently dropped — '{}' is a legitimate complete
+    // plugin output.
+    const demux = createDockerStreamDemuxer();
+    demux.push(Buffer.from('{}'));
+    expect(demux.result().stdout).toBe('{}');
+  });
+
+  it('invokes onChunk for the sub-sniff flush at result()', () => {
+    const calls: Array<[string, string]> = [];
+    const demux = createDockerStreamDemuxer((stream, text) =>
+      calls.push([stream, text])
+    );
+    demux.push(Buffer.from('{}'));
+    expect(calls).toEqual([]);
+    demux.result();
+    expect(calls).toEqual([['stdout', '{}']]);
+  });
+
+  it('salvages the payload of a truncated trailing multiplexed frame at result()', () => {
+    const demux = createDockerStreamDemuxer();
+    demux.push(frame(1, 'complete'));
+    // Header declares 100 bytes but the stream dies after 7.
+    const truncated = frame(2, 'partial').subarray(0, 8 + 7);
+    truncated.writeUInt32BE(100, 4);
+    demux.push(truncated);
+    const { stdout, stderr } = demux.result();
+    expect(stdout).toBe('complete');
+    expect(stderr).toBe('partial');
+  });
+
+  it('drops a truncated trailing header (no payload bytes) at result()', () => {
+    const demux = createDockerStreamDemuxer();
+    demux.push(frame(1, 'complete'));
+    demux.push(frame(1, 'x').subarray(0, 4)); // partial header only
+    expect(demux.result()).toEqual({ stdout: 'complete', stderr: '' });
+  });
+
+  it('result() is idempotent — flush happens once', () => {
+    const calls: Array<[string, string]> = [];
+    const demux = createDockerStreamDemuxer((stream, text) =>
+      calls.push([stream, text])
+    );
+    demux.push(Buffer.from('{}'));
+    demux.result();
+    demux.result();
+    expect(calls).toEqual([['stdout', '{}']]);
+    expect(demux.result().stdout).toBe('{}');
   });
 
   it('invokes onChunk with each newly decoded payload in order for multiplexed frames', () => {
@@ -132,16 +184,7 @@ describe('parsePluginOutput', () => {
   });
 
   it('returns the last COMPLETE block when a dangling RESULT_BEGIN follows it', () => {
-    // Noise braces around the block make the legacy fallback misparse, so
-    // this only passes if the parser finds the complete sentinel block.
     const stdout = `npm WARN {stray brace\n${RESULT_BEGIN}${JSON.stringify(payload)}${RESULT_END}\nasync log: ${RESULT_BEGIN}oops, no end`;
-    expect(parsePluginOutput(stdout, '')).toEqual(payload);
-  });
-
-  it('falls through to the legacy path when the only RESULT_BEGIN is dangling at position 0', () => {
-    // Also guards against an infinite backward scan (lastIndexOf clamps a
-    // negative fromIndex to 0 and would re-find index 0 forever).
-    const stdout = `${RESULT_BEGIN}no end here\n${JSON.stringify(payload)}`;
     expect(parsePluginOutput(stdout, '')).toEqual(payload);
   });
 
@@ -151,14 +194,26 @@ describe('parsePluginOutput', () => {
     expect(parsePluginOutput(`${first}\n${second}`, '')).toEqual(payload);
   });
 
-  it('falls back to legacy brace-matching for old plugin images', () => {
-    const stdout = `some log\n${JSON.stringify(payload, null, 2)}\n`;
-    expect(parsePluginOutput(stdout, '')).toEqual(payload);
+  it('throws (without an infinite backward scan) when the only RESULT_BEGIN is dangling at position 0', () => {
+    // Guards against lastIndexOf clamping a negative fromIndex to 0 and
+    // re-finding index 0 forever. Bare JSON after the dangling begin is NOT
+    // parsed — there is no legacy fallback.
+    const stdout = `${RESULT_BEGIN}no end here\n${JSON.stringify(payload)}`;
+    expect(() => parsePluginOutput(stdout, '')).toThrow(
+      /No sentinel-framed result/
+    );
   });
 
-  it('throws the legacy error shape when no JSON is present', () => {
+  it('throws for bare JSON without sentinels (no legacy fallback)', () => {
+    const stdout = `some log\n${JSON.stringify(payload, null, 2)}\n`;
+    expect(() => parsePluginOutput(stdout, '')).toThrow(
+      /No sentinel-framed result/
+    );
+  });
+
+  it('throws when no result is present at all', () => {
     expect(() => parsePluginOutput('garbage', 'boom')).toThrow(
-      /Invalid plugin output format/
+      /No sentinel-framed result/
     );
   });
 
@@ -166,10 +221,59 @@ describe('parsePluginOutput', () => {
     const stdout = `${RESULT_BEGIN}{not valid json}${RESULT_END}`;
     expect(() => parsePluginOutput(stdout, '')).toThrow(/JSON parse error/);
   });
+});
 
-  it('throws a JSON parse error when the legacy brace match is invalid JSON', () => {
-    expect(() => parsePluginOutput('log {not valid json} log', '')).toThrow(
-      /JSON parse error/
-    );
+describe('createSentinelLogFilter', () => {
+  const block = `${RESULT_BEGIN}{"success":true}${RESULT_END}`;
+
+  function collect() {
+    const out: string[] = [];
+    const filter = createSentinelLogFilter((text) => out.push(text));
+    return { out, filter };
+  }
+
+  it('passes plain text through unchanged', () => {
+    const { out, filter } = collect();
+    filter('Compiling 3 files\n');
+    expect(out).toEqual(['Compiling 3 files\n']);
+  });
+
+  it('suppresses a complete sentinel block within one chunk', () => {
+    const { out, filter } = collect();
+    filter(`before\n${block}after`);
+    expect(out).toEqual(['before\n', 'after']);
+  });
+
+  it('suppresses a sentinel block spanning multiple chunks', () => {
+    const { out, filter } = collect();
+    const whole = `log line\n${block}`;
+    filter(whole.slice(0, 15));
+    filter(whole.slice(15, 40));
+    filter(whole.slice(40));
+    expect(out.join('')).toBe('log line\n');
+  });
+
+  it('holds back a possible sentinel prefix at the chunk tail, emitting it when disproven', () => {
+    const { out, filter } = collect();
+    filter('value is <<<IGNITE');
+    // '<<<IGNITE' could be the start of RESULT_BEGIN — held back.
+    expect(out.join('')).toBe('value is ');
+    filter(' tokens>');
+    expect(out.join('')).toBe('value is <<<IGNITE tokens>');
+  });
+
+  it('drops whitespace-only chunks', () => {
+    const { out, filter } = collect();
+    filter('\n');
+    filter('   ');
+    filter('real content\n');
+    expect(out).toEqual(['real content\n']);
+  });
+
+  it('suppresses everything between BEGIN and END even across whitespace and braces', () => {
+    const { out, filter } = collect();
+    filter(`${RESULT_BEGIN}{"a":`);
+    filter(`1}${RESULT_END}visible`);
+    expect(out.join('')).toBe('visible');
   });
 });

@@ -1,7 +1,11 @@
 // Self-contained third-party compiler plugin for the isolated-build test.
 // Implements the Ignite runner contract directly (operation = last argv,
-// options via stdin to EOF, PluginResponse JSON on stdout).
+// options via stdin to EOF, sentinel-framed PluginResponse JSON on stdout —
+// framing is mandatory; there is no bare-JSON fallback).
 const fs = require('fs');
+
+const RESULT_BEGIN = '<<<IGNITE_RESULT_BEGIN>>>';
+const RESULT_END = '<<<IGNITE_RESULT_END>>>';
 
 const META = {
   id: 'git-fixture',
@@ -35,6 +39,8 @@ async function main() {
   } else {
     result = { success: true, data: {} };
   }
-  process.stdout.write(JSON.stringify(result));
+  process.stdout.write(
+    `${RESULT_BEGIN}${JSON.stringify(result)}${RESULT_END}\n`
+  );
 }
 main();
