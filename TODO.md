@@ -57,6 +57,17 @@ blocking current functionality.
 - **IsolatedBuilder robustness.** `waitForSquidReady` polls a baked-in dir rather than a real listen
   check in one path; no post-restart ACL re-verification (mitigated: ACL written before restart).
 
+## Repo lifecycle follow-ups (server-driven pipeline, 2026-07-06)
+
+- **`clean` plugin op.** The clean/clean-compile buttons still use the pre-lifecycle
+  endpoints; a true `forge clean`/hardhat-clean plugin operation (and wiring it as a
+  lifecycle mode) is a small follow-up.
+- **Failed add-repo registry residue.** If the add-mode pipeline fails (e.g. compile
+  error), the repo stays registered with no frameworks; the card shows the failure but
+  there is no automatic retry — a "retry setup" affordance would re-run the add pipeline.
+- **fs-watch trigger.** Drift detection is focus-triggered only (cheap stat walks);
+  filesystem watching was deliberately deferred.
+
 ## Frontend polish
 
 - **RepoCard button nesting.** Pre-existing button-in-button DOM nesting (a11y warning) where Tooltip
