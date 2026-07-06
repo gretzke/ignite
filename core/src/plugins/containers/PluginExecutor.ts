@@ -1,6 +1,9 @@
 import os from 'node:os';
 import { getLogger } from '../../utils/logger.js';
-import { PluginRegistryLoader, PluginConfig } from '../../assets/PluginRegistryLoader.js';
+import {
+  PluginRegistryLoader,
+  PluginConfig,
+} from '../../assets/PluginRegistryLoader.js';
 import {
   ContainerOrchestrator,
   ContainerLifecycle,
@@ -45,9 +48,13 @@ export function missingPermission(
 
 // Threaded through execute() -> executeEphemeralPlugin. Plugins that
 // requiresRepo use workspacePath to bind-mount the host workspace directly.
+// signal aborts the in-flight exec (job cancellation): the exec stream is
+// destroyed and the ephemeral container is stopped, killing the plugin
+// process instead of letting it keep writing to the mounted workspace.
 export interface ExecuteOpts {
   onOutput?: (text: string) => void;
   workspacePath?: string;
+  signal?: AbortSignal;
 }
 
 // Injectable dependencies (tests pass fakes; production uses real singletons).
@@ -292,7 +299,8 @@ export class PluginExecutor {
         options,
         containerName,
         pluginConfig.origin,
-        opts?.onOutput
+        opts?.onOutput,
+        opts?.signal
       );
     } catch (error) {
       return {
