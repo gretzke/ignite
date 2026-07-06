@@ -12,6 +12,7 @@ import type {
   RepoGetBranchesResult,
   RepoInfoResult,
   RepoGetFileResult,
+  RepoCheckResult,
 } from "./types.js";
 import { PathShape, PathRequestSchema } from "../../shared.js";
 import { JobStartedResponseSchema } from "../../jobs.js";
@@ -65,6 +66,18 @@ const GetFileResponseSchema = createApiResponseSchema<RepoGetFileResult>(
 )(
   z.object({
     content: z.string(),
+  }),
+);
+
+const CheckReposRequestSchema = createRequestSchema<{ pathOrUrl?: string }>(
+  "CheckReposRequest",
+)(z.object({ pathOrUrl: z.string().min(1).optional() }));
+
+const RepoCheckResponseSchema = createApiResponseSchema<RepoCheckResult>(
+  "RepoCheckResponseSchema",
+)(
+  z.object({
+    started: z.array(z.object({ pathOrUrl: z.string(), jobId: z.string() })),
   }),
 );
 
@@ -131,6 +144,15 @@ export const repoManagerRoutes = {
       tags: ["repo-manager"],
       body: PathRequestSchema,
       response: { 200: GetRepoInfoResponseSchema },
+    },
+  },
+  checkRepos: {
+    method: "POST" as const,
+    path: `${V1_BASE_PATH}/repos/check`,
+    schema: {
+      tags: ["repo-manager"],
+      body: CheckReposRequestSchema,
+      response: { 200: RepoCheckResponseSchema },
     },
   },
   getFile: {

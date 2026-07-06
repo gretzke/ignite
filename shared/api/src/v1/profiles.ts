@@ -6,6 +6,7 @@ import {
   createRequestSchema,
 } from "../utils/schema.js";
 import { PathRequestSchema } from "./shared.js";
+import { JobStartedResponseSchema } from "./jobs.js";
 
 export interface ProfileParams {
   id: string;
@@ -71,10 +72,44 @@ export interface DeleteProfileData {
   message: string;
 }
 
+// === Repo registry records (persisted per profile) ===
+
+export interface RepoWatchPaths {
+  config: string[]; // e.g. ["foundry.toml", "remappings.txt"]
+  sources: string[]; // e.g. ["src", "lib", "test"]
+  artifacts: string[]; // e.g. ["out"]
+}
+
+export interface RepoFingerprint {
+  sources: string; // sha256 hex over config+sources stat-walk
+  artifacts: string; // sha256 hex over artifacts stat-walk
+}
+
+export interface RepoFrameworkState {
+  id: string; // plugin id, e.g. "foundry"
+  name: string; // display name from plugin metadata
+  watchPaths?: RepoWatchPaths;
+  fingerprint?: RepoFingerprint; // captured after last successful compile
+  compiledAt?: string; // ISO timestamp of last successful compile
+}
+
+export interface RepoRecord {
+  pathOrUrl: string;
+  frameworks?: RepoFrameworkState[]; // undefined = never detected
+  detectedAt?: string;
+}
+
+// List entries enrich the persisted record with computed state so the UI
+// renders without re-running init/detect cycles.
+export interface RepoListEntry extends RepoRecord {
+  initialized: boolean;
+  activeJobId?: string; // in-flight repo.lifecycle job, if any
+}
+
 export interface RepoList {
-  session: string | null;
-  local: string[];
-  cloned: string[];
+  session: RepoListEntry | null;
+  local: RepoListEntry[];
+  cloned: RepoListEntry[];
 }
 
 export const ProfileParamsSchema = createRequestSchema<ProfileParams>(
@@ -173,13 +208,37 @@ export const DeleteProfileResponseSchema =
   );
 
 // Profile repository registry schemas
+export const RepoWatchPathsSchema = z.object({
+  config: z.array(z.string()),
+  sources: z.array(z.string()),
+  artifacts: z.array(z.string()),
+});
+
+export const RepoFrameworkStateSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  watchPaths: RepoWatchPathsSchema.optional(),
+  fingerprint: z
+    .object({ sources: z.string(), artifacts: z.string() })
+    .optional(),
+  compiledAt: z.string().optional(),
+});
+
+export const RepoListEntrySchema = z.object({
+  pathOrUrl: z.string(),
+  frameworks: z.array(RepoFrameworkStateSchema).optional(),
+  detectedAt: z.string().optional(),
+  initialized: z.boolean(),
+  activeJobId: z.string().optional(),
+});
+
 export const GetReposResponseSchema = createApiResponseSchema<RepoList>(
   "GetReposResponseSchema",
 )(
   z.object({
-    session: z.string().nullable(),
-    local: z.array(z.string()),
-    cloned: z.array(z.string()),
+    session: RepoListEntrySchema.nullable(),
+    local: z.array(RepoListEntrySchema),
+    cloned: z.array(RepoListEntrySchema),
   }),
 );
 
@@ -310,7 +369,9 @@ export const profileRoutes = {
     schema: {
       tags: ["profiles"],
       body: PathRequestSchema,
-      response: { 204: z.null() },
+      // Saving starts the add-mode lifecycle pipeline (init -> detect ->
+      // install -> compile -> fingerprint); the response is that job.
+      response: { 200: JobStartedResponseSchema },
     },
   },
   deleteRepo: {

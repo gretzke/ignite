@@ -32,3 +32,9 @@ export interface RepoInfoResult {
 export interface RepoGetFileResult {
   content: string;
 }
+
+// Result of a fingerprint drift check: lifecycle recompile jobs started for
+// repos whose sources/config changed since their last compile.
+export interface RepoCheckResult {
+  started: Array<{ pathOrUrl: string; jobId: string }>;
+}
