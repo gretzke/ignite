@@ -20,6 +20,11 @@ export class PluginManager {
     return PluginManager.instance;
   }
 
+  // Test-only: drop the singleton (and its cached FileSystem reference).
+  static resetInstance(): void {
+    PluginManager.instance = undefined as unknown as PluginManager;
+  }
+
   async getPlugin(pluginId: string): Promise<PluginMetadata> {
     const registry = await this.fileSystem.readPluginRegistry();
     const plugin = registry.plugins[pluginId];

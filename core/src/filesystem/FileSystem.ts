@@ -40,6 +40,14 @@ export class FileSystem {
     return FileSystem.instance;
   }
 
+  // Test-only: drop the singleton so the next getInstance(customHome) roots
+  // a fresh instance in a new temp dir. Without this, only the FIRST test in
+  // a process gets its own home — every later getInstance(newTempDir) call
+  // silently returns the stale instance pointing at an already-deleted dir.
+  static resetInstance(): void {
+    FileSystem.instance = undefined as unknown as FileSystem;
+  }
+
   // === Core Path Getters ===
 
   getIgniteHome(): string {

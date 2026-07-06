@@ -3,7 +3,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'path';
 import fs from 'fs/promises';
-import { createTestDirectory, cleanupTestDirectory } from '../setup.js';
+import {
+  createTestDirectory,
+  cleanupTestDirectory,
+  resetFilesystemSingletons,
+} from '../setup.js';
 import { FileSystem } from '../../filesystem/FileSystem.js';
 
 describe('FileSystem', () => {
@@ -12,6 +16,7 @@ describe('FileSystem', () => {
 
   beforeEach(async () => {
     testDir = await createTestDirectory();
+    resetFilesystemSingletons();
     fileSystem = FileSystem.getInstance(testDir);
   });
 
@@ -36,7 +41,10 @@ describe('FileSystem', () => {
   });
 
   describe('Profile Management', () => {
-    it('should create default profile automatically', async () => {
+    it('bootstraps the default profile on first readGlobalConfig', async () => {
+      // First-run bootstrap: reading the global config creates it AND the
+      // default profile (getProfileConfig itself never auto-creates).
+      await fileSystem.readGlobalConfig();
       const config = await fileSystem.getProfileConfig('default');
 
       expect(config.name).toBe('Default');
@@ -49,17 +57,19 @@ describe('FileSystem', () => {
     });
 
     it('should create custom profile successfully', async () => {
-      await fileSystem.createProfile('test-profile');
+      // Profiles are keyed by a generated id; the name is display-only.
+      const created = await fileSystem.createProfile('test-profile');
 
-      const config = await fileSystem.getProfileConfig('test-profile');
+      const config = await fileSystem.getProfileConfig(created.id);
       expect(config.name).toBe('test-profile');
       expect(config.color).toBe('#627eeb');
       expect(config.icon).toBe('');
       expect(typeof config.id).toBe('string');
+      expect(config.id).not.toBe('test-profile');
 
-      // Check that directories were created
-      const profilePath = fileSystem.getProfilePath('test-profile');
-      const reposPath = fileSystem.getProfileReposPath('test-profile');
+      // Check that directories were created (under the id, not the name)
+      const profilePath = fileSystem.getProfilePath(created.id);
+      const reposPath = fileSystem.getProfileReposPath(created.id);
 
       expect(await fileSystem.fileExists(profilePath)).toBe(true);
       expect(await fileSystem.fileExists(reposPath)).toBe(true);
@@ -71,19 +81,19 @@ describe('FileSystem', () => {
       );
     });
 
-    it('should list all profiles', async () => {
-      // Create default profile
-      await fileSystem.getProfileConfig('default');
+    it('should list all profiles (by id)', async () => {
+      // First-run bootstrap creates the default profile
+      await fileSystem.readGlobalConfig();
 
-      // Create additional profiles
-      await fileSystem.createProfile('profile1');
-      await fileSystem.createProfile('profile2');
+      // Create additional profiles (ids are generated)
+      const p1 = await fileSystem.createProfile('profile1');
+      const p2 = await fileSystem.createProfile('profile2');
 
       const profiles = await fileSystem.listProfiles();
       expect(profiles).toHaveLength(3);
       expect(profiles).toContain('default');
-      expect(profiles).toContain('profile1');
-      expect(profiles).toContain('profile2');
+      expect(profiles).toContain(p1.id);
+      expect(profiles).toContain(p2.id);
     });
 
     it('should validate profile names correctly', async () => {

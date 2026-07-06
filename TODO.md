@@ -49,14 +49,6 @@ blocking current functionality.
 - **Core lint baseline.** Fixed 2026-07-06: Node runtime globals added to `eslint.config.mjs`;
   `npm run lint` in `core/` is now 0 errors / 5 warnings (`security/detect-child-process` +
   `no-explicit-any` warns, all deliberate).
-- **Baseline test failures in `ProfileManager`/`FileSystem` (13).** Two entangled causes:
-  the tests encode an older profile contract (FileSystem auto-creating the default profile;
-  id-vs-name expectations), and `FileSystem.getInstance(customHome)` silently ignores a new
-  `customHome` once an instance exists, so per-test temp dirs never take effect — the other
-  manager singletons (`ProfileManager`, `PluginManager`) cache cross-references the same way.
-  Fixing this properly needs a test-side reset helper for ALL filesystem singletons plus
-  rewriting the stale expectations; re-rooting FileSystem alone breaks tests that accidentally
-  depended on consistently-stale singletons (attempted and reverted 2026-07-06).
 - **Error-helper coverage.** Extend the API error helpers for 403 / typed-400 responses and convert
   the remaining inline-IApiError-literal handler sites to use them.
 

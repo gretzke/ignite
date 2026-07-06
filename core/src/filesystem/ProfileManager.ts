@@ -24,6 +24,12 @@ export class ProfileManager {
     return ProfileManager.instance;
   }
 
+  // Test-only: drop the singleton (and its cached FileSystem reference) so
+  // the next getInstance() re-initializes against the current FileSystem.
+  static resetInstance(): void {
+    ProfileManager.instance = undefined as unknown as ProfileManager;
+  }
+
   // Initialize profile manager and load current profile
   private async initialize(): Promise<void> {
     try {
@@ -31,13 +37,30 @@ export class ProfileManager {
       const globalConfig = await this.fileSystem.readGlobalConfig();
       this.currentProfile = globalConfig.currentProfile || 'default';
 
-      // Ensure the current profile exists; if not, create default
+      // Ensure the current profile exists; if not, fall back to the default
+      // profile, bootstrapping it if it's missing too. (getProfileConfig
+      // throws on a missing profile — it does NOT auto-create; readGlobalConfig
+      // only bootstraps the default profile on a truly first run, so a
+      // deleted/archived current profile with an existing config.json lands
+      // here.)
       try {
         await this.fileSystem.getProfileConfig(this.currentProfile);
       } catch {
-        // create default profile
-        await this.fileSystem.getProfileConfig('default');
         this.currentProfile = 'default';
+        try {
+          await this.fileSystem.getProfileConfig('default');
+        } catch {
+          const nowIso = new Date().toISOString();
+          await this.fileSystem.createProfileConfig('default', {
+            id: 'default',
+            name: 'Default',
+            color: '#627eeb',
+            icon: '',
+            created: nowIso,
+            lastUsed: nowIso,
+          });
+          getLogger().info('📁 Re-created missing default profile');
+        }
       }
 
       // Update last startup time

@@ -1,7 +1,11 @@
 // Tests for ProfileManager class
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createTestDirectory, cleanupTestDirectory } from '../setup.js';
+import {
+  createTestDirectory,
+  cleanupTestDirectory,
+  resetFilesystemSingletons,
+} from '../setup.js';
 import { FileSystem } from '../../filesystem/FileSystem.js';
 import { ProfileManager } from '../../filesystem/ProfileManager.js';
 
@@ -12,6 +16,7 @@ describe('ProfileManager', () => {
 
   beforeEach(async () => {
     testDir = await createTestDirectory();
+    resetFilesystemSingletons();
     fileSystem = FileSystem.getInstance(testDir);
     profileManager = await ProfileManager.getInstance();
   });
@@ -38,7 +43,8 @@ describe('ProfileManager', () => {
 
   describe('Profile Operations', () => {
     it('should create new profile successfully', async () => {
-      await profileManager.createProfile('test-profile');
+      const created = await profileManager.createProfile('test-profile');
+      expect(created.id).not.toBe('test-profile'); // ids are generated
 
       const profiles = await profileManager.listProfiles();
       const profileNames = profiles.map((p) => p.name);
@@ -46,15 +52,15 @@ describe('ProfileManager', () => {
       expect(profileNames).toContain('test-profile');
     });
 
-    it('should switch profiles successfully', async () => {
-      await profileManager.createProfile('new-profile');
-      await profileManager.switchProfile('new-profile');
+    it('should switch profiles successfully (by id)', async () => {
+      const created = await profileManager.createProfile('new-profile');
+      await profileManager.switchProfile(created.id);
 
-      expect(profileManager.getCurrentProfile()).toBe('new-profile');
+      expect(profileManager.getCurrentProfile()).toBe(created.id);
 
       // Check that global config was updated
       const globalConfig = await fileSystem.readGlobalConfig();
-      expect(globalConfig.currentProfile).toBe('new-profile');
+      expect(globalConfig.currentProfile).toBe(created.id);
     });
 
     it('should list profiles in filesystem id order, not last-used order', async () => {
@@ -68,7 +74,9 @@ describe('ProfileManager', () => {
       // Switch to profile1 to update its lastUsed. This must NOT affect
       // ordering: listProfiles() preserves fileSystem.listProfiles() id
       // order and does not sort by lastUsed (see ProfileManager.listProfiles).
-      await profileManager.switchProfile('profile1');
+      const profiles1 = await profileManager.listProfiles();
+      const p1 = profiles1.find((p) => p.name === 'profile1');
+      await profileManager.switchProfile(p1!.id);
 
       const expectedIds = await fileSystem.listProfiles();
       const profiles = await profileManager.listProfiles();
@@ -98,31 +106,32 @@ describe('ProfileManager', () => {
       ).rejects.toThrow('Invalid profile name: invalid name');
     });
 
-    it('should prevent creating duplicate profile', async () => {
-      await profileManager.createProfile('duplicate');
+    it('allows duplicate display names (profiles are keyed by generated id)', async () => {
+      const first = await profileManager.createProfile('duplicate');
+      const second = await profileManager.createProfile('duplicate');
 
-      await expect(profileManager.createProfile('duplicate')).rejects.toThrow(
-        "Profile 'duplicate' already exists"
-      );
+      expect(first.id).not.toBe(second.id);
+      expect(first.name).toBe(second.name);
     });
   });
 
   describe('Profile Deletion', () => {
-    // Deleting default is allowed as long as at least one other profile exists
-    it('should prevent deleting last remaining profile', async () => {
+    // There is no standalone last-profile guard: the last remaining profile
+    // is necessarily the active one, so the active-profile guard covers it.
+    it('should prevent deleting the last remaining profile (it is active)', async () => {
       // Only default exists at this point
       await expect(profileManager.deleteProfile('default')).rejects.toThrow(
-        'Cannot delete the last remaining profile'
+        'Cannot delete the currently active profile'
       );
     });
 
     it('should prevent deleting currently active profile', async () => {
-      await profileManager.createProfile('active-profile');
-      await profileManager.switchProfile('active-profile');
+      const created = await profileManager.createProfile('active-profile');
+      await profileManager.switchProfile(created.id);
 
-      await expect(
-        profileManager.deleteProfile('active-profile')
-      ).rejects.toThrow('Cannot delete the currently active profile');
+      await expect(profileManager.deleteProfile(created.id)).rejects.toThrow(
+        'Cannot delete the currently active profile'
+      );
     });
 
     it('should prevent deleting non-existent profile', async () => {
@@ -132,27 +141,27 @@ describe('ProfileManager', () => {
     });
 
     it('should mark profile for deletion when valid', async () => {
-      await profileManager.createProfile('to-delete');
+      const created = await profileManager.createProfile('to-delete');
 
-      // Should not throw
+      // Should not throw (default is active; the new profile is not)
       await expect(
-        profileManager.deleteProfile('to-delete')
+        profileManager.deleteProfile(created.id)
       ).resolves.not.toThrow();
     });
   });
 
   describe('Configuration Updates', () => {
     it('should update profile last used time on switch', async () => {
-      await profileManager.createProfile('test-profile');
+      const created = await profileManager.createProfile('test-profile');
 
-      const configBefore = await fileSystem.getProfileConfig('test-profile');
+      const configBefore = await fileSystem.getProfileConfig(created.id);
 
       // Wait a bit to ensure timestamp difference
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      await profileManager.switchProfile('test-profile');
+      await profileManager.switchProfile(created.id);
 
-      const configAfter = await fileSystem.getProfileConfig('test-profile');
+      const configAfter = await fileSystem.getProfileConfig(created.id);
 
       expect(new Date(configAfter.lastUsed).getTime()).toBeGreaterThan(
         new Date(configBefore.lastUsed).getTime()
