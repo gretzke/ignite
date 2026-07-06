@@ -7,18 +7,19 @@ import {
 import { getRepoName } from '../../../utils/repo';
 
 // Derived view model for the repositories page: transforms the raw API data
-// into display-ready lists and handles current-workspace matching.
+// (RepoListEntry records) into display-ready lists and handles
+// current-workspace matching.
 export function useRepositoryLists() {
   const repositories = useAppSelector(selectRepositories);
   const repositoriesData = useAppSelector(selectRepositoriesData);
   const failedRepositories = useAppSelector(selectFailedRepositories);
 
-  const sessionPath = repositories?.session;
-  const localRepoPaths = repositories?.local || [];
+  const sessionPath = repositories?.session?.pathOrUrl;
+  const localEntries = repositories?.local || [];
 
   // Check if current workspace matches any local repo
   const matchingLocalRepoIndex = sessionPath
-    ? localRepoPaths.findIndex((path) => path === sessionPath)
+    ? localEntries.findIndex((entry) => entry.pathOrUrl === sessionPath)
     : -1;
 
   const hasMatchingLocalRepo = matchingLocalRepoIndex !== -1;
@@ -37,16 +38,16 @@ export function useRepositoryLists() {
       : null;
 
   // Transform local repos and handle current workspace matching, filter out failed ones
-  const localRepos = localRepoPaths
-    .filter((path) => !failedRepositories.includes(path))
-    .map((path, index) => {
-      const isCurrentWorkspace = path === sessionPath;
+  const localRepos = localEntries
+    .filter((entry) => !failedRepositories.includes(entry.pathOrUrl))
+    .map((entry, index) => {
+      const isCurrentWorkspace = entry.pathOrUrl === sessionPath;
       return {
         name: isCurrentWorkspace
-          ? `${getRepoName(path)} (Current Workspace)`
-          : getRepoName(path),
-        path,
-        frameworks: repositoriesData[path]?.frameworks,
+          ? `${getRepoName(entry.pathOrUrl)} (Current Workspace)`
+          : getRepoName(entry.pathOrUrl),
+        path: entry.pathOrUrl,
+        frameworks: repositoriesData[entry.pathOrUrl]?.frameworks,
         isCurrentWorkspace,
         originalIndex: index,
       };
@@ -61,11 +62,11 @@ export function useRepositoryLists() {
 
   const clonedRepos =
     repositories?.cloned
-      .filter((path) => !failedRepositories.includes(path))
-      .map((path) => ({
-        name: getRepoName(path),
-        path,
-        frameworks: repositoriesData[path]?.frameworks,
+      .filter((entry) => !failedRepositories.includes(entry.pathOrUrl))
+      .map((entry) => ({
+        name: getRepoName(entry.pathOrUrl),
+        path: entry.pathOrUrl,
+        frameworks: repositoriesData[entry.pathOrUrl]?.frameworks,
       })) || [];
 
   return { currentWorkspace, localRepos, clonedRepos, sessionPath };

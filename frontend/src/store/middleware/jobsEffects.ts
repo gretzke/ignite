@@ -60,8 +60,7 @@ function permissionDetails(
 ): { pluginId: string; permission: 'hostWrite' | 'net' } | null {
   if (job.error?.code !== 'PERMISSION_REQUIRED') return null;
   const details = job.error.details as
-    | { pluginId?: string; permission?: string }
-    | undefined;
+    { pluginId?: string; permission?: string } | undefined;
   if (!details?.pluginId || !details.permission) return null;
   return {
     pluginId: details.pluginId,
@@ -190,13 +189,66 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
       break;
     }
 
+    case 'repo.lifecycle': {
+      // Server-driven pipeline (sweep/add/recompile): one terminal event
+      // carries everything the card needs. Branch/commit info is still live
+      // data, so refresh it on success.
+      const pathOrUrl = job.params.pathOrUrl as string;
+      if (succeeded) {
+        const result = job.result as {
+          frameworks?: Array<{ id: string; name: string }>;
+        } | null;
+        dispatch(setRepositoryInitialized({ pathOrUrl, success: true }));
+        dispatch(
+          setRepositoryFrameworks({
+            pathOrUrl,
+            frameworks: (result?.frameworks ?? []).map((f) => ({
+              id: f.id,
+              name: f.name,
+            })),
+          })
+        );
+        dispatch(
+          apiClient.dispatch.getRepoInfo({
+            body: { pathOrUrl },
+            onSuccess: (repoInfo) => {
+              const getBranchesAction = apiClient.dispatch.getBranches({
+                body: { pathOrUrl },
+                onSuccess: (branchesData) => [
+                  setRepositoryInfo({ pathOrUrl, info: repoInfo }),
+                  setRepositoryBranches({
+                    pathOrUrl,
+                    branches: branchesData.branches,
+                  }),
+                ],
+                onError: () => [
+                  setRepositoryInfo({ pathOrUrl, info: repoInfo }),
+                ],
+              });
+              return [getBranchesAction];
+            },
+            onError: () => [],
+          })
+        );
+      } else {
+        dispatch(setRepositoryInitialized({ pathOrUrl, success: false }));
+        dispatch(
+          triggerToast({
+            title: 'Repository Setup Failed',
+            description: `${getRepoName(pathOrUrl)}: ${errorMessage}`,
+            variant: 'error',
+            duration: 10000,
+          })
+        );
+      }
+      break;
+    }
+
     case 'compiler.detect': {
       const pathOrUrl = job.params.pathOrUrl as string;
       if (succeeded) {
         const result = job.result as
-          | { frameworks: IFramework[] }
-          | null
-          | undefined;
+          { frameworks: IFramework[] } | null | undefined;
         dispatch(
           setRepositoryFrameworks({
             pathOrUrl,
@@ -241,7 +293,10 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
           permissionRequired({
             pluginId: perm.pluginId,
             permission: perm.permission,
-            retry: { endpoint: 'install', body: { pathOrUrl: repoPath, pluginId: frameworkId } },
+            retry: {
+              endpoint: 'install',
+              body: { pathOrUrl: repoPath, pluginId: frameworkId },
+            },
           })
         );
         break;
@@ -283,7 +338,10 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
           permissionRequired({
             pluginId: perm.pluginId,
             permission: perm.permission,
-            retry: { endpoint: 'compile', body: { pathOrUrl: repoPath, pluginId: frameworkId } },
+            retry: {
+              endpoint: 'compile',
+              body: { pathOrUrl: repoPath, pluginId: frameworkId },
+            },
           })
         );
         break;
@@ -387,7 +445,12 @@ jobsEffects.startListening({
           pendingSnapshotFetch.delete(jobId);
           const { title, description } = formatApiError(error);
           return [
-            triggerToast({ title, description, variant: 'error', duration: 5000 }),
+            triggerToast({
+              title,
+              description,
+              variant: 'error',
+              duration: 5000,
+            }),
           ];
         },
       })

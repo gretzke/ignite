@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import type { RepoList, RepoInfoResult } from '@ignite/api';
+import type { RepoList, RepoListEntry, RepoInfoResult } from '@ignite/api';
 import type { RootState } from '../../store';
 
 export interface IFramework {
@@ -33,25 +33,35 @@ const repositoriesSlice = createSlice({
     setRepositories(state, action: PayloadAction<RepoList>) {
       state.repositories = action.payload;
 
-      // Initialize repository data for tracking initialization status
-      const allRepos = [
+      const allEntries: RepoListEntry[] = [
         ...(action.payload.local || []),
         ...(action.payload.cloned || []),
         ...(action.payload.session ? [action.payload.session] : []),
       ];
 
-      // Only initialize repo data for new repositories (preserve existing status)
-      for (const repo of allRepos) {
-        if (!state.repositoriesData[repo]) {
-          state.repositoriesData[repo] = {
-            initialized: undefined,
-            branches: [],
-          };
+      // Seed view state from the server's persisted records: the backend
+      // swept/added these repos, so refresh renders instantly instead of
+      // re-running init/detect cycles. An in-flight lifecycle job keeps the
+      // repo in the loading state until its terminal event routes.
+      for (const entry of allEntries) {
+        const existing = state.repositoriesData[entry.pathOrUrl];
+        state.repositoriesData[entry.pathOrUrl] = {
+          branches: existing?.branches ?? [],
+          info: existing?.info,
+          initialized: entry.activeJobId ? undefined : entry.initialized,
+          frameworks: entry.frameworks
+            ? entry.frameworks.map((f) => ({ id: f.id, name: f.name }))
+            : existing?.frameworks,
+        };
+        if (entry.initialized && !entry.activeJobId) {
+          state.failedRepositories = state.failedRepositories.filter(
+            (repo) => repo !== entry.pathOrUrl
+          );
         }
       }
 
       // Clean up repository data for repos that are no longer in the list
-      const currentRepoSet = new Set(allRepos);
+      const currentRepoSet = new Set(allEntries.map((e) => e.pathOrUrl));
       Object.keys(state.repositoriesData).forEach((repo) => {
         if (!currentRepoSet.has(repo)) {
           delete state.repositoriesData[repo];
@@ -95,23 +105,36 @@ const repositoriesSlice = createSlice({
     },
     addRepository(
       state,
-      action: PayloadAction<{ pathOrUrl: string; type: 'local' | 'cloned' }>
+      action: PayloadAction<{
+        pathOrUrl: string;
+        type: 'local' | 'cloned';
+        // The add-mode lifecycle job the backend started for this repo.
+        jobId?: string;
+      }>
     ) {
       if (!state.repositories) return;
 
-      const { pathOrUrl, type } = action.payload;
+      const { pathOrUrl, type, jobId } = action.payload;
+      const entry: RepoListEntry = {
+        pathOrUrl,
+        initialized: false,
+        activeJobId: jobId,
+      };
 
       // Add to appropriate list if not already there
-      if (type === 'local' && !state.repositories.local.includes(pathOrUrl)) {
-        state.repositories.local.push(pathOrUrl);
+      if (
+        type === 'local' &&
+        !state.repositories.local.some((r) => r.pathOrUrl === pathOrUrl)
+      ) {
+        state.repositories.local.push(entry);
       } else if (
         type === 'cloned' &&
-        !state.repositories.cloned.includes(pathOrUrl)
+        !state.repositories.cloned.some((r) => r.pathOrUrl === pathOrUrl)
       ) {
-        state.repositories.cloned.push(pathOrUrl);
+        state.repositories.cloned.push(entry);
       }
 
-      // Initialize repository data for new repo
+      // Pipeline in flight -> loading state until its terminal event routes
       if (!state.repositoriesData[pathOrUrl]) {
         state.repositoriesData[pathOrUrl] = {
           initialized: undefined,
@@ -126,10 +149,10 @@ const repositoriesSlice = createSlice({
 
       // Remove from saved lists only (local and cloned)
       state.repositories.local = state.repositories.local.filter(
-        (repo) => repo !== pathOrUrl
+        (repo) => repo.pathOrUrl !== pathOrUrl
       );
       state.repositories.cloned = state.repositories.cloned.filter(
-        (repo) => repo !== pathOrUrl
+        (repo) => repo.pathOrUrl !== pathOrUrl
       );
       // Note: Don't remove from session - session is managed by backend API response
 

@@ -49,9 +49,9 @@ export default function RepositoryPage() {
   // straight to "not found".
   const isSaved =
     repositories !== null &&
-    (repositories.session === decodedPath ||
-      repositories.local.includes(decodedPath) ||
-      repositories.cloned.includes(decodedPath));
+    (repositories.session?.pathOrUrl === decodedPath ||
+      repositories.local.some((r) => r.pathOrUrl === decodedPath) ||
+      repositories.cloned.some((r) => r.pathOrUrl === decodedPath));
 
   const loadingMessage =
     repositories === null

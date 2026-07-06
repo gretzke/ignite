@@ -4,6 +4,7 @@ import Sidebar from './ui/Sidebar';
 import { Outlet } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from './store';
 import { startConnect } from './store/features/connection/connectionSlice';
+import { repositoriesApi } from './store/features/repositories/repositoriesApi';
 import PermissionApprovalDialog from './components/PermissionApprovalDialog';
 
 type CSSVars = React.CSSProperties & { ['--profile-color']?: string };
@@ -37,6 +38,22 @@ export default function App() {
   // Kick off connection once on mount; middleware manages lifecycle
   useEffect(() => {
     dispatch(startConnect());
+  }, [dispatch]);
+
+  // Focus-triggered fingerprint check: when the user comes back to the tab
+  // after editing sources, the backend compares stat fingerprints and starts
+  // incremental recompile jobs for drifted repos. Debounced so alt-tab
+  // storms don't spam checks (the server also cools down per repo).
+  useEffect(() => {
+    let last = 0;
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - last < 10_000) return;
+      last = now;
+      dispatch(repositoriesApi.checkRepos());
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [dispatch]);
 
   return (

@@ -1,4 +1,3 @@
-import type { RepoList } from '@ignite/api';
 import { apiClient, apiDispatchAction } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
 import { ApiError } from '@ignite/api/client';
@@ -15,7 +14,6 @@ import {
   setRepositoryInfo,
   startFrameworkDetection,
   setRepositoryFrameworks,
-  type IRepository,
 } from './repositoriesSlice';
 
 // API actions using the enhanced client (following profiles pattern)
@@ -29,11 +27,25 @@ export const repositoriesApi = {
     const apiAction = apiClient.dispatch.listRepos({
       params: { id: profileId },
       onSuccess: (data) => {
-        // Set repositories and initialize loading state
-        const setReposAction = setRepositories(data);
-
-        // Return the set action first, then we'll handle initialization in a separate action
-        return setReposAction;
+        // Render persisted server state; for repos whose lifecycle job is
+        // still in flight (startup sweep / add pipeline), attach to the job
+        // stream so the terminal event routes into the card state.
+        const entries = [
+          ...(data.local || []),
+          ...(data.cloned || []),
+          ...(data.session ? [data.session] : []),
+        ];
+        const attachActions = entries
+          .filter((entry) => entry.activeJobId)
+          .flatMap((entry) => [
+            jobStarted({
+              jobId: entry.activeJobId as string,
+              type: 'repo.lifecycle',
+              params: { pathOrUrl: entry.pathOrUrl },
+            }),
+            wsSend({ type: 'subscribe', jobId: entry.activeJobId }),
+          ]);
+        return [setRepositories(data), ...attachActions];
       },
       onError: (error) => {
         const { title, description } = formatApiError(error);
@@ -48,32 +60,6 @@ export const repositoriesApi = {
 
     // Return array of actions to dispatch
     return [clearAction, apiAction];
-  },
-
-  // Initialize repositories that need initialization
-  initializeRepositoriesIfNeeded: (
-    repositoriesData: Record<string, IRepository>,
-    repoList: RepoList
-  ) => {
-    // Create a Set of unique paths to avoid duplicate initialization
-    const uniquePaths = new Set([
-      ...(repoList.local || []),
-      ...(repoList.cloned || []),
-      ...(repoList.session ? [repoList.session] : []),
-    ]);
-
-    // Convert back to array and filter to only initialize repos that haven't been initialized yet
-    const reposToInitialize = Array.from(uniquePaths).filter((pathOrUrl) => {
-      const repoData = repositoriesData[pathOrUrl];
-      // Only initialize if repo data doesn't exist or is not successfully initialized
-      return !repoData || repoData.initialized !== true;
-    });
-
-    const initActions = reposToInitialize.flatMap((pathOrUrl) =>
-      repositoriesApi.initializeRepository(pathOrUrl)
-    );
-
-    return initActions;
   },
 
   // Checkout branch
@@ -318,24 +304,31 @@ export const repositoriesApi = {
     });
   },
 
-  // Save current workspace as a repository
+  // Save a repository; the backend starts the full add pipeline (init ->
+  // detect -> install -> compile -> fingerprint) and returns its job.
   saveRepository: (profileId: string, pathOrUrl: string) => {
     return apiClient.dispatch.saveRepo({
       params: { id: profileId },
       body: { pathOrUrl },
-      onSuccess: () => {
-        // Add the repository to the local state (assumes local repo for now)
-        // TODO: Determine if it's local or cloned based on pathOrUrl
+      onSuccess: (data) => {
+        const { jobId } = data as { jobId: string };
         const isUrl = pathOrUrl.startsWith('http');
         const repoType = isUrl ? 'cloned' : 'local';
 
         return [
-          addRepository({ pathOrUrl, type: repoType }),
+          addRepository({ pathOrUrl, type: repoType, jobId }),
+          jobStarted({
+            jobId,
+            type: 'repo.lifecycle',
+            params: { pathOrUrl },
+          }),
+          wsSend({ type: 'subscribe', jobId }),
           triggerToast({
-            title: 'Repository saved',
-            description: 'Repository has been saved successfully',
-            variant: 'success',
-            duration: 3000,
+            title: 'Repository added',
+            description:
+              'Setting up the repository (initialize, detect, install, compile)…',
+            variant: 'info',
+            duration: 4000,
           }),
         ];
       },
@@ -427,6 +420,30 @@ export const repositoriesApi = {
 
   // Clear repositories (when no profile selected)
   clearRepositories: () => clearRepositories(),
+
+  // Fingerprint drift check (focus-triggered). Auto-recompiles surface as
+  // card/job status via the subscribed lifecycle jobs — deliberately no
+  // toast on failure: a background check must never interrupt the user.
+  checkRepos: () => {
+    return apiDispatchAction({
+      endpoint: 'checkRepos',
+      body: {},
+      onSuccess: (data: unknown) => {
+        const { started } = data as {
+          started: Array<{ pathOrUrl: string; jobId: string }>;
+        };
+        return started.flatMap(({ pathOrUrl, jobId }) => [
+          jobStarted({
+            jobId,
+            type: 'repo.lifecycle',
+            params: { pathOrUrl },
+          }),
+          wsSend({ type: 'subscribe', jobId }),
+        ]);
+      },
+      onError: () => [],
+    });
+  },
 
   // Detect frameworks for a repository
   detectFrameworks: (pathOrUrl: string) => {
