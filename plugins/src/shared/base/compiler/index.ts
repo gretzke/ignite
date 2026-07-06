@@ -8,6 +8,7 @@ import type {
   GetArtifactDataOptions,
   ArtifactData,
   LinkReferences,
+  WatchPathsResult,
 } from "./types.js";
 import type { PluginResponse } from "../../types.js";
 import type { NoResult } from "../../index.js";
@@ -25,6 +26,7 @@ export abstract class CompilerPlugin
   abstract getArtifactData(
     options: GetArtifactDataOptions,
   ): Promise<PluginResponse<ArtifactData>>;
+  abstract getWatchPaths(): Promise<PluginResponse<WatchPathsResult>>;
 }
 
 // Re-export types for convenience
@@ -38,4 +40,5 @@ export type {
   ArtifactData,
   GetArtifactDataOptions,
   LinkReferences,
+  WatchPathsResult,
 } from "./types.js";

@@ -23,6 +23,10 @@ export type CompilerOperations = {
     params: GetArtifactDataOptions;
     result: ArtifactData;
   };
+  getWatchPaths: {
+    params: NoParams;
+    result: WatchPathsResult;
+  };
 };
 
 // Extract valid operation names
@@ -39,6 +43,17 @@ export type ICompilerPlugin = {
 
 export interface DetectionResult {
   detected: boolean;
+}
+
+// Workspace-relative locations whose changes should invalidate this
+// framework's build. Core stat-fingerprints these on the HOST (no container)
+// to decide when an incremental recompile is needed. The plugin must resolve
+// them from its own config — source/artifact dirs are user-configurable
+// (foundry.toml src/out, hardhat paths), so core cannot hardcode them.
+export interface WatchPathsResult {
+  config: string[]; // e.g. ["foundry.toml", "remappings.txt"]
+  sources: string[]; // e.g. ["src", "test", "script", "lib"]
+  artifacts: string[]; // e.g. ["out"]
 }
 
 export interface ArtifactLocation {

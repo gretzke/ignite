@@ -14,6 +14,7 @@ import {
   type GetArtifactDataOptions,
   type ArtifactData,
   type LinkReferences,
+  type WatchPathsResult,
 } from "../../shared/index.ts";
 import { execCommand } from "../../shared/utils/exec.js";
 import { execFailureMessage } from "../../shared/utils/format-error.js";
@@ -399,8 +400,11 @@ export class HardhatPlugin extends CompilerPlugin {
     }
   }
 
-  // Parse hardhat.config.js/ts to get the artifacts directory
-  // Returns "artifacts" as default if file doesn't exist or can't be parsed
+  // Parse hardhat.config.js/ts to resolve a paths.<key> setting. Best-effort
+  // regex parsing by design: evaluating repo config code on the host is
+  // forbidden (repo content only EXECUTES in containers), and this runs
+  // in-container but a regex keeps it dependency-free. Falls back to the
+  // Hardhat default when the pattern doesn't match (e.g. computed paths).
   private async getHardhatDir(
     workspaceRoot: string,
     dir: string,
@@ -408,6 +412,12 @@ export class HardhatPlugin extends CompilerPlugin {
   ): Promise<string> {
     // Try both .js and .ts config files
     const configFiles = ["hardhat.config.js", "hardhat.config.ts"];
+
+    // Escape the key for embedding in a RegExp (previously this was a regex
+    // LITERAL containing the literal text "${dir}", which never matched any
+    // real config, and the direct-assignment fallback hardcoded "artifacts"
+    // regardless of the requested key).
+    const key = dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     for (const configFile of configFiles) {
       const configPath = join(workspaceRoot, configFile);
@@ -419,20 +429,20 @@ export class HardhatPlugin extends CompilerPlugin {
 
         const configContent = await fs.readFile(configPath, "utf-8");
 
-        // Parse the artifacts path from the config
-        // Look for paths.artifacts = "..." or paths: { artifacts: "..." }
-        const artifactsMatch = configContent.match(
-          /paths\s*:\s*\{[^}]*${dir}\s*:\s*["']([^"']+)["']/,
+        // paths: { <key>: "..." }
+        const blockMatch = configContent.match(
+          new RegExp(
+            `paths\\s*:\\s*\\{[^}]*${key}\\s*:\\s*["']([^"']+)["']`,
+          ),
         );
-
-        if (artifactsMatch && artifactsMatch[1]) {
+        if (blockMatch && blockMatch[1]) {
           // Remove leading ./ if present
-          return artifactsMatch[1].replace(/^\.\//, "");
+          return blockMatch[1].replace(/^\.\//, "");
         }
 
-        // Also check for direct assignment: paths.artifacts = "..."
+        // Direct assignment: paths.<key> = "..."
         const directMatch = configContent.match(
-          /paths\.artifacts\s*=\s*["']([^"']+)["']/,
+          new RegExp(`paths\\.${key}\\s*=\\s*["']([^"']+)["']`),
         );
         if (directMatch && directMatch[1]) {
           return directMatch[1].replace(/^\.\//, "");
@@ -444,6 +454,40 @@ export class HardhatPlugin extends CompilerPlugin {
     }
 
     return defaultDir; // Default if not found or error
+  }
+
+  async getWatchPaths(): Promise<PluginResponse<WatchPathsResult>> {
+    try {
+      const ws = "/workspace";
+      const sources = await this.getHardhatDir(ws, "sources", "contracts");
+      const artifacts = await this.getHardhatDir(ws, "artifacts");
+
+      // Whichever config file exists drives the build; package.json changes
+      // (dependency bumps) should also invalidate.
+      const config: string[] = ["package.json"];
+      for (const candidate of ["hardhat.config.ts", "hardhat.config.js"]) {
+        if (await fileExists(join(ws, candidate))) {
+          config.push(candidate);
+        }
+      }
+
+      return {
+        success: true,
+        data: {
+          config,
+          sources: [sources],
+          artifacts: [artifacts],
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: "WATCH_PATHS_ERROR",
+          message: `Failed to resolve watch paths: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      };
+    }
   }
 }
 

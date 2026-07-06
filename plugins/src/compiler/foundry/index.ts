@@ -15,6 +15,7 @@ import {
   type GetArtifactDataOptions,
   type ArtifactData,
   type LinkReferences,
+  type WatchPathsResult,
 } from "../../shared/index.ts";
 import { execCommand } from "../../shared/utils/exec.js";
 import { execFailureMessage } from "../../shared/utils/format-error.js";
@@ -391,18 +392,18 @@ export class FoundryPlugin extends CompilerPlugin {
     return Object.keys(result).length > 0 ? result : undefined;
   }
 
-  // Parse foundry.toml to resolve a directory setting (e.g. "out", "src"),
-  // honoring FOUNDRY_PROFILE with fallback to the default profile
-  private async getFoundryDir(
+  // Parse foundry.toml to resolve a profile setting, honoring FOUNDRY_PROFILE
+  // with fallback to the default profile. Returns undefined when the file or
+  // key is absent or unparseable.
+  private async getFoundryValue(
     workspaceRoot: string,
-    dir: string,
-    defaultDir: string = dir,
-  ): Promise<string> {
+    key: string,
+  ): Promise<unknown> {
     const foundryTomlPath = join(workspaceRoot, "foundry.toml");
 
     try {
       if (!(await fileExists(foundryTomlPath))) {
-        return defaultDir;
+        return undefined;
       }
 
       const tomlContent = await fs.readFile(foundryTomlPath, "utf-8");
@@ -411,13 +412,55 @@ export class FoundryPlugin extends CompilerPlugin {
       };
 
       const profileName = process.env.FOUNDRY_PROFILE || "default";
-      const value =
-        config.profile?.[profileName]?.[dir] ??
-        config.profile?.default?.[dir];
-
-      return typeof value === "string" ? value : defaultDir;
+      return (
+        config.profile?.[profileName]?.[key] ?? config.profile?.default?.[key]
+      );
     } catch {
-      return defaultDir;
+      return undefined;
+    }
+  }
+
+  // Parse foundry.toml to resolve a directory setting (e.g. "out", "src")
+  private async getFoundryDir(
+    workspaceRoot: string,
+    dir: string,
+    defaultDir: string = dir,
+  ): Promise<string> {
+    const value = await this.getFoundryValue(workspaceRoot, dir);
+    return typeof value === "string" ? value : defaultDir;
+  }
+
+  async getWatchPaths(): Promise<PluginResponse<WatchPathsResult>> {
+    try {
+      const ws = "/workspace";
+      const src = await this.getFoundryDir(ws, "src");
+      const out = await this.getFoundryDir(ws, "out");
+      const test = await this.getFoundryDir(ws, "test");
+      const script = await this.getFoundryDir(ws, "script");
+      const libsValue = await this.getFoundryValue(ws, "libs");
+      const libs =
+        Array.isArray(libsValue) &&
+        libsValue.every((l) => typeof l === "string") &&
+        libsValue.length > 0
+          ? (libsValue as string[])
+          : ["lib"];
+
+      return {
+        success: true,
+        data: {
+          config: ["foundry.toml", "remappings.txt"],
+          sources: [src, test, script, ...libs],
+          artifacts: [out],
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: "WATCH_PATHS_ERROR",
+          message: `Failed to resolve watch paths: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      };
     }
   }
 }

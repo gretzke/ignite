@@ -12,6 +12,7 @@ import {
   type ArtifactListResult,
   type GetArtifactDataOptions,
   type ArtifactData,
+  type WatchPathsResult,
 } from '../../src/shared/index.ts';
 import { runPluginCLI } from '../../src/shared/plugin-runner.js';
 
@@ -90,6 +91,15 @@ export class StubCompilerPlugin extends CompilerPlugin {
         code: 'NOT_IMPLEMENTED',
         message: 'Stub compiler produces no artifacts',
       },
+    };
+  }
+
+  async getWatchPaths(): Promise<PluginResponse<WatchPathsResult>> {
+    // Reference implementation: the marker file this stub reads/writes is
+    // the only workspace state it depends on.
+    return {
+      success: true,
+      data: { config: [], sources: ['.stub-compiler'], artifacts: [] },
     };
   }
 }
