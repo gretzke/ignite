@@ -4,6 +4,7 @@ import path from 'path';
 import { FileSystem } from './FileSystem.js';
 import { RepoService, RepoKind, deriveRepoKind } from '../repos/RepoService.js';
 import { isGitRepository } from '../utils/startup.js';
+import { hasUrlCredentials } from '../utils/redact.js';
 
 // Injectable dependencies (tests pass fakes; production uses real singletons).
 export interface ProfileRepoRegistryDeps {
@@ -12,7 +13,7 @@ export interface ProfileRepoRegistryDeps {
     'getProfileReposPath' | 'fileExists' | 'readJsonFile' | 'writeJsonFile'
   >;
   isGitRepository: (p: string) => boolean;
-  removeClone: (pathOrUrl: string) => Promise<void>;
+  removeClone: (pathOrUrl: string, profileId: string) => Promise<void>;
   sessionPath: () => string | null;
 }
 
@@ -25,8 +26,8 @@ export class ProfileRepoRegistry {
       isGitRepository: deps?.isGitRepository ?? isGitRepository,
       removeClone:
         deps?.removeClone ??
-        ((pathOrUrl: string) =>
-          RepoService.getInstance().removeClone(pathOrUrl)),
+        ((pathOrUrl: string, profileId: string) =>
+          RepoService.getInstance().removeClone(pathOrUrl, profileId)),
       sessionPath:
         deps?.sessionPath ?? (() => process.env.IGNITE_WORKSPACE_PATH || null),
     };
@@ -75,6 +76,15 @@ export class ProfileRepoRegistry {
         );
       }
     }
+    // A credentialed URL saved here would persist the secret in cloned.json
+    // and surface it in every list/job/WS payload keyed by this identity.
+    // Host ambient credentials (helpers, ssh-agent) are the supported story.
+    if (kind === RepoKind.CLONED && hasUrlCredentials(pathOrUrl)) {
+      throw new Error(
+        'Repository URLs with embedded credentials are not supported. ' +
+          'Configure a git credential helper or SSH access instead.'
+      );
+    }
     // Deliberately NOT the tolerant readList(): a corrupt registry file must
     // propagate as an error (old handler behavior → 500) instead of being
     // silently overwritten with a fresh single-entry list.
@@ -84,7 +94,10 @@ export class ProfileRepoRegistry {
       list = await this.deps.fileSystem.readJsonFile<string[]>(p);
     }
     if (list.includes(pathOrUrl)) {
-      throw new Error(`Repository ${pathOrUrl} already exists`);
+      // Coded so the handler can map this to 409 instead of a generic 500.
+      throw Object.assign(new Error(`Repository ${pathOrUrl} already exists`), {
+        code: 'REPO_ALREADY_EXISTS',
+      });
     }
     list.push(pathOrUrl);
     await this.deps.fileSystem.writeJsonFile(p, list);
@@ -104,9 +117,11 @@ export class ProfileRepoRegistry {
     // The clone is disposable host data we own; a LOCAL repo is the user's
     // own directory and is never ours to delete (removeClone no-ops there
     // too, but skip the call entirely to keep the CLONED-only contract
-    // explicit here).
+    // explicit here). profileId is threaded through so removing a repo from
+    // a NON-active profile deletes that profile's clone, not the current
+    // profile's directory for the same URL.
     if (kind === RepoKind.CLONED) {
-      await this.deps.removeClone(pathOrUrl);
+      await this.deps.removeClone(pathOrUrl, profileId);
     }
   }
 }

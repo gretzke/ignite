@@ -6,13 +6,20 @@
 // not user edits).
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import { URL } from 'node:url';
-import { parseGitHubUrl, normalizeRepoUrl } from '@ignite/plugin-types';
+import {
+  parseGitHubUrl,
+  normalizeRepoUrl,
+  convertHttpsToSsh,
+} from '@ignite/plugin-types';
 import type { RepoInfoResult } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { hashWorkspacePath } from '../utils/startup.js';
 import { runCommand, type RunCommandResult } from '../utils/runCommand.js';
+import { KeyedMutex } from '../utils/KeyedMutex.js';
+import { redactUrlCredentials } from '../utils/redact.js';
 import { getLogger } from '../utils/logger.js';
 
 export enum RepoKind {
@@ -68,6 +75,13 @@ interface GitOutput {
 const HOOKS_OFF = ['-c', 'core.hooksPath=/dev/null'];
 const GIT_ALLOW_PROTOCOL = 'https:git:ssh:file';
 
+// git stderr patterns that mean "the transport rejected us", not "the repo is
+// broken". "Repository not found" is included deliberately: GitHub reports
+// private repos as not-found to unauthenticated HTTPS clients, and resolving
+// exactly that case is what the SSH fallback is for.
+const GIT_AUTH_ERROR =
+  /(could not read Username|could not read Password|Authentication failed|Permission denied|access denied|Invalid username or password|HTTP 40[13]|returned error: 40[13]|terminal prompts disabled|Repository not found)/i;
+
 // Timeouts per the Shared design: clone is slow (network + full history of
 // the default branch), fetch/pull touch the network but are bounded, local
 // ops never leave disk.
@@ -106,11 +120,25 @@ export class RepoService {
   private readonly fileSystem: FileSystem;
   private readonly injectedProfiles?: ProfileManager;
   private readonly run: typeof runCommand;
+  // Serializes mutating ops per repo identity: two overlapping repo.init
+  // jobs for the same URL must never clone/rm-rf the same directory
+  // concurrently (the pre-Phase-3 KeyedMutex guarded the container-name
+  // race; this is its host-side equivalent).
+  private readonly locks = new KeyedMutex();
 
   constructor(deps?: RepoServiceDeps) {
     this.fileSystem = deps?.fileSystem ?? FileSystem.getInstance();
     this.injectedProfiles = deps?.profiles;
     this.run = deps?.run ?? runCommand;
+  }
+
+  // Lock key: canonical URL for cloned repos (so https/ssh forms of the same
+  // repo serialize together), resolved path for local ones. Cross-profile
+  // over-serialization of the same URL is deliberate — cheap and safe.
+  private lockKey(pathOrUrl: string): string {
+    return deriveRepoKind(pathOrUrl) === RepoKind.CLONED
+      ? `cloned:${normalizeRepoUrl(pathOrUrl)}`
+      : `local:${path.resolve(pathOrUrl)}`;
   }
 
   static getInstance(): RepoService {
@@ -126,19 +154,53 @@ export class RepoService {
   // per-profile directory under <igniteHome>/repos/<profileId>, so the same
   // URL clones to the same place across restarts and different profiles
   // never share a clone.
-  async resolveWorkspacePath(pathOrUrl: string): Promise<string> {
+  // profileId is explicit where the caller addresses a specific profile
+  // (e.g. DELETE /profiles/:id/repos must remove THAT profile's clone, not
+  // the active one); it defaults to the current profile for the common case.
+  async resolveWorkspacePath(
+    pathOrUrl: string,
+    profileId?: string
+  ): Promise<string> {
     const kind = deriveRepoKind(pathOrUrl);
     if (kind === RepoKind.LOCAL) {
       return pathOrUrl;
     }
-    const profileId = await this.getProfileId();
-    const reposPath = this.fileSystem.getReposPath(profileId);
+    const resolvedProfileId = profileId ?? (await this.getProfileId());
+    const reposPath = this.fileSystem.getReposPath(resolvedProfileId);
     return path.join(reposPath, this.clonedDirName(pathOrUrl));
   }
 
   private async getProfileId(): Promise<string> {
-    const profiles = this.injectedProfiles ?? (await ProfileManager.getInstance());
+    const profiles =
+      this.injectedProfiles ?? (await ProfileManager.getInstance());
     return profiles.getCurrentProfile();
+  }
+
+  // Like resolveWorkspacePath, but throws when the directory doesn't exist.
+  // Callers that bind-mount the result MUST use this: Docker auto-creates a
+  // missing host path as an empty (root-owned, on Linux) directory instead
+  // of erroring, which both breaks the eventual clone (EACCES) and turns
+  // "repo not initialized" into a baffling "no frameworks detected".
+  async resolveExistingWorkspacePath(
+    pathOrUrl: string,
+    profileId?: string
+  ): Promise<string> {
+    const workspacePath = await this.resolveWorkspacePath(pathOrUrl, profileId);
+    let stats;
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: getReposPath-derived or the user's own local repo path
+      stats = await fs.stat(workspacePath);
+    } catch {
+      throw new Error(
+        deriveRepoKind(pathOrUrl) === RepoKind.CLONED
+          ? `Repository has not been initialized (no clone at ${workspacePath}). Initialize it first.`
+          : `Local repository path does not exist: ${workspacePath}`
+      );
+    }
+    if (!stats.isDirectory()) {
+      throw new Error(`Workspace path is not a directory: ${workspacePath}`);
+    }
+    return workspacePath;
   }
 
   // Sanitized <owner>-<repo>-<hash> directory name. normalizeRepoUrl folds
@@ -194,11 +256,28 @@ export class RepoService {
 
   // === Ops ===
 
-  // LOCAL: ensure the host path is a git repo. CLONED: clone if the dir is
-  // missing/not yet a repo, then fetch remote heads; idempotent if already
-  // cloned (matches the old plugin: a second init is a cheap no-op, it does
-  // NOT re-fetch).
-  async init(pathOrUrl: string): Promise<RepoResult<null>> {
+  // LOCAL: ensure the host path is a git repo. CLONED: clone if missing,
+  // idempotent when a complete clone is already present. Serialized per repo
+  // identity — overlapping init jobs for the same URL run one at a time.
+  //
+  // Clone strategy: clone into a sibling temp dir and atomically rename into
+  // place on success. The final workspace path therefore either doesn't
+  // exist or holds a COMPLETE clone — a crash/kill mid-clone leaves only a
+  // temp dir (swept on the next init), never a half-initialized workspace
+  // that later ops would happily treat as ready.
+  async init(
+    pathOrUrl: string,
+    opts?: { signal?: AbortSignal }
+  ): Promise<RepoResult<null>> {
+    return this.locks.run(this.lockKey(pathOrUrl), () =>
+      this.initLocked(pathOrUrl, opts?.signal)
+    );
+  }
+
+  private async initLocked(
+    pathOrUrl: string,
+    signal?: AbortSignal
+  ): Promise<RepoResult<null>> {
     try {
       const kind = deriveRepoKind(pathOrUrl);
       const workspacePath = await this.resolveWorkspacePath(pathOrUrl);
@@ -216,71 +295,181 @@ export class RepoService {
           error: {
             code: 'CLONE_FAILED',
             message:
-              `Refusing to clone repository: unsupported URL scheme in '${pathOrUrl}'. ` +
+              `Refusing to clone repository: unsupported URL scheme in '${redactUrlCredentials(pathOrUrl)}'. ` +
               'Only https://, git://, ssh://, file://, and git@host:path are allowed.',
           },
         };
       }
 
-      if (await this.isGitRepo(workspacePath)) {
+      if (await this.hasCompleteClone(workspacePath)) {
         // Already cloned — idempotent no-op, matches the old plugin.
         return { success: true, data: null };
       }
 
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: workspacePath is derived from FileSystem.getReposPath(profileId), not user input
-      await fs.mkdir(path.dirname(workspacePath), { recursive: true });
+      // A directory that exists but fails the completeness check is a
+      // pre-atomic-rename partial clone (or otherwise corrupt). It's a
+      // disposable managed clone — wipe and re-clone. Safe under the lock.
+      await fs
+        .rm(workspacePath, { recursive: true, force: true })
+        .catch(() => {});
 
+      const parentDir = path.dirname(workspacePath);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: workspacePath is derived from FileSystem.getReposPath(profileId), not user input
+      await fs.mkdir(parentDir, { recursive: true });
+      await this.sweepStaleTempClones(parentDir, path.basename(workspacePath));
+
+      const cloned = await this.cloneWithSshFallback(
+        pathOrUrl,
+        parentDir,
+        path.basename(workspacePath),
+        signal
+      );
+      if (!cloned.success) return cloned;
+      const tempDir = cloned.data;
+
+      // Atomic publish: same parent dir, so rename cannot cross filesystems.
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: both paths derived from getReposPath
+      await fs.rename(tempDir, workspacePath);
+
+      // Fetch the full set of remote heads so non-default branches show up in
+      // getBranches. Best-effort and NOT gated: a transient network blip
+      // after a successful clone must not fail init (a retry short-circuits
+      // on the complete clone and would never re-fetch). A later
+      // getBranches/checkout re-runs `fetch --all` and recovers.
+      const fetchHeads = await this.runNetworkGit(
+        workspacePath,
+        ['fetch', 'origin', '+refs/heads/*:refs/remotes/origin/*'],
+        RepoKind.CLONED,
+        signal
+      );
+      if (!fetchHeads.success) {
+        getLogger().warn(
+          `Cloned ${redactUrlCredentials(pathOrUrl)} but failed to fetch all remote heads (non-default branches may be missing until the next fetch): ${fetchHeads.error.message}`
+        );
+      }
+
+      return { success: true, data: null };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: 'INIT_ERROR',
+          message: redactUrlCredentials(errMsg(error)),
+        },
+      };
+    }
+  }
+
+  // A complete clone has a resolvable HEAD; `git clone` only publishes one
+  // after objects + checkout finish, and our own temp-dir+rename flow only
+  // publishes complete clones. Catches partial clones left by pre-fix
+  // versions (or a corrupted .git).
+  private async hasCompleteClone(workspacePath: string): Promise<boolean> {
+    if (!(await this.isGitRepo(workspacePath))) return false;
+    const head = await this.runGit(
+      workspacePath,
+      ['rev-parse', '--verify', 'HEAD'],
+      TIMEOUT_LOCAL_MS
+    );
+    return head.success;
+  }
+
+  // Clone into a fresh temp dir; on an auth-shaped HTTPS failure, retry once
+  // with the SSH form of the URL (the host's ssh-agent/keys often work where
+  // no HTTPS credential helper is configured — the old GitCredentialManager
+  // provided exactly this fallback). The surviving remote URL is whichever
+  // transport worked, so every later fetch/pull uses it automatically.
+  // Returns the temp dir containing the finished clone.
+  private async cloneWithSshFallback(
+    pathOrUrl: string,
+    parentDir: string,
+    dirName: string,
+    signal?: AbortSignal
+  ): Promise<RepoResult<string>> {
+    const cloneInto = async (url: string): Promise<RepoResult<string>> => {
+      const tempDir = path.join(
+        parentDir,
+        `.tmp-${dirName}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`
+      );
       const clone = await this.runGit(
-        path.dirname(workspacePath),
+        parentDir,
         [
           'clone',
           '--depth',
           '1',
           '--recurse-submodules',
           '--shallow-submodules',
-          pathOrUrl,
-          workspacePath,
+          url,
+          tempDir,
         ],
-        TIMEOUT_CLONE_MS
+        TIMEOUT_CLONE_MS,
+        signal
       );
       if (!clone.success) {
-        await fs.rm(workspacePath, { recursive: true, force: true }).catch(() => {});
-        return {
-          success: false,
-          error: {
-            code: 'CLONE_FAILED',
-            message: `Failed to clone repository: ${clone.error.message}`,
-          },
-        };
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        return clone;
       }
+      return { success: true, data: tempDir };
+    };
 
-      // Fetch the full set of remote heads so non-default branches show up in
-      // getBranches. This is best-effort and NOT gated: the reference plugin
-      // (cloned-repo/index.ts) fires this fetch and ignores its result, and
-      // gating init on it would be actively harmful — a transient network
-      // blip after a successful clone would return CLONE_FAILED, yet a retry
-      // short-circuits on the already-present clone (isGitRepo === true) and
-      // reports success WITHOUT ever re-fetching, permanently stranding the
-      // clone missing its non-default branches. Log and move on; a later
-      // init/getBranches/checkout re-runs `fetch --all` and recovers.
-      const fetchHeads = await this.runGit(
-        workspacePath,
-        ['fetch', 'origin', '+refs/heads/*:refs/remotes/origin/*'],
-        TIMEOUT_FETCH_MS
+    const first = await cloneInto(pathOrUrl);
+    if (first.success) return first;
+
+    const sshUrl = convertHttpsToSsh(pathOrUrl);
+    const authShaped = GIT_AUTH_ERROR.test(first.error.message);
+    if (!authShaped || sshUrl === pathOrUrl || signal?.aborted) {
+      return {
+        success: false,
+        error: {
+          code: 'CLONE_FAILED',
+          message: `Failed to clone repository: ${first.error.message}`,
+        },
+      };
+    }
+
+    getLogger().info(
+      `HTTPS clone of ${redactUrlCredentials(pathOrUrl)} was rejected (auth); retrying over SSH as ${sshUrl}`
+    );
+    const second = await cloneInto(sshUrl);
+    if (second.success) return second;
+    return {
+      success: false,
+      error: {
+        code: 'CLONE_FAILED',
+        message:
+          `Failed to clone repository over HTTPS (${first.error.message}) ` +
+          `and the SSH fallback also failed (${second.error.message})`,
+      },
+    };
+  }
+
+  // Remove leftover temp clones for this workspace dir (a previous core
+  // process died mid-clone). Only .tmp-<dirName>-* siblings are touched.
+  private async sweepStaleTempClones(
+    parentDir: string,
+    dirName: string
+  ): Promise<void> {
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: parentDir is getReposPath-derived
+      const entries = await fs.readdir(parentDir);
+      const prefix = `.tmp-${dirName}-`;
+      await Promise.all(
+        entries
+          .filter((name) => name.startsWith(prefix))
+          .map((name) =>
+            fs
+              .rm(path.join(parentDir, name), { recursive: true, force: true })
+              .catch(() => {})
+          )
       );
-      if (!fetchHeads.success) {
-        getLogger().warn(
-          `Cloned ${pathOrUrl} but failed to fetch all remote heads (non-default branches may be missing until the next fetch): ${fetchHeads.error.message}`
-        );
-      }
-
-      return { success: true, data: null };
-    } catch (error) {
-      return { success: false, error: { code: 'INIT_ERROR', message: errMsg(error) } };
+    } catch {
+      // Best-effort.
     }
   }
 
-  async getBranches(pathOrUrl: string): Promise<RepoResult<{ branches: string[] }>> {
+  async getBranches(
+    pathOrUrl: string
+  ): Promise<RepoResult<{ branches: string[] }>> {
     try {
       const cwd = await this.resolveWorkspacePath(pathOrUrl);
       const ensured = await this.ensureGitRepo(cwd);
@@ -289,11 +478,26 @@ export class RepoService {
       if (!refs.success) return refs;
       return { success: true, data: { branches: refs.data } };
     } catch (error) {
-      return { success: false, error: { code: 'GET_BRANCHES_ERROR', message: errMsg(error) } };
+      return {
+        success: false,
+        error: { code: 'GET_BRANCHES_ERROR', message: errMsg(error) },
+      };
     }
   }
 
-  async checkoutBranch(pathOrUrl: string, branch: string): Promise<RepoResult<null>> {
+  async checkoutBranch(
+    pathOrUrl: string,
+    branch: string
+  ): Promise<RepoResult<null>> {
+    return this.locks.run(this.lockKey(pathOrUrl), () =>
+      this.checkoutBranchLocked(pathOrUrl, branch)
+    );
+  }
+
+  private async checkoutBranchLocked(
+    pathOrUrl: string,
+    branch: string
+  ): Promise<RepoResult<null>> {
     try {
       const kind = deriveRepoKind(pathOrUrl);
       const cwd = await this.resolveWorkspacePath(pathOrUrl);
@@ -306,7 +510,11 @@ export class RepoService {
         if (!ensured.success) return ensured;
       }
 
-      const fetchRes = await this.runGit(cwd, ['fetch', '--all', '--prune'], TIMEOUT_FETCH_MS);
+      const fetchRes = await this.runNetworkGit(
+        cwd,
+        ['fetch', '--all', '--prune'],
+        kind
+      );
       if (!fetchRes.success) return fetchRes;
 
       if (kind === RepoKind.CLONED) {
@@ -328,7 +536,10 @@ export class RepoService {
 
   // Shared origin/-prefix handling: checking out "origin/foo" creates (or
   // reuses) a local tracking branch "foo" rather than leaving HEAD detached.
-  private async doCheckoutBranch(cwd: string, branch: string): Promise<RepoResult<null>> {
+  private async doCheckoutBranch(
+    cwd: string,
+    branch: string
+  ): Promise<RepoResult<null>> {
     if (branch.startsWith('origin/')) {
       const localBranchName = branch.replace('origin/', '');
       const branchExists = await this.runGit(
@@ -337,7 +548,11 @@ export class RepoService {
         TIMEOUT_LOCAL_MS
       );
       if (branchExists.success) {
-        const co = await this.runGit(cwd, ['checkout', localBranchName], TIMEOUT_LOCAL_MS);
+        const co = await this.runGit(
+          cwd,
+          ['checkout', localBranchName],
+          TIMEOUT_LOCAL_MS
+        );
         if (!co.success) return co;
       } else {
         const co = await this.runGit(
@@ -354,7 +569,19 @@ export class RepoService {
     return { success: true, data: null };
   }
 
-  async checkoutCommit(pathOrUrl: string, commit: string): Promise<RepoResult<null>> {
+  async checkoutCommit(
+    pathOrUrl: string,
+    commit: string
+  ): Promise<RepoResult<null>> {
+    return this.locks.run(this.lockKey(pathOrUrl), () =>
+      this.checkoutCommitLocked(pathOrUrl, commit)
+    );
+  }
+
+  private async checkoutCommitLocked(
+    pathOrUrl: string,
+    commit: string
+  ): Promise<RepoResult<null>> {
     try {
       const kind = deriveRepoKind(pathOrUrl);
       const cwd = await this.resolveWorkspacePath(pathOrUrl);
@@ -367,7 +594,11 @@ export class RepoService {
         if (!ensured.success) return ensured;
       }
 
-      const fetchRes = await this.runGit(cwd, ['fetch', '--all', '--prune'], TIMEOUT_FETCH_MS);
+      const fetchRes = await this.runNetworkGit(
+        cwd,
+        ['fetch', '--all', '--prune'],
+        kind
+      );
       if (!fetchRes.success) return fetchRes;
 
       if (kind === RepoKind.CLONED) {
@@ -375,7 +606,11 @@ export class RepoService {
         if (!reset.success) return reset;
       }
 
-      const co = await this.runGit(cwd, ['checkout', '--detach', commit], TIMEOUT_LOCAL_MS);
+      const co = await this.runGit(
+        cwd,
+        ['checkout', '--detach', commit],
+        TIMEOUT_LOCAL_MS
+      );
       if (!co.success) return co;
 
       return { success: true, data: null };
@@ -388,6 +623,14 @@ export class RepoService {
   }
 
   async pullChanges(pathOrUrl: string): Promise<RepoResult<null>> {
+    return this.locks.run(this.lockKey(pathOrUrl), () =>
+      this.pullChangesLocked(pathOrUrl)
+    );
+  }
+
+  private async pullChangesLocked(
+    pathOrUrl: string
+  ): Promise<RepoResult<null>> {
     try {
       const kind = deriveRepoKind(pathOrUrl);
       const cwd = await this.resolveWorkspacePath(pathOrUrl);
@@ -406,26 +649,34 @@ export class RepoService {
         if (!pristine.success) return pristine;
       }
 
-      const pull = await this.runGit(cwd, ['pull', '--ff-only'], TIMEOUT_FETCH_MS);
+      const pull = await this.runNetworkGit(cwd, ['pull', '--ff-only'], kind);
       if (!pull.success) return pull;
 
       return { success: true, data: null };
     } catch (error) {
-      return { success: false, error: { code: 'PULL_ERROR', message: errMsg(error) } };
+      return {
+        success: false,
+        error: { code: 'PULL_ERROR', message: errMsg(error) },
+      };
     }
   }
 
   // Destructive by design (frontend confirms before calling): discard
   // uncommitted changes and remove untracked files. Identical for both kinds.
   async reset(pathOrUrl: string): Promise<RepoResult<null>> {
-    try {
-      const cwd = await this.resolveWorkspacePath(pathOrUrl);
-      const ensured = await this.ensureGitRepo(cwd);
-      if (!ensured.success) return ensured;
-      return await this.makePristine(cwd);
-    } catch (error) {
-      return { success: false, error: { code: 'RESET_ERROR', message: errMsg(error) } };
-    }
+    return this.locks.run(this.lockKey(pathOrUrl), async () => {
+      try {
+        const cwd = await this.resolveWorkspacePath(pathOrUrl);
+        const ensured = await this.ensureGitRepo(cwd);
+        if (!ensured.success) return ensured;
+        return await this.makePristine(cwd);
+      } catch (error) {
+        return {
+          success: false as const,
+          error: { code: 'RESET_ERROR', message: errMsg(error) },
+        };
+      }
+    });
   }
 
   async getRepoInfo(pathOrUrl: string): Promise<RepoResult<RepoInfoResult>> {
@@ -449,7 +700,7 @@ export class RepoService {
         dirty = status.data;
       }
 
-      const upToDate = await this.isUpToDateWithRemote(cwd);
+      const upToDate = await this.isUpToDateWithRemote(cwd, kind);
       if (!upToDate.success) return upToDate;
 
       return {
@@ -462,11 +713,17 @@ export class RepoService {
         },
       };
     } catch (error) {
-      return { success: false, error: { code: 'INFO_ERROR', message: errMsg(error) } };
+      return {
+        success: false,
+        error: { code: 'INFO_ERROR', message: errMsg(error) },
+      };
     }
   }
 
-  async getFile(pathOrUrl: string, filePath: string): Promise<RepoResult<{ content: string }>> {
+  async getFile(
+    pathOrUrl: string,
+    filePath: string
+  ): Promise<RepoResult<{ content: string }>> {
     try {
       const validated = this.validateFilePath(filePath);
       if (!validated.success) return validated;
@@ -488,7 +745,10 @@ export class RepoService {
       ) {
         return {
           success: false,
-          error: { code: 'INVALID_PATH', message: 'File path escapes repository root' },
+          error: {
+            code: 'INVALID_PATH',
+            message: 'File path escapes repository root',
+          },
         };
       }
 
@@ -513,7 +773,10 @@ export class RepoService {
         if ((error as { code?: string }).code === 'ENOENT') {
           return {
             success: false,
-            error: { code: 'FILE_NOT_FOUND', message: `File not found: ${filePath}` },
+            error: {
+              code: 'FILE_NOT_FOUND',
+              message: `File not found: ${filePath}`,
+            },
           };
         }
         throw error;
@@ -526,17 +789,24 @@ export class RepoService {
         if ((error as { code?: string }).code === 'ENOENT') {
           return {
             success: false,
-            error: { code: 'FILE_NOT_FOUND', message: `File not found: ${filePath}` },
+            error: {
+              code: 'FILE_NOT_FOUND',
+              message: `File not found: ${filePath}`,
+            },
           };
         }
         throw error;
       }
-      if (realTarget !== realRoot && !realTarget.startsWith(realRoot + path.sep)) {
+      if (
+        realTarget !== realRoot &&
+        !realTarget.startsWith(realRoot + path.sep)
+      ) {
         return {
           success: false,
           error: {
             code: 'SUSPICIOUS_PATH_PATTERN',
-            message: 'File path resolves outside the repository (symlink escape)',
+            message:
+              'File path resolves outside the repository (symlink escape)',
           },
         };
       }
@@ -549,7 +819,10 @@ export class RepoService {
         if ((error as { code?: string }).code === 'ENOENT') {
           return {
             success: false,
-            error: { code: 'FILE_NOT_FOUND', message: `File not found: ${filePath}` },
+            error: {
+              code: 'FILE_NOT_FOUND',
+              message: `File not found: ${filePath}`,
+            },
           };
         }
         throw error;
@@ -557,7 +830,10 @@ export class RepoService {
       if (!stats.isFile()) {
         return {
           success: false,
-          error: { code: 'FILE_NOT_FOUND', message: `Path is not a file: ${filePath}` },
+          error: {
+            code: 'FILE_NOT_FOUND',
+            message: `Path is not a file: ${filePath}`,
+          },
         };
       }
 
@@ -565,7 +841,10 @@ export class RepoService {
       const content = await fs.readFile(realTarget, 'utf8');
       return { success: true, data: { content } };
     } catch (error) {
-      return { success: false, error: { code: 'FILE_READ_ERROR', message: errMsg(error) } };
+      return {
+        success: false,
+        error: { code: 'FILE_READ_ERROR', message: errMsg(error) },
+      };
     }
   }
 
@@ -574,7 +853,9 @@ export class RepoService {
   // INVALID_PATH; a remaining ".."/"./" substring after the segment scan
   // (e.g. a single segment literally named "a..b") is SUSPICIOUS_PATH_PATTERN.
   private validateFilePath(filePath: string): RepoResult<true> {
-    const normalizedPath = filePath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    const normalizedPath = filePath
+      .replace(/\\/g, '/')
+      .replace(/^\/+|\/+$/g, '');
     const pathSegments = normalizedPath.split('/');
 
     for (const segment of pathSegments) {
@@ -605,22 +886,34 @@ export class RepoService {
   // rm -rf the cloned workspace dir; LOCAL is a no-op (the host path is the
   // user's own repo, never ours to delete). Best-effort: mirrors the old
   // removeRepoContainers cleanup, which never blocks repo removal.
-  async removeClone(pathOrUrl: string): Promise<void> {
+  // profileId must be the profile whose registry entry is being removed —
+  // resolving via the CURRENT profile would delete the wrong profile's clone
+  // when a non-active profile's repo is removed.
+  async removeClone(pathOrUrl: string, profileId?: string): Promise<void> {
     const kind = deriveRepoKind(pathOrUrl);
     if (kind === RepoKind.LOCAL) return;
-    try {
-      const workspacePath = await this.resolveWorkspacePath(pathOrUrl);
-      await fs.rm(workspacePath, { recursive: true, force: true });
-    } catch {
-      // Best-effort; failure to clean up disk must not block the caller.
-    }
+    await this.locks.run(this.lockKey(pathOrUrl), async () => {
+      try {
+        const workspacePath = await this.resolveWorkspacePath(
+          pathOrUrl,
+          profileId
+        );
+        await fs.rm(workspacePath, { recursive: true, force: true });
+      } catch {
+        // Best-effort; failure to clean up disk must not block the caller.
+      }
+    });
   }
 
   // === Git primitives (ported from plugins/src/shared/utils/git.ts,
   // parameterized on cwd instead of a fixed /workspace) ===
 
   private async isGitRepo(cwd: string): Promise<boolean> {
-    const r = await this.runGit(cwd, ['rev-parse', '--is-inside-work-tree'], TIMEOUT_LOCAL_MS);
+    const r = await this.runGit(
+      cwd,
+      ['rev-parse', '--is-inside-work-tree'],
+      TIMEOUT_LOCAL_MS
+    );
     return r.success;
   }
 
@@ -628,14 +921,21 @@ export class RepoService {
     if (!(await this.isGitRepo(cwd))) {
       return {
         success: false,
-        error: { code: 'NOT_GIT_REPO', message: `Not a git repository at ${cwd}` },
+        error: {
+          code: 'NOT_GIT_REPO',
+          message: `Not a git repository at ${cwd}`,
+        },
       };
     }
     return { success: true, data: true };
   }
 
   private async hasTrackedChanges(cwd: string): Promise<RepoResult<boolean>> {
-    const res = await this.runGit(cwd, ['status', '--porcelain'], TIMEOUT_LOCAL_MS);
+    const res = await this.runGit(
+      cwd,
+      ['status', '--porcelain'],
+      TIMEOUT_LOCAL_MS
+    );
     if (!res.success) return res;
     return { success: true, data: res.data.stdout.trim().length > 0 };
   }
@@ -646,7 +946,10 @@ export class RepoService {
     if (dirty.data) {
       return {
         success: false,
-        error: { code: 'DIRTY_REPO', message: 'Repository has uncommitted changes' },
+        error: {
+          code: 'DIRTY_REPO',
+          message: 'Repository has uncommitted changes',
+        },
       };
     }
     return { success: true, data: true };
@@ -672,8 +975,14 @@ export class RepoService {
     return { success: true, data: branches };
   }
 
-  private async getCurrentBranch(cwd: string): Promise<RepoResult<string | null>> {
-    const res = await this.runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], TIMEOUT_LOCAL_MS);
+  private async getCurrentBranch(
+    cwd: string
+  ): Promise<RepoResult<string | null>> {
+    const res = await this.runGit(
+      cwd,
+      ['rev-parse', '--abbrev-ref', 'HEAD'],
+      TIMEOUT_LOCAL_MS
+    );
     if (!res.success) return res;
     const name = res.data.stdout.trim();
     return { success: true, data: name === 'HEAD' ? null : name };
@@ -685,7 +994,10 @@ export class RepoService {
     return { success: true, data: res.data.stdout.trim() };
   }
 
-  private async isUpToDateWithRemote(cwd: string): Promise<RepoResult<boolean>> {
+  private async isUpToDateWithRemote(
+    cwd: string,
+    kind: RepoKind
+  ): Promise<RepoResult<boolean>> {
     const branch = await this.getCurrentBranch(cwd);
     if (!branch.success) return branch;
     if (branch.data === null) {
@@ -704,7 +1016,11 @@ export class RepoService {
       return { success: true, data: true };
     }
 
-    const fetch = await this.runGit(cwd, ['fetch', '--all', '--prune'], TIMEOUT_FETCH_MS);
+    const fetch = await this.runNetworkGit(
+      cwd,
+      ['fetch', '--all', '--prune'],
+      kind
+    );
     if (!fetch.success) return fetch;
 
     const res = await this.runGit(
@@ -737,29 +1053,103 @@ export class RepoService {
     return { success: true, data: null };
   }
 
+  // Network-touching git op (fetch/pull) with an SSH fallback for CLONED
+  // repos: when the origin remote is HTTPS and the failure is auth-shaped,
+  // permanently switch origin to the SSH form and retry once. This recovers
+  // repos that were cloned over HTTPS (or saved before the SSH fallback
+  // existed) on hosts where only SSH credentials work. LOCAL repos are the
+  // user's own — their remotes are never touched.
+  private async runNetworkGit(
+    cwd: string,
+    args: string[],
+    kind: RepoKind,
+    signal?: AbortSignal
+  ): Promise<RepoResult<GitOutput>> {
+    const first = await this.runGit(cwd, args, TIMEOUT_FETCH_MS, signal);
+    if (
+      first.success ||
+      kind !== RepoKind.CLONED ||
+      !GIT_AUTH_ERROR.test(first.error.message) ||
+      signal?.aborted
+    ) {
+      return first;
+    }
+
+    const origin = await this.runGit(
+      cwd,
+      ['remote', 'get-url', 'origin'],
+      TIMEOUT_LOCAL_MS
+    );
+    if (!origin.success) return first;
+    const originUrl = origin.data.stdout.trim();
+    const sshUrl = convertHttpsToSsh(originUrl);
+    if (sshUrl === originUrl) return first;
+
+    getLogger().info(
+      `HTTPS ${args[0]} in ${cwd} was rejected (auth); switching origin to SSH (${sshUrl}) and retrying`
+    );
+    const setUrl = await this.runGit(
+      cwd,
+      ['remote', 'set-url', 'origin', sshUrl],
+      TIMEOUT_LOCAL_MS
+    );
+    if (!setUrl.success) return first;
+
+    const second = await this.runGit(cwd, args, TIMEOUT_FETCH_MS, signal);
+    if (!second.success) {
+      // Neither transport works — restore the original URL so the remote
+      // config doesn't flip-flop on every retry.
+      await this.runGit(
+        cwd,
+        ['remote', 'set-url', 'origin', originUrl],
+        TIMEOUT_LOCAL_MS
+      );
+      return first;
+    }
+    return second;
+  }
+
   // Every git invocation goes through here so the safety rails (hooks
-  // disabled, protocol allowlist) are structurally impossible to bypass.
-  // Mirrors the old plugin-side execGit contract: any failure — spawn error,
-  // timeout, or a non-zero exit — comes back as GIT_COMMAND_FAILED rather
-  // than throwing, so callers never need a try/catch around a git call.
+  // disabled, protocol allowlist, no interactive prompts) are structurally
+  // impossible to bypass. Mirrors the old plugin-side execGit contract: any
+  // failure — spawn error, timeout, abort, or a non-zero exit — comes back
+  // as GIT_COMMAND_FAILED rather than throwing, so callers never need a
+  // try/catch around a git call. Error messages are credential-redacted:
+  // git happily echoes credentialed URLs into stderr.
   private async runGit(
     cwd: string,
     args: string[],
-    timeoutMs: number
+    timeoutMs: number,
+    signal?: AbortSignal
   ): Promise<RepoResult<GitOutput>> {
     let result: RunCommandResult;
     try {
       result = await this.run('git', [...HOOKS_OFF, ...args], {
         cwd,
-        env: { ...process.env, GIT_ALLOW_PROTOCOL },
+        env: {
+          ...process.env,
+          GIT_ALLOW_PROTOCOL,
+          // Never hang on an interactive credential prompt — this runs in a
+          // server. Failing fast is what makes the SSH fallback reachable.
+          GIT_TERMINAL_PROMPT: '0',
+          // Same for SSH passphrase/host-key prompts; accept-new keeps
+          // first-contact clones working without disabling host-key checks
+          // entirely. An explicitly configured GIT_SSH_COMMAND wins.
+          GIT_SSH_COMMAND:
+            process.env.GIT_SSH_COMMAND ??
+            'ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new',
+        },
         timeoutMs,
+        signal,
       });
     } catch (error) {
       return {
         success: false,
         error: {
           code: 'GIT_COMMAND_FAILED',
-          message: `git ${args.join(' ')} failed: ${errMsg(error)}`,
+          message: redactUrlCredentials(
+            `git ${args.join(' ')} failed: ${errMsg(error)}`
+          ),
         },
       };
     }
@@ -768,10 +1158,15 @@ export class RepoService {
         success: false,
         error: {
           code: 'GIT_COMMAND_FAILED',
-          message: `git ${args.join(' ')} failed (exit ${result.code}): ${result.stderr.trim()}`,
+          message: redactUrlCredentials(
+            `git ${args.join(' ')} failed (exit ${result.code}): ${result.stderr.trim()}`
+          ),
         },
       };
     }
-    return { success: true, data: { stdout: result.stdout, stderr: result.stderr } };
+    return {
+      success: true,
+      data: { stdout: result.stdout, stderr: result.stderr },
+    };
   }
 }

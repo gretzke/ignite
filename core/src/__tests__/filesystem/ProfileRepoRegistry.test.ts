@@ -86,7 +86,12 @@ describe('ProfileRepoRegistry', () => {
     expect(
       deps._store.get(`/profiles/p1/repos/${RepoKind.CLONED}.json`)
     ).toEqual(['https://github.com/c/d']);
-    expect(deps.removeClone).toHaveBeenCalledWith('https://github.com/a/b');
+    // profileId is threaded through so the ADDRESSED profile's clone is
+    // deleted, not the currently-active profile's.
+    expect(deps.removeClone).toHaveBeenCalledWith(
+      'https://github.com/a/b',
+      'p1'
+    );
   });
 
   it('remove does not call removeClone for a LOCAL repo', async () => {
