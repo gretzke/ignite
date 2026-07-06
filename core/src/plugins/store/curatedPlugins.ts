@@ -8,7 +8,7 @@ import type { StorePluginData } from '@ignite/api';
 // hosted registry repo so it updates without an app release.
 export const CURATED_PLUGINS: readonly StorePluginData[] = [
   {
-    name: 'Waffle Plugin',
+    name: 'Waffle',
     description: 'Compiles Solidity projects that use the Waffle toolchain.',
     repoUrl: 'https://github.com/gretzke/ignite-waffle-plugin',
   },

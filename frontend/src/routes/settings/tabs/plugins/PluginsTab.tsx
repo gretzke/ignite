@@ -112,11 +112,6 @@ function PluginCard({
                 {plugin.type}
               </span>
             )}
-            {isNative && (
-              <span className="text-xs rounded-full pill px-2 py-0.5 shrink-0">
-                Built-in
-              </span>
-            )}
             {!isNative &&
               granted.map((p) => (
                 <span

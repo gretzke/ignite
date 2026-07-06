@@ -317,6 +317,7 @@ export class RepoLifecycle {
     // parallel; fanning out per-plugin containers on top of that invites
     // container storms during startup sweeps.
     const detectedIds: Array<{ id: string; name: string }> = [];
+    const erroredIds = new Set<string>();
     for (const plugin of compilers) {
       try {
         const result = await this.deps.executor.execute(
@@ -330,12 +331,36 @@ export class RepoLifecycle {
             id: plugin.metadata.id,
             name: plugin.metadata.name,
           });
+        } else if (!result.success) {
+          erroredIds.add(plugin.metadata.id);
+          getLogger().error(
+            `Lifecycle detect errored for ${plugin.metadata.id}: ${result.error?.message}`
+          );
         }
       } catch (error) {
         // One broken plugin must not fail detection for the others.
+        erroredIds.add(plugin.metadata.id);
         getLogger().error(
           `Lifecycle detect failed for ${plugin.metadata.id}: ${error}`
         );
+      }
+    }
+
+    // A detect that ERRORED (as opposed to answering "not detected") must
+    // not clobber a previously-detected framework: transient failures — a
+    // missing/stale plugin image, docker contention while another plugin
+    // builds — would otherwise flip working repos to "Unknown Framework" on
+    // the next sweep. Keep the prior detection; its watchPaths/fingerprint
+    // carry over via the prior-state merge below.
+    for (const priorFw of prior?.frameworks ?? []) {
+      if (
+        erroredIds.has(priorFw.id) &&
+        !detectedIds.some((d) => d.id === priorFw.id)
+      ) {
+        ctx.log(
+          `detect errored for ${priorFw.id} — keeping previous detection\n`
+        );
+        detectedIds.push({ id: priorFw.id, name: priorFw.name });
       }
     }
 

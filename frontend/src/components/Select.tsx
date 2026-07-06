@@ -96,6 +96,16 @@ export default function Select({
       menuStyle={{
         padding: 0,
         width: maxOptionWidth,
+        // In-place menus can't use backdrop blur (the parent dialog already
+        // owns the backdrop), so fall back to an explicit translucent fill —
+        // same recipe as the header dropdowns.
+        ...(portal
+          ? {}
+          : {
+              background:
+                'color-mix(in oklch, var(--bg-base) calc(var(--glass-milk) + 20%), transparent)',
+              borderColor: 'color-mix(in oklch, #fff 28%, transparent)',
+            }),
         maxHeight: 320,
         zIndex: 9999,
         display: 'flex',

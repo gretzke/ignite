@@ -256,6 +256,74 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('a detect ERROR keeps the previously-detected framework instead of clobbering it', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const priorFramework = {
+        id: 'foundry',
+        name: 'Foundry',
+        watchPaths: {
+          config: ['foundry.toml'],
+          sources: ['src'],
+          artifacts: ['out'],
+        },
+        fingerprint: { sources: 'abc', artifacts: 'def' },
+      };
+      const { lifecycle, jobs, registry } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a', frameworks: [priorFramework] }],
+        responses: {
+          foundry: {
+            // e.g. the plugin image is missing or docker is contended.
+            detect: {
+              success: false,
+              error: { code: 'BOOM', message: 'image not found' },
+            },
+            getWatchPaths: {
+              success: false,
+              error: { code: 'BOOM', message: 'image not found' },
+            },
+          },
+        },
+      });
+      lifecycle.startLifecycle('/repo-a', 'p1', 'sweep');
+      await jobs.runAll();
+
+      const patch = registry.updates.at(-1)?.patch;
+      expect(patch?.frameworks?.map((f) => f.id)).toEqual(['foundry']);
+      // Prior compile-time state carried over untouched.
+      expect(patch?.frameworks?.[0].watchPaths).toEqual(
+        priorFramework.watchPaths
+      );
+      expect(patch?.frameworks?.[0].fingerprint).toEqual(
+        priorFramework.fingerprint
+      );
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('a genuine "not detected" answer still clears the framework', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, registry } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [
+          {
+            pathOrUrl: '/repo-a',
+            frameworks: [{ id: 'foundry', name: 'Foundry' }],
+          },
+        ],
+        responses: { foundry: { detect: NOT_DETECTED } },
+      });
+      lifecycle.startLifecycle('/repo-a', 'p1', 'sweep');
+      await jobs.runAll();
+      expect(registry.updates.at(-1)?.patch.frameworks).toEqual([]);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('add: install + compile for EVERY detected framework, fingerprint persisted', async () => {
     const dir = await createTestDirectory();
     try {
