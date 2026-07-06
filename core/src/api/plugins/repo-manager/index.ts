@@ -24,6 +24,10 @@ import {
 import { JobManager } from '../../../jobs/JobManager.js';
 import { ErrorCodes, type ErrorCode } from '../../../types/errors.js';
 import { sendPluginError, sendBadRequest } from '../../utils/errors.js';
+import {
+  hasUrlCredentials,
+  redactUrlCredentials,
+} from '../../../utils/redact.js';
 
 // Subsets of the real singletons the handlers depend on — narrow enough that
 // tests can inject fakes without implementing the full classes.
@@ -90,8 +94,23 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         sendBadRequest(
           reply,
           ErrorCodes.INIT_ERROR,
-          `Refusing to clone repository: unsupported URL scheme in '${pathOrUrl}'. ` +
+          `Refusing to clone repository: unsupported URL scheme in '${redactUrlCredentials(pathOrUrl)}'. ` +
             'Only https://, git://, ssh://, file://, and git@host:path are allowed.'
+        );
+        return reply as unknown as IApiResponse<JobStartedData>;
+      }
+
+      // Credentials embedded in the URL would be persisted in job records,
+      // broadcast over the WS job channel, and rendered in the UI. Reject
+      // them outright: host ambient credentials (credential helpers,
+      // ssh-agent — with automatic SSH fallback) are the supported way to
+      // access private repos.
+      if (hasUrlCredentials(pathOrUrl)) {
+        sendBadRequest(
+          reply,
+          ErrorCodes.INIT_ERROR,
+          'Refusing to clone repository: URLs with embedded credentials are not supported. ' +
+            'Configure a git credential helper or SSH access instead.'
         );
         return reply as unknown as IApiResponse<JobStartedData>;
       }
@@ -101,7 +120,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         { pathOrUrl },
         async (ctx): Promise<null> => {
           ctx.log(`Initializing repository ${pathOrUrl}...`);
-          const result = await d.repos.init(pathOrUrl);
+          const result = await d.repos.init(pathOrUrl, { signal: ctx.signal });
           if (!result.success) {
             throw Object.assign(new Error(result.error.message), {
               code: result.error.code,

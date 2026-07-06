@@ -115,7 +115,9 @@ describe('repo-manager API handlers', () => {
       const { runner } = jobs.started[0];
       const result = await runner(makeCtx());
       expect(result).toBeNull();
-      expect(repos.init).toHaveBeenCalledWith('/local/repo');
+      expect(repos.init).toHaveBeenCalledWith('/local/repo', {
+        signal: expect.any(AbortSignal),
+      });
     });
 
     it('runner rejects with { code, message } when RepoService.init fails', async () => {

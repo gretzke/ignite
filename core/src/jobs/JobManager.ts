@@ -15,6 +15,7 @@ import type { JobRecord, JobEvent, JobState } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { getLogger } from '../utils/logger.js';
 import { ErrorCodes } from '../types/errors.js';
+import { redactParams, redactUrlCredentials } from '../utils/redact.js';
 
 export interface JobContext {
   log(line: string): void;
@@ -78,6 +79,19 @@ function normalizeError(err: unknown): {
   };
 }
 
+// Job records are persisted to disk, broadcast over WS, and rendered in the
+// UI — nothing credential-shaped may survive into them. Entry points already
+// reject credentialed repo URLs; this is defense in depth for every other
+// string that flows through (git stderr in error messages, tool output in
+// logs, params from future job types).
+function redactError(error: {
+  code: string;
+  message: string;
+  details?: unknown;
+}): { code: string; message: string; details?: unknown } {
+  return { ...error, message: redactUrlCredentials(error.message) };
+}
+
 export class JobManager {
   private static instance: JobManager;
   private readonly fileSystem: FileSystem;
@@ -113,9 +127,7 @@ export class JobManager {
     for (const file of jobFiles) {
       const filePath = path.join(jobsPath, file);
       try {
-        const record = await this.fileSystem.readJsonFile<JobRecord>(
-          filePath
-        );
+        const record = await this.fileSystem.readJsonFile<JobRecord>(filePath);
         loaded.push(record);
       } catch (err) {
         getLogger().warn(`Skipping corrupt job file ${file}: ${String(err)}`);
@@ -185,7 +197,10 @@ export class JobManager {
     const record: JobRecord = {
       id,
       type,
-      params,
+      // Redacted copy: runners receive their inputs via closure, so the
+      // record's params exist purely for display/routing and must be safe
+      // to persist and broadcast.
+      params: redactParams(params),
       state: 'queued',
       createdAt: new Date().toISOString(),
       events: [],
@@ -294,7 +309,7 @@ export class JobManager {
         );
         return;
       }
-      job.record.error = normalizeError(err);
+      job.record.error = redactError(normalizeError(err));
       this.transitionTo(job, 'failed');
     }
   }
@@ -314,7 +329,13 @@ export class JobManager {
   }
 
   private handleLog(job: InternalJob, chunk: string): void {
-    job.logBuffer += chunk;
+    // A runner that keeps producing output after its job went terminal
+    // (e.g. a cancelled container still streaming) must not mutate the
+    // already-terminal record.
+    if (isTerminal(job.record.state)) {
+      return;
+    }
+    job.logBuffer += redactUrlCredentials(chunk);
     let newlineIndex = job.logBuffer.indexOf('\n');
     while (newlineIndex !== -1) {
       const line = job.logBuffer.slice(0, newlineIndex);
