@@ -2,6 +2,9 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type {
   IApiResponse,
+  JobStartedData,
+  RepoRecord,
+  RepoListEntry,
   ListProfilesData,
   GetCurrentProfileData,
   CreateProfileRequest,
@@ -20,6 +23,8 @@ import type {
 import type { PathOptions } from '@ignite/plugin-types';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
+import { RepoLifecycle } from '../repos/RepoLifecycle.js';
+import { RepoService } from '../repos/RepoService.js';
 import { ErrorCodes } from '../types/errors.js';
 import { sendCaughtError } from './utils/errors.js';
 
@@ -47,6 +52,12 @@ export interface ProfileManagerLike {
 export interface ProfileHandlerDeps {
   getProfileManager: () => Promise<ProfileManagerLike>;
   repoRegistry: Pick<ProfileRepoRegistry, 'list' | 'save' | 'remove'>;
+  lifecycle: Pick<
+    RepoLifecycle,
+    'startLifecycle' | 'activeJobFor' | 'ensureProfileSwept' | 'sessionState'
+  >;
+  // Cheap host check for the list endpoint's `initialized` field.
+  hasWorkspace: (pathOrUrl: string, profileId: string) => Promise<boolean>;
 }
 
 export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
@@ -54,7 +65,22 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     getProfileManager:
       deps?.getProfileManager ?? (() => ProfileManager.getInstance()),
     repoRegistry: deps?.repoRegistry ?? new ProfileRepoRegistry(),
+    lifecycle: deps?.lifecycle ?? RepoLifecycle.getInstance(),
+    hasWorkspace:
+      deps?.hasWorkspace ??
+      ((pathOrUrl: string, profileId: string) =>
+        RepoService.getInstance().hasWorkspace(pathOrUrl, profileId)),
   };
+
+  // Enrich a persisted record with computed state for the list response.
+  const enrich = async (
+    record: RepoRecord,
+    profileId: string
+  ): Promise<RepoListEntry> => ({
+    ...record,
+    initialized: await d.hasWorkspace(record.pathOrUrl, profileId),
+    activeJobId: d.lifecycle.activeJobFor(record.pathOrUrl),
+  });
 
   return {
     listProfiles: async (
@@ -159,6 +185,10 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         const { id } = request.params;
         const manager = await d.getProfileManager();
         await manager.switchProfile(id);
+        // Lazy per-profile sweep: first switch to a profile this CLI run
+        // initializes+detects its repos in the background; later switches
+        // are no-ops (fire-and-forget — the UI attaches via the jobs WS).
+        d.lifecycle.ensureProfileSwept(id);
         return reply
           .status(200)
           .send({ data: { message: `Switched to profile '${id}'` } });
@@ -260,8 +290,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     ): Promise<IApiResponse<RepoList>> => {
       try {
         const { id } = request.params;
-        const { session, local, cloned } = await d.repoRegistry.list(id);
-        return reply.status(200).send({ data: { session, local, cloned } });
+        const { local, cloned } = await d.repoRegistry.list(id);
+        const sessionRecord = d.lifecycle.sessionState();
+        const data: RepoList = {
+          session: sessionRecord ? await enrich(sessionRecord, id) : null,
+          local: await Promise.all(local.map((r) => enrich(r, id))),
+          cloned: await Promise.all(cloned.map((r) => enrich(r, id))),
+        };
+        return reply.status(200).send({ data });
       } catch (error) {
         return sendCaughtError(
           reply,
@@ -275,10 +311,17 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     saveRepo: async (
       request: FastifyRequest<{ Params: ProfileParams; Body: PathOptions }>,
       reply: FastifyReply
-    ): Promise<null> => {
+    ): Promise<IApiResponse<JobStartedData>> => {
       try {
         await d.repoRegistry.save(request.params.id, request.body.pathOrUrl);
-        return reply.status(204).send(null);
+        // Adding a repo runs the full pipeline: init -> detect -> install ->
+        // compile -> fingerprint (every detected framework, local + cloned).
+        const job = d.lifecycle.startLifecycle(
+          request.body.pathOrUrl,
+          request.params.id,
+          'add'
+        );
+        return reply.status(200).send({ data: { jobId: job.id } });
       } catch (error) {
         // Saving an identity that's already registered is a client conflict,
         // not a server fault.
@@ -290,14 +333,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             error: 'Conflict',
             code: ErrorCodes.REPO_ALREADY_EXISTS,
             message: error instanceof Error ? error.message : String(error),
-          }) as unknown as null;
+          }) as unknown as IApiResponse<JobStartedData>;
         }
         return sendCaughtError(
           reply,
           error,
           ErrorCodes.PROFILE_REPO_SAVE_ERROR,
           'Failed to save repository to profile'
-        ) as unknown as null;
+        ) as unknown as IApiResponse<JobStartedData>;
       }
     },
 

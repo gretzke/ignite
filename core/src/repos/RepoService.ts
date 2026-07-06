@@ -176,6 +176,24 @@ export class RepoService {
     return profiles.getCurrentProfile();
   }
 
+  // True when the repo's workspace exists and is usable: LOCAL -> the path
+  // is a git repository; CLONED -> a complete clone is present. Used by the
+  // repo list endpoint to report `initialized` without running any jobs.
+  async hasWorkspace(pathOrUrl: string, profileId?: string): Promise<boolean> {
+    try {
+      const workspacePath = await this.resolveWorkspacePath(
+        pathOrUrl,
+        profileId
+      );
+      if (deriveRepoKind(pathOrUrl) === RepoKind.LOCAL) {
+        return await this.isGitRepo(workspacePath);
+      }
+      return await this.hasCompleteClone(workspacePath);
+    } catch {
+      return false;
+    }
+  }
+
   // Like resolveWorkspacePath, but throws when the directory doesn't exist.
   // Callers that bind-mount the result MUST use this: Docker auto-creates a
   // missing host path as an empty (root-owned, on Linux) directory instead

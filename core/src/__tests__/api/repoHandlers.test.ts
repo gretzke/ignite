@@ -498,4 +498,45 @@ describe('repo-manager API handlers', () => {
       });
     });
   });
+
+  describe('checkRepos', () => {
+    it('delegates to lifecycle.checkAndRecompile for the current profile', async () => {
+      const lifecycle = {
+        checkAndRecompile: vi.fn(async () => ({
+          started: [{ pathOrUrl: '/repo-a', jobId: 'job-3' }],
+        })),
+      };
+      const handlers = createRepoHandlers({
+        repos: makeFakeRepos(),
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
+      const reply = makeReply();
+      await handlers.checkRepos({ body: {} } as never, reply as never);
+      expect(reply.statusCode).toBe(200);
+      expect(reply.body).toEqual({
+        data: { started: [{ pathOrUrl: '/repo-a', jobId: 'job-3' }] },
+      });
+      expect(lifecycle.checkAndRecompile).toHaveBeenCalledWith('p1', undefined);
+    });
+
+    it('narrows the check to a single repo when pathOrUrl is provided', async () => {
+      const lifecycle = {
+        checkAndRecompile: vi.fn(async () => ({ started: [] })),
+      };
+      const handlers = createRepoHandlers({
+        repos: makeFakeRepos(),
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
+      const reply = makeReply();
+      await handlers.checkRepos(
+        { body: { pathOrUrl: '/repo-a' } } as never,
+        reply as never
+      );
+      expect(lifecycle.checkAndRecompile).toHaveBeenCalledWith('p1', '/repo-a');
+    });
+  });
 });

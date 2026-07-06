@@ -46,6 +46,20 @@ function makeDeps() {
       save: vi.fn(async () => {}),
       remove: vi.fn(async () => {}),
     },
+    lifecycle: {
+      startLifecycle: vi.fn(() => ({
+        id: 'job-add-0',
+        type: 'repo.lifecycle',
+        params: {},
+        state: 'queued' as const,
+        createdAt: new Date().toISOString(),
+        events: [],
+      })),
+      activeJobFor: vi.fn(() => undefined as string | undefined),
+      ensureProfileSwept: vi.fn(),
+      sessionState: vi.fn(() => null),
+    },
+    hasWorkspace: vi.fn(async () => true),
   };
 }
 
@@ -78,7 +92,7 @@ describe('profile handlers', () => {
     });
   });
 
-  it('saveRepo returns 204 and delegates to the registry', async () => {
+  it('saveRepo delegates to the registry (now returning the pipeline job)', async () => {
     const deps = makeDeps();
     const handlers = createProfileHandlers(deps);
     const reply = makeReply();
@@ -86,7 +100,7 @@ describe('profile handlers', () => {
       { params: { id: 'p1' }, body: { pathOrUrl: '/repo' } } as never,
       reply as never
     );
-    expect(reply.statusCode).toBe(204);
+    expect(reply.statusCode).toBe(200);
     expect(deps.repoRegistry.save).toHaveBeenCalledWith('p1', '/repo');
   });
 
@@ -105,5 +119,115 @@ describe('profile handlers', () => {
     expect((reply.body as { code: string }).code).toBe(
       'PROFILE_REPO_DELETE_ERROR'
     );
+  });
+
+  it('listRepos returns enriched entries with initialized, cached frameworks and activeJobId', async () => {
+    const deps = makeDeps();
+    deps.repoRegistry.list = async () => ({
+      session: null,
+      local: [
+        {
+          pathOrUrl: '/repo-a',
+          frameworks: [{ id: 'foundry', name: 'Foundry' }],
+          detectedAt: '2026-07-06T00:00:00.000Z',
+        },
+        { pathOrUrl: '/repo-b' },
+      ],
+      cloned: [],
+    });
+    deps.hasWorkspace = vi.fn(
+      async (pathOrUrl: string) => pathOrUrl === '/repo-a'
+    );
+    deps.lifecycle.activeJobFor = vi.fn((pathOrUrl: string) =>
+      pathOrUrl === '/repo-b' ? 'job-9' : undefined
+    );
+    const handlers = createProfileHandlers(deps);
+    const reply = makeReply();
+    await handlers.listRepos({ params: { id: 'p1' } } as never, reply as never);
+    expect(reply.statusCode).toBe(200);
+    expect(reply.body).toEqual({
+      data: {
+        session: null,
+        local: [
+          {
+            pathOrUrl: '/repo-a',
+            frameworks: [{ id: 'foundry', name: 'Foundry' }],
+            detectedAt: '2026-07-06T00:00:00.000Z',
+            initialized: true,
+            activeJobId: undefined,
+          },
+          {
+            pathOrUrl: '/repo-b',
+            initialized: false,
+            activeJobId: 'job-9',
+          },
+        ],
+        cloned: [],
+      },
+    });
+    // initialized is computed against the ADDRESSED profile.
+    expect(deps.hasWorkspace).toHaveBeenCalledWith('/repo-a', 'p1');
+  });
+
+  it('listRepos includes the session workspace entry from lifecycle state', async () => {
+    const deps = makeDeps();
+    deps.lifecycle.sessionState = vi.fn(() => ({
+      pathOrUrl: '/ws/session',
+      frameworks: [{ id: 'foundry', name: 'Foundry' }],
+    }));
+    const handlers = createProfileHandlers(deps);
+    const reply = makeReply();
+    await handlers.listRepos({ params: { id: 'p1' } } as never, reply as never);
+    expect(reply.statusCode).toBe(200);
+    expect(
+      (reply.body as { data: { session: { pathOrUrl: string } } }).data.session
+        .pathOrUrl
+    ).toBe('/ws/session');
+  });
+
+  it('saveRepo starts an add-mode lifecycle job and returns { jobId }', async () => {
+    const deps = makeDeps();
+    const handlers = createProfileHandlers(deps);
+    const reply = makeReply();
+    await handlers.saveRepo(
+      { params: { id: 'p1' }, body: { pathOrUrl: '/repo' } } as never,
+      reply as never
+    );
+    expect(reply.statusCode).toBe(200);
+    expect(reply.body).toEqual({ data: { jobId: 'job-add-0' } });
+    expect(deps.lifecycle.startLifecycle).toHaveBeenCalledWith(
+      '/repo',
+      'p1',
+      'add'
+    );
+  });
+
+  it('saveRepo does NOT start a pipeline when the save is rejected', async () => {
+    const deps = makeDeps();
+    deps.repoRegistry.save = vi.fn(async () => {
+      throw Object.assign(new Error('Repository /repo already exists'), {
+        code: 'REPO_ALREADY_EXISTS',
+      });
+    });
+    const handlers = createProfileHandlers(deps);
+    const reply = makeReply();
+    await handlers.saveRepo(
+      { params: { id: 'p1' }, body: { pathOrUrl: '/repo' } } as never,
+      reply as never
+    );
+    expect(reply.statusCode).toBe(409);
+    expect(deps.lifecycle.startLifecycle).not.toHaveBeenCalled();
+  });
+
+  it('switchProfile triggers the lazy per-profile sweep', async () => {
+    const deps = makeDeps();
+    const handlers = createProfileHandlers(deps);
+    const reply = makeReply();
+    await handlers.switchProfile(
+      { params: { id: 'p2' } } as never,
+      reply as never
+    );
+    expect(reply.statusCode).toBe(200);
+    expect(deps.lifecycle.ensureProfileSwept).toHaveBeenCalledWith('p2');
   });
 });

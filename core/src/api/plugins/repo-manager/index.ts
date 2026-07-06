@@ -6,6 +6,7 @@ import type { PathOptions } from '@ignite/plugin-types';
 import type {
   IApiResponse,
   JobStartedData,
+  RepoCheckResult,
   CheckoutBranchRequest,
   CheckoutCommitRequest,
   GetFileRequest,
@@ -22,6 +23,8 @@ import {
   type RepoResult,
 } from '../../../repos/RepoService.js';
 import { JobManager } from '../../../jobs/JobManager.js';
+import { RepoLifecycle } from '../../../repos/RepoLifecycle.js';
+import { ProfileManager } from '../../../filesystem/ProfileManager.js';
 import { ErrorCodes, type ErrorCode } from '../../../types/errors.js';
 import { sendPluginError, sendBadRequest } from '../../utils/errors.js';
 import {
@@ -49,6 +52,8 @@ export interface RepoJobManagerLike {
 export interface RepoHandlerDeps {
   repos: RepoServiceLike;
   jobs: RepoJobManagerLike;
+  lifecycle: Pick<RepoLifecycle, 'checkAndRecompile'>;
+  getProfileId: () => Promise<string>;
 }
 
 // Every non-init op stays a flat 500 on failure, matching the old
@@ -74,6 +79,10 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
   const d: RepoHandlerDeps = {
     repos: deps?.repos ?? RepoService.getInstance(),
     jobs: deps?.jobs ?? JobManager.getInstance(),
+    lifecycle: deps?.lifecycle ?? RepoLifecycle.getInstance(),
+    getProfileId:
+      deps?.getProfileId ??
+      (async () => (await ProfileManager.getInstance()).getCurrentProfile()),
   };
 
   return {
@@ -234,6 +243,28 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         );
       }
       return reply.status(200).send({ data: result.data });
+    },
+
+    checkRepos: async (
+      request: FastifyRequest<{ Body: { pathOrUrl?: string } }>,
+      reply: FastifyReply
+    ): Promise<IApiResponse<RepoCheckResult>> => {
+      try {
+        const profileId = await d.getProfileId();
+        const result = await d.lifecycle.checkAndRecompile(
+          profileId,
+          request.body?.pathOrUrl
+        );
+        return reply.status(200).send({ data: result });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return reply.status(500).send({
+          statusCode: 500,
+          error: 'Internal Server Error',
+          code: ErrorCodes.REPO_CHECK_ERROR,
+          message: `Failed to check repositories: ${message}`,
+        }) as unknown as IApiResponse<RepoCheckResult>;
+      }
     },
 
     getFile: async (

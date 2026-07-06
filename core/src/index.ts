@@ -21,6 +21,7 @@ import { createWsHandler } from './api/ws.js';
 import { StaticAssetHandler } from './assets/StaticAssetHandler.js';
 import { validatePluginImages } from './plugins/utils/ImageValidator.js';
 import { PluginRegistryLoader } from './assets/PluginRegistryLoader.js';
+import { RepoLifecycle } from './repos/RepoLifecycle.js';
 import { JobManager } from './jobs/JobManager.js';
 import { runCommand } from './utils/runCommand.js';
 
@@ -219,6 +220,14 @@ async function main(): Promise<void> {
     // Listen on localhost only; session auth protects /api and /ws even from
     // containers that reach us via host.docker.internal.
     await app.listen({ port, host: '127.0.0.1' });
+
+    // Server-driven repo lifecycle: sweep the active profile once per CLI
+    // run (init + detect + persist). The UI attaches to whatever is still
+    // in flight via the jobs WS channel instead of re-running the cycle on
+    // every page load.
+    RepoLifecycle.getInstance().ensureProfileSwept(
+      profileManager.getCurrentProfile()
+    );
 
     const authedUrl = `http://localhost:${port}/?token=${sessionToken}`;
 
