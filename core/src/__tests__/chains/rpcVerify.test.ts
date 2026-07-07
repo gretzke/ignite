@@ -94,13 +94,56 @@ describe('verifyRpcEndpoint', () => {
   });
 
   it('times out slow endpoints', async () => {
+    // This fetch never resolves on its own; it only settles when the
+    // AbortSignal fires. This proves the signal is actually threaded into
+    // fetch and that cancellation short-circuits the pending call.
+    const abortAware = ((_url: unknown, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(
+            (init.signal as AbortSignal).reason ?? new Error('aborted')
+          )
+        );
+      })) as unknown as typeof fetch;
     const result = await verifyRpcEndpoint('https://rpc.example.com', 1, {
-      fetchImpl: fakeRpc({ eth_chainId: '0x1' }, { delayMs: 200 }),
+      fetchImpl: abortAware,
       timeoutMs: 20,
       now: () => NOW,
     });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/timed out/i);
+  });
+
+  it('fails gracefully on malformed hex quantities', async () => {
+    const result = await verifyRpcEndpoint('https://rpc.example.com', 1, {
+      fetchImpl: fakeRpc({ eth_chainId: 'not-hex' }),
+      now: () => NOW,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/malformed hex/i);
+  });
+
+  it('fails gracefully when the latest block is null', async () => {
+    const result = await verifyRpcEndpoint('https://rpc.example.com', 1, {
+      fetchImpl: fakeRpc({ eth_chainId: '0x1', eth_getBlockByNumber: null }),
+      now: () => NOW,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.chainIdMatch).toBe(true);
+    expect(result.error).toMatch(/no latest block/i);
+  });
+
+  it('fails gracefully on a non-Error throw', async () => {
+    const boom = (async () => {
+      // eslint-disable-next-line @typescript-eslint/no-throw-literal
+      throw 'string boom';
+    }) as unknown as typeof fetch;
+    const result = await verifyRpcEndpoint('https://rpc.example.com', 1, {
+      fetchImpl: boom,
+      now: () => NOW,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('string boom');
   });
 
   it('tolerates a healthy chain id but failing block fetch (degrades, still ok=false with error)', async () => {
