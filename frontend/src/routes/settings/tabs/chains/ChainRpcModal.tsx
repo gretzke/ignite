@@ -1,0 +1,277 @@
+// frontend/src/routes/settings/tabs/chains/ChainRpcModal.tsx
+// Per-chain RPC endpoints: stored endpoints with health status, one-click
+// add of chainlist public suggestions, and manual URL entry with a
+// debounced pre-save health check (eth_chainId must match the chain).
+import { useEffect, useState } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
+import { Loader2, Plus, Star, Trash2, Activity } from 'lucide-react';
+import type { ChainInfo, RpcEndpoint } from '@ignite/api';
+import { useAppDispatch, useAppSelector } from '../../../../store';
+import {
+  chainsApi,
+  rpcCheckReset,
+} from '../../../../store/features/chains/chainsSlice';
+import Tooltip from '../../../../components/Tooltip';
+
+interface ChainRpcModalProps {
+  chain: ChainInfo;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+function HealthChip({ endpoint }: { endpoint: RpcEndpoint }) {
+  const v = endpoint.lastVerification;
+  if (!v) {
+    return <span className="chip">unchecked</span>;
+  }
+  if (v.ok) {
+    return (
+      <span className="chip chip-ok">
+        <span className="chip-dot" />
+        {v.latencyMs !== undefined ? `${v.latencyMs} ms` : 'healthy'}
+        {v.blockAgeSeconds !== undefined && v.blockAgeSeconds > 60
+          ? ` · block ${v.blockAgeSeconds}s old`
+          : ''}
+      </span>
+    );
+  }
+  return (
+    <Tooltip label={v.error ?? 'Verification failed'}>
+      <span className="chip chip-err">
+        <span className="chip-dot" />
+        {v.chainIdMatch === false ? 'wrong chain' : 'unhealthy'}
+      </span>
+    </Tooltip>
+  );
+}
+
+export default function ChainRpcModal({
+  chain,
+  open,
+  onOpenChange,
+}: ChainRpcModalProps) {
+  const dispatch = useAppDispatch();
+  const endpoints = useAppSelector(
+    (state) => state.chains.rpcByChain[String(chain.chainId)] ?? []
+  );
+  const rpcCheck = useAppSelector((state) => state.chains.rpcCheck);
+  const [newUrl, setNewUrl] = useState('');
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) dispatch(chainsApi.fetchRpcs(chain.chainId));
+  }, [open, chain.chainId, dispatch]);
+
+  // Debounced pre-save check of the manual URL.
+  useEffect(() => {
+    const url = newUrl.trim();
+    if (!url || !/^https?:\/\/.+/.test(url)) {
+      dispatch(rpcCheckReset());
+      return;
+    }
+    const t = setTimeout(() => {
+      chainsApi.checkRpc(url, chain.chainId).forEach((a) => dispatch(a));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [newUrl, chain.chainId, dispatch]);
+
+  useEffect(() => {
+    if (!open) {
+      setNewUrl('');
+      dispatch(rpcCheckReset());
+    }
+  }, [open, dispatch]);
+
+  const storedUrls = new Set(endpoints.map((e) => e.url));
+  const suggestions = chain.rpc.filter((url) => !storedUrls.has(url));
+  const checkOk = rpcCheck.url === newUrl.trim() && rpcCheck.result?.ok === true;
+  const checkMismatch =
+    rpcCheck.url === newUrl.trim() &&
+    rpcCheck.result !== null &&
+    rpcCheck.result.chainIdMatch === false;
+  const canAdd = /^https?:\/\/.+/.test(newUrl.trim()) && !checkMismatch;
+
+  const handleAdd = () => {
+    dispatch(chainsApi.addRpc(chain.chainId, { url: newUrl.trim() }));
+    setNewUrl('');
+    dispatch(rpcCheckReset());
+  };
+
+  const handleVerify = (endpointId: string) => {
+    setVerifyingId(endpointId);
+    dispatch(chainsApi.verifyRpc(chain.chainId, endpointId));
+    // The verification result lands via rpcVerificationReceived; clear the
+    // spinner after a grace period rather than tracking per-request state.
+    setTimeout(() => setVerifyingId(null), 12_000);
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" style={{ background: 'transparent' }} />
+        <Dialog.Content
+          className="dialog-content glass-overlay"
+          style={{ maxWidth: 640, width: '92vw', padding: 16 }}
+        >
+          <Dialog.Title className="text-base font-semibold mb-1">
+            RPC endpoints — {chain.name}
+          </Dialog.Title>
+          <div className="text-xs text-muted mono-data mb-3">
+            chainId {chain.chainId}
+          </div>
+
+          <div className="glass-list mb-3">
+            {endpoints.length === 0 && (
+              <div className="list-row text-muted">
+                No stored endpoints yet. Add one below.
+              </div>
+            )}
+            {endpoints.map((endpoint) => (
+              <div key={endpoint.id} className="list-row">
+                <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                  <div className="min-w-0">
+                    <div className="mono-data truncate">{endpoint.url}</div>
+                    <div className="flex items-center gap-2 mt-1">
+                      {endpoint.preferred && (
+                        <span className="pill pill-primary">preferred</span>
+                      )}
+                      <HealthChip endpoint={endpoint} />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Tooltip label="Verify now">
+                      <button
+                        className="btn btn-sm btn-secondary-borderless"
+                        onClick={() => handleVerify(endpoint.id)}
+                        aria-label={`Verify ${endpoint.url}`}
+                      >
+                        {verifyingId === endpoint.id ? (
+                          <Loader2 size={16} className="animate-spin" />
+                        ) : (
+                          <Activity size={16} />
+                        )}
+                      </button>
+                    </Tooltip>
+                    {!endpoint.preferred && (
+                      <Tooltip label="Set as preferred">
+                        <button
+                          className="btn btn-sm btn-secondary-borderless"
+                          onClick={() =>
+                            dispatch(
+                              chainsApi.setPreferredRpc(
+                                chain.chainId,
+                                endpoint.id
+                              )
+                            )
+                          }
+                          aria-label={`Prefer ${endpoint.url}`}
+                        >
+                          <Star size={16} />
+                        </button>
+                      </Tooltip>
+                    )}
+                    <Tooltip label="Remove endpoint">
+                      <button
+                        className="btn btn-sm btn-secondary-borderless"
+                        onClick={() =>
+                          dispatch(
+                            chainsApi.deleteRpc(chain.chainId, endpoint.id)
+                          )
+                        }
+                        aria-label={`Remove ${endpoint.url}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </Tooltip>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid gap-1 mb-3">
+            <span className="text-xs text-muted">Add endpoint</span>
+            <div className="flex items-center gap-2">
+              <input
+                className="input-glass mono-data flex-1"
+                placeholder="https://rpc.example.com"
+                value={newUrl}
+                onChange={(e) => setNewUrl(e.target.value)}
+              />
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={!canAdd}
+                onClick={handleAdd}
+              >
+                <Plus size={14} />
+                Add
+              </button>
+            </div>
+            {rpcCheck.checking && rpcCheck.url === newUrl.trim() && (
+              <span className="text-xs text-muted flex items-center gap-1">
+                <Loader2 size={12} className="animate-spin" /> Checking
+                endpoint…
+              </span>
+            )}
+            {checkOk && (
+              <span className="text-xs text-ok">
+                Healthy — chainId {rpcCheck.result?.reportedChainId},{' '}
+                {rpcCheck.result?.latencyMs} ms
+              </span>
+            )}
+            {checkMismatch && (
+              <span className="text-xs text-err">
+                {rpcCheck.result?.error ?? 'Chain ID mismatch'}
+              </span>
+            )}
+            {rpcCheck.error && rpcCheck.url === newUrl.trim() && (
+              <span className="text-xs text-warn">
+                Could not check endpoint: {rpcCheck.error}. You can still add
+                it.
+              </span>
+            )}
+          </div>
+
+          {suggestions.length > 0 && (
+            <div className="grid gap-1 mb-3">
+              <span className="text-xs text-muted">
+                Public suggestions (chainlist)
+              </span>
+              <div className="glass-list">
+                {suggestions.slice(0, 6).map((url) => (
+                  <div key={url} className="list-row">
+                    <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                      <span className="mono-data truncate text-muted">
+                        {url}
+                      </span>
+                      <button
+                        className="btn btn-sm btn-secondary shrink-0"
+                        onClick={() =>
+                          dispatch(
+                            chainsApi.addRpc(chain.chainId, {
+                              url,
+                              source: 'chainlist',
+                            })
+                          )
+                        }
+                      >
+                        <Plus size={14} />
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end">
+            <Dialog.Close asChild>
+              <button className="btn btn-secondary">Close</button>
+            </Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
