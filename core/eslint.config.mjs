@@ -39,6 +39,8 @@ export default [
         AbortController: 'readonly',
         URL: 'readonly',
         NodeJS: 'readonly',
+        fetch: 'readonly',
+        performance: 'readonly',
       },
     },
     plugins: {

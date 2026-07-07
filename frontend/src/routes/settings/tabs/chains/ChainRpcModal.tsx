@@ -97,6 +97,11 @@ export default function ChainRpcModal({
     rpcCheck.url === trimmedUrl &&
     !rpcCheck.checking &&
     (rpcCheck.result !== null || rpcCheck.error !== null);
+  const checkUnreachable =
+    rpcCheck.url === trimmedUrl &&
+    rpcCheck.result !== null &&
+    rpcCheck.result.ok === false &&
+    !checkMismatch;
   const canAdd = urlShapeValid && checkSettled && !checkMismatch;
 
   const handleAdd = () => {
@@ -236,6 +241,13 @@ export default function ChainRpcModal({
               <span className="text-xs text-warn">
                 Could not check endpoint: {rpcCheck.error}. You can still add
                 it.
+              </span>
+            )}
+            {checkUnreachable && (
+              <span className="text-xs text-warn">
+                Could not reach endpoint
+                {rpcCheck.result?.error ? `: ${rpcCheck.result.error}` : ''}.{' '}
+                You can still add it.
               </span>
             )}
           </div>
