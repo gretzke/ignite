@@ -4,7 +4,11 @@ import type {
   PluginMetadata,
   PluginPermissionRequest,
 } from '@ignite/plugin-types/types';
-import { PluginType, PLUGIN_PERMISSION_IDS } from '@ignite/plugin-types/types';
+import {
+  PluginType,
+  PLUGIN_PERMISSION_IDS,
+  MAX_CONFIG_FIELDS,
+} from '@ignite/plugin-types/types';
 import { normalizeRepoUrl } from '@ignite/plugin-types';
 import { PluginManager } from '../../filesystem/PluginManager.js';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
@@ -332,6 +336,7 @@ export class PluginInstaller {
       );
     }
     this.validatePermissionRequests(metadata);
+    this.validateConfigSchema(metadata);
   }
 
   // The permission manifest is attacker-controlled input rendered in the
@@ -379,6 +384,78 @@ export class PluginInstaller {
         throw invalid(
           `permission '${request.id}' description contains control characters`
         );
+      }
+    }
+  }
+
+  // The config schema manifest is attacker-controlled input rendered as a
+  // settings form: only known field types, no duplicate keys, and label /
+  // description text that is short plain text (same discipline as
+  // validatePermissionRequests above).
+  private validateConfigSchema(metadata: PluginMetadata): void {
+    const fields = metadata.configFields;
+    if (fields === undefined) return;
+    const invalid = (reason: string): PluginError =>
+      new PluginError(
+        `Invalid config schema for '${metadata.id}': ${reason}`,
+        ErrorCodes.PLUGIN_INSTALL_INVALID
+      );
+    if (!Array.isArray(fields)) throw invalid('configFields must be an array');
+    if (fields.length > MAX_CONFIG_FIELDS) throw invalid('too many config fields');
+    const keyPattern = /^[a-z0-9][a-z0-9._-]*$/;
+    // eslint-disable-next-line no-control-regex
+    const controlChars = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
+    const types = new Set(['string', 'number', 'boolean', 'select']);
+    const seen = new Set<string>();
+    for (const field of fields) {
+      if (typeof field !== 'object' || field === null) {
+        throw invalid('each field must be an object');
+      }
+      const f = field as unknown as Record<string, unknown>;
+      if (typeof f.key !== 'string' || !keyPattern.test(f.key)) {
+        throw invalid(`invalid field key '${String(f.key)}'`);
+      }
+      if (seen.has(f.key)) throw invalid(`duplicate field key '${f.key}'`);
+      seen.add(f.key);
+      if (typeof f.type !== 'string' || !types.has(f.type)) {
+        throw invalid(`field '${f.key}' has unknown type '${String(f.type)}'`);
+      }
+      for (const textField of ['label', 'description'] as const) {
+        const v = f[textField];
+        if (v === undefined && textField === 'description') continue;
+        if (typeof v !== 'string' || v.length === 0 || v.length > 280) {
+          throw invalid(`field '${f.key}' has an invalid ${textField}`);
+        }
+        if (controlChars.test(v)) {
+          throw invalid(
+            `field '${f.key}' ${textField} contains control characters`
+          );
+        }
+      }
+      for (const boolField of ['secret', 'perChain', 'required'] as const) {
+        if (f[boolField] !== undefined && typeof f[boolField] !== 'boolean') {
+          throw invalid(`field '${f.key}' ${boolField} must be a boolean`);
+        }
+      }
+      if (f.type === 'select') {
+        if (!Array.isArray(f.options) || f.options.length === 0) {
+          throw invalid(`select field '${f.key}' needs non-empty options`);
+        }
+        for (const opt of f.options) {
+          const o = opt as Record<string, unknown>;
+          if (
+            typeof o?.value !== 'string' ||
+            typeof o?.label !== 'string' ||
+            o.value.length === 0 ||
+            o.label.length === 0 ||
+            o.label.length > 280 ||
+            controlChars.test(o.label)
+          ) {
+            throw invalid(`select field '${f.key}' has an invalid option`);
+          }
+        }
+      } else if (f.options !== undefined) {
+        throw invalid(`field '${f.key}' may not declare options`);
       }
     }
   }

@@ -11,6 +11,9 @@ export type {
   PluginMetadata,
   PluginPermissionId,
   PluginPermissionRequest,
+  PluginConfigField,
+  PluginConfigFieldType,
+  PluginConfigSelectOption,
 } from "@ignite/plugin-types/types";
 
 // Interface definitions
@@ -35,6 +38,24 @@ export const PluginPermissionRequestSchema = z.object({
   description: z.string().min(1).max(280),
 });
 
+// Manifest-declared config field, rendered as a form control in the
+// settings UI. Mirrors PluginConfigField in @ignite/plugin-types.
+export const PluginConfigSelectOptionSchema = z.object({
+  value: z.string(),
+  label: z.string(),
+});
+
+export const PluginConfigFieldSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  type: z.enum(["string", "number", "boolean", "select"]),
+  description: z.string().optional(),
+  secret: z.boolean().optional(),
+  perChain: z.boolean().optional(),
+  required: z.boolean().optional(),
+  options: z.array(PluginConfigSelectOptionSchema).optional(),
+});
+
 export const PluginMetadataSchema = z.object({
   id: z.string(),
   type: PluginTypeSchema,
@@ -42,6 +63,7 @@ export const PluginMetadataSchema = z.object({
   version: z.string(),
   baseImage: z.string(),
   permissions: z.array(PluginPermissionRequestSchema).optional(),
+  configFields: z.array(PluginConfigFieldSchema).optional(),
 }) satisfies z.ZodType<PluginMetadata>;
 
 // Type-safe IApiResponse schemas that enforce interface compliance
