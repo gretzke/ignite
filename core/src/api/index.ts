@@ -20,6 +20,7 @@ import { repoManagerHandlers } from './plugins/repo-manager/index.js';
 import { filesystemHandlers } from './filesystem.js';
 import { versionsHandlers } from './plugins/versions.js';
 import { gitHandlers } from './git.js';
+import { chainHandlers } from './chains.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
@@ -51,6 +52,7 @@ export async function registerApi(app: FastifyInstance) {
         { name: 'plugins', description: 'Plugin management and execution' },
         { name: 'compiler', description: 'Compiler plugin operations' },
         { name: 'filesystem', description: 'Host filesystem browsing' },
+        { name: 'chains', description: 'Chain registry and RPC endpoints' },
       ],
     },
     transform: jsonSchemaTransform,
@@ -88,6 +90,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...filesystemHandlers,
     ...versionsHandlers,
     ...gitHandlers,
+    ...chainHandlers,
   };
 
   checkHandlers(allHandlers);

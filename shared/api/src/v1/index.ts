@@ -27,6 +27,7 @@ import { versionsRoutes } from "./plugins/versions.js";
 import { filesystemRoutes } from "./filesystem.js";
 import { jobsRoutes } from "./jobs.js";
 import { gitRoutes } from "./git.js";
+import { chainRoutes } from "./chains.js";
 
 export interface IApiError {
   statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 499 | 500 | 503;
@@ -65,6 +66,7 @@ const allRoutes = {
   ...filesystemRoutes,
   ...jobsRoutes,
   ...gitRoutes,
+  ...chainRoutes,
 } as const;
 
 export const v1Routes = allRoutes satisfies ValidateRoutes<typeof allRoutes>;
