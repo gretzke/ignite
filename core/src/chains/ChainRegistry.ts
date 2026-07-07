@@ -231,7 +231,13 @@ function parseChainlist(raw: unknown): ChainInfo[] {
   for (const entry of raw) {
     if (typeof entry !== 'object' || entry === null) continue;
     const e = entry as Record<string, unknown>;
-    if (typeof e.chainId !== 'number' || typeof e.name !== 'string') continue;
+    if (
+      typeof e.chainId !== 'number' ||
+      !Number.isInteger(e.chainId) ||
+      e.chainId <= 0 ||
+      typeof e.name !== 'string'
+    )
+      continue;
     const currency = (e.nativeCurrency ?? {}) as Record<string, unknown>;
     const explorers = Array.isArray(e.explorers)
       ? (e.explorers as Record<string, unknown>[])
@@ -249,7 +255,12 @@ function parseChainlist(raw: unknown): ChainInfo[] {
       nativeCurrency: {
         name: typeof currency.name === 'string' ? currency.name : 'Ether',
         symbol: typeof currency.symbol === 'string' ? currency.symbol : 'ETH',
-        decimals: typeof currency.decimals === 'number' ? currency.decimals : 18,
+        decimals:
+          typeof currency.decimals === 'number' &&
+          Number.isInteger(currency.decimals) &&
+          currency.decimals >= 0
+            ? currency.decimals
+            : 18,
       },
       rpc: Array.isArray(e.rpc)
         ? (e.rpc as unknown[]).filter(

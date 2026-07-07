@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type {
+  AddRpcRequest,
   ChainInfo,
   ListChainsData,
   RpcEndpoint,
@@ -217,10 +218,7 @@ export const chainsApi = {
 
   fetchRpcs: (chainId: number) => refetchRpcs(chainId),
 
-  addRpc: (
-    chainId: number,
-    body: { url: string; label?: string; source?: 'manual' | 'chainlist' }
-  ) => {
+  addRpc: (chainId: number, body: AddRpcRequest) => {
     const apiAction = apiClient.dispatch.addRpc({
       params: { chainId: String(chainId) },
       body,

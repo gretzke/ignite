@@ -80,3 +80,22 @@ blocking current functionality.
 - Ensure compiler containers can only access `/workspace` (largely addressed by Phase 3: workspace is a
   single bind mount, `:ro` unless `hostWrite`, and `RepoService.getFile` rejects symlink escapes; revisit
   if additional mounts are ever added).
+
+## Chains & RPC store follow-ups (D1a final review, 2026-07-07)
+
+- **Coded-error/UX cleanup batch.** `codedError(code,msg)` helper to replace 5x
+  `Object.assign(new Error...)`; align `sendCodedOrCaught` with `sendCaughtError`
+  field conventions (+`details`) so coded errors get specific toast titles;
+  friendlier JSON-RPC error text ("RPC error undefined: undefined"); dedicated
+  `rpcOpFailed` no-op instead of `fetchChainsFailed()` on RPC paths; RPC URL
+  normalization (trailing-slash dupes); ChainModal edit preserves unedited
+  API-set fields (shortName/rpc/infoURL); aria-labels on chains search + RPC add
+  inputs; refetch-after-mutation drops active search query; offline cold-start
+  empty state says "chainlist unavailable", not "no matches".
+- **Chains test gaps.** Concurrent single-flight refresh test; RpcStore
+  remove-non-preferred no-reassignment test.
+- **Chainlist hardening.** Size cap on the chainid.network response
+  (unbounded body today; localhost-only impact). SSRF note: checkRpc/verifyRpc
+  deliberately fetch arbitrary URLs incl. private IPs (local anvil is a primary
+  use case; API is localhost+token-gated) — accepted design, consider
+  `redirect: 'manual'` when revisiting.

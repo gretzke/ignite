@@ -24,11 +24,8 @@ export default function ChainsTab() {
   const [rpcChain, setRpcChain] = useState<ChainInfo | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChainInfo | null>(null);
 
-  useEffect(() => {
-    chainsApi.fetchChains().forEach((a) => dispatch(a));
-  }, [dispatch]);
-
-  // Debounced server-side search.
+  // Debounced server-side search; the initial empty-query run on first
+  // paint also covers the mount fetch (250ms delay is acceptable).
   useEffect(() => {
     const t = setTimeout(() => {
       chainsApi.fetchChains(query || undefined).forEach((a) => dispatch(a));

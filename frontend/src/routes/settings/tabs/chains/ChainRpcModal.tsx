@@ -2,7 +2,7 @@
 // Per-chain RPC endpoints: stored endpoints with health status, one-click
 // add of chainlist public suggestions, and manual URL entry with a
 // debounced pre-save health check (eth_chainId must match the chain).
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Loader2, Plus, Star, Trash2, Activity } from 'lucide-react';
 import type { ChainInfo, RpcEndpoint } from '@ignite/api';
@@ -57,10 +57,43 @@ export default function ChainRpcModal({
   const rpcCheck = useAppSelector((state) => state.chains.rpcCheck);
   const [newUrl, setNewUrl] = useState('');
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  // Snapshot of the checkedAt seen when a verify was kicked off, so the
+  // reactive clear below only fires once a *new* result lands rather than
+  // instantly clearing on a pre-existing lastVerification.
+  const verifyingRef = useRef<{ id: string; prevCheckedAt?: string } | null>(
+    null
+  );
+  const verifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (open) dispatch(chainsApi.fetchRpcs(chain.chainId));
   }, [open, chain.chainId, dispatch]);
+
+  // Clear the spinner as soon as a fresh verification result lands for the
+  // endpoint currently being verified, instead of relying solely on the
+  // fallback timeout below.
+  useEffect(() => {
+    const verifying = verifyingRef.current;
+    if (!verifying) return;
+    const endpoint = endpoints.find((e) => e.id === verifying.id);
+    const checkedAt = endpoint?.lastVerification?.checkedAt;
+    if (checkedAt && checkedAt !== verifying.prevCheckedAt) {
+      verifyingRef.current = null;
+      setVerifyingId(null);
+      if (verifyTimeoutRef.current) {
+        clearTimeout(verifyTimeoutRef.current);
+        verifyTimeoutRef.current = null;
+      }
+    }
+  }, [endpoints]);
+
+  // Fallback timeout cleanup on unmount.
+  useEffect(
+    () => () => {
+      if (verifyTimeoutRef.current) clearTimeout(verifyTimeoutRef.current);
+    },
+    []
+  );
 
   // Debounced pre-save check of the manual URL.
   useEffect(() => {
@@ -111,11 +144,20 @@ export default function ChainRpcModal({
   };
 
   const handleVerify = (endpointId: string) => {
+    const endpoint = endpoints.find((e) => e.id === endpointId);
+    verifyingRef.current = {
+      id: endpointId,
+      prevCheckedAt: endpoint?.lastVerification?.checkedAt,
+    };
     setVerifyingId(endpointId);
     dispatch(chainsApi.verifyRpc(chain.chainId, endpointId));
-    // The verification result lands via rpcVerificationReceived; clear the
-    // spinner after a grace period rather than tracking per-request state.
-    setTimeout(() => setVerifyingId(null), 12_000);
+    // The verification result usually lands via rpcVerificationReceived well
+    // before this fires; it's a fallback so the spinner never sticks forever.
+    if (verifyTimeoutRef.current) clearTimeout(verifyTimeoutRef.current);
+    verifyTimeoutRef.current = setTimeout(() => {
+      verifyingRef.current = null;
+      setVerifyingId(null);
+    }, 12_000);
   };
 
   return (

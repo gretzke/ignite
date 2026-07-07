@@ -29,6 +29,16 @@ const CHAINLIST_SAMPLE = [
     chainId: 10,
   },
   { name: 'Broken entry with no chainId', rpc: [] },
+  { name: 'Bad float', chainId: 1.5, rpc: [] },
+  { name: 'Bad zero', chainId: 0, rpc: [] },
+  {
+    name: 'Bad Decimals',
+    chain: 'BAD',
+    rpc: [],
+    nativeCurrency: { name: 'X', symbol: 'X', decimals: -3 },
+    shortName: 'bad',
+    chainId: 42,
+  },
 ];
 
 function makeDeps(overrides?: {
@@ -69,12 +79,19 @@ describe('ChainRegistry', () => {
     const { deps, files } = makeDeps();
     const registry = new ChainRegistry(deps);
     const data = await registry.listChains();
-    // Broken entry dropped; templated RPC URL filtered.
-    expect(data.total).toBe(2);
+    // Broken entry (no chainId), non-integer chainId and zero chainId are
+    // all dropped; templated RPC URL filtered.
+    expect(data.total).toBe(3);
+    expect(data.chains.some((c) => c.chainId === 1.5)).toBe(false);
+    expect(data.chains.some((c) => c.chainId === 0)).toBe(false);
     const eth = data.chains.find((c) => c.chainId === 1)!;
     expect(eth.source).toBe('chainlist');
     expect(eth.rpc).toEqual(['https://eth.llamarpc.com']);
     expect(eth.explorers?.[0]?.url).toBe('https://etherscan.io');
+    // Invalid (negative) decimals from the untrusted dataset default to 18
+    // rather than being persisted as-is.
+    const bad = data.chains.find((c) => c.chainId === 42)!;
+    expect(bad.nativeCurrency.decimals).toBe(18);
     expect(files.has('/chains/chainlist-cache.json')).toBe(true);
     expect(data.fetchedAt).toBeTruthy();
   });
@@ -168,7 +185,7 @@ describe('ChainRegistry', () => {
     const registry = new ChainRegistry(deps);
     const limited = await registry.listChains({ limit: 1 });
     expect(limited.chains).toHaveLength(1);
-    expect(limited.total).toBe(2);
+    expect(limited.total).toBe(3);
   });
 
   it('deleteCustomChain removes custom entries and rejects non-custom ids', async () => {
