@@ -21,6 +21,9 @@ import {
   pluginCacheVolumeName,
 } from '../utils/pluginCache.js';
 import { ErrorCodes } from '../../types/errors.js';
+import { PluginConfigStore } from '../config/PluginConfigStore.js';
+import { VaultStore } from '../vault/VaultStore.js';
+import { resolveConfig } from '../config/resolveConfig.js';
 
 // The boolean-flag permissions gate-checked here — `secrets` is a granted-key
 // list, not a boolean flag, and is resolved separately at injection time
@@ -75,6 +78,12 @@ export interface PluginExecutorDeps {
   registryLoader: Pick<PluginRegistryLoader, 'getPluginConfig'>;
   trust: Pick<TrustManager, 'getGrant'>;
   executeOperation: (typeof PluginExecutionUtils)['executeOperation'];
+  // Config resolution deps (Task 6): non-secret values and encrypted
+  // secrets, merged by resolveConfig into `options.config` before the
+  // container ever sees the operation. Only touched when a plugin declares
+  // configFields, so plugins without a schema pay zero extra cost.
+  pluginConfigStore: Pick<PluginConfigStore, 'getValues'>;
+  vaultStore: Pick<VaultStore, 'getSecret' | 'listSecretKeys'>;
 }
 
 // Unified plugin executor - delegates to dynamic handlers
@@ -92,6 +101,8 @@ export class PluginExecutor {
       executeOperation:
         deps?.executeOperation ??
         PluginExecutionUtils.executeOperation.bind(PluginExecutionUtils),
+      pluginConfigStore: deps?.pluginConfigStore ?? new PluginConfigStore(),
+      vaultStore: deps?.vaultStore ?? new VaultStore(),
     };
   }
 
@@ -189,19 +200,67 @@ export class PluginExecutor {
       opts?.workspacePath
     );
 
+    // Resolve this plugin's declared config (non-secret values + granted
+    // secrets) and merge it under a reserved `config` key. Plugins without a
+    // configFields schema skip this entirely: options pass through unchanged
+    // (no `config` key added, zero extra store reads).
+    const resolvedConfig = await this.resolvePluginConfig(pluginConfig, grant);
+    const optionsWithConfig = resolvedConfig
+      ? { ...options, config: resolvedConfig }
+      : options;
+
     // Execute with resolved ephemeral container; always stop it afterwards
     // (AutoRemove=true, so Docker cleans it up once stopped)
     try {
       return await this.executeOperationDirect(
         pluginConfig,
         operation,
-        options,
+        optionsWithConfig,
         ephemeralContainer,
         opts
       );
     } finally {
       await this.deps.containerOrchestrator.stopContainer(ephemeralContainer);
     }
+  }
+
+  // Resolves this plugin's config schema into the flat object injected into
+  // the container's stdin options. Returns undefined (skip injection
+  // entirely) when the plugin declares no configFields. NEVER logs the
+  // resolved value — it may contain decrypted secrets.
+  private async resolvePluginConfig(
+    pluginConfig: PluginConfig,
+    grant: PermissionGrant
+  ): Promise<Record<string, unknown> | undefined> {
+    const configFields = pluginConfig.metadata.configFields;
+    if (!configFields || configFields.length === 0) return undefined;
+
+    const pluginId = pluginConfig.metadata.id;
+    const [configValues, secretKeys] = await Promise.all([
+      this.deps.pluginConfigStore.getValues(pluginId),
+      this.deps.vaultStore.listSecretKeys(pluginId),
+    ]);
+
+    // listSecretKeys returns raw vault entry keys scoped to this plugin:
+    // "<pluginId>::<key>" (global) or "<pluginId>::<key>::<chainId>"
+    // (per-chain). Derive the chainIds with a stored value for a given
+    // field key by filtering on the per-chain prefix.
+    const getSecretChainIds = async (key: string): Promise<number[]> => {
+      const keyPrefix = `${pluginId}::${key}::`;
+      return secretKeys
+        .filter((entry) => entry.startsWith(keyPrefix))
+        .map((entry) => Number(entry.slice(keyPrefix.length)))
+        .filter((chainId) => Number.isFinite(chainId));
+    };
+
+    return resolveConfig({
+      metadata: pluginConfig.metadata,
+      grant,
+      configValues,
+      getSecret: (key, chainId) =>
+        this.deps.vaultStore.getSecret(pluginId, key, chainId),
+      getSecretChainIds,
+    });
   }
 
   // Create ephemeral container with AutoRemove=true, bind-mounting the host

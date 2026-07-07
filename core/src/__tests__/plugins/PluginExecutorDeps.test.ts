@@ -105,6 +105,93 @@ describe('PluginExecutor with injected deps', () => {
     );
   });
 
+  describe('config resolution and injection (Task 6)', () => {
+    it('leaves options unchanged when the plugin declares no configFields (zero behavior change)', async () => {
+      const { executor, executeOperation } = makeExecutor();
+
+      const options = { pathOrUrl: '/repo' };
+      await executor.execute('stub', 'detect', options);
+
+      expect(executeOperation).toHaveBeenCalledTimes(1);
+      const calls = executeOperation.mock.calls[0] as unknown as unknown[];
+      const calledOptions = calls[3];
+      expect(calledOptions).toBe(options); // same reference: no config key added
+      expect(calledOptions).not.toHaveProperty('config');
+    });
+
+    it('merges non-secret values and granted secrets, omitting ungranted secrets', async () => {
+      const getSecret = vi.fn(async (_pluginId: string, key: string) =>
+        key === 'grantedSecret' ? 'top-secret' : 'should-never-surface'
+      );
+      const listSecretKeys = vi.fn(async () => [
+        'stub-with-config::grantedSecret',
+        'stub-with-config::ungrantedSecret',
+      ]);
+      const getValues = vi.fn(async () => ({
+        apiUrl: { global: 'https://example.com' },
+      }));
+
+      const { executor, executeOperation } = makeExecutor({
+        registryLoader: {
+          getPluginConfig: async () => ({
+            metadata: {
+              id: 'stub-with-config',
+              type: PluginType.COMPILER,
+              baseImage: 'img:latest',
+              configFields: [
+                { key: 'apiUrl', label: 'API URL', type: 'string' },
+                {
+                  key: 'grantedSecret',
+                  label: 'Granted Secret',
+                  type: 'string',
+                  secret: true,
+                },
+                {
+                  key: 'ungrantedSecret',
+                  label: 'Ungranted Secret',
+                  type: 'string',
+                  secret: true,
+                },
+              ],
+            },
+            requiresRepo: false,
+            origin: 'builtin',
+          }),
+        },
+        trust: {
+          getGrant: async () => ({
+            trust: 'trusted',
+            hostWrite: false,
+            net: false,
+            secrets: ['grantedSecret'],
+          }),
+        },
+        pluginConfigStore: { getValues },
+        vaultStore: { getSecret, listSecretKeys },
+      });
+
+      await executor.execute('stub-with-config', 'detect', {});
+
+      expect(executeOperation).toHaveBeenCalledTimes(1);
+      const calls = executeOperation.mock.calls[0] as unknown as unknown[];
+      const calledOptions = calls[3] as Record<string, unknown>;
+      expect(calledOptions.config).toEqual({
+        apiUrl: 'https://example.com',
+        grantedSecret: 'top-secret',
+      });
+      expect(getSecret).toHaveBeenCalledWith(
+        'stub-with-config',
+        'grantedSecret',
+        undefined
+      );
+      expect(getSecret).not.toHaveBeenCalledWith(
+        'stub-with-config',
+        'ungrantedSecret',
+        undefined
+      );
+    });
+  });
+
   describe('ephemeral workspace bind-mount (Phase 3)', () => {
     function makeRequiresRepoExecutor(overrides: Record<string, unknown> = {}) {
       return makeExecutor({
