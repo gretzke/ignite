@@ -306,6 +306,24 @@
   .list-row:focus-visible {
     outline-offset: -2px;
   }
+  /* Stretched click target for a card/row whose body navigates but whose
+     controls are real buttons: nesting <button> in <button> is invalid
+     HTML, so the shell stays a <div> and this overlay (a sibling of the
+     content) catches body clicks. Controls opt out via .row-action. */
+  .row-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    cursor: pointer;
+    border-radius: inherit;
+  }
+  .row-overlay:focus-visible {
+    outline-offset: -2px;
+  }
+  .row-action {
+    position: relative;
+    z-index: 2;
+  }
 
   /* Small leading icon tile for rows */
   .icon-tile {

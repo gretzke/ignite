@@ -123,12 +123,11 @@ function DirtyIndicator({
       placement="top"
     >
       <div
-        className="flex items-center gap-1 cursor-pointer text-warn hover:opacity-80 transition-opacity"
+        className="row-action flex items-center gap-1 cursor-pointer text-warn hover:opacity-80 transition-opacity"
         role="button"
         tabIndex={0}
         aria-label="Discard uncommitted changes"
-        onClick={(e) => {
-          e.stopPropagation();
+        onClick={() => {
           onResetRepo(path);
         }}
         onKeyDown={(e) => {
@@ -193,9 +192,8 @@ function BranchSelector({ path }: { path: string }) {
         return (
           <div
             ref={ref}
-            className="flex items-center gap-1 cursor-pointer text-muted hover:text-accent transition-colors"
-            onClick={(e) => {
-              e.stopPropagation();
+            className="row-action flex items-center gap-1 cursor-pointer text-muted hover:text-accent transition-colors"
+            onClick={() => {
               toggle();
             }}
             onKeyDown={(e) => {
@@ -258,9 +256,8 @@ function CommitHashSelector({
 
   return (
     <div
-      className="flex items-center gap-1 cursor-pointer text-muted hover:text-accent transition-colors"
-      onClick={(e) => {
-        e.stopPropagation();
+      className="row-action flex items-center gap-1 cursor-pointer text-muted hover:text-accent transition-colors"
+      onClick={() => {
         handleCommitHashClick();
       }}
       onKeyDown={(e) => {
@@ -398,7 +395,7 @@ export default function RepoCard({
           <Tooltip label="Pull Changes" placement="top">
             <button
               type="button"
-              className={`btn btn-secondary ${
+              className={`row-action btn btn-secondary ${
                 variant !== 'current' ? 'btn-secondary-borderless' : ''
               }`}
               style={{
@@ -409,8 +406,7 @@ export default function RepoCard({
               }}
               aria-label="Pull changes"
               title="Pull Changes"
-              onClick={(e) => {
-                e.stopPropagation();
+              onClick={() => {
                 onPull(repo.path);
               }}
             >
@@ -422,7 +418,7 @@ export default function RepoCard({
           <Tooltip label="Save" placement="top">
             <button
               type="button"
-              className="btn btn-primary"
+              className="row-action btn btn-primary"
               style={{
                 width: 40,
                 height: 36,
@@ -431,8 +427,7 @@ export default function RepoCard({
               }}
               aria-label="Save repository"
               title="Save"
-              onClick={(e) => {
-                e.stopPropagation();
+              onClick={() => {
                 onSave();
               }}
             >
@@ -444,7 +439,7 @@ export default function RepoCard({
           <Tooltip label="Remove" placement="top">
             <button
               type="button"
-              className="btn btn-secondary btn-secondary-borderless"
+              className="row-action btn btn-secondary btn-secondary-borderless"
               style={{
                 width: 40,
                 height: 36,
@@ -453,8 +448,7 @@ export default function RepoCard({
               }}
               aria-label="Remove repository"
               title="Remove"
-              onClick={(e) => {
-                e.stopPropagation();
+              onClick={() => {
                 onRemove(repo.name, repo.path);
               }}
             >
@@ -471,16 +465,21 @@ export default function RepoCard({
   const shellClass =
     variant === 'current' ? 'glass-card p-4 w-full text-left' : 'list-row';
 
-  return clickable ? (
-    <button
-      type="button"
-      className={`${shellClass} clickable`}
-      onClick={() => handleRepoClick(repo.path)}
-      aria-label={`Open ${repo.name} repository details`}
-    >
+  // The shell is always a <div>: the card holds real <button> controls
+  // (pull/save/remove), and wrapping them in a shell <button> is invalid
+  // HTML. Body clicks navigate via the stretched .row-overlay sibling;
+  // controls sit above it with .row-action.
+  return (
+    <div className={`${shellClass}${clickable ? ' clickable relative' : ''}`}>
+      {clickable && (
+        <button
+          type="button"
+          className="row-overlay"
+          onClick={() => handleRepoClick(repo.path)}
+          aria-label={`Open ${repo.name} repository details`}
+        />
+      )}
       {CardContent}
-    </button>
-  ) : (
-    <div className={shellClass}>{CardContent}</div>
+    </div>
   );
 }
