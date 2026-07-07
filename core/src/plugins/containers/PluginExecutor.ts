@@ -192,6 +192,20 @@ export class PluginExecutor {
     const pluginId = pluginConfig.metadata.id;
     getLogger().info(`⚡ Executing ephemeral plugin: ${pluginId}.${operation}`);
 
+    // Resolve this plugin's declared config (non-secret values + granted
+    // secrets) BEFORE creating any container: resolution needs no container,
+    // and a vault/master-key rejection here should fail loud with nothing to
+    // clean up, rather than leaking an already-created ephemeral container
+    // (which may hold a workspace bind mount). Plugins without a configFields
+    // schema skip this entirely: options pass through unchanged (no `config`
+    // key added, zero extra store reads).
+    const resolvedConfig = await this.resolvePluginConfig(pluginConfig, grant);
+    // 'config' is a reserved options key: core-resolved config overwrites any
+    // caller-supplied value.
+    const optionsWithConfig = resolvedConfig
+      ? { ...options, config: resolvedConfig }
+      : options;
+
     // Create ephemeral container, binding the host workspace directly when
     // the plugin requiresRepo (Phase 3: no more repo-container VolumesFrom).
     const ephemeralContainer = await this.createEphemeralContainer(
@@ -199,15 +213,6 @@ export class PluginExecutor {
       grant,
       opts?.workspacePath
     );
-
-    // Resolve this plugin's declared config (non-secret values + granted
-    // secrets) and merge it under a reserved `config` key. Plugins without a
-    // configFields schema skip this entirely: options pass through unchanged
-    // (no `config` key added, zero extra store reads).
-    const resolvedConfig = await this.resolvePluginConfig(pluginConfig, grant);
-    const optionsWithConfig = resolvedConfig
-      ? { ...options, config: resolvedConfig }
-      : options;
 
     // Execute with resolved ephemeral container; always stop it afterwards
     // (AutoRemove=true, so Docker cleans it up once stopped)

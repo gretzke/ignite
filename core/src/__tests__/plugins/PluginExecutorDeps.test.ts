@@ -190,6 +190,59 @@ describe('PluginExecutor with injected deps', () => {
         undefined
       );
     });
+
+    it('rejects without ever creating a container when vault secret resolution fails', async () => {
+      const vaultError = new Error('vault locked: master key unavailable');
+      const getSecret = vi.fn(async () => {
+        throw vaultError;
+      });
+      const listSecretKeys = vi.fn(async () => [
+        'stub-with-config::grantedSecret',
+      ]);
+      const getValues = vi.fn(async () => ({}));
+
+      const { executor, deps, executeOperation } = makeExecutor({
+        registryLoader: {
+          getPluginConfig: async () => ({
+            metadata: {
+              id: 'stub-with-config',
+              type: PluginType.COMPILER,
+              baseImage: 'img:latest',
+              configFields: [
+                {
+                  key: 'grantedSecret',
+                  label: 'Granted Secret',
+                  type: 'string',
+                  secret: true,
+                },
+              ],
+            },
+            requiresRepo: false,
+            origin: 'builtin',
+          }),
+        },
+        trust: {
+          getGrant: async () => ({
+            trust: 'trusted',
+            hostWrite: false,
+            net: false,
+            secrets: ['grantedSecret'],
+          }),
+        },
+        pluginConfigStore: { getValues },
+        vaultStore: { getSecret, listSecretKeys },
+      });
+
+      await expect(
+        executor.execute('stub-with-config', 'detect', {})
+      ).rejects.toThrow(/vault locked/);
+
+      expect(
+        deps.containerOrchestrator.createContainer as ReturnType<typeof vi.fn>
+      ).not.toHaveBeenCalled();
+      expect(deps.containerOrchestrator.stopContainer).not.toHaveBeenCalled();
+      expect(executeOperation).not.toHaveBeenCalled();
+    });
   });
 
   describe('ephemeral workspace bind-mount (Phase 3)', () => {
