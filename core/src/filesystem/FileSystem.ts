@@ -77,6 +77,22 @@ export class FileSystem {
     return path.join(this.igniteHome, 'jobs');
   }
 
+  getChainsPath(): string {
+    return path.join(this.igniteHome, 'chains');
+  }
+
+  getChainlistCachePath(): string {
+    return path.join(this.getChainsPath(), 'chainlist-cache.json');
+  }
+
+  getUserChainsPath(): string {
+    return path.join(this.getChainsPath(), 'user-chains.json');
+  }
+
+  getRpcStorePath(): string {
+    return path.join(this.getChainsPath(), 'rpc-store.json');
+  }
+
   // Host workspace directory for cloned repos (RepoService), keyed by
   // profile so different profiles never share a clone. Distinct from
   // getProfileReposPath, which holds the local/cloned pathOrUrl *registry*
