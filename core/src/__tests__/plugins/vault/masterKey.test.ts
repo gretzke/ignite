@@ -116,4 +116,34 @@ describe('getMasterKey (file fallback)', () => {
     expect(key).toHaveLength(32);
     expect(deps.writeKeyFile).toHaveBeenCalled(); // file fallback used
   });
+
+  it('does not overwrite keychain on transient find-generic-password failures', async () => {
+    const deps = {
+      platform: 'darwin' as const,
+      fileSystem: { getVaultKeyPath: () => '/x/vault.key' },
+      readKeyFile: vi.fn(async () => {
+        throw Object.assign(new Error('enoent'), { code: 'ENOENT' });
+      }),
+      writeKeyFile: vi.fn(async () => {}),
+      runCommand: vi.fn(async (_cmd: string, args: string[], opts?: { input?: string }) => {
+        // find-generic-password fails with permission denied (code 1), not code 44
+        if (args.includes('find-generic-password')) {
+          return { stdout: '', stderr: 'permission denied', code: 1 };
+        }
+        // Should never reach here: -i invocations should not happen on transient failures
+        throw new Error('security -i should not be called on transient failures');
+      }),
+    };
+    const key = await getMasterKey(deps);
+    // File fallback should have been used
+    expect(key).toHaveLength(32);
+    expect(deps.writeKeyFile).toHaveBeenCalled();
+    // Verify that no keychain write was ever attempted
+    const runCommandCalls = (deps.runCommand as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    for (const call of runCommandCalls) {
+      const args = call[1] as string[];
+      const opts = call[2] as { input?: string } | undefined;
+      expect(opts?.input).toBeUndefined(); // No -i stdin invocations
+    }
+  });
 });

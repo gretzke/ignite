@@ -2,7 +2,10 @@
 //   1. macOS Keychain (generic password, service "ignite-vault") — the key
 //      never touches argv/env: reads via `security find-generic-password -w`
 //      (value on stdout), writes via `security -i` (command incl. the key fed
-//      on stdin).
+//      on stdin). Keychain creation only occurs if the find command exits with
+//      code 44 (errSecItemNotFound); transient failures (permission denied, etc.)
+//      are treated as keychain unavailable and fall through to file storage
+//      without overwriting existing entries.
 //   2. A 0600 key file under ~/.ignite/plugins/vault.key (non-macOS, or when
 //      the keychain is unavailable).
 // First use generates a fresh random key and persists it.
@@ -64,8 +67,14 @@ async function tryKeychain(d: MasterKeyDeps): Promise<Buffer | null> {
     if (read.code === 0) {
       const key = Buffer.from(read.stdout.trim(), 'base64');
       if (key.length === KEY_BYTES) return key;
+      // code 0 but malformed/wrong length → keychain unavailable, no write
+      return null;
     }
-    // Not found (or malformed) → create and store.
+    // Only create + store if the item is genuinely absent (code 44).
+    // Any other non-zero code (permission denied, etc.) is a transient failure.
+    if (read.code !== 44) {
+      return null; // fall through to file fallback without touching keychain
+    }
     const key = randomBytes(KEY_BYTES);
     const b64 = key.toString('base64');
     // `security -i` reads the command from stdin so the key stays off argv.
