@@ -49,7 +49,11 @@ export default function PermissionApprovalDialog() {
     approvalDismissed(),
   ];
 
-  const grantTrust = (permissions: { hostWrite: boolean; net: boolean }) => {
+  const grantTrust = (permissions: {
+    hostWrite: boolean;
+    net: boolean;
+    secrets: string[];
+  }) => {
     dispatch(
       apiClient.dispatch.setPluginTrust({
         params: { pluginId },
@@ -114,6 +118,10 @@ export default function PermissionApprovalDialog() {
               (existing?.permissions.hostWrite ?? false) ||
               permission === 'hostWrite',
             net: (existing?.permissions.net ?? false) || permission === 'net',
+            // setPluginTrust replaces the full secrets grant on every call —
+            // round-trip whatever is currently granted so approving
+            // hostWrite/net here can never silently revoke a secret grant.
+            secrets: existing?.permissions.secrets ?? [],
           });
           return [];
         },

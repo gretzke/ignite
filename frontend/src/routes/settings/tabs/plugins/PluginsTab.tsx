@@ -6,6 +6,7 @@ import {
   Package,
   Plug,
   Plus,
+  Settings2,
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
@@ -15,6 +16,7 @@ import Tooltip from '../../../../components/Tooltip';
 import ConfirmDialog from '../../../../components/ConfirmDialog';
 import { useAppDispatch, useAppSelector } from '../../../../store';
 import {
+  openConfigModal,
   openPermissionsModal,
   pluginsApi,
   selectDevMode,
@@ -78,6 +80,7 @@ function PluginCard({
   );
   const manageable = !isNative && versionInfo?.source === 'git';
   const updateAvailable = !isNative && versionInfo?.updateAvailable;
+  const hasConfig = Boolean(plugin.configFields?.length);
 
   const handleManage = () => {
     if (manageable && versionInfo && onManage) onManage(plugin, versionInfo);
@@ -170,6 +173,22 @@ function PluginCard({
               </button>
             </Tooltip>
           )}
+          {hasConfig && (
+            <Tooltip label="Configure" placement="top">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ width: 32, height: 32, padding: 0 }}
+                aria-label="Configure"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dispatch(openConfigModal({ pluginId: plugin.pluginId }));
+                }}
+              >
+                <Settings2 size={14} />
+              </button>
+            </Tooltip>
+          )}
           <Tooltip label="Manage permissions" placement="top">
             <button
               type="button"
@@ -201,6 +220,24 @@ function PluginCard({
               }}
             >
               <Trash2 size={14} />
+            </button>
+          </Tooltip>
+        </div>
+      )}
+      {isNative && hasConfig && (
+        <div className="flex items-center gap-2 shrink-0">
+          <Tooltip label="Configure" placement="top">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ width: 32, height: 32, padding: 0 }}
+              aria-label="Configure"
+              onClick={(e) => {
+                e.stopPropagation();
+                dispatch(openConfigModal({ pluginId: plugin.pluginId }));
+              }}
+            >
+              <Settings2 size={14} />
             </button>
           </Tooltip>
         </div>

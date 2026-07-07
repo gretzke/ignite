@@ -32,11 +32,18 @@ export default function PluginPermissionsModal() {
     hostWrite: false,
     net: false,
   });
+  // Secret-scope grants (config fields marked `secret: true`). Bound to
+  // Switches below the hostWrite/net rows.
+  const [pendingSecrets, setPendingSecrets] = useState<Set<string>>(new Set());
+
+  const secretFields = row?.configFields?.filter((f) => f.secret) ?? [];
 
   // Re-seed the toggles from the stored grant whenever the modal targets a
   // (possibly different) plugin or its trust state arrives from the server.
   const grantKey = modal
-    ? `${modal.pluginId}:${row?.permissions.hostWrite}:${row?.permissions.net}`
+    ? `${modal.pluginId}:${row?.permissions.hostWrite}:${
+        row?.permissions.net
+      }:${(row?.permissions.secrets ?? []).slice().sort().join(',')}`
     : '';
   useEffect(() => {
     if (!modal) return;
@@ -44,6 +51,7 @@ export default function PluginPermissionsModal() {
       hostWrite: row?.permissions.hostWrite ?? false,
       net: row?.permissions.net ?? false,
     });
+    setPendingSecrets(new Set(row?.permissions.secrets ?? []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grantKey]);
 
@@ -63,11 +71,17 @@ export default function PluginPermissionsModal() {
         pending.hostWrite && requested.some((r) => r.id === 'hostWrite'),
       net: pending.net && requested.some((r) => r.id === 'net'),
     };
+    // Clamp to the plugin's declared secret keys for the same reason.
+    const secretKeys = secretFields
+      .map((f) => f.key)
+      .filter((k) => pendingSecrets.has(k));
     dispatch(
       pluginsApi.setPermissions(
         modal.pluginId,
-        next.hostWrite || next.net ? 'trusted' : 'untrusted',
-        next
+        next.hostWrite || next.net || secretKeys.length > 0
+          ? 'trusted'
+          : 'untrusted',
+        { ...next, secrets: secretKeys }
       )
     );
     close();
@@ -100,12 +114,12 @@ export default function PluginPermissionsModal() {
             </Dialog.Title>
           </div>
           <Dialog.Description className="text-sm opacity-80 mb-4">
-            {requested.length > 0
+            {requested.length > 0 || secretFields.length > 0
               ? 'This plugin requests the following permissions. They are off by default and can be changed here at any time.'
               : 'This plugin does not request any permissions. It can read the repository and produce artifacts, but cannot write to your machine or access the network.'}
           </Dialog.Description>
 
-          {requested.length > 0 && (
+          {(requested.length > 0 || secretFields.length > 0) && (
             <div className="flex flex-col gap-3 mb-5">
               {requested.map((request) => (
                 <div
@@ -138,6 +152,42 @@ export default function PluginPermissionsModal() {
                   </div>
                 </div>
               ))}
+              {secretFields.map((field) => (
+                <div
+                  key={field.key}
+                  className="card-milky p-3 flex items-start justify-between gap-4"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold">
+                        {field.label}
+                      </span>
+                      <span className="text-xs rounded-full pill px-2 py-0.5 shrink-0">
+                        Secret
+                      </span>
+                    </div>
+                    {/* Plugin-authored text: rendered strictly as plain text */}
+                    {field.description && (
+                      <div className="text-sm opacity-80 mt-1 break-words">
+                        {field.description}
+                      </div>
+                    )}
+                  </div>
+                  <div className="shrink-0 pt-1">
+                    <Switch
+                      checked={pendingSecrets.has(field.key)}
+                      onCheckedChange={(v) =>
+                        setPendingSecrets((prev) => {
+                          const next = new Set(prev);
+                          if (v) next.add(field.key);
+                          else next.delete(field.key);
+                          return next;
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 
@@ -164,7 +214,7 @@ export default function PluginPermissionsModal() {
                   Cancel
                 </button>
               </Dialog.Close>
-              {requested.length > 0 && (
+              {(requested.length > 0 || secretFields.length > 0) && (
                 <button
                   type="button"
                   className="btn btn-primary"

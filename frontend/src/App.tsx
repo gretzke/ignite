@@ -7,6 +7,7 @@ import { startConnect } from './store/features/connection/connectionSlice';
 import { repositoriesApi } from './store/features/repositories/repositoriesApi';
 import PermissionApprovalDialog from './components/PermissionApprovalDialog';
 import PluginPermissionsModal from './components/PluginPermissionsModal';
+import PluginConfigModal from './components/PluginConfigModal';
 
 type CSSVars = React.CSSProperties & { ['--profile-color']?: string };
 
@@ -81,6 +82,9 @@ export default function App() {
 
       {/* Plugin permission request/management modal */}
       <PluginPermissionsModal />
+
+      {/* Plugin config form modal */}
+      <PluginConfigModal />
 
       {/* Ambient background layers */}
       <div className="ambient-gradient" aria-hidden="true" />

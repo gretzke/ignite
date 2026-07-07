@@ -1,10 +1,16 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type {
+  DeletePluginConfigQuery,
+  GetPluginConfigData,
+  PluginConfigField,
   PluginPermissionRequest,
   PluginVersionInfoData,
+  SetPluginConfigValueRequest,
+  SetPluginSecretRequest,
   StorePluginData,
 } from '@ignite/api';
-import { apiClient } from '../../api/client';
+import type { ApiError } from '@ignite/api/client';
+import { apiClient, apiDispatchAction } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
 import { formatApiError } from '../../middleware/apiGate';
 import { jobStarted } from '../jobs/jobsSlice';
@@ -12,16 +18,25 @@ import { discoverActiveJobs } from '../jobs/discoverJobs';
 import { wsSend } from '../../middleware/websocket';
 import type { RootState } from '../../store';
 
+export interface PluginPermissions {
+  hostWrite: boolean;
+  net: boolean;
+  // Granted secret config-field keys (see PluginConfigField.secret).
+  secrets: string[];
+}
+
 export interface PluginRow {
   pluginId: string;
   name?: string;
   type?: string;
   version?: string;
   trust: 'native' | 'trusted' | 'untrusted';
-  permissions: { hostWrite: boolean; net: boolean };
+  permissions: PluginPermissions;
   // Manifest-declared permission requests (with user-facing descriptions).
   // Only these can be granted.
   requested: PluginPermissionRequest[];
+  // Manifest-declared config fields (settings-form schema), if any.
+  configFields?: PluginConfigField[];
 }
 
 // Drives the global permissions modal: opened from a plugin card, after an
@@ -32,15 +47,25 @@ export interface PermissionsModalState {
   newPermissionIds: string[];
 }
 
+// Drives the global plugin config modal, opened from a plugin card's
+// Configure button.
+export interface ConfigModalState {
+  pluginId: string;
+}
+
 interface PluginsState {
   rows: Record<string, PluginRow>;
   loading: boolean;
   devMode: boolean;
   permissionsModal: PermissionsModalState | null;
+  configModal: ConfigModalState | null;
   // Version/update info per installed plugin (from /plugins/versions).
   versions: Record<string, PluginVersionInfoData>;
   // Curated store catalog; null until first fetched.
   storePlugins: StorePluginData[] | null;
+  // Config schema + current values per plugin, fetched on-demand when the
+  // config modal opens.
+  configByPlugin: Record<string, GetPluginConfigData>;
 }
 
 const initialState: PluginsState = {
@@ -48,8 +73,10 @@ const initialState: PluginsState = {
   loading: false,
   devMode: false,
   permissionsModal: null,
+  configModal: null,
   versions: {},
   storePlugins: null,
+  configByPlugin: {},
 };
 
 const pluginsSlice = createSlice({
@@ -72,6 +99,7 @@ const pluginsSlice = createSlice({
             type: string;
             version: string;
             requested: PluginPermissionRequest[];
+            configFields?: PluginConfigField[];
           }
         >
       >
@@ -84,11 +112,13 @@ const pluginsSlice = createSlice({
           permissions: state.rows[id]?.permissions ?? {
             hostWrite: false,
             net: false,
+            secrets: [],
           },
           name: m.name,
           type: m.type,
           version: m.version,
           requested: m.requested,
+          configFields: m.configFields,
         };
       }
     },
@@ -97,6 +127,18 @@ const pluginsSlice = createSlice({
     },
     closePermissionsModal(state) {
       state.permissionsModal = null;
+    },
+    openConfigModal(state, action: PayloadAction<ConfigModalState>) {
+      state.configModal = action.payload;
+    },
+    closeConfigModal(state) {
+      state.configModal = null;
+    },
+    configReceived(
+      state,
+      action: PayloadAction<{ pluginId: string; config: GetPluginConfigData }>
+    ) {
+      state.configByPlugin[action.payload.pluginId] = action.payload.config;
     },
     setVersions(state, action: PayloadAction<PluginVersionInfoData[]>) {
       state.versions = Object.fromEntries(
@@ -112,7 +154,7 @@ const pluginsSlice = createSlice({
         Array<{
           pluginId: string;
           trust: 'native' | 'trusted' | 'untrusted';
-          permissions: { hostWrite: boolean; net: boolean };
+          permissions: PluginPermissions;
         }>
       >
     ) {
@@ -140,6 +182,9 @@ export const {
   removeRow,
   openPermissionsModal,
   closePermissionsModal,
+  openConfigModal,
+  closeConfigModal,
+  configReceived,
   setVersions,
   setStorePlugins,
 } = pluginsSlice.actions;
@@ -148,8 +193,11 @@ export const selectPluginsLoading = (s: RootState) => s.plugins.loading;
 export const selectDevMode = (s: RootState) => s.plugins.devMode;
 export const selectPermissionsModal = (s: RootState) =>
   s.plugins.permissionsModal;
+export const selectConfigModal = (s: RootState) => s.plugins.configModal;
 export const selectPluginRow = (s: RootState, pluginId: string) =>
   s.plugins.rows[pluginId];
+export const selectPluginConfig = (s: RootState, pluginId: string) =>
+  s.plugins.configByPlugin[pluginId];
 export const selectPluginVersions = (s: RootState) => s.plugins.versions;
 export const selectStorePlugins = (s: RootState) => s.plugins.storePlugins;
 export const pluginsReducer = pluginsSlice.reducer;
@@ -183,6 +231,7 @@ export const pluginsApi = {
                   type: m.type,
                   version: m.version,
                   requested: m.permissions ?? [],
+                  configFields: m.configFields,
                 },
               ])
             )
@@ -202,7 +251,18 @@ export const pluginsApi = {
         },
       }),
       apiClient.dispatch.listPluginTrust({
-        onSuccess: (data) => [setTrust(data.plugins), setLoading(false)],
+        onSuccess: (data) => [
+          setTrust(
+            data.plugins.map((p) => ({
+              ...p,
+              permissions: {
+                ...p.permissions,
+                secrets: p.permissions.secrets ?? [],
+              },
+            }))
+          ),
+          setLoading(false),
+        ],
         onError: (error) => {
           const { title, description } = formatApiError(error);
           return [
@@ -242,7 +302,7 @@ export const pluginsApi = {
   setPermissions(
     pluginId: string,
     trust: 'trusted' | 'untrusted',
-    permissions: { hostWrite: boolean; net: boolean }
+    permissions: { hostWrite: boolean; net: boolean; secrets: string[] }
   ) {
     return apiClient.dispatch.setPluginTrust({
       params: { pluginId },
@@ -389,6 +449,91 @@ export const pluginsApi = {
             duration: 5000,
           }),
         ];
+      },
+    });
+  },
+  // Fetches a plugin's config schema + current values. Not toast-wrapped —
+  // called silently whenever the config modal opens.
+  fetchConfig(pluginId: string) {
+    return apiClient.dispatch.getPluginConfig({
+      params: { pluginId },
+      onSuccess: (data) => [configReceived({ pluginId, config: data })],
+      onError: (error) => {
+        const { title, description } = formatApiError(error);
+        return [
+          triggerToast({
+            title,
+            description,
+            variant: 'error',
+            duration: 5000,
+          }),
+        ];
+      },
+    });
+  },
+  // Writes a non-secret config value (global or per-chain). The response is
+  // the refreshed config payload, so it's dispatched straight into
+  // configByPlugin instead of triggering a separate refetch.
+  setConfigValue(pluginId: string, body: SetPluginConfigValueRequest) {
+    const apiAction = apiClient.dispatch.setPluginConfigValue({
+      params: { pluginId },
+      body,
+      onSuccess: (data) => configReceived({ pluginId, config: data }),
+    });
+    return triggerToast({
+      apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
+      loading: { title: 'Saving value…', variant: 'info' },
+      onSuccess: () => ({
+        title: 'Value saved',
+        variant: 'success',
+        duration: 3000,
+      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return { title, description, variant: 'error', duration: 6000 };
+      },
+    });
+  },
+  // Writes a secret value to the vault. The value itself is never echoed
+  // back — only secretsPresent/grantedSecrets change in the response.
+  setSecret(pluginId: string, body: SetPluginSecretRequest) {
+    const apiAction = apiClient.dispatch.setPluginSecret({
+      params: { pluginId },
+      body,
+      onSuccess: (data) => configReceived({ pluginId, config: data }),
+    });
+    return triggerToast({
+      apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
+      loading: { title: 'Saving secret…', variant: 'info' },
+      onSuccess: () => ({
+        title: 'Secret saved',
+        variant: 'success',
+        duration: 3000,
+      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return { title, description, variant: 'error', duration: 6000 };
+      },
+    });
+  },
+  deleteConfigValue(pluginId: string, key: string, chainId?: number) {
+    const query: DeletePluginConfigQuery = { key, chainId };
+    const apiAction = apiClient.dispatch.deletePluginConfigValue({
+      params: { pluginId },
+      query,
+      onSuccess: (data) => configReceived({ pluginId, config: data }),
+    });
+    return triggerToast({
+      apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
+      loading: { title: 'Removing value…', variant: 'info' },
+      onSuccess: () => ({
+        title: 'Value removed',
+        variant: 'success',
+        duration: 3000,
+      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return { title, description, variant: 'error', duration: 6000 };
       },
     });
   },
