@@ -14,6 +14,7 @@ import { profileHandlers } from './profiles.js';
 import { jobsHandlers } from './jobs.js';
 import { pluginHandlers } from './plugins/index.js';
 import { trustHandlers } from './plugins/trust.js';
+import { pluginConfigHandlers } from './plugins/config.js';
 import { installHandlers } from './plugins/install.js';
 import { compilerHandlers } from './plugins/compiler/index.js';
 import { repoManagerHandlers } from './plugins/repo-manager/index.js';
@@ -84,6 +85,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...jobsHandlers,
     ...pluginHandlers,
     ...trustHandlers,
+    ...pluginConfigHandlers,
     ...installHandlers,
     ...compilerHandlers,
     ...repoManagerHandlers,

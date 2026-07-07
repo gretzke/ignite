@@ -41,12 +41,12 @@ describe('trust API handlers', () => {
     expect(data.plugins).toContainEqual({
       pluginId: 'local-repo',
       trust: 'native',
-      permissions: { hostWrite: true, net: true },
+      permissions: { hostWrite: true, net: true, secrets: [] },
     });
     expect(data.plugins).toContainEqual({
       pluginId: '@acme/foundry',
       trust: 'untrusted',
-      permissions: { hostWrite: false, net: false },
+      permissions: { hostWrite: false, net: false, secrets: [] },
     });
   });
 
@@ -61,6 +61,7 @@ describe('trust API handlers', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.plugin.permissions.hostWrite).toBe(true);
+    expect(res.json().data.plugin.permissions.secrets).toEqual([]);
     const grant = await manager.getGrant('@acme/foundry');
     expect(grant.hostWrite).toBe(true);
   });
@@ -106,6 +107,56 @@ describe('trust API handlers', () => {
     });
     expect(ok.statusCode).toBe(200);
     await strictApp.close();
+  });
+
+  it('rejects granting a secret scope the plugin does not declare, and persists a declared one', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-trust-api3-'));
+    const secretManager = new TrustManager(
+      path.join(dir, 'trust.json'),
+      async () => false
+    );
+    // '@acme/foundry' declares only 'apiKey' as a secret config field.
+    const handlers = createTrustHandlers(
+      secretManager,
+      vi.fn(async () => ['@acme/foundry']),
+      vi.fn(async () => ['hostWrite', 'net']),
+      vi.fn(async () => ['apikey'])
+    );
+    const secretApp = fastify();
+    secretApp.post('/api/v1/plugins/:pluginId/trust', handlers.setPluginTrust);
+    await secretApp.ready();
+
+    const denied = await secretApp.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/@acme%2Ffoundry/trust',
+      payload: {
+        trust: 'trusted',
+        permissions: {
+          hostWrite: false,
+          net: false,
+          secrets: ['apikey', 'undeclaredkey'],
+        },
+      },
+    });
+    expect(denied.statusCode).toBe(400);
+    expect(denied.json().code).toBe('PERMISSION_NOT_REQUESTED');
+    // Grant unchanged (fail-closed).
+    const grant = await secretManager.getGrant('@acme/foundry');
+    expect(grant.secrets).toEqual([]);
+
+    const ok = await secretApp.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/@acme%2Ffoundry/trust',
+      payload: {
+        trust: 'trusted',
+        permissions: { hostWrite: false, net: false, secrets: ['apikey'] },
+      },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().data.plugin.permissions.secrets).toEqual(['apikey']);
+    const grantedAfter = await secretManager.getGrant('@acme/foundry');
+    expect(grantedAfter.secrets).toEqual(['apikey']);
+    await secretApp.close();
   });
 
   it('refuses to modify native plugin trust', async () => {

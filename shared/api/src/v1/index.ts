@@ -7,6 +7,7 @@ export * from "./system.js";
 export * from "./profiles.js";
 export * from "./plugins/index.js";
 export * from "./plugins/trust.js";
+export * from "./plugins/config.js";
 export * from "./plugins/install.js";
 export * from "./plugins/compiler/index.js";
 export * from "./plugins/repo-manager/index.js";
@@ -20,6 +21,7 @@ import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
 import { pluginRoutes } from "./plugins/index.js";
 import { trustRoutes } from "./plugins/trust.js";
+import { configRoutes } from "./plugins/config.js";
 import { installRoutes } from "./plugins/install.js";
 import { compilerRoutes } from "./plugins/compiler/index.js";
 import { repoManagerRoutes } from "./plugins/repo-manager/index.js";
@@ -59,6 +61,7 @@ const allRoutes = {
   ...profileRoutes,
   ...pluginRoutes,
   ...trustRoutes,
+  ...configRoutes,
   ...installRoutes,
   ...compilerRoutes,
   ...repoManagerRoutes,

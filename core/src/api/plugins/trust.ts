@@ -16,19 +16,24 @@ import { sendCaughtError } from '../utils/errors.js';
 
 type SetTrustBody = {
   trust: 'trusted' | 'untrusted';
-  permissions: { hostWrite: boolean; net: boolean };
+  permissions: { hostWrite: boolean; net: boolean; secrets?: string[] };
 };
 
 // Factory so tests can inject a TrustManager and plugin listing; the exported
 // trustHandlers below wire production defaults. getRequestedPermissions
 // returns the permission ids a plugin's manifest declares — grants are
 // clamped to that set (an undeclared permission can never be granted).
+// getDeclaredSecretKeys returns the plugin's declared secret config-field
+// keys — secret grants are clamped to that set the same way.
 export function createTrustHandlers(
   manager: TrustManager,
   listInstalledPluginIds: () => Promise<string[]>,
   getRequestedPermissions: (
     pluginId: string
-  ) => Promise<string[]> = getRequestedPermissionsFromRegistry
+  ) => Promise<string[]> = getRequestedPermissionsFromRegistry,
+  getDeclaredSecretKeys: (
+    pluginId: string
+  ) => Promise<string[]> = getDeclaredSecretKeysFromRegistry
 ) {
   return {
     listPluginTrust: async (
@@ -43,7 +48,11 @@ export function createTrustHandlers(
             return {
               pluginId,
               trust: grant.trust,
-              permissions: { hostWrite: grant.hostWrite, net: grant.net },
+              permissions: {
+                hostWrite: grant.hostWrite,
+                net: grant.net,
+                secrets: grant.secrets,
+              },
             };
           })
         );
@@ -108,12 +117,27 @@ export function createTrustHandlers(
           return reply.status(400).send(body);
         }
 
-        // The wire format has no `secrets` field yet — Task 7 wires real
-        // secret-grant clamping through this endpoint; until then every
-        // grant made here carries no secrets.
+        // Same clamp for secret-scope grants: only declared secret config
+        // fields are grantable. Every call replaces the full secrets grant.
+        const requestedSecrets = permissions.secrets ?? [];
+        const declaredSecretKeys = await getDeclaredSecretKeys(pluginId);
+        const notDeclaredSecrets = requestedSecrets.filter(
+          (key) => !declaredSecretKeys.includes(key)
+        );
+        if (notDeclaredSecrets.length > 0) {
+          const body: IApiError = {
+            statusCode: 400,
+            error: 'Bad Request',
+            code: ErrorCodes.PERMISSION_NOT_REQUESTED,
+            message: `Plugin ${pluginId} does not declare the following secret fields: ${notDeclaredSecrets.join(', ')}.`,
+          };
+          return reply.status(400).send(body);
+        }
+
         const entry = await manager.setTrust(pluginId, trust, {
-          ...permissions,
-          secrets: [],
+          hostWrite: permissions.hostWrite,
+          net: permissions.net,
+          secrets: requestedSecrets,
         });
         const body: IApiResponse<SetPluginTrustData> = {
           data: {
@@ -154,6 +178,20 @@ async function getRequestedPermissionsFromRegistry(
   try {
     const metadata = await PluginManager.getInstance().getPlugin(pluginId);
     return (metadata.permissions ?? []).map((request) => request.id);
+  } catch {
+    // Fail-closed: unknown plugin → nothing is grantable.
+    return [];
+  }
+}
+
+async function getDeclaredSecretKeysFromRegistry(
+  pluginId: string
+): Promise<string[]> {
+  try {
+    const metadata = await PluginManager.getInstance().getPlugin(pluginId);
+    return (metadata.configFields ?? [])
+      .filter((field) => field.secret)
+      .map((field) => field.key);
   } catch {
     // Fail-closed: unknown plugin → nothing is grantable.
     return [];

@@ -32,8 +32,15 @@ function makeDeps() {
   const sources: Record<string, PluginInstallSource> = {};
   const grants: Record<
     string,
-    { trust: 'trusted' | 'untrusted'; hostWrite: boolean; net: boolean }
+    {
+      trust: 'trusted' | 'untrusted';
+      hostWrite: boolean;
+      net: boolean;
+      secrets?: string[];
+    }
   > = {};
+  const vaultDeletedPlugins: string[] = [];
+  const configDeletedPlugins: string[] = [];
   return {
     pluginManager: {
       addPlugin: vi.fn(
@@ -57,13 +64,13 @@ function makeDeps() {
         trust: grants[id]?.trust ?? ('untrusted' as const),
         hostWrite: grants[id]?.hostWrite ?? false,
         net: grants[id]?.net ?? false,
-        secrets: [] as string[],
+        secrets: grants[id]?.secrets ?? ([] as string[]),
       })),
       setTrust: vi.fn(
         async (
           id: string,
           trust: 'trusted' | 'untrusted',
-          permissions: { hostWrite: boolean; net: boolean }
+          permissions: { hostWrite: boolean; net: boolean; secrets: string[] }
         ) => {
           grants[id] = { trust, ...permissions };
         }
@@ -81,9 +88,21 @@ function makeDeps() {
         description: 'A waffle compiler',
       },
     })),
+    vaultStore: {
+      deletePlugin: vi.fn(async (id: string) => {
+        vaultDeletedPlugins.push(id);
+      }),
+    },
+    configStore: {
+      deletePlugin: vi.fn(async (id: string) => {
+        configDeletedPlugins.push(id);
+      }),
+    },
     store,
     sources,
     grants,
+    vaultDeletedPlugins,
+    configDeletedPlugins,
   };
 }
 
@@ -394,14 +413,87 @@ describe('PluginInstaller', () => {
         code: 'PLUGIN_NOT_FOUND',
       });
     });
+
+    it('clamps granted secrets to the new version declared secret fields, dropping ones no longer declared', async () => {
+      await installV1(deps);
+      // User previously granted two secret-scope keys.
+      deps.grants.waffle = {
+        trust: 'trusted',
+        hostWrite: true,
+        net: false,
+        secrets: ['apikey', 'legacykey'],
+      };
+      const v2: PluginMetadata = {
+        ...waffleMeta,
+        version: '2.0.0',
+        // New version keeps `apikey` as a secret field but no longer
+        // declares `legacykey` at all.
+        configFields: [
+          { key: 'apikey', label: 'API Key', type: 'string', secret: true },
+        ],
+      };
+      const updater = new PluginInstaller(
+        backendReturning({
+          imageTag: 'ignite/installed_waffle:2.0.0',
+          metadata: v2,
+        }),
+        deps
+      );
+
+      await updater.update('waffle');
+
+      expect(deps.grants.waffle).toEqual({
+        trust: 'trusted',
+        hostWrite: true,
+        net: false,
+        secrets: ['apikey'],
+      });
+    });
+
+    it('keeps a plugin trusted on update when only secret grants survive (no hostWrite/net)', async () => {
+      const installer = new PluginInstaller(backend, deps);
+      await installer.install(gitSource);
+      deps.grants.waffle = {
+        trust: 'trusted',
+        hostWrite: false,
+        net: false,
+        secrets: ['apikey'],
+      };
+      const v2: PluginMetadata = {
+        ...waffleMeta,
+        version: '2.0.0',
+        permissions: [],
+        configFields: [
+          { key: 'apikey', label: 'API Key', type: 'string', secret: true },
+        ],
+      };
+      const updater = new PluginInstaller(
+        backendReturning({
+          imageTag: 'ignite/installed_waffle:2.0.0',
+          metadata: v2,
+        }),
+        deps
+      );
+
+      await updater.update('waffle');
+
+      expect(deps.grants.waffle).toEqual({
+        trust: 'trusted',
+        hostWrite: false,
+        net: false,
+        secrets: ['apikey'],
+      });
+    });
   });
 
-  it('uninstall removes registry entry, revokes trust, and removes the image and cache volume', async () => {
+  it('uninstall removes registry entry, revokes trust, and removes the image, cache volume, vault secrets, and config values', async () => {
     const installer = new PluginInstaller(backend, deps);
     await installer.install(gitSource);
     await installer.uninstall('waffle');
     expect(deps.pluginManager.removePlugin).toHaveBeenCalledWith('waffle');
     expect(deps.trust.revoke).toHaveBeenCalledWith('waffle');
+    expect(deps.vaultStore.deletePlugin).toHaveBeenCalledWith('waffle');
+    expect(deps.configStore.deletePlugin).toHaveBeenCalledWith('waffle');
     expect(deps.removeImage).toHaveBeenCalledWith(
       'ignite/installed_waffle:1.0.0'
     );

@@ -14,6 +14,8 @@ import { PluginManager } from '../../filesystem/PluginManager.js';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 import { TrustManager } from '../trust/TrustManager.js';
 import type { PluginPermissions } from '../trust/TrustManager.js';
+import { VaultStore } from '../vault/VaultStore.js';
+import { PluginConfigStore } from '../config/PluginConfigStore.js';
 import { getLogger } from '../../utils/logger.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 import { pluginCacheVolumeName } from '../utils/pluginCache.js';
@@ -47,6 +49,8 @@ export interface PluginInstallerDeps {
   removeVolume: (volumeName: string) => Promise<void>;
   // Remote inspection for git sources (track derivation + description).
   inspectRemote: (url: string) => Promise<InspectGitRemoteData>;
+  vaultStore: Pick<VaultStore, 'deletePlugin'>;
+  configStore: Pick<PluginConfigStore, 'deletePlugin'>;
 }
 
 export interface PluginUpdateResult {
@@ -54,6 +58,11 @@ export interface PluginUpdateResult {
   // Permissions the new version requests that the previous one didn't —
   // surfaced to the user post-update; they start denied.
   newPermissions: PluginPermissionRequest[];
+  // TODO(secret-scope reporting): newly-declared secret config fields aren't
+  // surfaced here yet, unlike newPermissions above. Wiring that through
+  // requires a PluginConfigField[]-shaped sibling to newPermissions and a
+  // frontend consumer for it (see Task 8's config UI) — deferred rather than
+  // half-wiring an API shape nothing reads yet.
 }
 
 export class PluginInstaller {
@@ -69,6 +78,8 @@ export class PluginInstaller {
       loader: deps?.loader ?? PluginRegistryLoader.getInstance(),
       trust: deps?.trust ?? TrustManager.getInstance(),
       inspectRemote: deps?.inspectRemote ?? inspectGitRemote,
+      vaultStore: deps?.vaultStore ?? new VaultStore(),
+      configStore: deps?.configStore ?? new PluginConfigStore(),
       removeImage:
         deps?.removeImage ??
         (async (imageTag: string) => {
@@ -214,21 +225,29 @@ export class PluginInstaller {
       );
 
       // Clamp grants to the new requested set: a permission the new version
-      // no longer requests is revoked; new requests start denied.
+      // no longer requests is revoked; new requests start denied. Secret
+      // grants get the same treatment against the new manifest's declared
+      // secret config-field keys — a key the new version no longer declares
+      // as secret can't stay granted.
       const grant = await this.deps.trust.getGrant(pluginId);
+      const declaredSecretKeys = new Set(
+        (metadata.configFields ?? [])
+          .filter((field) => field.secret)
+          .map((field) => field.key)
+      );
       const clamped: PluginPermissions = {
         hostWrite: grant.hostWrite && requestedIds.has('hostWrite'),
         net: grant.net && requestedIds.has('net'),
-        // Task 7 wires real secret-grant clamping; until then updates never
-        // carry secret grants forward.
-        secrets: [],
+        secrets: grant.secrets.filter((key) => declaredSecretKeys.has(key)),
       };
 
       const persisted: PluginMetadata = { ...metadata, baseImage: imageTag };
       await this.deps.pluginManager.addPlugin(persisted, effective);
       await this.deps.trust.setTrust(
         pluginId,
-        clamped.hostWrite || clamped.net ? 'trusted' : 'untrusted',
+        clamped.hostWrite || clamped.net || clamped.secrets.length > 0
+          ? 'trusted'
+          : 'untrusted',
         clamped
       );
 
@@ -473,8 +492,12 @@ export class PluginInstaller {
     // Revoke trust first (fail-closed): a trust entry surviving without a
     // plugin is dangerous (Critical #1 shows how it can be inherited by a
     // later reinstall), whereas a plugin surviving without a trust entry is
-    // merely unusable until re-approved.
+    // merely unusable until re-approved. Vault secrets and non-secret config
+    // values are scoped to this plugin id too, so they're wiped alongside —
+    // a later reinstall of the same id must not inherit either.
     await this.deps.trust.revoke(pluginId);
+    await this.deps.vaultStore.deletePlugin(pluginId);
+    await this.deps.configStore.deletePlugin(pluginId);
 
     let imageTag: string | undefined;
     if (await this.deps.pluginManager.hasPlugin(pluginId)) {
