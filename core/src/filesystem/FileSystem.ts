@@ -131,6 +131,14 @@ export class FileSystem {
     return path.join(this.getPluginsPath(), 'registry.json');
   }
 
+  getVaultPath(): string {
+    return path.join(this.getPluginsPath(), 'vault.json');
+  }
+
+  getVaultKeyPath(): string {
+    return path.join(this.getPluginsPath(), 'vault.key');
+  }
+
   getPluginInstallPath(pluginId: string): string {
     return path.join(this.getPluginsPath(), 'installed', pluginId);
   }
