@@ -248,4 +248,18 @@ describe('VaultStore', () => {
       store.setSecret('bad::id', 'k', 'v')
     ).rejects.toThrow('Vault ids must not contain "::"');
   });
+
+  it('listSecretKeys rejects when pluginId contains the "::" delimiter', async () => {
+    const { store } = makeStore();
+    await expect(
+      store.listSecretKeys('foo::bar')
+    ).rejects.toThrow('Vault ids must not contain "::"');
+  });
+
+  it('deletePlugin rejects when pluginId contains the "::" delimiter', async () => {
+    const { store } = makeStore();
+    await expect(
+      store.deletePlugin('foo::bar')
+    ).rejects.toThrow('Vault ids must not contain "::"');
+  });
 });

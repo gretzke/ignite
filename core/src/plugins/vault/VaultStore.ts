@@ -90,17 +90,25 @@ export class VaultStore {
 
   async listSecretKeys(pluginId: string): Promise<string[]> {
     const file = await this.readFile();
-    const prefix = `${pluginId}::`;
+    const prefix = this.pluginPrefix(pluginId);
     return Object.keys(file.entries).filter((k) => k.startsWith(prefix));
   }
 
   async deletePlugin(pluginId: string): Promise<void> {
     const file = await this.readFile();
-    const prefix = `${pluginId}::`;
+    const prefix = this.pluginPrefix(pluginId);
     for (const k of Object.keys(file.entries)) {
       if (k.startsWith(prefix)) delete file.entries[k];
     }
     await this.writeFile(file);
+  }
+
+  // Backstops the same charset invariant entryKey() enforces.
+  private pluginPrefix(pluginId: string): string {
+    if (pluginId.includes('::')) {
+      throw new Error('Vault ids must not contain "::"');
+    }
+    return `${pluginId}::`;
   }
 
   // Collision-freedom of entry keys relies on pluginId/key never containing
@@ -108,12 +116,13 @@ export class VaultStore {
   // before they ever reach the vault, which excludes ':'. This is a
   // defensive backstop in case that upstream invariant is ever bypassed.
   private entryKey(pluginId: string, key: string, chainId?: number): string {
-    if (pluginId.includes('::') || key.includes('::')) {
+    const prefix = this.pluginPrefix(pluginId);
+    if (key.includes('::')) {
       throw new Error('Vault ids must not contain "::"');
     }
     return chainId === undefined
-      ? `${pluginId}::${key}`
-      : `${pluginId}::${key}::${chainId}`;
+      ? `${prefix}${key}`
+      : `${prefix}${key}::${chainId}`;
   }
 
   private getMasterKey(): Promise<Buffer> {
