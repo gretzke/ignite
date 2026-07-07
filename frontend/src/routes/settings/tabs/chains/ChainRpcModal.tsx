@@ -75,21 +75,29 @@ export default function ChainRpcModal({
     return () => clearTimeout(t);
   }, [newUrl, chain.chainId, dispatch]);
 
-  useEffect(() => {
-    if (!open) {
-      setNewUrl('');
+  // The modal is conditionally mounted by ChainsTab, so closing = unmounting;
+  // reset the shared check state on the way out.
+  useEffect(
+    () => () => {
       dispatch(rpcCheckReset());
-    }
-  }, [open, dispatch]);
+    },
+    [dispatch]
+  );
 
   const storedUrls = new Set(endpoints.map((e) => e.url));
   const suggestions = chain.rpc.filter((url) => !storedUrls.has(url));
-  const checkOk = rpcCheck.url === newUrl.trim() && rpcCheck.result?.ok === true;
+  const trimmedUrl = newUrl.trim();
+  const checkOk = rpcCheck.url === trimmedUrl && rpcCheck.result?.ok === true;
   const checkMismatch =
-    rpcCheck.url === newUrl.trim() &&
+    rpcCheck.url === trimmedUrl &&
     rpcCheck.result !== null &&
     rpcCheck.result.chainIdMatch === false;
-  const canAdd = /^https?:\/\/.+/.test(newUrl.trim()) && !checkMismatch;
+  const urlShapeValid = /^https?:\/\/.+/.test(trimmedUrl);
+  const checkSettled =
+    rpcCheck.url === trimmedUrl &&
+    !rpcCheck.checking &&
+    (rpcCheck.result !== null || rpcCheck.error !== null);
+  const canAdd = urlShapeValid && checkSettled && !checkMismatch;
 
   const handleAdd = () => {
     dispatch(chainsApi.addRpc(chain.chainId, { url: newUrl.trim() }));
@@ -207,7 +215,7 @@ export default function ChainRpcModal({
                 Add
               </button>
             </div>
-            {rpcCheck.checking && rpcCheck.url === newUrl.trim() && (
+            {rpcCheck.checking && rpcCheck.url === trimmedUrl && (
               <span className="text-xs text-muted flex items-center gap-1">
                 <Loader2 size={12} className="animate-spin" /> Checking
                 endpoint…
@@ -224,7 +232,7 @@ export default function ChainRpcModal({
                 {rpcCheck.result?.error ?? 'Chain ID mismatch'}
               </span>
             )}
-            {rpcCheck.error && rpcCheck.url === newUrl.trim() && (
+            {rpcCheck.error && rpcCheck.url === trimmedUrl && (
               <span className="text-xs text-warn">
                 Could not check endpoint: {rpcCheck.error}. You can still add
                 it.
