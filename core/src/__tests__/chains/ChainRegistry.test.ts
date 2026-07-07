@@ -204,4 +204,15 @@ describe('ChainRegistry', () => {
     const data = await registry.listChains();
     expect(data.chains.some((c) => c.source === 'custom')).toBe(false);
   });
+
+  it('deleteCustomChain correctly identifies chainlist ids on cold cache', async () => {
+    // Fresh registry with empty files, no prior warmup calls
+    const { deps } = makeDeps({ files: new Map() });
+    const registry = new ChainRegistry(deps);
+    // First call is deleteCustomChain(1), which must fetch chainlist to distinguish
+    // between "id exists on chainlist" vs "id unknown"
+    await expect(registry.deleteCustomChain(1)).rejects.toMatchObject({
+      code: 'CHAIN_NOT_CUSTOM',
+    });
+  });
 });

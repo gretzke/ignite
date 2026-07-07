@@ -108,7 +108,7 @@ export class ChainRegistry {
   async deleteCustomChain(chainId: number): Promise<void> {
     const existing = await this.readCustomChains();
     if (!existing.some((c) => c.chainId === chainId)) {
-      const cache = await this.readCache();
+      const cache = await this.ensureFresh();
       const onChainlist = cache?.chains.some((c) => c.chainId === chainId);
       throw Object.assign(
         new Error(
