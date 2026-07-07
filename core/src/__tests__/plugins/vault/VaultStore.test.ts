@@ -28,6 +28,36 @@ function makeStore() {
   return { store, files, getMasterKeyCalls: () => masterKeyCalls };
 }
 
+// Builds a store whose getMasterKey rejects on the first `failures` calls and
+// resolves afterwards, to exercise cache-clearing-on-rejection behavior.
+function makeStoreWithFlakyMasterKey(failures: number) {
+  const files = new Map<string, unknown>();
+  let masterKeyCalls = 0;
+  const store = new VaultStore({
+    fileSystem: {
+      getVaultPath: () => '/plugins/vault.json',
+      fileExists: async (p: string) => files.has(p),
+      readJsonFile: async <T,>(p: string): Promise<T> => {
+        if (!files.has(p)) throw new Error(`ENOENT: ${p}`);
+        const value = files.get(p);
+        if (value === undefined) throw new Error(`corrupt: ${p}`);
+        return value as T;
+      },
+      writeJsonFile: async <T,>(p: string, data: T) => {
+        files.set(p, JSON.parse(JSON.stringify(data)));
+      },
+    },
+    getMasterKey: async () => {
+      masterKeyCalls++;
+      if (masterKeyCalls <= failures) {
+        throw new Error('transient disk error');
+      }
+      return MASTER_KEY;
+    },
+  });
+  return { store, files, getMasterKeyCalls: () => masterKeyCalls };
+}
+
 describe('VaultStore', () => {
   it('round-trips a secret via set/get', async () => {
     const { store } = makeStore();
@@ -162,5 +192,60 @@ describe('VaultStore', () => {
     await store.getSecret('plugin-a', 'apiKey');
     await store.hasSecret('plugin-a', 'apiKey');
     expect(getMasterKeyCalls()).toBe(1);
+  });
+
+  it('does not cache a rejected master-key promise: retries and succeeds after a transient failure', async () => {
+    const { store, getMasterKeyCalls } = makeStoreWithFlakyMasterKey(1);
+
+    await expect(
+      store.setSecret('plugin-a', 'apiKey', 'value')
+    ).rejects.toThrow('transient disk error');
+    expect(getMasterKeyCalls()).toBe(1);
+
+    await store.setSecret('plugin-a', 'apiKey', 'value');
+    expect(getMasterKeyCalls()).toBe(2);
+    expect(await store.getSecret('plugin-a', 'apiKey')).toBe('value');
+    // Second getSecret call reuses the now-successful cached promise.
+    expect(getMasterKeyCalls()).toBe(2);
+  });
+
+  it('getSecret rejects (does not return undefined) when the master key provider persistently fails for an existing entry', async () => {
+    // Seed a vault file with a real encrypted entry via a healthy store...
+    const { store: seededStore, files } = makeStore();
+    await seededStore.setSecret('plugin-a', 'apiKey', 'value');
+
+    // ...then read it back with a store whose master-key provider always fails.
+    const persistentlyFailingStore = new VaultStore({
+      fileSystem: {
+        getVaultPath: () => '/plugins/vault.json',
+        fileExists: async (p: string) => files.has(p),
+        readJsonFile: async <T,>(p: string): Promise<T> => files.get(p) as T,
+        writeJsonFile: async () => {},
+      },
+      getMasterKey: async () => {
+        throw new Error('master key provider is down');
+      },
+    });
+
+    await expect(
+      persistentlyFailingStore.getSecret('plugin-a', 'apiKey')
+    ).rejects.toThrow('master key provider is down');
+  });
+
+  it('treats a malformed-but-non-throwing vault shape (entries: null) as empty, and set still works afterwards', async () => {
+    const { store, files } = makeStore();
+    files.set('/plugins/vault.json', { version: 1, entries: null });
+
+    expect(await store.getSecret('plugin-a', 'apiKey')).toBeUndefined();
+
+    await store.setSecret('plugin-a', 'apiKey', 'value');
+    expect(await store.getSecret('plugin-a', 'apiKey')).toBe('value');
+  });
+
+  it('setSecret throws when pluginId contains the "::" delimiter', async () => {
+    const { store } = makeStore();
+    await expect(
+      store.setSecret('bad::id', 'k', 'v')
+    ).rejects.toThrow('Vault ids must not contain "::"');
   });
 });

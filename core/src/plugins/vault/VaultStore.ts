@@ -53,8 +53,11 @@ export class VaultStore {
     const file = await this.readFile();
     const entry = file.entries[this.entryKey(pluginId, key, chainId)];
     if (!entry) return undefined;
+    // Resolve the master key outside the try: infrastructure failures here
+    // (e.g. the master-key provider is down) must propagate to the caller,
+    // not be swallowed and misreported as "secret not found".
+    const masterKey = await this.getMasterKey();
     try {
-      const masterKey = await this.getMasterKey();
       return decryptSecret(entry, masterKey);
     } catch {
       // Fail closed: a GCM auth failure here means either the ciphertext
@@ -100,15 +103,27 @@ export class VaultStore {
     await this.writeFile(file);
   }
 
+  // Collision-freedom of entry keys relies on pluginId/key never containing
+  // '::': PluginInstaller validates both against ^[a-z0-9][a-z0-9._-]*$
+  // before they ever reach the vault, which excludes ':'. This is a
+  // defensive backstop in case that upstream invariant is ever bypassed.
   private entryKey(pluginId: string, key: string, chainId?: number): string {
+    if (pluginId.includes('::') || key.includes('::')) {
+      throw new Error('Vault ids must not contain "::"');
+    }
     return chainId === undefined
       ? `${pluginId}::${key}`
       : `${pluginId}::${key}::${chainId}`;
   }
 
-  private async getMasterKey(): Promise<Buffer> {
+  private getMasterKey(): Promise<Buffer> {
     if (!this.masterKeyPromise) {
-      this.masterKeyPromise = this.deps.getMasterKey();
+      const attempt = this.deps.getMasterKey();
+      // A failed resolution must not poison the cache: clear so callers retry.
+      attempt.catch(() => {
+        if (this.masterKeyPromise === attempt) this.masterKeyPromise = undefined;
+      });
+      this.masterKeyPromise = attempt;
     }
     return this.masterKeyPromise;
   }
