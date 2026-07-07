@@ -99,3 +99,22 @@ blocking current functionality.
   deliberately fetch arbitrary URLs incl. private IPs (local anvil is a primary
   use case; API is localhost+token-gated) — accepted design, consider
   `redirect: 'manual'` when revisiting.
+
+## Plugin config/vault follow-ups (D1b final review, 2026-07-08)
+
+- **Master-key split-brain (darwin).** Transient keychain failure with no vault.key
+  mints a fresh file key; secrets written in that window decrypt-fail (silently,
+  fail-closed) once the keychain recovers. Consider refusing to create a file key
+  when vault.json already has entries, and surfacing decrypt-fail distinctly from
+  absent.
+- **Config form polish.** Number field cleared→Save stores 0 (should unset via
+  deleteConfigValue); no unset affordance for global non-secret values; no
+  ConfirmDialog on secret-clear / override-remove; dead config?.fields fallback.
+- **`required` config fields are declared but never enforced** (form or exec time).
+- **Value-type validation on PUT config** (boolean into number field, select value
+  not checked against options) — robustness only, user-initiated.
+- **Store write serialization.** Vault/config stores are instantiated per consumer
+  (API/executor/installer); temp+rename prevents corruption but concurrent RMW can
+  resurrect entries. Shared singleton or per-file mutex.
+- **Surface newly-declared secret fields on plugin update** like newPermissions
+  (installer TODO).

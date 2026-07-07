@@ -437,6 +437,10 @@ export class PluginInstaller {
       if (typeof f.key !== 'string' || !keyPattern.test(f.key)) {
         throw invalid(`invalid field key '${String(f.key)}'`);
       }
+      if (typeof f.key === 'string' && f.key.length > 64) {
+        const truncated = f.key.substring(0, 64);
+        throw invalid(`field key '${truncated}' exceeds 64 characters`);
+      }
       if (seen.has(f.key)) throw invalid(`duplicate field key '${f.key}'`);
       seen.add(f.key);
       if (typeof f.type !== 'string' || !types.has(f.type)) {
@@ -463,12 +467,17 @@ export class PluginInstaller {
         if (!Array.isArray(f.options) || f.options.length === 0) {
           throw invalid(`select field '${f.key}' needs non-empty options`);
         }
+        if (f.options.length > 64) {
+          throw invalid(`select field '${f.key}' has too many options`);
+        }
         for (const opt of f.options) {
           const o = opt as Record<string, unknown>;
           if (
             typeof o?.value !== 'string' ||
             typeof o?.label !== 'string' ||
             o.value.length === 0 ||
+            o.value.length > 280 ||
+            controlChars.test(o.value) ||
             o.label.length === 0 ||
             o.label.length > 280 ||
             controlChars.test(o.label)

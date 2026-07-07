@@ -114,6 +114,31 @@ describe('validateConfigSchema (via install)', () => {
     });
   });
 
+  it('accepts exactly-64-char field key and exactly-64 select options', async () => {
+    const deps = makeDeps();
+    const backend = backendReturning({
+      imageTag: baseMeta.baseImage,
+      metadata: {
+        ...baseMeta,
+        configFields: [
+          {
+            key: 'x'.repeat(64),
+            label: 'Max Key',
+            type: 'select',
+            options: Array.from({ length: 64 }, (_, i) => ({
+              value: `opt${i}`,
+              label: `Option ${i}`,
+            })),
+          },
+        ],
+      },
+    });
+    const installer = new PluginInstaller(backend, deps);
+    await expect(installer.install(gitSource)).resolves.toMatchObject({
+      id: 'cfg-plugin',
+    });
+  });
+
   const cases: Array<[string, unknown, RegExp]> = [
     ['non-array configFields', {}, /config/i],
     [
@@ -164,6 +189,38 @@ describe('validateConfigSchema (via install)', () => {
         },
       ],
       /control/i,
+    ],
+    [
+      'a field key exceeding 64 characters',
+      [{ key: 'x'.repeat(65), label: 'L', type: 'string' }],
+      /exceeds 64|length/i,
+    ],
+    [
+      'a select field with more than 64 options',
+      [
+        {
+          key: 'k',
+          label: 'L',
+          type: 'select',
+          options: Array.from({ length: 65 }, (_, i) => ({
+            value: `opt${i}`,
+            label: `Option ${i}`,
+          })),
+        },
+      ],
+      /too many options/i,
+    ],
+    [
+      'a select option value with control characters',
+      [
+        {
+          key: 'k',
+          label: 'L',
+          type: 'select',
+          options: [{ value: 'a\x00b', label: 'Valid' }],
+        },
+      ],
+      /invalid option/i,
     ],
   ];
 
