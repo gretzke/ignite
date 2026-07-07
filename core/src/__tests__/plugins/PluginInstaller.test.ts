@@ -57,6 +57,7 @@ function makeDeps() {
         trust: grants[id]?.trust ?? ('untrusted' as const),
         hostWrite: grants[id]?.hostWrite ?? false,
         net: grants[id]?.net ?? false,
+        secrets: [] as string[],
       })),
       setTrust: vi.fn(
         async (
@@ -293,6 +294,7 @@ describe('PluginInstaller', () => {
         trust: 'trusted',
         hostWrite: true,
         net: false,
+        secrets: [],
       });
       // Old image removed, registry now points at the new tag, source kept.
       expect(deps.removeImage).toHaveBeenCalledWith(
@@ -321,6 +323,7 @@ describe('PluginInstaller', () => {
         trust: 'untrusted',
         hostWrite: false,
         net: false,
+        secrets: [],
       });
     });
 

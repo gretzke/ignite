@@ -22,9 +22,14 @@ import {
 } from '../utils/pluginCache.js';
 import { ErrorCodes } from '../../types/errors.js';
 
+// The boolean-flag permissions gate-checked here — `secrets` is a granted-key
+// list, not a boolean flag, and is resolved separately at injection time
+// (Task 6/7), so it's excluded from this operation gate.
+type BooleanPermission = Exclude<keyof PluginPermissions, 'secrets'>;
+
 // SPEC.md §3.1 operations matrix: install and compile mutate the shared
 // volume, verify talks to block explorers. detect/mount/etc. need no grant.
-export const OPERATION_PERMISSIONS: Record<string, keyof PluginPermissions> = {
+export const OPERATION_PERMISSIONS: Record<string, BooleanPermission> = {
   install: 'hostWrite',
   compile: 'hostWrite',
   verify: 'net',
@@ -34,7 +39,7 @@ export const OPERATION_PERMISSIONS: Record<string, keyof PluginPermissions> = {
 export function missingPermission(
   operation: string,
   grant: PermissionGrant
-): keyof PluginPermissions | null {
+): BooleanPermission | null {
   const required = OPERATION_PERMISSIONS[operation];
   if (required && !grant[required]) return required;
   return null;

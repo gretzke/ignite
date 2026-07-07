@@ -91,6 +91,7 @@ describe.skipIf(!ready)('third-party plugin runtime (Docker)', () => {
     await TrustManager.getInstance().setTrust('stub-compiler', 'trusted', {
       hostWrite: true,
       net: false,
+      secrets: [],
     });
 
     // Host workspace dir, bind-mounted directly into the ephemeral compiler

@@ -111,6 +111,7 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
     await TrustManager.getInstance().setTrust('git-fixture', 'trusted', {
       hostWrite: true,
       net: false,
+      secrets: [],
     });
     const afterApproval = await PluginExecutor.getInstance().execute(
       'git-fixture',
@@ -131,6 +132,7 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
       await TrustManager.getInstance().setTrust('git-fixture', 'trusted', {
         hostWrite: true,
         net: false,
+        secrets: [],
       });
 
       // The compile runs from the isolated-build image, with hostWrite

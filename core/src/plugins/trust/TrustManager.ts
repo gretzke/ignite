@@ -12,12 +12,15 @@ export type TrustLevel = 'native' | 'trusted' | 'untrusted';
 export interface PluginPermissions {
   hostWrite: boolean;
   net: boolean;
+  // Granted secret config-field keys (see Task 6/7). Not resolved here.
+  secrets: string[];
 }
 
 export interface PermissionGrant {
   readonly trust: TrustLevel;
   readonly hostWrite: boolean;
   readonly net: boolean;
+  readonly secrets: string[];
 }
 
 export interface TrustEntry {
@@ -32,12 +35,17 @@ export const NATIVE_GRANT: PermissionGrant = Object.freeze({
   trust: 'native',
   hostWrite: true,
   net: true,
+  // Native means all-granted; the empty array here is not "no secrets" —
+  // native grants are resolved to every declared secret downstream at
+  // injection time (Task 6), so this stays empty rather than enumerating.
+  secrets: Object.freeze([]) as unknown as string[],
 });
 
 export const UNTRUSTED_GRANT: PermissionGrant = Object.freeze({
   trust: 'untrusted',
   hostWrite: false,
   net: false,
+  secrets: Object.freeze([]) as unknown as string[],
 });
 
 export class TrustManager {
@@ -89,6 +97,11 @@ export class TrustManager {
       trust: 'trusted',
       hostWrite: entry.permissions.hostWrite === true,
       net: entry.permissions.net === true,
+      // Migration path for trust.json entries persisted before this field
+      // existed: fail closed to no granted secrets.
+      secrets: Array.isArray(entry.permissions.secrets)
+        ? [...entry.permissions.secrets]
+        : [],
     });
   }
 
@@ -110,8 +123,12 @@ export class TrustManager {
       // Untrusted plugins can never hold permissions, whatever the caller sent.
       permissions:
         trust === 'trusted'
-          ? { hostWrite: permissions.hostWrite, net: permissions.net }
-          : { hostWrite: false, net: false },
+          ? {
+              hostWrite: permissions.hostWrite,
+              net: permissions.net,
+              secrets: [...permissions.secrets],
+            }
+          : { hostWrite: false, net: false, secrets: [] },
       ts: new Date().toISOString(),
     };
     entries[pluginId] = entry;

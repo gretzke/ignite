@@ -54,6 +54,7 @@ function makeDeps() {
         trust: 'untrusted' as const,
         hostWrite: false,
         net: false,
+        secrets: [],
       })),
       setTrust: vi.fn(async () => {}),
     },

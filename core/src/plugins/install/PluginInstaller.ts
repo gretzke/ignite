@@ -219,6 +219,9 @@ export class PluginInstaller {
       const clamped: PluginPermissions = {
         hostWrite: grant.hostWrite && requestedIds.has('hostWrite'),
         net: grant.net && requestedIds.has('net'),
+        // Task 7 wires real secret-grant clamping; until then updates never
+        // carry secret grants forward.
+        secrets: [],
       };
 
       const persisted: PluginMetadata = { ...metadata, baseImage: imageTag };

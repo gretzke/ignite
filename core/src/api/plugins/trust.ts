@@ -108,7 +108,13 @@ export function createTrustHandlers(
           return reply.status(400).send(body);
         }
 
-        const entry = await manager.setTrust(pluginId, trust, permissions);
+        // The wire format has no `secrets` field yet — Task 7 wires real
+        // secret-grant clamping through this endpoint; until then every
+        // grant made here carries no secrets.
+        const entry = await manager.setTrust(pluginId, trust, {
+          ...permissions,
+          secrets: [],
+        });
         const body: IApiResponse<SetPluginTrustData> = {
           data: {
             plugin: {
