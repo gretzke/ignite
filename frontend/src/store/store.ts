@@ -2,6 +2,7 @@
 // - Adds only RTK Query reducer + middleware
 import { configureStore } from '@reduxjs/toolkit';
 import { appReducer } from './features/app/appSlice';
+import { chainsReducer } from './features/chains/chainsSlice';
 import { connectionReducer } from './features/connection/connectionSlice';
 import { websocketMiddleware } from './middleware/websocket';
 import { toastListener } from './middleware/toastListener';
@@ -25,6 +26,7 @@ export const store = configureStore({
   reducer: {
     // Local UI theme state
     app: appReducer,
+    chains: chainsReducer,
     connection: connectionReducer,
     profiles: profilesReducer,
     repositories: repositoriesReducer,
