@@ -517,4 +517,133 @@ describe('PluginInstaller', () => {
     const installer = new PluginInstaller(backend, deps);
     await expect(installer.uninstall('foundry')).rejects.toThrow(/built-in/i);
   });
+
+  describe('rebuildImage', () => {
+    const pinnedCommit = 'b'.repeat(40);
+
+    function seedInstalled(source: PluginInstallSource) {
+      deps.store.waffle = { ...waffleMeta };
+      deps.sources.waffle = source;
+    }
+
+    it('rebuilds a git install from the PINNED commit, never the floating ref, and leaves the registry untouched', async () => {
+      seedInstalled({
+        kind: 'git',
+        url: 'https://github.com/acme/waffle',
+        ref: 'main',
+        track: { mode: 'branch', branch: 'main' },
+        commit: pinnedCommit,
+      });
+      const rebuildBackend = backendReturning({
+        imageTag: 'ignite/installed_waffle:1.0.0',
+        metadata: waffleMeta,
+        commit: pinnedCommit,
+      });
+      const installer = new PluginInstaller(rebuildBackend, deps);
+
+      const meta = await installer.rebuildImage('waffle');
+
+      expect(rebuildBackend.buildPluginImage).toHaveBeenCalledWith({
+        kind: 'git',
+        url: 'https://github.com/acme/waffle',
+        ref: pinnedCommit,
+      });
+      expect(meta).toEqual(waffleMeta);
+      // Rebuild, not update: neither the registry nor trust are written.
+      expect(deps.pluginManager.addPlugin).not.toHaveBeenCalled();
+      expect(deps.trust.setTrust).not.toHaveBeenCalled();
+      expect(deps.removeImage).not.toHaveBeenCalled();
+    });
+
+    it('fails actionably for a git install without a recorded commit instead of rebuilding a moved ref', async () => {
+      seedInstalled({
+        kind: 'git',
+        url: 'https://github.com/acme/waffle',
+        ref: 'main',
+      });
+      const rebuildBackend = backendReturning({
+        imageTag: 'ignite/installed_waffle:1.0.0',
+        metadata: waffleMeta,
+      });
+      const installer = new PluginInstaller(rebuildBackend, deps);
+
+      await expect(installer.rebuildImage('waffle')).rejects.toThrow(
+        /waffle.*no pinned commit.*reinstall/is
+      );
+      expect(rebuildBackend.buildPluginImage).not.toHaveBeenCalled();
+    });
+
+    it('fails actionably when a local install source directory no longer exists', async () => {
+      seedInstalled({ kind: 'local', contextDir: '/gone/waffle' });
+      const rebuildBackend = backendReturning({
+        imageTag: 'ignite/installed_waffle:1.0.0',
+        metadata: waffleMeta,
+      });
+      const installer = new PluginInstaller(rebuildBackend, {
+        ...deps,
+        directoryExists: vi.fn(async () => false),
+      });
+
+      await expect(installer.rebuildImage('waffle')).rejects.toThrow(
+        /'\/gone\/waffle' no longer exists.*reinstall/is
+      );
+      expect(rebuildBackend.buildPluginImage).not.toHaveBeenCalled();
+    });
+
+    it('rebuilds a local install when the recorded contextDir still exists', async () => {
+      seedInstalled({ kind: 'local', contextDir: '/plugins/waffle' });
+      const rebuildBackend = backendReturning({
+        imageTag: 'ignite/installed_waffle:1.0.0',
+        metadata: waffleMeta,
+      });
+      const installer = new PluginInstaller(rebuildBackend, {
+        ...deps,
+        directoryExists: vi.fn(async () => true),
+      });
+
+      await expect(installer.rebuildImage('waffle')).resolves.toEqual(
+        waffleMeta
+      );
+      expect(rebuildBackend.buildPluginImage).toHaveBeenCalledWith({
+        kind: 'local',
+        contextDir: '/plugins/waffle',
+      });
+    });
+
+    it('fails on drifted post-build metadata without touching registry or trust, and removes the drifted image', async () => {
+      seedInstalled({ kind: 'local', contextDir: '/plugins/waffle' });
+      const drifted = backendReturning({
+        imageTag: 'ignite/installed_waffle:2.0.0',
+        metadata: { ...waffleMeta, version: '2.0.0' },
+      });
+      const installer = new PluginInstaller(drifted, {
+        ...deps,
+        directoryExists: vi.fn(async () => true),
+      });
+
+      await expect(installer.rebuildImage('waffle')).rejects.toThrow(
+        /drifted.*reinstall/is
+      );
+      expect(deps.pluginManager.addPlugin).not.toHaveBeenCalled();
+      expect(deps.trust.setTrust).not.toHaveBeenCalled();
+      expect(deps.removeImage).toHaveBeenCalledWith(
+        'ignite/installed_waffle:2.0.0'
+      );
+    });
+
+    it('refuses to rebuild a built-in plugin', async () => {
+      const installer = new PluginInstaller(backend, deps);
+      await expect(installer.rebuildImage('foundry')).rejects.toThrow(
+        /built-in.*docker:build/is
+      );
+    });
+
+    it('fails actionably when no install source was recorded', async () => {
+      deps.store.waffle = { ...waffleMeta };
+      const installer = new PluginInstaller(backend, deps);
+      await expect(installer.rebuildImage('waffle')).rejects.toThrow(
+        /no recorded install source.*reinstall/is
+      );
+    });
+  });
 });

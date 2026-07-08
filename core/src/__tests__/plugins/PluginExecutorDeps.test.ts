@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PluginExecutor } from '../../plugins/containers/PluginExecutor.js';
 import { PluginType } from '@ignite/plugin-types/types';
+import { PluginError, ErrorCodes } from '../../types/errors.js';
 
 const GRANT_NONE = { trust: 'untrusted', hostWrite: false, net: false };
 const GRANT_ALL = { trust: 'native', hostWrite: true, net: true };
@@ -330,6 +331,198 @@ describe('PluginExecutor with injected deps', () => {
       } finally {
         Object.defineProperty(process, 'platform', { value: originalPlatform });
       }
+    });
+  });
+
+  describe('missing installed-plugin image auto-rebuild', () => {
+    const imageMissingError = () =>
+      new PluginError(
+        'Docker image img:latest not found. Run `npm run docker:build` to build plugin images.',
+        ErrorCodes.PLUGIN_IMAGE_MISSING,
+        { image: 'img:latest' }
+      );
+
+    const installedLoader = {
+      getPluginConfig: async () => ({
+        metadata: {
+          id: 'stub',
+          type: PluginType.COMPILER,
+          baseImage: 'img:latest',
+        },
+        requiresRepo: false,
+        origin: 'installed',
+      }),
+    };
+
+    it('rebuilds the image once and retries container creation on a missing installed image', async () => {
+      let imagePresent = false;
+      const createContainer = vi.fn(async (opts: { name: string }) => {
+        if (!imagePresent) throw imageMissingError();
+        return opts.name;
+      });
+      const rebuildImage = vi.fn(async () => {
+        imagePresent = true;
+      });
+      const { executor } = makeExecutor({
+        registryLoader: installedLoader,
+        rebuildImage,
+        containerOrchestrator: {
+          createContainer,
+          stopContainer: vi.fn(async () => {}),
+          getContainer: vi.fn(() => ({
+            exec: vi.fn(async () => ({
+              start: vi.fn(async () => ({
+                on: (ev: string, cb: () => void) => {
+                  if (ev === 'end') cb();
+                },
+                resume: () => {},
+              })),
+            })),
+          })),
+          cleanup: vi.fn(async () => {}),
+          cleanupDetached: vi.fn(),
+        },
+      });
+
+      const result = await executor.execute('stub', 'detect', {});
+
+      expect(result.success).toBe(true);
+      expect(rebuildImage).toHaveBeenCalledTimes(1);
+      expect(rebuildImage).toHaveBeenCalledWith('stub');
+      expect(createContainer).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns a failure envelope (no second rebuild) when the image is still missing after the rebuild', async () => {
+      const createContainer = vi.fn(async () => {
+        throw imageMissingError();
+      });
+      const rebuildImage = vi.fn(async () => {});
+      const { executor } = makeExecutor({
+        registryLoader: installedLoader,
+        rebuildImage,
+        containerOrchestrator: {
+          createContainer,
+          stopContainer: vi.fn(async () => {}),
+          getContainer: vi.fn(),
+          cleanup: vi.fn(async () => {}),
+          cleanupDetached: vi.fn(),
+        },
+      });
+
+      const result = await executor.execute('stub', 'detect', {});
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCodes.PLUGIN_REBUILD_FAILED);
+        expect(result.error.message).toMatch(/img:latest.*stub/s);
+      }
+      expect(rebuildImage).toHaveBeenCalledTimes(1);
+      expect(createContainer).toHaveBeenCalledTimes(2);
+    });
+
+    it("surfaces the rebuild's actionable error through the failure envelope when the rebuild itself fails", async () => {
+      const createContainer = vi.fn(async () => {
+        throw imageMissingError();
+      });
+      const rebuildImage = vi.fn(async () => {
+        throw new PluginError(
+          "Cannot rebuild plugin 'stub': its git install recorded no pinned commit. Uninstall and reinstall the plugin instead.",
+          ErrorCodes.PLUGIN_REBUILD_FAILED,
+          { pluginId: 'stub' }
+        );
+      });
+      const { executor } = makeExecutor({
+        registryLoader: installedLoader,
+        rebuildImage,
+        containerOrchestrator: {
+          createContainer,
+          stopContainer: vi.fn(async () => {}),
+          getContainer: vi.fn(),
+          cleanup: vi.fn(async () => {}),
+          cleanupDetached: vi.fn(),
+        },
+      });
+
+      const result = await executor.execute('stub', 'detect', {});
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCodes.PLUGIN_REBUILD_FAILED);
+        expect(result.error.message).toMatch(/no pinned commit.*reinstall/is);
+      }
+      expect(createContainer).toHaveBeenCalledTimes(1); // no retry after a failed rebuild
+    });
+
+    it('single-flights the rebuild across concurrent execs of the same plugin', async () => {
+      let imagePresent = false;
+      const createContainer = vi.fn(async (opts: { name: string }) => {
+        if (!imagePresent) throw imageMissingError();
+        return opts.name;
+      });
+      let resolveRebuild!: () => void;
+      const rebuildImage = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveRebuild = () => {
+              imagePresent = true;
+              resolve();
+            };
+          })
+      );
+      const { executor } = makeExecutor({
+        registryLoader: installedLoader,
+        rebuildImage,
+        containerOrchestrator: {
+          createContainer,
+          stopContainer: vi.fn(async () => {}),
+          getContainer: vi.fn(() => ({
+            exec: vi.fn(async () => ({
+              start: vi.fn(async () => ({
+                on: (ev: string, cb: () => void) => {
+                  if (ev === 'end') cb();
+                },
+                resume: () => {},
+              })),
+            })),
+          })),
+          cleanup: vi.fn(async () => {}),
+          cleanupDetached: vi.fn(),
+        },
+      });
+
+      const inFlight = Promise.all([
+        executor.execute('stub', 'detect', {}),
+        executor.execute('stub', 'detect', {}),
+      ]);
+      // Let both execs hit the missing image and join the shared rebuild.
+      await new Promise((resolve) => setImmediate(resolve));
+      resolveRebuild();
+      const [first, second] = await inFlight;
+
+      expect(first.success).toBe(true);
+      expect(second.success).toBe(true);
+      expect(rebuildImage).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves built-in plugins on the existing docker:build error path (no rebuild attempt)', async () => {
+      const rebuildImage = vi.fn(async () => {});
+      const { executor } = makeExecutor({
+        rebuildImage,
+        containerOrchestrator: {
+          createContainer: vi.fn(async () => {
+            throw imageMissingError();
+          }),
+          stopContainer: vi.fn(async () => {}),
+          getContainer: vi.fn(),
+          cleanup: vi.fn(async () => {}),
+          cleanupDetached: vi.fn(),
+        },
+      });
+
+      await expect(executor.execute('stub', 'detect', {})).rejects.toThrow(
+        /docker:build/
+      );
+      expect(rebuildImage).not.toHaveBeenCalled();
     });
   });
 });

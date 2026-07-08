@@ -20,7 +20,8 @@ import {
   PLUGIN_CACHE_MOUNT,
   pluginCacheVolumeName,
 } from '../utils/pluginCache.js';
-import { ErrorCodes } from '../../types/errors.js';
+import { IgniteError, ErrorCodes } from '../../types/errors.js';
+import { createDefaultPluginInstaller } from '../install/defaultInstaller.js';
 import { PluginConfigStore } from '../config/PluginConfigStore.js';
 import { VaultStore } from '../vault/VaultStore.js';
 import { resolveConfig } from '../config/resolveConfig.js';
@@ -46,6 +47,15 @@ export function missingPermission(
   const required = OPERATION_PERMISSIONS[operation];
   if (required && !grant[required]) return required;
   return null;
+}
+
+// Container creation failed because the image is gone (ContainerOrchestrator
+// maps dockerode's 404 on create to this typed error).
+function isImageMissingError(error: unknown): boolean {
+  return (
+    error instanceof IgniteError &&
+    error.code === ErrorCodes.PLUGIN_IMAGE_MISSING
+  );
 }
 
 // Every plugin is EPHEMERAL (Phase 3 deleted the persistent/repo-container
@@ -84,6 +94,9 @@ export interface PluginExecutorDeps {
   // configFields, so plugins without a schema pay zero extra cost.
   pluginConfigStore: Pick<PluginConfigStore, 'getValues'>;
   vaultStore: Pick<VaultStore, 'getSecret' | 'listSecretKeys'>;
+  // Rebuild a deleted installed-plugin image from its recorded (pinned)
+  // install source — PluginInstaller.rebuildImage in production.
+  rebuildImage: (pluginId: string) => Promise<unknown>;
 }
 
 // Unified plugin executor - delegates to dynamic handlers
@@ -103,8 +116,16 @@ export class PluginExecutor {
         PluginExecutionUtils.executeOperation.bind(PluginExecutionUtils),
       pluginConfigStore: deps?.pluginConfigStore ?? new PluginConfigStore(),
       vaultStore: deps?.vaultStore ?? new VaultStore(),
+      rebuildImage:
+        deps?.rebuildImage ??
+        ((pluginId: string) =>
+          createDefaultPluginInstaller().rebuildImage(pluginId)),
     };
   }
+
+  // Single-flight guard: concurrent execs of the same missing-image plugin
+  // share one rebuild instead of stampeding docker with identical builds.
+  private rebuildsInFlight = new Map<string, Promise<void>>();
 
   // Get singleton instance of PluginExecutor
   static getInstance(): PluginExecutor {
@@ -208,11 +229,47 @@ export class PluginExecutor {
 
     // Create ephemeral container, binding the host workspace directly when
     // the plugin requiresRepo (Phase 3: no more repo-container VolumesFrom).
-    const ephemeralContainer = await this.createEphemeralContainer(
-      pluginConfig,
-      grant,
-      opts?.workspacePath
-    );
+    // An installed plugin whose image was deleted (docker prune, manual rmi)
+    // gets ONE rebuild from its recorded pinned install source + retry;
+    // built-in images keep the existing docker:build error path.
+    let ephemeralContainer: string;
+    try {
+      ephemeralContainer = await this.createEphemeralContainer(
+        pluginConfig,
+        grant,
+        opts?.workspacePath
+      );
+    } catch (error) {
+      if (pluginConfig.origin !== 'installed' || !isImageMissingError(error)) {
+        throw error;
+      }
+      getLogger().warn(
+        `🔁 Image ${pluginConfig.metadata.baseImage} for ${pluginId} is missing; rebuilding it from the recorded install source`
+      );
+      try {
+        await this.rebuildImageOnce(pluginId);
+        ephemeralContainer = await this.createEphemeralContainer(
+          pluginConfig,
+          grant,
+          opts?.workspacePath
+        );
+      } catch (rebuildError) {
+        // Second failure (rebuild itself, or the single retry) surfaces the
+        // rebuild path's actionable message via the normal failure envelope.
+        const message =
+          rebuildError instanceof Error
+            ? rebuildError.message
+            : String(rebuildError);
+        return {
+          success: false,
+          error: {
+            code: ErrorCodes.PLUGIN_REBUILD_FAILED,
+            message: `Image ${pluginConfig.metadata.baseImage} for plugin ${pluginId} is missing and could not be rebuilt: ${message}`,
+            details: { pluginId },
+          },
+        };
+      }
+    }
 
     // Execute with resolved ephemeral container; always stop it afterwards
     // (AutoRemove=true, so Docker cleans it up once stopped)
@@ -227,6 +284,21 @@ export class PluginExecutor {
     } finally {
       await this.deps.containerOrchestrator.stopContainer(ephemeralContainer);
     }
+  }
+
+  // Rebuild pluginId's image, sharing one in-flight rebuild across concurrent
+  // callers (single-flight per pluginId).
+  private rebuildImageOnce(pluginId: string): Promise<void> {
+    let inFlight = this.rebuildsInFlight.get(pluginId);
+    if (!inFlight) {
+      inFlight = Promise.resolve(this.deps.rebuildImage(pluginId))
+        .then(() => undefined)
+        .finally(() => {
+          this.rebuildsInFlight.delete(pluginId);
+        });
+      this.rebuildsInFlight.set(pluginId, inFlight);
+    }
+    return inFlight;
   }
 
   // Resolves this plugin's config schema into the flat object injected into

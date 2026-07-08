@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import Docker from 'dockerode';
 import { getLogger } from '../../utils/logger.js';
 import type { PermissionGrant } from '../trust/TrustManager.js';
+import { PluginError, ErrorCodes } from '../../types/errors.js';
 
 // Container lifecycle types. Phase 3 deleted the persistent/session repo-
 // container tier: every container is now EPHEMERAL, created once for a
@@ -114,9 +115,12 @@ export class ContainerOrchestrator {
     } catch (error) {
       const statusCode = (error as { statusCode?: number })?.statusCode;
       if (statusCode === 404) {
+        // Typed so PluginExecutor can recognize a missing image and rebuild
+        // installed-plugin images from their recorded install source. The
+        // docker:build hint only applies to built-in images.
         const msg = `Docker image ${image} not found. Run \`npm run docker:build\` to build plugin images.`;
         getLogger().error(`❌ ${msg}`);
-        throw new Error(msg);
+        throw new PluginError(msg, ErrorCodes.PLUGIN_IMAGE_MISSING, { image });
       }
       getLogger().error(`❌ Failed to create container ${name}:`, error);
       throw error;

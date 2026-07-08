@@ -2,13 +2,8 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { IApiResponse, JobStartedData } from '@ignite/api';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
-import {
-  PluginInstaller,
-  type PluginUpdateResult,
-} from '../../plugins/install/PluginInstaller.js';
-import { LocalFolderBuildBackend } from '../../plugins/install/LocalFolderBuildBackend.js';
-import { GitSourceBuildBackend } from '../../plugins/install/GitSourceBuildBackend.js';
-import { RoutingBuildBackend } from '../../plugins/install/RoutingBuildBackend.js';
+import type { PluginUpdateResult } from '../../plugins/install/PluginInstaller.js';
+import { createDefaultPluginInstaller } from '../../plugins/install/defaultInstaller.js';
 import type { PluginInstallSource } from '../../plugins/install/types.js';
 import { JobManager } from '../../jobs/JobManager.js';
 import { RepoLifecycle } from '../../repos/RepoLifecycle.js';
@@ -157,12 +152,8 @@ export function createInstallHandlers(
 }
 
 // Production wiring: route local sources to the host builder, git sources to
-// the isolated builder.
+// the isolated builder (shared with the startup image validator and the
+// executor's lazy rebuild path).
 export const installHandlers = createInstallHandlers(
-  new PluginInstaller(
-    new RoutingBuildBackend(
-      new LocalFolderBuildBackend(),
-      new GitSourceBuildBackend()
-    )
-  )
+  createDefaultPluginInstaller()
 );

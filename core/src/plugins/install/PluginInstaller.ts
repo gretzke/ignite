@@ -1,4 +1,5 @@
 import Docker from 'dockerode';
+import { stat } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type {
   PluginMetadata,
@@ -47,6 +48,9 @@ export interface PluginInstallerDeps {
   };
   removeImage: (imageTag: string) => Promise<void>;
   removeVolume: (volumeName: string) => Promise<void>;
+  // Existence probe for local install sources (rebuildImage fails actionably
+  // when the recorded contextDir is gone instead of surfacing a docker error).
+  directoryExists: (dir: string) => Promise<boolean>;
   // Remote inspection for git sources (track derivation + description).
   inspectRemote: (url: string) => Promise<InspectGitRemoteData>;
   vaultStore: Pick<VaultStore, 'deletePlugin'>;
@@ -80,6 +84,16 @@ export class PluginInstaller {
       inspectRemote: deps?.inspectRemote ?? inspectGitRemote,
       vaultStore: deps?.vaultStore ?? new VaultStore(),
       configStore: deps?.configStore ?? new PluginConfigStore(),
+      directoryExists:
+        deps?.directoryExists ??
+        (async (dir: string) => {
+          try {
+            // eslint-disable-next-line security/detect-non-literal-fs-filename -- Existence probe of a previously-recorded install source path
+            return (await stat(dir)).isDirectory();
+          } catch {
+            return false;
+          }
+        }),
       removeImage:
         deps?.removeImage ??
         (async (imageTag: string) => {
@@ -269,6 +283,95 @@ export class PluginInstaller {
     } catch (error) {
       // Never remove the tag the still-installed previous version points at.
       if (imageTag !== previous.baseImage) {
+        await this.deps.removeImage(imageTag).catch(() => {});
+      }
+      throw error;
+    }
+  }
+
+  // Rebuild the Docker image of an already-installed plugin whose image was
+  // deleted (docker prune, manual rmi, ...). This is a REBUILD, not an
+  // update: the registry entry and trust grants are the source of truth and
+  // are never modified. Git sources rebuild from the PINNED commit recorded
+  // at install time — never a floating ref, which may have moved to code the
+  // user never approved — and the build must reproduce exactly the recorded
+  // id/version (and therefore the recorded baseImage tag), or fail with an
+  // actionable error telling the user to reinstall.
+  async rebuildImage(pluginId: string): Promise<PluginMetadata> {
+    if (await this.deps.loader.isBuiltin(pluginId)) {
+      throw new PluginError(
+        `Cannot rebuild built-in plugin '${pluginId}' from an install source; run \`npm run docker:build\` instead`,
+        ErrorCodes.PLUGIN_REBUILD_FAILED,
+        { pluginId }
+      );
+    }
+    if (!(await this.deps.pluginManager.hasPlugin(pluginId))) {
+      throw new PluginError(
+        `Plugin '${pluginId}' is not installed`,
+        ErrorCodes.PLUGIN_NOT_FOUND,
+        { pluginId }
+      );
+    }
+    const recorded = await this.deps.pluginManager.getPlugin(pluginId);
+    const stored = await this.deps.pluginManager.getInstallSource(pluginId);
+    if (!stored) {
+      throw new PluginError(
+        `Cannot rebuild plugin '${pluginId}': it has no recorded install source. Uninstall and reinstall it to restore its image.`,
+        ErrorCodes.PLUGIN_REBUILD_FAILED,
+        { pluginId }
+      );
+    }
+
+    let buildSource: PluginInstallSource;
+    if (stored.kind === 'git') {
+      if (!stored.commit) {
+        // A floating ref may have moved since install; silently rebuilding
+        // from it would run code the user never approved under the old grant.
+        throw new PluginError(
+          `Cannot rebuild plugin '${pluginId}': its git install recorded no pinned commit (only the floating ref '${stored.ref ?? 'default branch'}'), so a rebuild could silently pick up different code. Uninstall and reinstall the plugin instead.`,
+          ErrorCodes.PLUGIN_REBUILD_FAILED,
+          { pluginId }
+        );
+      }
+      buildSource = { kind: 'git', url: stored.url, ref: stored.commit };
+    } else {
+      if (!(await this.deps.directoryExists(stored.contextDir))) {
+        throw new PluginError(
+          `Cannot rebuild plugin '${pluginId}': its local install source '${stored.contextDir}' no longer exists. Uninstall and reinstall the plugin instead.`,
+          ErrorCodes.PLUGIN_REBUILD_FAILED,
+          { pluginId }
+        );
+      }
+      buildSource = stored;
+    }
+
+    getLogger().info(
+      `🔨 Rebuilding missing image ${recorded.baseImage} for plugin ${pluginId}`
+    );
+    const { imageTag, metadata } = await this.backend.buildPluginImage(
+      buildSource
+    );
+    try {
+      // The rebuilt image must be exactly what the registry already records —
+      // a drifted local dir (or a commit that no longer builds the same
+      // plugin) must not be silently substituted under the existing grant.
+      if (
+        metadata.id !== recorded.id ||
+        metadata.version !== recorded.version ||
+        imageTag !== recorded.baseImage
+      ) {
+        throw new PluginError(
+          `Rebuild of plugin '${pluginId}' produced '${metadata.id}@${metadata.version}' (${imageTag}), but the registry records '${recorded.id}@${recorded.version}' (${recorded.baseImage}). The install source has drifted — uninstall and reinstall the plugin instead.`,
+          ErrorCodes.PLUGIN_REBUILD_FAILED,
+          { pluginId }
+        );
+      }
+      getLogger().info(`✅ Rebuilt image ${imageTag} for plugin ${pluginId}`);
+      return recorded;
+    } catch (error) {
+      // Don't leave a drifted image behind under a foreign tag; never remove
+      // the tag the registry points at.
+      if (imageTag !== recorded.baseImage) {
         await this.deps.removeImage(imageTag).catch(() => {});
       }
       throw error;
