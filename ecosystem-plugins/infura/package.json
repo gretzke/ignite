@@ -1,8 +1,0 @@
-{
-  "name": "ignite-infura-plugin",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Infura RPC-provider plugin for Ignite — turns a vaulted Infura API key into per-chain RPC endpoints",
-  "main": "index.cjs",
-  "license": "MIT"
-}

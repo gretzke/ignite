@@ -10,6 +10,7 @@
 // Generic by design: add a plugin by appending to PLUGINS below (Task 5
 // appends "chainz" the same way).
 
+import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,9 +20,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RESULT_BEGIN = '<<<IGNITE_RESULT_BEGIN>>>';
 const RESULT_END = '<<<IGNITE_RESULT_END>>>';
 
+// Infura and Alchemy graduated to builtin plugins (plugins/src/rpc-provider/)
+// but speak the exact same CLI protocol (runPluginCLI reads the operation
+// from the last argv element and options from stdin), so this suite drives
+// their built bundles directly.
+const BUILTIN_BUNDLE_DIR = path.resolve(__dirname, '..', 'plugins', 'dist', 'js');
+
 const PLUGINS = [
   {
-    dir: 'infura',
+    entry: path.join(BUILTIN_BUNDLE_DIR, 'rpc-provider_infura.js'),
     id: 'infura',
     name: 'Infura',
     configFieldKey: 'api-key',
@@ -30,14 +37,14 @@ const PLUGINS = [
     assertUrls: (chains) => chains.every((c) => c.url.includes('TESTKEY')),
   },
   {
-    dir: 'alchemy',
+    entry: path.join(BUILTIN_BUNDLE_DIR, 'rpc-provider_alchemy.js'),
     id: 'alchemy',
     name: 'Alchemy',
     configFieldKey: 'api-key',
     assertUrls: (chains) => chains.every((c) => c.url.includes('TESTKEY')),
   },
   {
-    dir: 'chainz',
+    entry: path.join(__dirname, 'chainz', 'index.cjs'),
     id: 'chainz',
     name: 'chainz',
     configFieldKey: 'chainz-config',
@@ -77,10 +84,11 @@ function assert(condition, message, details) {
   }
 }
 
-// Runs `node <plugin>/index.cjs <op>` with `options` JSON on stdin, and
-// parses the sentinel-framed PluginResponse from stdout.
-function runOp(pluginDir, op, options) {
-  const entry = path.join(__dirname, pluginDir, 'index.cjs');
+// Runs `node <entry> <op>` with `options` JSON on stdin, and parses the
+// sentinel-framed PluginResponse from stdout. `entry` is either an
+// ecosystem plugin's index.cjs or a built builtin bundle — both read the
+// operation from the last argv element and options from stdin.
+function runOp(entry, op, options) {
   const input = JSON.stringify(options ?? {});
   const result = spawnSync(process.execPath, [entry, op], {
     input,
@@ -89,12 +97,12 @@ function runOp(pluginDir, op, options) {
 
   if (result.error) {
     throw new Error(
-      `failed to spawn plugin ${pluginDir} for op ${op}: ${result.error}`
+      `failed to spawn plugin ${entry} for op ${op}: ${result.error}`
     );
   }
   if (result.status !== 0) {
     throw new Error(
-      `plugin ${pluginDir} op ${op} exited with status ${result.status}\n` +
+      `plugin ${entry} op ${op} exited with status ${result.status}\n` +
         `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`
     );
   }
@@ -104,7 +112,7 @@ function runOp(pluginDir, op, options) {
   const endIdx = stdout.indexOf(RESULT_END);
   if (beginIdx === -1 || endIdx === -1 || endIdx < beginIdx) {
     throw new Error(
-      `plugin ${pluginDir} op ${op} did not emit a sentinel-framed result.\n` +
+      `plugin ${entry} op ${op} did not emit a sentinel-framed result.\n` +
         `stdout:\n${stdout}`
     );
   }
@@ -113,17 +121,26 @@ function runOp(pluginDir, op, options) {
     return JSON.parse(jsonText);
   } catch (error) {
     throw new Error(
-      `plugin ${pluginDir} op ${op} emitted unparseable JSON: ${jsonText}\n` +
+      `plugin ${entry} op ${op} emitted unparseable JSON: ${jsonText}\n` +
         `(${error instanceof Error ? error.message : String(error)})`
     );
   }
 }
 
 for (const plugin of PLUGINS) {
-  console.log(`\n== ${plugin.name} (${plugin.dir}) ==`);
+  if (!existsSync(plugin.entry)) {
+    console.error(
+      `FAIL: ${plugin.name}: plugin entry not found: ${plugin.entry}\n` +
+        `Built bundles are required — run the plugins build first ` +
+        `(cd plugins && npm run build).`
+    );
+    process.exit(1);
+  }
+
+  console.log(`\n== ${plugin.name} (${path.relative(path.resolve(__dirname, '..'), plugin.entry)}) ==`);
 
   // --- getInfo shape ---
-  const infoResponse = runOp(plugin.dir, 'getInfo', {});
+  const infoResponse = runOp(plugin.entry, 'getInfo', {});
   assert(
     infoResponse.success === true,
     `${plugin.name}: getInfo returns success:true`,
@@ -158,7 +175,7 @@ for (const plugin of PLUGINS) {
   );
 
   // --- getSupportedChains without config ---
-  const emptyResponse = runOp(plugin.dir, 'getSupportedChains', {});
+  const emptyResponse = runOp(plugin.entry, 'getSupportedChains', {});
   assert(
     emptyResponse.success === true &&
       Array.isArray(emptyResponse.data?.chains) &&
@@ -167,7 +184,7 @@ for (const plugin of PLUGINS) {
     emptyResponse
   );
 
-  const emptyKeyResponse = runOp(plugin.dir, 'getSupportedChains', {
+  const emptyKeyResponse = runOp(plugin.entry, 'getSupportedChains', {
     config: { [plugin.configFieldKey]: '   ' },
   });
   assert(
@@ -199,7 +216,7 @@ for (const plugin of PLUGINS) {
     testConfig = { [plugin.configFieldKey]: 'TESTKEY' };
   }
 
-  const chainsResponse = runOp(plugin.dir, 'getSupportedChains', {
+  const chainsResponse = runOp(plugin.entry, 'getSupportedChains', {
     config: testConfig,
   });
   assert(
@@ -255,7 +272,7 @@ for (const plugin of PLUGINS) {
   );
 
   // --- unknown operation ---
-  const unknownResponse = runOp(plugin.dir, 'thisOperationDoesNotExist', {});
+  const unknownResponse = runOp(plugin.entry, 'thisOperationDoesNotExist', {});
   assert(
     unknownResponse.success === false &&
       typeof unknownResponse.error?.code === 'string',
@@ -285,7 +302,7 @@ for (const plugin of PLUGINS) {
       },
     });
 
-    const chainzResponse = runOp(plugin.dir, 'getSupportedChains', {
+    const chainzResponse = runOp(plugin.entry, 'getSupportedChains', {
       config: { 'chainz-config': chainzConfig },
     });
     assert(
@@ -368,7 +385,7 @@ for (const plugin of PLUGINS) {
     );
 
     // Test malformed JSON
-    const badJsonResponse = runOp(plugin.dir, 'getSupportedChains', {
+    const badJsonResponse = runOp(plugin.entry, 'getSupportedChains', {
       config: { 'chainz-config': '{invalid json}' },
     });
     assert(
@@ -380,7 +397,7 @@ for (const plugin of PLUGINS) {
     );
 
     // Test missing config
-    const noConfigResponse = runOp(plugin.dir, 'getSupportedChains', {
+    const noConfigResponse = runOp(plugin.entry, 'getSupportedChains', {
       config: {},
     });
     assert(
