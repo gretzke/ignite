@@ -154,3 +154,19 @@ blocking current functionality.
 - **Update-flow scope re-prompt asymmetry.** plugin.update only prompts on new
   boolean permissions; newly-declared secret/file scopes on update do not
   re-prompt the way installs now do (jobsEffects update branch).
+
+## Plugin-platform genericity (special-casing audit, 2026-07-09)
+
+Audit verdict: no first-vs-third-party capability violations; four symmetric
+smells, ranked:
+
+1. **Closed operation vocabulary at the API route layer** — plugins cannot ship
+   new operations without a core PR. Generalize: manifest-declared operation
+   list + generic `POST /plugins/:id/:operation` dispatch reusing the existing
+   grant pipeline. Slot with D5 (deployment-type surface introduces new ops).
+2. **`OPERATION_PERMISSIONS` core-hardcoded op→permission map** (pre-flight UX
+   only; enforcement is structural) — derive from manifest-declared hints.
+3. **`requiresRepo` inferred from `type === COMPILER`** — promote to a
+   manifest-declared capability (e.g. `repoRead`), installer-validated.
+4. **Dead `PluginType.REPO_MANAGER` enum value** — remove or mark
+   non-functional legacy so plugin authors aren't misled.
