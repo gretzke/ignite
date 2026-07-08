@@ -379,6 +379,40 @@ describe('RpcProviderService', () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  // Note on refresh=true composition: getEndpoints(refresh) followed by a
+  // separate, fully-awaited getStatuses(refresh) call is two independent
+  // logical requests, each of which must hit the plugin fresh — that's what
+  // "bypasses the cache when refresh is true" above guarantees, and it's
+  // indistinguishable (by design — refresh has no notion of "request") from
+  // two deliberate, back-to-back user refreshes. A caller that wants both
+  // endpoints and statuses from *one* refresh must ask once, via
+  // getChainData — see the regression test in chains.test.ts, which
+  // reproduces the reviewer's finding at the level it actually manifested
+  // (the listRpcs handler previously called getEndpoints then getStatuses
+  // sequentially for a single incoming request).
+  it('getChainData fetches once per plugin and derives endpoints + statuses from the same fetch', async () => {
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      data: { chains: [{ chainId: 1, url: 'https://rpc.acme.example/eth' }] },
+    }));
+    const deps = makeDeps({ execute });
+    const service = new RpcProviderService(deps);
+    const { endpoints, statuses } = await service.getChainData(1, true);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(endpoints).toEqual([
+      {
+        id: 'plugin:acme-rpc:1:0',
+        url: 'https://rpc.acme.example/eth',
+        label: 'Acme RPC',
+        source: 'plugin',
+        pluginId: 'acme-rpc',
+      },
+    ]);
+    expect(statuses).toEqual([
+      { pluginId: 'acme-rpc', name: 'Acme RPC', state: 'ok' },
+    ]);
+  });
+
   it('getInstance returns a singleton, resetInstance drops it', () => {
     const a = RpcProviderService.getInstance();
     const b = RpcProviderService.getInstance();

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createChainHandlers, type ChainHandlerDeps } from '../../api/chains.js';
+import { RpcProviderService } from '../../chains/RpcProviderService.js';
+import type { PluginResponse } from '@ignite/plugin-types/types';
 
 function makeReply() {
   const reply = {
@@ -67,8 +69,7 @@ function makeDeps(): ChainHandlerDeps {
       updateVerification: vi.fn(async () => undefined),
     },
     providers: {
-      getEndpoints: vi.fn(async () => []),
-      getStatuses: vi.fn(async () => []),
+      getChainData: vi.fn(async () => ({ endpoints: [], statuses: [] })),
     },
     verify: vi.fn(async () => ({
       ok: true,
@@ -167,7 +168,10 @@ describe('chain handlers', () => {
       source: 'plugin' as const,
       pluginId: 'some-plugin',
     };
-    deps.providers.getEndpoints = vi.fn(async () => [providerEndpoint]);
+    deps.providers.getChainData = vi.fn(async () => ({
+      endpoints: [providerEndpoint],
+      statuses: [],
+    }));
     const h = createChainHandlers(deps);
     const reply = makeReply();
     await h.listRpcs(
@@ -182,7 +186,7 @@ describe('chain handlers', () => {
     expect(body.data.providerEndpoints).toEqual([providerEndpoint]);
   });
 
-  it('listRpcs forwards refresh=true to providers.getEndpoints and providers.getStatuses', async () => {
+  it('listRpcs forwards refresh=true to providers.getChainData in a single call', async () => {
     const deps = makeDeps();
     const h = createChainHandlers(deps);
     const reply = makeReply();
@@ -190,49 +194,15 @@ describe('chain handlers', () => {
       req({ params: { chainId: '1' }, query: { refresh: true } }) as never,
       reply
     );
-    expect(deps.providers.getEndpoints).toHaveBeenCalledWith(1, true);
-    expect(deps.providers.getStatuses).toHaveBeenCalledWith(true);
+    expect(deps.providers.getChainData).toHaveBeenCalledWith(1, true);
+    expect(deps.providers.getChainData).toHaveBeenCalledTimes(1);
     expect(reply.statusCode).toBe(200);
   });
 
-  it('listRpcs degrades to an empty providerEndpoints array when the provider service throws, while stored endpoints are unaffected', async () => {
+  it('listRpcs degrades providerEndpoints and providerStatuses together when the provider service throws, while stored endpoints are unaffected', async () => {
     const deps = makeDeps();
-    deps.providers.getEndpoints = vi.fn(async () => {
+    deps.providers.getChainData = vi.fn(async () => {
       throw new Error('provider fetch failed');
-    });
-    const h = createChainHandlers(deps);
-    const reply = makeReply();
-    await h.listRpcs(
-      req({ params: { chainId: '1' }, query: {} }) as never,
-      reply
-    );
-    expect(reply.statusCode).toBe(200);
-    const body = reply.body as {
-      data: { endpoints: unknown[]; providerEndpoints: unknown[] };
-    };
-    expect(body.data.endpoints).toEqual([ENDPOINT]);
-    expect(body.data.providerEndpoints).toEqual([]);
-  });
-
-  it('listRpcs includes providerStatuses from the provider service', async () => {
-    const deps = makeDeps();
-    const status = { pluginId: 'infura', name: 'Infura', state: 'needs-config' as const };
-    deps.providers.getStatuses = vi.fn(async () => [status]);
-    const h = createChainHandlers(deps);
-    const reply = makeReply();
-    await h.listRpcs(
-      req({ params: { chainId: '1' }, query: {} }) as never,
-      reply
-    );
-    expect(reply.statusCode).toBe(200);
-    const body = reply.body as { data: { providerStatuses: unknown[] } };
-    expect(body.data.providerStatuses).toEqual([status]);
-  });
-
-  it('listRpcs omits providerStatuses when the provider service throws, while endpoints/providerEndpoints are unaffected', async () => {
-    const deps = makeDeps();
-    deps.providers.getStatuses = vi.fn(async () => {
-      throw new Error('status fetch failed');
     });
     const h = createChainHandlers(deps);
     const reply = makeReply();
@@ -249,7 +219,61 @@ describe('chain handlers', () => {
       };
     };
     expect(body.data.endpoints).toEqual([ENDPOINT]);
+    expect(body.data.providerEndpoints).toEqual([]);
     expect(body.data.providerStatuses).toBeUndefined();
+  });
+
+  it('listRpcs includes providerStatuses from the provider service', async () => {
+    const deps = makeDeps();
+    const status = { pluginId: 'infura', name: 'Infura', state: 'needs-config' as const };
+    deps.providers.getChainData = vi.fn(async () => ({
+      endpoints: [],
+      statuses: [status],
+    }));
+    const h = createChainHandlers(deps);
+    const reply = makeReply();
+    await h.listRpcs(
+      req({ params: { chainId: '1' }, query: {} }) as never,
+      reply
+    );
+    expect(reply.statusCode).toBe(200);
+    const body = reply.body as { data: { providerStatuses: unknown[] } };
+    expect(body.data.providerStatuses).toEqual([status]);
+  });
+
+  // Reviewer-reported finding: with refresh=true (sent by the frontend on
+  // every modal open and refresh click), the old handler called
+  // providers.getEndpoints then providers.getStatuses sequentially, and
+  // each independently bypassed the per-plugin TTL cache — so every
+  // provider plugin container executed TWICE per request. Uses a real
+  // RpcProviderService (not the mocked ChainHandlerDeps.providers above) so
+  // the plugin execute spy reflects genuine fetch counts, not a hand-mocked
+  // call count.
+  it('regression: listRpcs executes each provider plugin exactly once under refresh=true', async () => {
+    const execute = vi.fn(
+      async (): Promise<PluginResponse<unknown>> => ({
+        success: true,
+        data: {
+          chains: [{ chainId: 1, url: 'https://provider.example.com/rpc' }],
+        },
+      })
+    );
+    RpcProviderService.resetInstance();
+    const providerService = new RpcProviderService({
+      getProviders: async () => [{ id: 'some-plugin', name: 'Some Plugin' }],
+      execute,
+    });
+    const deps = makeDeps();
+    deps.providers = providerService;
+    const h = createChainHandlers(deps);
+    const reply = makeReply();
+    await h.listRpcs(
+      req({ params: { chainId: '1' }, query: { refresh: true } }) as never,
+      reply
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(reply.statusCode).toBe(200);
+    RpcProviderService.resetInstance();
   });
 
   it('verifyRpc verifies the stored endpoint and persists the result', async () => {

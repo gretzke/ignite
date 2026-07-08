@@ -36,7 +36,7 @@ export interface ChainHandlerDeps {
     RpcStore,
     'list' | 'add' | 'remove' | 'setPreferred' | 'updateVerification'
   >;
-  providers: Pick<RpcProviderService, 'getEndpoints' | 'getStatuses'>;
+  providers: Pick<RpcProviderService, 'getChainData'>;
   verify: (
     url: string,
     expectedChainId: number
@@ -188,29 +188,30 @@ export function createChainHandlers(deps?: Partial<ChainHandlerDeps>) {
         const chainId = Number(request.params.chainId);
         const endpoints = await d.rpcStore.list(chainId);
         let providerEndpoints: typeof endpoints = [];
+        // Single getChainData call: one execute per provider plugin no
+        // matter how many of {endpoints, statuses} the response needs.
+        // Previously this called getEndpoints then getStatuses sequentially,
+        // which under refresh=true executed every plugin twice — refresh
+        // always bypasses the TTL cache, and by the time the second call
+        // started the first's single-flight entry had already settled and
+        // been removed, so there was nothing left to dedupe against.
+        // Endpoints and statuses now come from the same fetch, so they
+        // degrade together rather than independently.
+        let providerStatuses: Awaited<
+          ReturnType<ChainHandlerDeps['providers']['getChainData']>
+        >['statuses'] | undefined;
         try {
-          providerEndpoints = await d.providers.getEndpoints(
+          const chainData = await d.providers.getChainData(
             chainId,
             request.query?.refresh
           );
+          providerEndpoints = chainData.endpoints;
+          providerStatuses = chainData.statuses;
         } catch {
           // Provider fetch is best-effort — a plugin/service-level throw
           // must never hide the stored endpoints, which are already known
           // good at this point.
           providerEndpoints = [];
-        }
-        // Sequential (not Promise.all): getStatuses shares getEndpoints's
-        // just-populated per-plugin cache, so this costs no extra plugin
-        // executions within the TTL window. Degrades independently — a
-        // statuses failure must not hide providerEndpoints or vice versa.
-        let providerStatuses: Awaited<
-          ReturnType<ChainHandlerDeps['providers']['getStatuses']>
-        > | undefined;
-        try {
-          providerStatuses = await d.providers.getStatuses(
-            request.query?.refresh
-          );
-        } catch {
           providerStatuses = undefined;
         }
         return reply

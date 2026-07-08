@@ -59,8 +59,14 @@ export class RpcProviderService {
   private cache = new Map<string, CacheEntry>();
   // Single-flight: concurrent fetches for the same plugin share one promise.
   // Cleared once the fetch settles (success or rejection) so a later call
-  // starts fresh instead of being stuck on a poisoned promise. Shared by
-  // getEndpoints and getStatuses so the two readers never double-execute.
+  // starts fresh instead of being stuck on a poisoned promise. This dedupes
+  // calls that overlap in time — including refresh=true calls, since
+  // refresh skips the TTL cache read but still checks inflight first — but
+  // it cannot dedupe calls that are sequential (one fully resolves, removing
+  // its inflight entry, before the next starts). That's why getEndpoints and
+  // getStatuses funnel through fetchAllProviderData below: a single caller
+  // making both requests must make exactly one getProviderCache call per
+  // plugin, not one each.
   private inflight = new Map<string, Promise<ProviderCacheData>>();
 
   constructor(deps?: Partial<RpcProviderServiceDeps>) {
@@ -86,17 +92,38 @@ export class RpcProviderService {
     RpcProviderService.instance = undefined as unknown as RpcProviderService;
   }
 
-  async getEndpoints(chainId: number, refresh = false): Promise<RpcEndpoint[]> {
+  // Single-pass fetch shared by getChainData, getEndpoints and getStatuses:
+  // exactly one getProviderCache call per plugin, however many of those
+  // three a caller ends up using. A caller that needs both endpoints and
+  // statuses for the same request MUST go through getChainData (or this
+  // method directly) rather than composing getEndpoints+getStatuses —
+  // composing them each makes their own pass and, under refresh=true, each
+  // pass is a real plugin execution (see the `inflight` comment above for
+  // why refresh calls can't dedupe across sequential calls).
+  private async fetchAllProviderData(
+    refresh: boolean
+  ): Promise<{ provider: { id: string; name: string }; data: ProviderCacheData }[]> {
     const providers = await this.deps.getProviders();
     const perProvider = await Promise.all(
       providers.map((provider) => this.getProviderCache(provider.id, refresh))
     );
+    return providers.map((provider, i) => ({ provider, data: perProvider[i] }));
+  }
 
+  // The combined read: one fetch per plugin, endpoints and statuses both
+  // derived from that same fetch. Preferred over getEndpoints+getStatuses
+  // whenever a caller needs both, since that composition would fetch twice.
+  async getChainData(
+    chainId: number,
+    refresh = false
+  ): Promise<{
+    endpoints: RpcEndpoint[];
+    statuses: { pluginId: string; name: string; state: ProviderState }[];
+  }> {
+    const all = await this.fetchAllProviderData(refresh);
     const endpoints: RpcEndpoint[] = [];
-    providers.forEach((provider, i) => {
-      const forChain = perProvider[i].entries.filter(
-        (entry) => entry.chainId === chainId
-      );
+    const statuses = all.map(({ provider, data }) => {
+      const forChain = data.entries.filter((entry) => entry.chainId === chainId);
       forChain.forEach((entry, n) => {
         endpoints.push({
           id: `plugin:${provider.id}:${chainId}:${n}`,
@@ -106,24 +133,30 @@ export class RpcProviderService {
           pluginId: provider.id,
         });
       });
+      return { pluginId: provider.id, name: provider.name, state: data.state };
     });
-    return endpoints;
+    return { endpoints, statuses };
   }
 
-  // Same per-plugin cache as getEndpoints (see getProviderCache) — calling
-  // this right after/before getEndpoints within the same TTL window costs no
-  // extra plugin executions, only a cache read.
+  // Thin delegate over getChainData for callers that only need endpoints.
+  // Do not compose this with getStatuses to get both — use getChainData
+  // directly, or this fetches every plugin a second time.
+  async getEndpoints(chainId: number, refresh = false): Promise<RpcEndpoint[]> {
+    return (await this.getChainData(chainId, refresh)).endpoints;
+  }
+
+  // Thin delegate over fetchAllProviderData for callers that only need
+  // statuses (which aren't chainId-scoped, unlike endpoints). Do not compose
+  // this with getEndpoints to get both — use getChainData directly, or this
+  // fetches every plugin a second time.
   async getStatuses(
     refresh = false
   ): Promise<{ pluginId: string; name: string; state: ProviderState }[]> {
-    const providers = await this.deps.getProviders();
-    const perProvider = await Promise.all(
-      providers.map((provider) => this.getProviderCache(provider.id, refresh))
-    );
-    return providers.map((provider, i) => ({
+    const all = await this.fetchAllProviderData(refresh);
+    return all.map(({ provider, data }) => ({
       pluginId: provider.id,
       name: provider.name,
-      state: perProvider[i].state,
+      state: data.state,
     }));
   }
 
@@ -136,9 +169,17 @@ export class RpcProviderService {
     this.cache.delete(pluginId);
   }
 
-  // Single fetch point shared by getEndpoints and getStatuses: both read the
-  // same per-plugin cache/inflight entry, so a plugin is executed at most
-  // once per TTL window no matter which (or both) readers ask for it.
+  // Single fetch point for a plugin: on a non-refresh call, a cached entry
+  // within the TTL is served with no execute at all. On a refresh call, the
+  // TTL cache read is deliberately skipped — refresh means "give me a live
+  // read" — but this still checks `inflight` first, so any calls that
+  // overlap in time (e.g. Promise.all-ed concurrent refreshes for the same
+  // plugin) still collapse into one execute. It can't help two refresh
+  // calls that don't overlap in time (one fully resolves before the next
+  // starts) — that case is handled one level up, by fetchAllProviderData
+  // being the only caller of this method, so a single logical request
+  // (getChainData/getEndpoints/getStatuses) always calls this exactly once
+  // per plugin.
   private async getProviderCache(
     pluginId: string,
     refresh: boolean
