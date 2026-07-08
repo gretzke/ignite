@@ -12,4 +12,10 @@ export const CURATED_PLUGINS: readonly StorePluginData[] = [
     description: 'Compiles Solidity projects that use the Waffle toolchain.',
     repoUrl: 'https://github.com/gretzke/ignite-waffle-plugin',
   },
+  {
+    name: 'chainz',
+    description:
+      'Provides RPC endpoints from your chainz config (~/.chainz.json) — each chain contributes its selected RPC.',
+    repoUrl: 'https://github.com/gretzke/ignite-chainz-plugin',
+  },
 ];
