@@ -316,7 +316,9 @@ export default function RepositoriesPage() {
         title="Remove Repository"
         description={
           repoToDelete
-            ? `Are you sure you want to remove "${repoToDelete.name}" from your repositories? This will not delete the actual files.`
+            ? /^(https?:\/\/|git@)/.test(repoToDelete.path)
+              ? `Are you sure you want to remove "${repoToDelete.name}"? Ignite's local clone will be deleted (each profile keeps its own clone) — the remote repository is untouched, and re-adding creates a fresh clone.`
+              : `Are you sure you want to remove "${repoToDelete.name}" from your repositories? Your local files are not touched.`
             : ''
         }
         confirmText="Remove"
