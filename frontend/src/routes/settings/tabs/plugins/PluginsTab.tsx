@@ -78,6 +78,19 @@ function PluginCard({
   const granted = (['repoWrite', 'net'] as const).filter(
     (p) => plugin.permissions[p]
   );
+  // Granted secret/file config scopes, rendered as pills next to the
+  // permission pills. Native plugins have every declared scope implicitly
+  // granted, so their pills come straight from the manifest; third-party
+  // pills reflect the actual grant. Labels come from the declared config
+  // field, falling back to the raw key.
+  const scopeFields = (plugin.configFields ?? []).filter(
+    (f) => f.secret || f.type === 'file'
+  );
+  const grantedScopes = isNative
+    ? scopeFields.map((f) => f.key)
+    : plugin.permissions.secrets;
+  const scopeLabel = (key: string) =>
+    scopeFields.find((f) => f.key === key)?.label ?? key;
   const manageable = !isNative && versionInfo?.source === 'git';
   const updateAvailable = !isNative && versionInfo?.updateAvailable;
   const hasConfig = Boolean(plugin.configFields?.length);
@@ -128,6 +141,14 @@ function PluginCard({
                   {PERMISSION_TITLES[p]}
                 </span>
               ))}
+            {grantedScopes.map((key) => (
+              <span
+                key={`scope-${key}`}
+                className="text-xs rounded-full pill px-2 py-0.5 shrink-0"
+              >
+                {scopeLabel(key)}
+              </span>
+            ))}
             {updateAvailable && (
               <span className="text-xs rounded-full pill pill-primary px-2 py-0.5 shrink-0">
                 Update available

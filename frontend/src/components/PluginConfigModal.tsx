@@ -436,12 +436,15 @@ export default function PluginConfigModal() {
               <Settings2 size={20} />
             </div>
             <Dialog.Title className="text-base font-semibold">
-              {name} Configuration
+              {name} Plugin Configuration
             </Dialog.Title>
           </div>
           <Dialog.Description className="text-sm opacity-80 mb-4">
-            Configure this plugin&apos;s settings. Secret values are write-only
-            — once saved, they are never displayed again.
+            Configure this plugin&apos;s settings.
+            {fields.some((f) => f.secret === true) &&
+              ' Secret values are write-only — once saved, they are never displayed again.'}
+            {fields.some((f) => f.type === 'file') &&
+              " File paths are stored in plain text; the file's contents are provided to the plugin only with your permission grant."}
           </Dialog.Description>
 
           {!config ? (

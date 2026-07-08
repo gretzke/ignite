@@ -6,12 +6,13 @@
 import { useEffect } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Link } from 'react-router-dom';
-import { Plug, Settings2 } from 'lucide-react';
+import { Loader2, Plug, Settings2 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../../../../store';
 import {
   openConfigModal,
   pluginsApi,
   selectPluginRows,
+  selectPluginsLoading,
 } from '../../../../store/features/plugins/pluginsSlice';
 
 interface RpcPluginsModalProps {
@@ -31,6 +32,7 @@ export default function RpcPluginsModal({
 }: RpcPluginsModalProps) {
   const dispatch = useAppDispatch();
   const rows = useAppSelector(selectPluginRows);
+  const loading = useAppSelector(selectPluginsLoading);
   const rpcPlugins = rows
     .filter((p) => p.type === 'rpc-provider')
     .sort((a, b) => (a.name ?? a.pluginId).localeCompare(b.name ?? b.pluginId));
@@ -77,7 +79,14 @@ export default function RpcPluginsModal({
           </div>
 
           <div className="glass-list mb-3">
-            {rpcPlugins.length === 0 ? (
+            {/* The refresh dispatched on open may still be in flight; don't
+                flash the empty state until the plugin list actually loaded. */}
+            {rpcPlugins.length === 0 && loading ? (
+              <div className="list-row text-muted flex items-center justify-center gap-2">
+                <Loader2 size={14} className="animate-spin" />
+                Loading plugins…
+              </div>
+            ) : rpcPlugins.length === 0 ? (
               <div className="list-row text-muted">
                 No RPC provider plugins installed. Install one from the{' '}
                 <Link to="/settings#plugins" onClick={() => onOpenChange(false)}>

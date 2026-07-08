@@ -369,13 +369,29 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
         dispatch(discoverActiveJobs());
         // Fresh install: prompt for the manifest-requested permissions
         // (every one of them is "new"). Grants are all-denied until the user
-        // saves the modal.
+        // saves the modal. The job result's plugin is the full persisted
+        // PluginMetadata (PluginInstaller.install returns it verbatim), so
+        // configFields is available here: a plugin that requests no
+        // repoWrite/net permission but declares secret/file config scopes
+        // still needs the prompt — the modal renders those scope rows.
         const installed = (
           job.result as
-            | { plugin?: { id?: string; permissions?: Array<{ id: string }> } }
+            | {
+                plugin?: {
+                  id?: string;
+                  permissions?: Array<{ id: string }>;
+                  configFields?: Array<{ secret?: boolean; type?: string }>;
+                };
+              }
             | undefined
         )?.plugin;
-        if (installed?.id && (installed.permissions?.length ?? 0) > 0) {
+        const declaresScopes = (installed?.configFields ?? []).some(
+          (f) => f.secret === true || f.type === 'file'
+        );
+        if (
+          installed?.id &&
+          ((installed.permissions?.length ?? 0) > 0 || declaresScopes)
+        ) {
           dispatch(
             openPermissionsModal({
               pluginId: installed.id,
