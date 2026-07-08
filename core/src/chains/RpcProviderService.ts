@@ -9,6 +9,7 @@ import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
+import { stripSentinelBlocks } from '../plugins/utils/pluginTransport.js';
 import { getLogger } from '../utils/logger.js';
 import { isValidRpcUrl } from './rpcVerify.js';
 
@@ -24,6 +25,8 @@ export interface RpcProviderServiceDeps {
   // Test-only override for the per-fetch AbortController timeout; production
   // always uses the 30s default.
   timeoutMs: number;
+  // Injectable so tests can assert what reaches the log sink (secret hygiene).
+  logger: { warn: (message: string) => void };
 }
 
 interface CacheEntry {
@@ -54,6 +57,7 @@ export class RpcProviderService {
       execute: deps?.execute ?? defaultExecute,
       now: deps?.now ?? Date.now,
       timeoutMs: deps?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      logger: deps?.logger ?? getLogger(),
     };
   }
 
@@ -156,23 +160,38 @@ export class RpcProviderService {
         }
       );
       if (!response.success) {
-        getLogger().warn(
-          `RPC provider ${pluginId} getSupportedChains failed: ${response.error.message}`
+        // Never log plugin error messages raw: parse errors
+        // (parsePluginOutput) quote the framed result payload, which can
+        // embed granted secrets such as key-bearing provider URLs.
+        this.deps.logger.warn(
+          `RPC provider ${pluginId} getSupportedChains failed (${
+            response.error.code
+          }): ${sanitizeErrorMessage(response.error.message)}`
         );
         return [];
       }
       return validateResult(pluginId, response.data);
     } catch (error) {
-      getLogger().warn(
-        `RPC provider ${pluginId} getSupportedChains threw: ${
+      // Same hygiene as above: thrown errors can also quote result payloads.
+      this.deps.logger.warn(
+        `RPC provider ${pluginId} getSupportedChains threw: ${sanitizeErrorMessage(
           error instanceof Error ? error.message : String(error)
-        }`
+        )}`
       );
       return [];
     } finally {
       clearTimeout(timer);
     }
   }
+}
+
+// Plugin error messages are untrusted diagnostics: parsePluginOutput errors
+// quote the sentinel-framed result payload (and stdout/stderr tails), which
+// for granted providers embeds key-bearing URLs. Strip any framed blocks and
+// truncate hard so no log sink can echo a secret.
+const MAX_LOGGED_ERROR_CHARS = 200;
+function sanitizeErrorMessage(message: string): string {
+  return stripSentinelBlocks(message).slice(0, MAX_LOGGED_ERROR_CHARS);
 }
 
 // The overall shape (an object with a `chains` array) must hold or the whole

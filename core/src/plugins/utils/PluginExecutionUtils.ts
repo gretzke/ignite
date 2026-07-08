@@ -151,13 +151,17 @@ export class PluginExecutionUtils {
               // result payload may carry granted secrets (e.g. key-embedding
               // provider URLs) which must never reach core logs, and slicing
               // first could cut the END sentinel and leak a partial block.
+              // stderr gets the same treatment — a plugin (or its runtime)
+              // can echo the framed block there too.
               getLogger().debug(
                 `🔍 Plugin stdout (${pluginId}): "${stripSentinelBlocks(
                   stdout
                 ).slice(0, 2000)}"`
               );
               getLogger().debug(
-                `🔍 Plugin stderr (${pluginId}): "${stderr.slice(0, 2000)}"`
+                `🔍 Plugin stderr (${pluginId}): "${stripSentinelBlocks(
+                  stderr
+                ).slice(0, 2000)}"`
               );
               settle(
                 resolve,

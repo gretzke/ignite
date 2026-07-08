@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { RESULT_BEGIN, RESULT_END } from '@ignite/plugin-types';
 import { RpcProviderService } from '../../chains/RpcProviderService.js';
 import type { PluginResponse } from '@ignite/plugin-types/types';
 
@@ -28,6 +29,7 @@ function makeDeps(overrides?: {
       })),
     now: overrides?.now ?? (() => NOW),
     timeoutMs: overrides?.timeoutMs ?? 30_000,
+    logger: { warn: vi.fn() },
   };
 }
 
@@ -160,6 +162,61 @@ describe('RpcProviderService', () => {
     const endpoints = await service.getEndpoints(1);
     expect(endpoints).toHaveLength(1);
     expect(endpoints[0].pluginId).toBe('good-rpc');
+  });
+
+  // parsePluginOutput errors quote the framed result payload, which for
+  // granted providers embeds key-bearing URLs — the warn-level provider
+  // failure logs must never echo it.
+  it('never logs sentinel-framed payload content from provider error messages', async () => {
+    const framedPayload = `${RESULT_BEGIN}{"url":"https://rpc.example/v1/SECRETMARKER"}${RESULT_END}`;
+    const execute = vi.fn(
+      async (pluginId: string): Promise<PluginResponse<unknown>> => {
+        if (pluginId === 'error-rpc') {
+          return {
+            success: false,
+            error: {
+              code: 'PARSE_ERROR',
+              message: `JSON parse error. Framed output: ${framedPayload}`,
+            },
+          };
+        }
+        throw new Error(`plugin output unusable: ${framedPayload}`);
+      }
+    );
+    const deps = makeDeps({
+      execute,
+      providers: [
+        { id: 'error-rpc', name: 'Error RPC' }, // response.error warn path
+        { id: 'throw-rpc', name: 'Throw RPC' }, // catch-path warn
+      ],
+    });
+    const service = new RpcProviderService(deps);
+    const endpoints = await service.getEndpoints(1);
+    expect(endpoints).toEqual([]);
+
+    const warn = deps.logger.warn as ReturnType<typeof vi.fn>;
+    expect(warn).toHaveBeenCalledTimes(2);
+    const logged = warn.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(logged).not.toContain('SECRETMARKER');
+    // pluginId and the error code survive sanitization for debuggability.
+    expect(logged).toContain('error-rpc');
+    expect(logged).toContain('PARSE_ERROR');
+    expect(logged).toContain('throw-rpc');
+  });
+
+  it('truncates oversized provider error messages in logs', async () => {
+    const execute = vi.fn(async (): Promise<PluginResponse<unknown>> => {
+      return {
+        success: false,
+        error: { code: 'BOOM', message: 'x'.repeat(5000) },
+      };
+    });
+    const deps = makeDeps({ execute });
+    const service = new RpcProviderService(deps);
+    await service.getEndpoints(1);
+    const warn = deps.logger.warn as ReturnType<typeof vi.fn>;
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0]).length).toBeLessThan(300);
   });
 
   it('drops all entries when the plugin result is not a well-formed chains array', async () => {

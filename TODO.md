@@ -136,3 +136,14 @@ blocking current functionality.
   "reachable but wrong chain" from "unreachable".
 - **Ecosystem plugin GitHub spin-out** (infura/alchemy/chainz out of the
   monorepo) tracked for D7.
+- **Sanitize parsePluginOutput error quoting globally** — parse errors embed the full
+  framed payload / stdout tail in error messages; any log sink that prints plugin
+  error messages verbatim can leak config secrets (D1b-wide concern; RpcProviderService
+  now sanitizes locally).
+- **Invalidate provider cache on plugin install/uninstall/update** (currently only
+  config/trust changes invalidate; reinstall-within-TTL serves stale entries).
+- **listRpcs provider fan-out uses Promise.all** — one hung provider on cold cache
+  delays the response up to 30s; switch to allSettled/stale-serve with staleness
+  surfacing.
+- **refresh query param z.coerce.boolean footgun** — ?refresh=false coerces true;
+  frontend works around it; consider an explicit enum transform.
