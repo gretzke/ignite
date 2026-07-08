@@ -43,66 +43,110 @@ export default function ChainsTab() {
     [chains]
   );
 
-  const row = (chain: ChainInfo) => (
-    <div
-      key={chain.chainId}
-      className="glass-surface nav-item flex items-center justify-between"
-      // .nav-item has no padding outside the sidebar; match the ProfilesTab
-      // row convention so the tile sits inside the card with breathing room.
-      style={{ padding: '0.9rem 1.1rem' }}
-    >
-      <div className="flex items-center gap-3 min-w-0">
-        <ChainIcon chain={chain} />
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="truncate">{chain.name}</span>
-            {chain.source === 'custom' && (
-              <span className="pill pill-primary">custom</span>
-            )}
-          </div>
-          <div className="text-xs text-muted mono-data">
-            chainId {chain.chainId}
-            {chain.shortName ? ` · ${chain.shortName}` : ''}
-            {' · '}
-            {chain.nativeCurrency.symbol}
+  const row = (chain: ChainInfo) => {
+    // Single-action click rule: known chains expose only the RPC button, so
+    // clicking anywhere on the row opens the RPC modal. Custom chains have
+    // three buttons (RPC / edit / delete), so the row body stays inert and
+    // only the buttons act.
+    const rowAction =
+      chain.source === 'custom' ? undefined : () => setRpcChain(chain);
+    const rowClass = 'glass-surface nav-item flex items-center justify-between';
+    // .nav-item has no padding outside the sidebar; match the ProfilesTab
+    // row convention so the tile sits inside the card with breathing room.
+    const rowStyle = { padding: '0.9rem 1.1rem' };
+    const body = (
+      <>
+        <div className="flex items-center gap-3 min-w-0">
+          <ChainIcon chain={chain} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="truncate">{chain.name}</span>
+              {chain.source === 'custom' && (
+                <span className="pill pill-primary">custom</span>
+              )}
+            </div>
+            <div className="text-xs text-muted mono-data">
+              chainId {chain.chainId}
+              {chain.shortName ? ` · ${chain.shortName}` : ''}
+              {' · '}
+              {chain.nativeCurrency.symbol}
+            </div>
           </div>
         </div>
+        <div className="flex items-center gap-1">
+          <Tooltip label="RPC endpoints">
+            <button
+              className="btn btn-sm btn-secondary-borderless"
+              onClick={(e) => {
+                e.stopPropagation();
+                setRpcChain(chain);
+              }}
+              aria-label={`RPC endpoints for ${chain.name}`}
+            >
+              <PlugZap size={16} />
+            </button>
+          </Tooltip>
+          {chain.source === 'custom' && (
+            <>
+              <Tooltip label="Edit chain">
+                <button
+                  className="btn btn-sm btn-secondary-borderless"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setChainModal({ open: true, chain });
+                  }}
+                  aria-label={`Edit ${chain.name}`}
+                >
+                  <Pencil size={16} />
+                </button>
+              </Tooltip>
+              <Tooltip label="Delete chain">
+                <button
+                  className="btn btn-sm btn-secondary-borderless"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteTarget(chain);
+                  }}
+                  aria-label={`Delete ${chain.name}`}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </Tooltip>
+            </>
+          )}
+        </div>
+      </>
+    );
+    if (rowAction) {
+      return (
+        <div
+          key={chain.chainId}
+          className={`${rowClass} cursor-pointer`}
+          style={rowStyle}
+          role="button"
+          tabIndex={0}
+          aria-label={`RPC endpoints for ${chain.name}`}
+          onClick={rowAction}
+          onKeyDown={(e) => {
+            if (
+              (e.key === 'Enter' || e.key === ' ') &&
+              e.target === e.currentTarget
+            ) {
+              e.preventDefault();
+              rowAction();
+            }
+          }}
+        >
+          {body}
+        </div>
+      );
+    }
+    return (
+      <div key={chain.chainId} className={rowClass} style={rowStyle}>
+        {body}
       </div>
-      <div className="flex items-center gap-1">
-        <Tooltip label="RPC endpoints">
-          <button
-            className="btn btn-sm btn-secondary-borderless"
-            onClick={() => setRpcChain(chain)}
-            aria-label={`RPC endpoints for ${chain.name}`}
-          >
-            <PlugZap size={16} />
-          </button>
-        </Tooltip>
-        {chain.source === 'custom' && (
-          <>
-            <Tooltip label="Edit chain">
-              <button
-                className="btn btn-sm btn-secondary-borderless"
-                onClick={() => setChainModal({ open: true, chain })}
-                aria-label={`Edit ${chain.name}`}
-              >
-                <Pencil size={16} />
-              </button>
-            </Tooltip>
-            <Tooltip label="Delete chain">
-              <button
-                className="btn btn-sm btn-secondary-borderless"
-                onClick={() => setDeleteTarget(chain)}
-                aria-label={`Delete ${chain.name}`}
-              >
-                <Trash2 size={16} />
-              </button>
-            </Tooltip>
-          </>
-        )}
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="grid gap-4">
@@ -188,7 +232,8 @@ export default function ChainsTab() {
         }
         confirmText="Delete"
         onConfirm={() => {
-          if (deleteTarget) dispatch(chainsApi.deleteChain(deleteTarget.chainId));
+          if (deleteTarget)
+            dispatch(chainsApi.deleteChain(deleteTarget.chainId));
           setDeleteTarget(null);
         }}
       />

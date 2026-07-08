@@ -82,25 +82,23 @@ function PluginCard({
   const updateAvailable = !isNative && versionInfo?.updateAvailable;
   const hasConfig = Boolean(plugin.configFields?.length);
 
-  const handleManage = () => {
-    if (manageable && versionInfo && onManage) onManage(plugin, versionInfo);
-  };
+  const openConfig = () =>
+    dispatch(openConfigModal({ pluginId: plugin.pluginId }));
 
-  return (
-    <div
-      className={`glass-surface nav-item flex items-center justify-between ${
-        manageable ? 'cursor-pointer' : ''
-      }`}
-      style={{ padding: '0.9rem 1.1rem' }}
-      role={manageable ? 'button' : undefined}
-      tabIndex={manageable ? 0 : undefined}
-      onClick={handleManage}
-      onKeyDown={(e) => {
-        if (manageable && e.key === 'Enter' && e.target === e.currentTarget) {
-          handleManage();
-        }
-      }}
-    >
+  // Single-action click rule: when a card exposes exactly one action, clicking
+  // anywhere on the card triggers it; with two or more actions the card body
+  // is inert and only the buttons act. Non-native cards always render Manage
+  // permissions + Uninstall (2+ actions), so the only single-action case is a
+  // native plugin with a config form (e.g. Infura/Alchemy → Configure). The
+  // old whole-card git-manage click always coexisted with other buttons and is
+  // replaced by an explicit Manage source button below.
+  const cardAction = isNative && hasConfig ? openConfig : undefined;
+
+  const cardClass = 'glass-surface nav-item flex items-center justify-between';
+  const cardStyle = { padding: '0.9rem 1.1rem' };
+
+  const body = (
+    <>
       <div className="flex items-center gap-3 min-w-0">
         <div
           className="icon-tile"
@@ -182,10 +180,26 @@ function PluginCard({
                 aria-label="Configure"
                 onClick={(e) => {
                   e.stopPropagation();
-                  dispatch(openConfigModal({ pluginId: plugin.pluginId }));
+                  openConfig();
                 }}
               >
                 <Settings2 size={14} />
+              </button>
+            </Tooltip>
+          )}
+          {manageable && versionInfo && (
+            <Tooltip label="Manage source" placement="top">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ width: 32, height: 32, padding: 0 }}
+                aria-label="Manage source"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onManage?.(plugin, versionInfo);
+                }}
+              >
+                <GitBranch size={14} />
               </button>
             </Tooltip>
           )}
@@ -234,7 +248,7 @@ function PluginCard({
               aria-label="Configure"
               onClick={(e) => {
                 e.stopPropagation();
-                dispatch(openConfigModal({ pluginId: plugin.pluginId }));
+                openConfig();
               }}
             >
               <Settings2 size={14} />
@@ -242,6 +256,35 @@ function PluginCard({
           </Tooltip>
         </div>
       )}
+    </>
+  );
+
+  if (cardAction) {
+    return (
+      <div
+        className={`${cardClass} cursor-pointer`}
+        style={cardStyle}
+        role="button"
+        tabIndex={0}
+        aria-label={`Configure ${plugin.name ?? plugin.pluginId}`}
+        onClick={cardAction}
+        onKeyDown={(e) => {
+          if (
+            (e.key === 'Enter' || e.key === ' ') &&
+            e.target === e.currentTarget
+          ) {
+            e.preventDefault();
+            cardAction();
+          }
+        }}
+      >
+        {body}
+      </div>
+    );
+  }
+  return (
+    <div className={cardClass} style={cardStyle}>
+      {body}
     </div>
   );
 }

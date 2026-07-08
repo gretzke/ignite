@@ -1,8 +1,6 @@
 import Tooltip from '../components/Tooltip';
 import {
   Folder,
-  Puzzle,
-  Rocket,
   Settings as IconSettings,
   ChevronsLeft,
   ChevronsRight,
@@ -13,8 +11,6 @@ import { setSidebarCollapsed } from '../store/features/app/appSlice';
 
 const NAV_ITEMS = [
   { to: '/repositories', label: 'Repositories', Icon: Folder },
-  { to: '/workflows', label: 'Workflows', Icon: Puzzle },
-  { to: '/deployments', label: 'Deployments', Icon: Rocket },
 ] as const;
 
 function navClass({ isActive }: { isActive: boolean }) {

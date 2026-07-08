@@ -4,15 +4,12 @@
 // debounced pre-save health check (eth_chainId must match the chain).
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import {
-  Loader2,
-  Plus,
-  Star,
-  Trash2,
-  Activity,
-  RefreshCw,
-} from 'lucide-react';
-import type { ChainInfo, RpcEndpoint, RpcVerificationResult } from '@ignite/api';
+import { Loader2, Plus, Star, Trash2, Activity, RefreshCw } from 'lucide-react';
+import type {
+  ChainInfo,
+  RpcEndpoint,
+  RpcVerificationResult,
+} from '@ignite/api';
 import { useAppDispatch, useAppSelector } from '../../../../store';
 import {
   chainsApi,
@@ -27,6 +24,10 @@ interface ChainRpcModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
+
+// Stable fallback so effects keyed on the endpoints array don't re-fire on
+// every render while the first fetch is in flight.
+const EMPTY_ENDPOINTS: RpcEndpoint[] = [];
 
 function HealthChip({ endpoint }: { endpoint: RpcEndpoint }) {
   const v = endpoint.lastVerification;
@@ -91,15 +92,17 @@ export default function ChainRpcModal({
   onOpenChange,
 }: ChainRpcModalProps) {
   const dispatch = useAppDispatch();
-  const endpoints = useAppSelector(
-    (state) => state.chains.rpcByChain[String(chain.chainId)] ?? []
+  // No `?? []` default here: `undefined` means "never fetched for this chain"
+  // and drives the loading row, while `[]` is a genuine empty result.
+  const storedEndpoints = useAppSelector(
+    (state) => state.chains.rpcByChain[String(chain.chainId)]
   );
+  const rpcsLoading = storedEndpoints === undefined;
+  const endpoints = storedEndpoints ?? EMPTY_ENDPOINTS;
   const providerEndpoints = useAppSelector(
     (state) => state.chains.providerRpcByChain[String(chain.chainId)] ?? []
   );
-  const providerChecks = useAppSelector(
-    (state) => state.chains.providerChecks
-  );
+  const providerChecks = useAppSelector((state) => state.chains.providerChecks);
   const rpcCheck = useAppSelector((state) => state.chains.rpcCheck);
   const [newUrl, setNewUrl] = useState('');
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
@@ -215,7 +218,10 @@ export default function ChainRpcModal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" style={{ background: 'transparent' }} />
+        <Dialog.Overlay
+          className="dialog-overlay"
+          style={{ background: 'transparent' }}
+        />
         <Dialog.Content
           className="dialog-content glass-overlay"
           style={{ maxWidth: 640, width: '92vw', padding: 16 }}
@@ -234,7 +240,13 @@ export default function ChainRpcModal({
 
           <div className="eyebrow mb-1">Configured</div>
           <div className="glass-list mb-3">
-            {endpoints.length === 0 && (
+            {rpcsLoading && (
+              <div className="list-row text-muted flex items-center justify-center gap-2">
+                <Loader2 size={14} className="animate-spin" />
+                Loading endpoints…
+              </div>
+            )}
+            {!rpcsLoading && endpoints.length === 0 && (
               <div className="list-row text-muted">
                 No stored endpoints yet. Add one below.
               </div>
@@ -346,94 +358,98 @@ export default function ChainRpcModal({
             {checkUnreachable && (
               <span className="text-xs text-warn">
                 Could not reach endpoint
-                {rpcCheck.result?.error ? `: ${rpcCheck.result.error}` : ''}.{' '}
-                You can still add it.
+                {rpcCheck.result?.error
+                  ? `: ${rpcCheck.result.error}`
+                  : ''}. You can still add it.
               </span>
             )}
           </div>
 
-          {(availableProviderEndpoints.length > 0 ||
-            suggestions.length > 0) && (
-            <div className="grid gap-1 mb-3">
-              <div className="eyebrow flex items-center justify-between">
-                <span>Available</span>
-                <Tooltip label="Refresh">
-                  <button
-                    className="btn btn-sm btn-secondary-borderless"
-                    onClick={() =>
-                      dispatch(chainsApi.fetchRpcs(chain.chainId, true))
-                    }
-                    aria-label="Refresh provider endpoints"
-                  >
-                    <RefreshCw size={14} />
-                  </button>
-                </Tooltip>
-              </div>
-              <div className="glass-list">
-                {availableProviderEndpoints.map((endpoint) => (
-                  <div key={endpoint.id} className="list-row">
-                    <div className="flex items-center justify-between gap-2 w-full min-w-0">
-                      <div className="min-w-0">
-                        <div className="mono-data truncate">
-                          {endpoint.url}
+          {!rpcsLoading &&
+            (availableProviderEndpoints.length > 0 ||
+              suggestions.length > 0) && (
+              <div className="grid gap-1 mb-3">
+                <div className="eyebrow flex items-center justify-between">
+                  <span>Available</span>
+                  <Tooltip label="Refresh">
+                    <button
+                      className="btn btn-sm btn-secondary-borderless"
+                      onClick={() =>
+                        dispatch(chainsApi.fetchRpcs(chain.chainId, true))
+                      }
+                      aria-label="Refresh provider endpoints"
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                  </Tooltip>
+                </div>
+                <div className="glass-list">
+                  {availableProviderEndpoints.map((endpoint) => (
+                    <div key={endpoint.id} className="list-row">
+                      <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                        <div className="min-w-0">
+                          <div className="mono-data truncate">
+                            {endpoint.url}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="pill">{endpoint.pluginId}</span>
+                            {endpoint.label && (
+                              <span className="text-xs text-muted">
+                                {endpoint.label}
+                              </span>
+                            )}
+                            <ProviderHealthChip
+                              checkState={providerChecks[endpoint.id]}
+                            />
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="pill">{endpoint.pluginId}</span>
-                          {endpoint.label && (
-                            <span className="text-xs text-muted">
-                              {endpoint.label}
-                            </span>
-                          )}
-                          <ProviderHealthChip
-                            checkState={providerChecks[endpoint.id]}
-                          />
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Tooltip label="Verify now">
+                            <button
+                              className="btn btn-sm btn-secondary-borderless"
+                              disabled={
+                                providerChecks[endpoint.id] === 'checking'
+                              }
+                              onClick={() =>
+                                chainsApi
+                                  .checkProviderRpc(chain.chainId, endpoint)
+                                  .forEach(dispatch)
+                              }
+                              aria-label={`Verify ${endpoint.url}`}
+                            >
+                              <Activity size={16} />
+                            </button>
+                          </Tooltip>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Tooltip label="Verify now">
-                          <button
-                            className="btn btn-sm btn-secondary-borderless"
-                            disabled={providerChecks[endpoint.id] === 'checking'}
-                            onClick={() =>
-                              chainsApi
-                                .checkProviderRpc(chain.chainId, endpoint)
-                                .forEach(dispatch)
-                            }
-                            aria-label={`Verify ${endpoint.url}`}
-                          >
-                            <Activity size={16} />
-                          </button>
-                        </Tooltip>
+                    </div>
+                  ))}
+                  {suggestions.slice(0, 6).map((url) => (
+                    <div key={url} className="list-row">
+                      <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                        <span className="mono-data truncate text-muted">
+                          {url}
+                        </span>
+                        <button
+                          className="btn btn-sm btn-secondary shrink-0"
+                          onClick={() =>
+                            dispatch(
+                              chainsApi.addRpc(chain.chainId, {
+                                url,
+                                source: 'chainlist',
+                              })
+                            )
+                          }
+                        >
+                          <Plus size={14} />
+                          Add
+                        </button>
                       </div>
                     </div>
-                  </div>
-                ))}
-                {suggestions.slice(0, 6).map((url) => (
-                  <div key={url} className="list-row">
-                    <div className="flex items-center justify-between gap-2 w-full min-w-0">
-                      <span className="mono-data truncate text-muted">
-                        {url}
-                      </span>
-                      <button
-                        className="btn btn-sm btn-secondary shrink-0"
-                        onClick={() =>
-                          dispatch(
-                            chainsApi.addRpc(chain.chainId, {
-                              url,
-                              source: 'chainlist',
-                            })
-                          )
-                        }
-                      >
-                        <Plus size={14} />
-                        Add
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           <div className="flex items-center justify-end">
             <Dialog.Close asChild>
