@@ -18,6 +18,7 @@ import type {
 } from '@ignite/api';
 import { ChainRegistry } from '../chains/ChainRegistry.js';
 import { RpcStore } from '../chains/RpcStore.js';
+import { RpcProviderService } from '../chains/RpcProviderService.js';
 import { verifyRpcEndpoint } from '../chains/rpcVerify.js';
 import { ErrorCodes, type ErrorCode } from '../types/errors.js';
 import { sendCaughtError } from './utils/errors.js';
@@ -35,6 +36,7 @@ export interface ChainHandlerDeps {
     RpcStore,
     'list' | 'add' | 'remove' | 'setPreferred' | 'updateVerification'
   >;
+  providers: Pick<RpcProviderService, 'getEndpoints'>;
   verify: (
     url: string,
     expectedChainId: number
@@ -75,6 +77,7 @@ export function createChainHandlers(deps?: Partial<ChainHandlerDeps>) {
   const d: ChainHandlerDeps = {
     registry: deps?.registry ?? new ChainRegistry(),
     rpcStore: deps?.rpcStore ?? new RpcStore(),
+    providers: deps?.providers ?? RpcProviderService.getInstance(),
     verify:
       deps?.verify ??
       ((url: string, expectedChainId: number) =>
@@ -182,8 +185,21 @@ export function createChainHandlers(deps?: Partial<ChainHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<ListRpcsData>> => {
       try {
-        const endpoints = await d.rpcStore.list(Number(request.params.chainId));
-        return reply.status(200).send({ data: { endpoints } });
+        const chainId = Number(request.params.chainId);
+        const endpoints = await d.rpcStore.list(chainId);
+        let providerEndpoints: typeof endpoints = [];
+        try {
+          providerEndpoints = await d.providers.getEndpoints(
+            chainId,
+            request.query?.refresh
+          );
+        } catch {
+          // Provider fetch is best-effort — a plugin/service-level throw
+          // must never hide the stored endpoints, which are already known
+          // good at this point.
+          providerEndpoints = [];
+        }
+        return reply.status(200).send({ data: { endpoints, providerEndpoints } });
       } catch (error) {
         return sendCodedOrCaught(
           reply,

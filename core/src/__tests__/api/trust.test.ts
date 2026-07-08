@@ -9,6 +9,7 @@ import { createTrustHandlers } from '../../api/plugins/trust.js';
 describe('trust API handlers', () => {
   let app: FastifyInstance;
   let manager: TrustManager;
+  let providers: { invalidate: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-trust-api-'));
@@ -22,7 +23,14 @@ describe('trust API handlers', () => {
     const requested = vi.fn(async (pluginId: string) =>
       pluginId === '@acme/foundry' ? ['hostWrite', 'net'] : []
     );
-    const handlers = createTrustHandlers(manager, listInstalled, requested);
+    providers = { invalidate: vi.fn() };
+    const handlers = createTrustHandlers(
+      manager,
+      listInstalled,
+      requested,
+      undefined,
+      providers
+    );
 
     app = fastify();
     app.get('/api/v1/plugins/trust', handlers.listPluginTrust);
@@ -64,6 +72,7 @@ describe('trust API handlers', () => {
     expect(res.json().data.plugin.permissions.secrets).toEqual([]);
     const grant = await manager.getGrant('@acme/foundry');
     expect(grant.hostWrite).toBe(true);
+    expect(providers.invalidate).toHaveBeenCalledWith('@acme/foundry');
   });
 
   it('rejects granting a permission the plugin does not request', async () => {
@@ -72,10 +81,13 @@ describe('trust API handlers', () => {
       path.join(dir, 'trust.json'),
       async () => false
     );
+    const strictProviders = { invalidate: vi.fn() };
     const handlers = createTrustHandlers(
       strictManager,
       vi.fn(async () => ['@acme/foundry']),
-      vi.fn(async () => ['hostWrite']) // net is not requested
+      vi.fn(async () => ['hostWrite']), // net is not requested
+      undefined,
+      strictProviders
     );
     const strictApp = fastify();
     strictApp.post('/api/v1/plugins/:pluginId/trust', handlers.setPluginTrust);
@@ -95,6 +107,7 @@ describe('trust API handlers', () => {
     const grant = await strictManager.getGrant('@acme/foundry');
     expect(grant.net).toBe(false);
     expect(grant.hostWrite).toBe(false);
+    expect(strictProviders.invalidate).not.toHaveBeenCalled();
 
     // Denying a non-requested permission is fine — only granting is clamped.
     const ok = await strictApp.inject({
@@ -106,6 +119,7 @@ describe('trust API handlers', () => {
       },
     });
     expect(ok.statusCode).toBe(200);
+    expect(strictProviders.invalidate).toHaveBeenCalledWith('@acme/foundry');
     await strictApp.close();
   });
 
@@ -116,11 +130,13 @@ describe('trust API handlers', () => {
       async () => false
     );
     // '@acme/foundry' declares only 'apiKey' as a secret config field.
+    const secretProviders = { invalidate: vi.fn() };
     const handlers = createTrustHandlers(
       secretManager,
       vi.fn(async () => ['@acme/foundry']),
       vi.fn(async () => ['hostWrite', 'net']),
-      vi.fn(async () => ['apikey'])
+      vi.fn(async () => ['apikey']),
+      secretProviders
     );
     const secretApp = fastify();
     secretApp.post('/api/v1/plugins/:pluginId/trust', handlers.setPluginTrust);
@@ -143,6 +159,7 @@ describe('trust API handlers', () => {
     // Grant unchanged (fail-closed).
     const grant = await secretManager.getGrant('@acme/foundry');
     expect(grant.secrets).toEqual([]);
+    expect(secretProviders.invalidate).not.toHaveBeenCalled();
 
     const ok = await secretApp.inject({
       method: 'POST',
@@ -156,6 +173,7 @@ describe('trust API handlers', () => {
     expect(ok.json().data.plugin.permissions.secrets).toEqual(['apikey']);
     const grantedAfter = await secretManager.getGrant('@acme/foundry');
     expect(grantedAfter.secrets).toEqual(['apikey']);
+    expect(secretProviders.invalidate).toHaveBeenCalledWith('@acme/foundry');
     await secretApp.close();
   });
 
@@ -170,6 +188,7 @@ describe('trust API handlers', () => {
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().code).toBe('TRUST_IMMUTABLE');
+    expect(providers.invalidate).not.toHaveBeenCalled();
   });
 
   it('404s for plugins that are not installed', async () => {
@@ -182,5 +201,6 @@ describe('trust API handlers', () => {
       },
     });
     expect(res.statusCode).toBe(404);
+    expect(providers.invalidate).not.toHaveBeenCalled();
   });
 });

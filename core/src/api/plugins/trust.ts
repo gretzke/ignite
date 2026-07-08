@@ -11,6 +11,7 @@ import type {
 import { TrustManager } from '../../plugins/trust/TrustManager.js';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 import { PluginManager } from '../../filesystem/PluginManager.js';
+import { RpcProviderService } from '../../chains/RpcProviderService.js';
 import { ErrorCodes } from '../../types/errors.js';
 import { sendCaughtError } from '../utils/errors.js';
 
@@ -33,7 +34,8 @@ export function createTrustHandlers(
   ) => Promise<string[]> = getRequestedPermissionsFromRegistry,
   getDeclaredSecretKeys: (
     pluginId: string
-  ) => Promise<string[]> = getDeclaredSecretKeysFromRegistry
+  ) => Promise<string[]> = getDeclaredSecretKeysFromRegistry,
+  providers: Pick<RpcProviderService, 'invalidate'> = RpcProviderService.getInstance()
 ) {
   return {
     listPluginTrust: async (
@@ -139,6 +141,7 @@ export function createTrustHandlers(
           net: permissions.net,
           secrets: requestedSecrets,
         });
+        providers.invalidate(pluginId);
         const body: IApiResponse<SetPluginTrustData> = {
           data: {
             plugin: {

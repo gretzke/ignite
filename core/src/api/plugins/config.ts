@@ -19,6 +19,7 @@ import { PluginConfigStore } from '../../plugins/config/PluginConfigStore.js';
 import { VaultStore } from '../../plugins/vault/VaultStore.js';
 import { TrustManager } from '../../plugins/trust/TrustManager.js';
 import { PluginManager } from '../../filesystem/PluginManager.js';
+import { RpcProviderService } from '../../chains/RpcProviderService.js';
 import { ErrorCodes, type ErrorCode } from '../../types/errors.js';
 import { sendCaughtError, sendBadRequest } from '../utils/errors.js';
 
@@ -30,6 +31,7 @@ export interface PluginConfigHandlerDeps {
   >;
   vaultStore: Pick<VaultStore, 'setSecret' | 'deleteSecret' | 'listSecretKeys'>;
   trust: Pick<TrustManager, 'getGrant'>;
+  providers: Pick<RpcProviderService, 'invalidate'>;
 }
 
 // Domain services throw Errors tagged with a `code`; map the known ones to
@@ -127,6 +129,7 @@ export function createPluginConfigHandlers(
     configStore: deps?.configStore ?? new PluginConfigStore(),
     vaultStore: deps?.vaultStore ?? new VaultStore(),
     trust: deps?.trust ?? TrustManager.getInstance(),
+    providers: deps?.providers ?? RpcProviderService.getInstance(),
   };
 
   return {
@@ -182,6 +185,7 @@ export function createPluginConfigHandlers(
         }
 
         await d.configStore.setValue(pluginId, key, value, chainId);
+        d.providers.invalidate(pluginId);
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -219,6 +223,7 @@ export function createPluginConfigHandlers(
         }
 
         await d.vaultStore.setSecret(pluginId, key, value, chainId);
+        d.providers.invalidate(pluginId);
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -260,6 +265,7 @@ export function createPluginConfigHandlers(
         } else {
           await d.configStore.deleteValue(pluginId, key, chainId);
         }
+        d.providers.invalidate(pluginId);
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {

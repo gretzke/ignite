@@ -100,6 +100,9 @@ function makeDeps() {
         secrets: ['apikey'],
       })),
     },
+    providers: {
+      invalidate: vi.fn(),
+    },
   };
   return { deps, configValues, vaultEntries };
 }
@@ -156,6 +159,7 @@ describe('plugin config handlers', () => {
     expect(configValues.timeout).toEqual({ global: 30 });
     const body = reply.body as { data: GetPluginConfigData };
     expect(body.data.values.timeout).toEqual({ global: 30 });
+    expect(deps.providers.invalidate).toHaveBeenCalledWith(PLUGIN_ID);
   });
 
   it('PUT config rejects a secret key with CONFIG_FIELD_IS_SECRET', async () => {
@@ -174,6 +178,7 @@ describe('plugin config handlers', () => {
       'CONFIG_FIELD_IS_SECRET'
     );
     expect(deps.configStore.setValue).not.toHaveBeenCalled();
+    expect(deps.providers.invalidate).not.toHaveBeenCalled();
   });
 
   it('PUT config rejects an unknown key with CONFIG_UNKNOWN_FIELD', async () => {
@@ -192,6 +197,7 @@ describe('plugin config handlers', () => {
       'CONFIG_UNKNOWN_FIELD'
     );
     expect(deps.configStore.setValue).not.toHaveBeenCalled();
+    expect(deps.providers.invalidate).not.toHaveBeenCalled();
   });
 
   it('PUT secret rejects a key that is not a declared secret field', async () => {
@@ -222,6 +228,7 @@ describe('plugin config handlers', () => {
     expect(reply2.statusCode).toBe(400);
     expect((reply2.body as { code: string }).code).toBe('SECRET_NOT_DECLARED');
     expect(deps.vaultStore.setSecret).not.toHaveBeenCalled();
+    expect(deps.providers.invalidate).not.toHaveBeenCalled();
   });
 
   it('PUT secret succeeds and never echoes the value back', async () => {
@@ -246,6 +253,7 @@ describe('plugin config handlers', () => {
     expect(JSON.stringify(reply.body)).not.toContain(secretValue);
     const body = reply.body as { data: GetPluginConfigData };
     expect(body.data.secretsPresent).toContain('apikey');
+    expect(deps.providers.invalidate).toHaveBeenCalledWith(PLUGIN_ID);
   });
 
   it('DELETE routes a secret field to the vault store', async () => {
@@ -264,6 +272,7 @@ describe('plugin config handlers', () => {
     );
     expect(deps.configStore.deleteValue).not.toHaveBeenCalled();
     expect(vaultEntries.has(`${PLUGIN_ID}::apikey`)).toBe(false);
+    expect(deps.providers.invalidate).toHaveBeenCalledWith(PLUGIN_ID);
   });
 
   it('DELETE routes a non-secret field to the config store', async () => {
@@ -285,6 +294,7 @@ describe('plugin config handlers', () => {
     );
     expect(deps.vaultStore.deleteSecret).not.toHaveBeenCalled();
     expect(configValues.endpoint).toBeUndefined();
+    expect(deps.providers.invalidate).toHaveBeenCalledWith(PLUGIN_ID);
   });
 
   it('DELETE rejects an unknown key with CONFIG_UNKNOWN_FIELD', async () => {
@@ -299,5 +309,6 @@ describe('plugin config handlers', () => {
     expect((reply.body as { code: string }).code).toBe(
       'CONFIG_UNKNOWN_FIELD'
     );
+    expect(deps.providers.invalidate).not.toHaveBeenCalled();
   });
 });
