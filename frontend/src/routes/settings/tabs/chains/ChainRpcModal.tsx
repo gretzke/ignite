@@ -20,6 +20,7 @@ import {
   providerChecksReset,
 } from '../../../../store/features/chains/chainsSlice';
 import Tooltip from '../../../../components/Tooltip';
+import ChainIcon from './ChainIcon';
 
 interface ChainRpcModalProps {
   chain: ChainInfo;
@@ -165,6 +166,11 @@ export default function ChainRpcModal({
 
   const storedUrls = new Set(endpoints.map((e) => e.url));
   const suggestions = chain.rpc.filter((url) => !storedUrls.has(url));
+  // A provider URL the user manually saved is already in Configured — don't
+  // show it twice under Available.
+  const availableProviderEndpoints = providerEndpoints.filter(
+    (e) => !storedUrls.has(e.url)
+  );
   const trimmedUrl = newUrl.trim();
   const checkOk = rpcCheck.url === trimmedUrl && rpcCheck.result?.ok === true;
   const checkMismatch =
@@ -214,13 +220,19 @@ export default function ChainRpcModal({
           className="dialog-content glass-overlay"
           style={{ maxWidth: 640, width: '92vw', padding: 16 }}
         >
-          <Dialog.Title className="text-base font-semibold mb-1">
-            RPC endpoints — {chain.name}
-          </Dialog.Title>
-          <div className="text-xs text-muted mono-data mb-3">
-            chainId {chain.chainId}
+          <div className="flex items-center gap-3 mb-3">
+            <ChainIcon chain={chain} />
+            <div className="min-w-0">
+              <Dialog.Title className="text-base font-semibold truncate">
+                RPC endpoints — {chain.name}
+              </Dialog.Title>
+              <div className="text-xs text-muted mono-data">
+                chainId {chain.chainId}
+              </div>
+            </div>
           </div>
 
+          <div className="eyebrow mb-1">Configured</div>
           <div className="glass-list mb-3">
             {endpoints.length === 0 && (
               <div className="list-row text-muted">
@@ -340,10 +352,11 @@ export default function ChainRpcModal({
             )}
           </div>
 
-          {providerEndpoints.length > 0 && (
+          {(availableProviderEndpoints.length > 0 ||
+            suggestions.length > 0) && (
             <div className="grid gap-1 mb-3">
               <div className="eyebrow flex items-center justify-between">
-                <span>Provider endpoints</span>
+                <span>Available</span>
                 <Tooltip label="Refresh">
                   <button
                     className="btn btn-sm btn-secondary-borderless"
@@ -357,7 +370,7 @@ export default function ChainRpcModal({
                 </Tooltip>
               </div>
               <div className="glass-list">
-                {providerEndpoints.map((endpoint) => (
+                {availableProviderEndpoints.map((endpoint) => (
                   <div key={endpoint.id} className="list-row">
                     <div className="flex items-center justify-between gap-2 w-full min-w-0">
                       <div className="min-w-0">
@@ -395,16 +408,6 @@ export default function ChainRpcModal({
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
-          )}
-
-          {suggestions.length > 0 && (
-            <div className="grid gap-1 mb-3">
-              <span className="text-xs text-muted">
-                Public suggestions (chainlist)
-              </span>
-              <div className="glass-list">
                 {suggestions.slice(0, 6).map((url) => (
                   <div key={url} className="list-row">
                     <div className="flex items-center justify-between gap-2 w-full min-w-0">

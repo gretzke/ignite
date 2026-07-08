@@ -8,6 +8,7 @@ import { useAppDispatch, useAppSelector } from '../../../../store';
 import { chainsApi } from '../../../../store/features/chains/chainsSlice';
 import Tooltip from '../../../../components/Tooltip';
 import ConfirmDialog from '../../../../components/ConfirmDialog';
+import ChainIcon from './ChainIcon';
 import ChainModal from './ChainModal';
 import ChainRpcModal from './ChainRpcModal';
 
@@ -46,11 +47,12 @@ export default function ChainsTab() {
     <div
       key={chain.chainId}
       className="glass-surface nav-item flex items-center justify-between"
+      // .nav-item has no padding outside the sidebar; match the ProfilesTab
+      // row convention so the tile sits inside the card with breathing room.
+      style={{ padding: '0.9rem 1.1rem' }}
     >
       <div className="flex items-center gap-3 min-w-0">
-        <div className="icon-tile" aria-hidden>
-          {chain.name.slice(0, 1).toUpperCase()}
-        </div>
+        <ChainIcon chain={chain} />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="truncate">{chain.name}</span>

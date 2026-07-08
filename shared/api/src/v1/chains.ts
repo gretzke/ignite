@@ -29,6 +29,7 @@ export interface ChainInfo {
   rpc: string[]; // public suggestions (chainlist); custom chains may be empty
   explorers?: ChainExplorer[];
   infoURL?: string;
+  iconUrl?: string; // derived from the chainlist icon slug; custom chains have none
   source: "chainlist" | "custom";
 }
 
@@ -165,6 +166,7 @@ export const ChainInfoSchema = z.object({
   rpc: z.array(z.string()),
   explorers: z.array(ChainExplorerSchema).optional(),
   infoURL: z.string().optional(),
+  iconUrl: z.string().optional(),
   source: z.enum(["chainlist", "custom"]),
 });
 

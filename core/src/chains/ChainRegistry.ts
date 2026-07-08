@@ -269,6 +269,12 @@ function parseChainlist(raw: unknown): ChainInfo[] {
         : [],
       explorers: explorers?.length ? explorers : undefined,
       infoURL: typeof e.infoURL === 'string' ? e.infoURL : undefined,
+      // llamao hosts the chainlist icon set; only plain slugs are accepted
+      // (anything with path chars is dropped — untrusted dataset).
+      iconUrl:
+        typeof e.icon === 'string' && /^[a-z0-9_-]+$/i.test(e.icon)
+          ? `https://icons.llamao.fi/icons/chains/rsz_${e.icon}.jpg`
+          : undefined,
       source: 'chainlist',
     });
   }

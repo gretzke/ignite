@@ -147,3 +147,5 @@ blocking current functionality.
   surfacing.
 - **refresh query param z.coerce.boolean footgun** — ?refresh=false coerces true;
   frontend works around it; consider an explicit enum transform.
+- **Chain icons load from icons.llamao.fi** — external CDN; offline falls back to
+  the letter tile; consider core-side caching later.

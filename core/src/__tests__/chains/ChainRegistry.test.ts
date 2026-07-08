@@ -14,6 +14,7 @@ const CHAINLIST_SAMPLE = [
     nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
     infoURL: 'https://ethereum.org',
     shortName: 'eth',
+    icon: 'ethereum',
     chainId: 1,
     networkId: 1,
     explorers: [
@@ -37,6 +38,7 @@ const CHAINLIST_SAMPLE = [
     rpc: [],
     nativeCurrency: { name: 'X', symbol: 'X', decimals: -3 },
     shortName: 'bad',
+    icon: '../evil', // path chars → icon slug must be rejected
     chainId: 42,
   },
 ];
@@ -88,10 +90,19 @@ describe('ChainRegistry', () => {
     expect(eth.source).toBe('chainlist');
     expect(eth.rpc).toEqual(['https://eth.llamarpc.com']);
     expect(eth.explorers?.[0]?.url).toBe('https://etherscan.io');
+    // Icon slug maps to the llamao-hosted chainlist icon set.
+    expect(eth.iconUrl).toBe(
+      'https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg'
+    );
+    // Entries without an icon slug carry no iconUrl.
+    const op = data.chains.find((c) => c.chainId === 10)!;
+    expect(op.iconUrl).toBeUndefined();
     // Invalid (negative) decimals from the untrusted dataset default to 18
     // rather than being persisted as-is.
     const bad = data.chains.find((c) => c.chainId === 42)!;
     expect(bad.nativeCurrency.decimals).toBe(18);
+    // Icon slugs with path characters ('../evil') are rejected outright.
+    expect(bad.iconUrl).toBeUndefined();
     expect(files.has('/chains/chainlist-cache.json')).toBe(true);
     expect(data.fetchedAt).toBeTruthy();
   });
