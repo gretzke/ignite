@@ -2,7 +2,7 @@
 // Chains registry: user-defined chains (editable) + chainlist dataset
 // (read-only, searchable). All data is per-user; nothing here is shared.
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Pencil, Trash2, PlugZap } from 'lucide-react';
+import { Plus, RefreshCw, Pencil, Trash2, PlugZap, Plug } from 'lucide-react';
 import type { ChainInfo } from '@ignite/api';
 import { useAppDispatch, useAppSelector } from '../../../../store';
 import { chainsApi } from '../../../../store/features/chains/chainsSlice';
@@ -11,6 +11,7 @@ import ConfirmDialog from '../../../../components/ConfirmDialog';
 import ChainIcon from './ChainIcon';
 import ChainModal from './ChainModal';
 import ChainRpcModal from './ChainRpcModal';
+import RpcPluginsModal from './RpcPluginsModal';
 
 export default function ChainsTab() {
   const dispatch = useAppDispatch();
@@ -24,6 +25,7 @@ export default function ChainsTab() {
   }>({ open: false });
   const [rpcChain, setRpcChain] = useState<ChainInfo | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChainInfo | null>(null);
+  const [pluginsModalOpen, setPluginsModalOpen] = useState(false);
 
   // Debounced server-side search; the initial empty-query run on first
   // paint also covers the mount fetch (250ms delay is acceptable).
@@ -175,6 +177,13 @@ export default function ChainsTab() {
             </button>
           </Tooltip>
           <button
+            className="btn btn-sm btn-secondary"
+            onClick={() => setPluginsModalOpen(true)}
+          >
+            <Plug size={14} />
+            Configure plugins
+          </button>
+          <button
             className="btn btn-sm btn-primary"
             onClick={() => setChainModal({ open: true })}
           >
@@ -221,6 +230,10 @@ export default function ChainsTab() {
           onOpenChange={(open) => !open && setRpcChain(null)}
         />
       )}
+      <RpcPluginsModal
+        open={pluginsModalOpen}
+        onOpenChange={setPluginsModalOpen}
+      />
       <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}

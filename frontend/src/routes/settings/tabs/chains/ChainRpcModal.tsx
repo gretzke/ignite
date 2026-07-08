@@ -4,7 +4,15 @@
 // debounced pre-save health check (eth_chainId must match the chain).
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Loader2, Plus, Star, Trash2, Activity, RefreshCw } from 'lucide-react';
+import {
+  Loader2,
+  Plus,
+  Star,
+  Trash2,
+  Activity,
+  RefreshCw,
+  Settings2,
+} from 'lucide-react';
 import type {
   ChainInfo,
   RpcEndpoint,
@@ -16,8 +24,22 @@ import {
   rpcCheckReset,
   providerChecksReset,
 } from '../../../../store/features/chains/chainsSlice';
+import {
+  openConfigModal,
+  pluginsApi,
+  selectPluginRows,
+} from '../../../../store/features/plugins/pluginsSlice';
 import Tooltip from '../../../../components/Tooltip';
 import ChainIcon from './ChainIcon';
+
+// Cap on concurrent auto-probes of plugin-provided endpoints so opening a
+// chain with many configured providers doesn't fire a burst of requests.
+const MAX_CONCURRENT_PROBES = 3;
+
+// Provider-side entitlement errors (401/403/"unauthorized"/"forbidden") mean
+// the endpoint itself is reachable but the caller's key isn't enabled for
+// this chain — distinct from a generically unhealthy endpoint.
+const AUTH_ERROR_RE = /\b(401|403|unauthorized|forbidden)\b/i;
 
 interface ChainRpcModalProps {
   chain: ChainInfo;
@@ -76,11 +98,15 @@ function ProviderHealthChip({
       </span>
     );
   }
+  // Distinguish "provider rejected the key/plan for this chain" from a
+  // generically unreachable/broken endpoint — this is the empirical answer
+  // to "which chains does my Infura/Alchemy key actually have enabled".
+  const authGated = checkState.error ? AUTH_ERROR_RE.test(checkState.error) : false;
   return (
     <Tooltip label={checkState.error ?? 'Verification failed'}>
-      <span className="chip chip-err">
+      <span className={`chip ${authGated ? 'chip-warn' : 'chip-err'}`}>
         <span className="chip-dot" />
-        unhealthy
+        {authGated ? 'key not enabled' : 'unhealthy'}
       </span>
     </Tooltip>
   );
@@ -104,6 +130,9 @@ export default function ChainRpcModal({
   );
   const providerChecks = useAppSelector((state) => state.chains.providerChecks);
   const rpcCheck = useAppSelector((state) => state.chains.rpcCheck);
+  const rpcProviderPlugins = useAppSelector(selectPluginRows).filter(
+    (p) => p.type === 'rpc-provider'
+  );
   const [newUrl, setNewUrl] = useState('');
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   // Snapshot of the checkedAt seen when a verify was kicked off, so the
@@ -117,6 +146,12 @@ export default function ChainRpcModal({
   useEffect(() => {
     if (open) dispatch(chainsApi.fetchRpcs(chain.chainId));
   }, [open, chain.chainId, dispatch]);
+
+  // Plugin metadata (name/type) for the "no endpoints for this chain" hint
+  // rows below — refreshed on open so a just-installed plugin shows up.
+  useEffect(() => {
+    if (open) pluginsApi.refresh().forEach((a) => dispatch(a));
+  }, [open, dispatch]);
 
   // Clear the spinner as soon as a fresh verification result lands for the
   // endpoint currently being verified, instead of relying solely on the
@@ -170,10 +205,44 @@ export default function ChainRpcModal({
   const storedUrls = new Set(endpoints.map((e) => e.url));
   const suggestions = chain.rpc.filter((url) => !storedUrls.has(url));
   // A provider URL the user manually saved is already in Configured — don't
-  // show it twice under Available.
+  // show it twice under Plugin endpoints.
   const availableProviderEndpoints = providerEndpoints.filter(
     (e) => !storedUrls.has(e.url)
   );
+  // Installed rpc-provider plugins that contributed zero endpoints for this
+  // chain — the frontend can't tell "unconfigured key" from "chain not
+  // supported by this provider" apart, so the hint copy covers both.
+  const pluginIdsWithEndpoints = new Set(
+    providerEndpoints.map((e) => e.pluginId)
+  );
+  const pluginsWithoutEndpoints = rpcProviderPlugins.filter(
+    (p) => !pluginIdsWithEndpoints.has(p.pluginId)
+  );
+
+  // Auto-probe plugin endpoints that haven't been checked yet, capped at
+  // MAX_CONCURRENT_PROBES in flight. `checkProviderRpc` marks the endpoint
+  // 'checking' synchronously, so once dispatched it drops out of `pending`
+  // on the next render — this can't loop.
+  useEffect(() => {
+    if (!open) return;
+    const inFlight = availableProviderEndpoints.filter(
+      (e) => providerChecks[e.id] === 'checking'
+    ).length;
+    const room = MAX_CONCURRENT_PROBES - inFlight;
+    if (room <= 0) return;
+    const pending = availableProviderEndpoints.filter(
+      (e) => providerChecks[e.id] === undefined
+    );
+    pending
+      .slice(0, room)
+      .forEach((endpoint) =>
+        chainsApi.checkProviderRpc(chain.chainId, endpoint).forEach(dispatch)
+      );
+    // availableProviderEndpoints is a new array each render; the guard above
+    // is state-based (not reference-based), so re-running this effect on
+    // every render is harmless — it just re-checks and finds nothing to do.
+  }, [open, availableProviderEndpoints, providerChecks, chain.chainId, dispatch]);
+
   const trimmedUrl = newUrl.trim();
   const checkOk = rpcCheck.url === trimmedUrl && rpcCheck.result?.ok === true;
   const checkMismatch =
@@ -367,10 +436,10 @@ export default function ChainRpcModal({
 
           {!rpcsLoading &&
             (availableProviderEndpoints.length > 0 ||
-              suggestions.length > 0) && (
+              pluginsWithoutEndpoints.length > 0) && (
               <div className="grid gap-1 mb-3">
                 <div className="eyebrow flex items-center justify-between">
-                  <span>Available</span>
+                  <span>Plugin endpoints</span>
                   <Tooltip label="Refresh">
                     <button
                       className="btn btn-sm btn-secondary-borderless"
@@ -424,25 +493,23 @@ export default function ChainRpcModal({
                       </div>
                     </div>
                   ))}
-                  {suggestions.slice(0, 6).map((url) => (
-                    <div key={url} className="list-row">
+                  {pluginsWithoutEndpoints.map((plugin) => (
+                    <div key={plugin.pluginId} className="list-row text-muted">
                       <div className="flex items-center justify-between gap-2 w-full min-w-0">
-                        <span className="mono-data truncate text-muted">
-                          {url}
+                        <span className="truncate">
+                          {plugin.name ?? plugin.pluginId} — no endpoints for
+                          this chain (check its configuration)
                         </span>
                         <button
-                          className="btn btn-sm btn-secondary shrink-0"
+                          className="btn btn-sm btn-secondary-borderless shrink-0"
                           onClick={() =>
                             dispatch(
-                              chainsApi.addRpc(chain.chainId, {
-                                url,
-                                source: 'chainlist',
-                              })
+                              openConfigModal({ pluginId: plugin.pluginId })
                             )
                           }
                         >
-                          <Plus size={14} />
-                          Add
+                          <Settings2 size={14} />
+                          Configure
                         </button>
                       </div>
                     </div>
@@ -450,6 +517,37 @@ export default function ChainRpcModal({
                 </div>
               </div>
             )}
+
+          {!rpcsLoading && suggestions.length > 0 && (
+            <div className="grid gap-1 mb-3">
+              <div className="eyebrow">Public suggestions</div>
+              <div className="glass-list">
+                {suggestions.slice(0, 6).map((url) => (
+                  <div key={url} className="list-row">
+                    <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                      <span className="mono-data truncate text-muted">
+                        {url}
+                      </span>
+                      <button
+                        className="btn btn-sm btn-secondary shrink-0"
+                        onClick={() =>
+                          dispatch(
+                            chainsApi.addRpc(chain.chainId, {
+                              url,
+                              source: 'chainlist',
+                            })
+                          )
+                        }
+                      >
+                        <Plus size={14} />
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-end">
             <Dialog.Close asChild>
