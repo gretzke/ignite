@@ -58,6 +58,16 @@ const chainsSlice = createSlice({
     fetchChainsFailed(state) {
       state.loading = false;
     },
+    fetchRpcsFailed(state, action: PayloadAction<{ chainId: number }>) {
+      // Only initialize empty endpoints if never fetched; don't clobber on refresh failure.
+      const chainIdStr = String(action.payload.chainId);
+      if (state.rpcByChain[chainIdStr] === undefined) {
+        state.rpcByChain[chainIdStr] = [];
+      }
+      if (state.providerRpcByChain[chainIdStr] === undefined) {
+        state.providerRpcByChain[chainIdStr] = [];
+      }
+    },
     fetchRpcsSucceeded(
       state,
       action: PayloadAction<{
@@ -144,6 +154,7 @@ export const {
   fetchChainsStarted,
   fetchChainsSucceeded,
   fetchChainsFailed,
+  fetchRpcsFailed,
   fetchRpcsSucceeded,
   rpcVerificationReceived,
   rpcCheckStarted,
@@ -178,7 +189,7 @@ const refetchRpcs = (chainId: number, refresh?: boolean) =>
         endpoints: data.endpoints,
         providerEndpoints: data.providerEndpoints,
       }),
-    onError: () => fetchChainsFailed(),
+    onError: () => fetchRpcsFailed({ chainId }),
   });
 
 export const chainsApi = {
