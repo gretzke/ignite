@@ -5,6 +5,7 @@ import type {
   PluginPermissionRequest,
 } from '@ignite/plugin-types/types';
 import { PluginInstaller } from '../../plugins/install/PluginInstaller.js';
+import type { ConfigValue } from '../../plugins/config/PluginConfigStore.js';
 import type {
   PluginBuildBackend,
   PluginBuildResult,
@@ -41,6 +42,10 @@ function makeDeps() {
   > = {};
   const vaultDeletedPlugins: string[] = [];
   const configDeletedPlugins: string[] = [];
+  const configValues: Record<
+    string,
+    Record<string, { global?: ConfigValue; perChain?: Record<string, ConfigValue> }>
+  > = {};
   return {
     pluginManager: {
       addPlugin: vi.fn(
@@ -97,12 +102,14 @@ function makeDeps() {
       deletePlugin: vi.fn(async (id: string) => {
         configDeletedPlugins.push(id);
       }),
+      getValues: vi.fn(async (id: string) => configValues[id] ?? {}),
     },
     store,
     sources,
     grants,
     vaultDeletedPlugins,
     configDeletedPlugins,
+    configValues,
   };
 }
 
@@ -482,6 +489,199 @@ describe('PluginInstaller', () => {
         hostWrite: false,
         net: false,
         secrets: ['apikey'],
+      });
+    });
+
+    describe('re-consent for changed file-field defaults', () => {
+      const v1WithFile: PluginMetadata = {
+        ...waffleMeta,
+        permissions: [],
+        configFields: [
+          {
+            key: 'configfile',
+            label: 'Config File',
+            type: 'file',
+            default: '~/.waffle.json',
+          },
+        ],
+      };
+
+      async function installV1WithFile(deps: ReturnType<typeof makeDeps>) {
+        const installer = new PluginInstaller(
+          backendReturning({
+            imageTag: 'ignite/installed_waffle:1.0.0',
+            metadata: v1WithFile,
+          }),
+          deps
+        );
+        await installer.install(gitSource);
+        deps.grants.waffle = {
+          trust: 'trusted',
+          hostWrite: false,
+          net: false,
+          secrets: ['configfile'],
+        };
+        return installer;
+      }
+
+      it('drops the grant when the file field default changed and the user never configured their own path', async () => {
+        await installV1WithFile(deps);
+        const v2: PluginMetadata = {
+          ...waffleMeta,
+          version: '2.0.0',
+          permissions: [],
+          configFields: [
+            {
+              key: 'configfile',
+              label: 'Config File',
+              type: 'file',
+              default: '~/.waffle2.json',
+            },
+          ],
+        };
+        const updater = new PluginInstaller(
+          backendReturning({
+            imageTag: 'ignite/installed_waffle:2.0.0',
+            metadata: v2,
+          }),
+          deps
+        );
+
+        await updater.update('waffle');
+
+        expect(deps.grants.waffle).toEqual({
+          trust: 'untrusted',
+          hostWrite: false,
+          net: false,
+          secrets: [],
+        });
+      });
+
+      it('keeps the grant when the file field default changed but the user pinned their own path', async () => {
+        await installV1WithFile(deps);
+        deps.configValues.waffle = {
+          configfile: { global: '/home/user/custom-waffle.json' },
+        };
+        const v2: PluginMetadata = {
+          ...waffleMeta,
+          version: '2.0.0',
+          permissions: [],
+          configFields: [
+            {
+              key: 'configfile',
+              label: 'Config File',
+              type: 'file',
+              default: '~/.waffle2.json',
+            },
+          ],
+        };
+        const updater = new PluginInstaller(
+          backendReturning({
+            imageTag: 'ignite/installed_waffle:2.0.0',
+            metadata: v2,
+          }),
+          deps
+        );
+
+        await updater.update('waffle');
+
+        expect(deps.grants.waffle).toEqual({
+          trust: 'trusted',
+          hostWrite: false,
+          net: false,
+          secrets: ['configfile'],
+        });
+      });
+
+      it('keeps the grant when the file field default is unchanged', async () => {
+        await installV1WithFile(deps);
+        const v2: PluginMetadata = {
+          ...waffleMeta,
+          version: '2.0.0',
+          permissions: [],
+          configFields: [
+            {
+              key: 'configfile',
+              label: 'Config File',
+              type: 'file',
+              default: '~/.waffle.json',
+            },
+          ],
+        };
+        const updater = new PluginInstaller(
+          backendReturning({
+            imageTag: 'ignite/installed_waffle:2.0.0',
+            metadata: v2,
+          }),
+          deps
+        );
+
+        await updater.update('waffle');
+
+        expect(deps.grants.waffle).toEqual({
+          trust: 'trusted',
+          hostWrite: false,
+          net: false,
+          secrets: ['configfile'],
+        });
+      });
+
+      it('drops the grant on a secret -> file type transition, even with a user-configured path', async () => {
+        const v1WithSecret: PluginMetadata = {
+          ...waffleMeta,
+          permissions: [],
+          configFields: [
+            { key: 'apikey', label: 'API Key', type: 'string', secret: true },
+          ],
+        };
+        const installer = new PluginInstaller(
+          backendReturning({
+            imageTag: 'ignite/installed_waffle:1.0.0',
+            metadata: v1WithSecret,
+          }),
+          deps
+        );
+        await installer.install(gitSource);
+        deps.grants.waffle = {
+          trust: 'trusted',
+          hostWrite: false,
+          net: false,
+          secrets: ['apikey'],
+        };
+        // Even though the user has a configured path under the same key,
+        // the type transition alone must re-open consent.
+        deps.configValues.waffle = {
+          apikey: { global: '/home/user/apikey-as-a-file.json' },
+        };
+        const v2: PluginMetadata = {
+          ...waffleMeta,
+          version: '2.0.0',
+          permissions: [],
+          configFields: [
+            {
+              key: 'apikey',
+              label: 'API Key',
+              type: 'file',
+              default: '~/.apikey.json',
+            },
+          ],
+        };
+        const updater = new PluginInstaller(
+          backendReturning({
+            imageTag: 'ignite/installed_waffle:2.0.0',
+            metadata: v2,
+          }),
+          deps
+        );
+
+        await updater.update('waffle');
+
+        expect(deps.grants.waffle).toEqual({
+          trust: 'untrusted',
+          hostWrite: false,
+          net: false,
+          secrets: [],
+        });
       });
     });
   });

@@ -251,6 +251,24 @@ describe('plugin config handlers', () => {
     expect(deps.vaultStore.setSecret).not.toHaveBeenCalled();
   });
 
+  it('PUT config rejects a non-string value on a file field with CONFIG_SET_ERROR', async () => {
+    const { deps, configValues } = makeDeps();
+    const h = createPluginConfigHandlers(deps);
+    const reply = makeReply();
+    await h.setPluginConfigValue(
+      req({
+        params: { pluginId: PLUGIN_ID },
+        body: { key: 'configfile', value: true },
+      }),
+      reply
+    );
+    expect(reply.statusCode).toBe(400);
+    expect((reply.body as { code: string }).code).toBe('CONFIG_SET_ERROR');
+    expect(deps.configStore.setValue).not.toHaveBeenCalled();
+    expect(deps.providers.invalidate).not.toHaveBeenCalled();
+    expect(configValues.configfile).toBeUndefined();
+  });
+
   it('DELETE routes a file field to the config store (not the vault)', async () => {
     const { deps, configValues } = makeDeps();
     configValues.configfile = { global: '/home/user/.acme.json' };

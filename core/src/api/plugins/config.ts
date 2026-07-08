@@ -192,6 +192,18 @@ export function createPluginConfigHandlers(
             `Config field '${key}' is a secret; set it via PUT /plugins/${pluginId}/config/secret`
           );
         }
+        // A file field's value is a host filesystem path that later gets
+        // read and injected into the plugin's container — a non-string
+        // (e.g. an object or boolean) would either crash that later read or
+        // coerce into something the user never typed. Reject at the API
+        // boundary instead of trusting the client.
+        if (field.type === 'file' && typeof value !== 'string') {
+          return sendBadRequest(
+            reply,
+            ErrorCodes.CONFIG_SET_ERROR,
+            `Config field '${key}' is a file field and requires a string path, got ${typeof value}`
+          );
+        }
 
         await d.configStore.setValue(pluginId, key, value, chainId);
         d.providers.invalidate(pluginId);

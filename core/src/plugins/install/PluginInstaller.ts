@@ -54,7 +54,7 @@ export interface PluginInstallerDeps {
   // Remote inspection for git sources (track derivation + description).
   inspectRemote: (url: string) => Promise<InspectGitRemoteData>;
   vaultStore: Pick<VaultStore, 'deletePlugin'>;
-  configStore: Pick<PluginConfigStore, 'deletePlugin'>;
+  configStore: Pick<PluginConfigStore, 'deletePlugin' | 'getValues'>;
 }
 
 export interface PluginUpdateResult {
@@ -251,10 +251,45 @@ export class PluginInstaller {
           .filter((field) => field.secret || field.type === 'file')
           .map((field) => field.key)
       );
+
+      // A granted file-field key additionally needs re-consent when the
+      // plugin-authored default path changed, or when the field newly
+      // became a file field (e.g. secret -> file): the user's original
+      // approval covered a specific default (or a secret, not filesystem
+      // access), and a plugin-authored default is part of what was
+      // consented to — changing it (or the field's shape) re-opens consent.
+      // A user who pinned their own path via config is unaffected: they
+      // never relied on the plugin's default, so there's nothing new to
+      // consent to.
+      const oldFieldsByKey = new Map(
+        (previous.configFields ?? []).map((field) => [field.key, field])
+      );
+      const newFieldsByKey = new Map(
+        (metadata.configFields ?? []).map((field) => [field.key, field])
+      );
+      const configValues = await this.deps.configStore.getValues(pluginId);
+
+      const clampedSecrets = grant.secrets.filter((key) => {
+        if (!declaredSecretKeys.has(key)) return false;
+        const newField = newFieldsByKey.get(key);
+        if (newField?.type !== 'file') return true;
+        const oldField = oldFieldsByKey.get(key);
+        // Type transition into 'file' (from secret, or from no prior field)
+        // is treated as newly-consented — the old grant doesn't carry over.
+        if (oldField?.type !== 'file') return false;
+        if (newField.default !== oldField.default) {
+          const userPath = configValues[key]?.global;
+          if (!(typeof userPath === 'string' && userPath.length > 0)) {
+            return false;
+          }
+        }
+        return true;
+      });
+
       const clamped: PluginPermissions = {
         hostWrite: grant.hostWrite && requestedIds.has('hostWrite'),
         net: grant.net && requestedIds.has('net'),
-        secrets: grant.secrets.filter((key) => declaredSecretKeys.has(key)),
+        secrets: clampedSecrets,
       };
 
       const persisted: PluginMetadata = { ...metadata, baseImage: imageTag };
