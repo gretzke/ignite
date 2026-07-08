@@ -1,0 +1,8 @@
+{
+  "name": "ignite-alchemy-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Alchemy RPC-provider plugin for Ignite — turns a vaulted Alchemy API key into per-chain RPC endpoints",
+  "main": "index.cjs",
+  "license": "MIT"
+}
