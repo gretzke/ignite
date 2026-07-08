@@ -10,6 +10,7 @@ import {
   createDockerStreamDemuxer,
   createSentinelLogFilter,
   parsePluginOutput,
+  stripSentinelBlocks,
 } from './pluginTransport.js';
 import { INSTALLED_PLUGIN_ENTRYPOINT } from '../install/types.js';
 
@@ -146,8 +147,14 @@ export class PluginExecutionUtils {
           stream.on('end', () => {
             const { stdout, stderr } = demux.result();
             try {
+              // Strip the sentinel-framed result block BEFORE truncating: the
+              // result payload may carry granted secrets (e.g. key-embedding
+              // provider URLs) which must never reach core logs, and slicing
+              // first could cut the END sentinel and leak a partial block.
               getLogger().debug(
-                `🔍 Plugin stdout (${pluginId}): "${stdout.slice(0, 2000)}"`
+                `🔍 Plugin stdout (${pluginId}): "${stripSentinelBlocks(
+                  stdout
+                ).slice(0, 2000)}"`
               );
               getLogger().debug(
                 `🔍 Plugin stderr (${pluginId}): "${stderr.slice(0, 2000)}"`

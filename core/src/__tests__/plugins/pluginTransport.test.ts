@@ -3,6 +3,7 @@ import {
   createDockerStreamDemuxer,
   createSentinelLogFilter,
   parsePluginOutput,
+  stripSentinelBlocks,
 } from '../../plugins/utils/pluginTransport.js';
 import { RESULT_BEGIN, RESULT_END } from '@ignite/plugin-types';
 
@@ -275,5 +276,32 @@ describe('createSentinelLogFilter', () => {
     filter(`${RESULT_BEGIN}{"a":`);
     filter(`1}${RESULT_END}visible`);
     expect(out.join('')).toBe('visible');
+  });
+});
+
+// Diagnostics (e.g. the plugin-stdout debug echo in PluginExecutionUtils)
+// must never quote result payloads — they may carry granted secrets such as
+// key-embedding RPC provider URLs.
+describe('stripSentinelBlocks', () => {
+  it('returns text without sentinels unchanged', () => {
+    expect(stripSentinelBlocks('plain log output\n')).toBe(
+      'plain log output\n'
+    );
+  });
+
+  it('removes a framed block, keeping surrounding text', () => {
+    const text = `before\n${RESULT_BEGIN}{"secret":"sk-leak"}${RESULT_END}after\n`;
+    expect(stripSentinelBlocks(text)).toBe('before\nafter\n');
+  });
+
+  it('removes multiple framed blocks', () => {
+    const text = `a${RESULT_BEGIN}{"x":1}${RESULT_END}b${RESULT_BEGIN}{"y":2}${RESULT_END}c`;
+    expect(stripSentinelBlocks(text)).toBe('abc');
+  });
+
+  it('drops an unterminated trailing block entirely', () => {
+    // A truncated block must not leak a partial payload.
+    const text = `kept${RESULT_BEGIN}{"secret":"sk-lea`;
+    expect(stripSentinelBlocks(text)).toBe('kept');
   });
 });

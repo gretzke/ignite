@@ -118,3 +118,21 @@ blocking current functionality.
   resurrect entries. Shared singleton or per-file mutex.
 - **Surface newly-declared secret fields on plugin update** like newPermissions
   (installer TODO).
+
+## RPC provider follow-ups (D1c, 2026-07-08)
+
+- **File-picker config field type for chainz.** Pasting the config JSON into a
+  secret string field is the v1 bridge; a file-picker field type would let the
+  plugin read the host config file directly.
+- **Provider staleness/error surfacing in UI.** A broken/slow provider silently
+  degrades to an empty (cached) result; the chain RPC modal should be able to
+  show "provider errored/stale" instead of just omitting the section.
+- **Content-derived synthetic endpoint ids.** Ids are positional
+  (`plugin:<id>:<chainId>:<n>`), so a refresh that reorders entries can
+  misattach stale verification checks to the wrong row; derive ids from entry
+  content (url hash) instead.
+- **ProviderHealthChip wrong-chain distinction.** Per-row verify shows a
+  generic error for a URL that answers with the wrong chainId; distinguish
+  "reachable but wrong chain" from "unreachable".
+- **Ecosystem plugin GitHub spin-out** (infura/alchemy/chainz out of the
+  monorepo) tracked for D7.

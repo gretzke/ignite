@@ -185,6 +185,24 @@ export function createSentinelLogFilter(
   };
 }
 
+// Remove every sentinel-framed result block (inclusive) from a blob of
+// plugin output, including an unterminated trailing block, so diagnostics
+// can quote plugin output without echoing result payloads — which may carry
+// granted secrets (e.g. key-embedding RPC provider URLs, SPEC §6.8) — into
+// core logs.
+export function stripSentinelBlocks(text: string): string {
+  let out = '';
+  let rest = text;
+  for (;;) {
+    const begin = rest.indexOf(RESULT_BEGIN);
+    if (begin === -1) return out + rest;
+    out += rest.slice(0, begin);
+    const end = rest.indexOf(RESULT_END, begin + RESULT_BEGIN.length);
+    if (end === -1) return out; // unterminated block: drop the tail
+    rest = rest.slice(end + RESULT_END.length);
+  }
+}
+
 // Extract the plugin's JSON result from the last sentinel-framed block.
 // Sentinel framing is the only supported protocol: every plugin (built-in or
 // installed) must be bundled with a runPluginCLI that emits it. Throws when
