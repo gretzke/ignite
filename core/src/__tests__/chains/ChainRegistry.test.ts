@@ -41,6 +41,26 @@ const CHAINLIST_SAMPLE = [
     icon: '../evil', // path chars → icon slug must be rejected
     chainId: 42,
   },
+  {
+    // Second zero-TVL chain: exercises the alphabetical tiebreak
+    // ('Aardvark…' < 'Bad Decimals').
+    name: 'Aardvark Testnet',
+    chain: 'AARD',
+    rpc: [],
+    nativeCurrency: { name: 'Aard', symbol: 'AARD', decimals: 18 },
+    shortName: 'aard',
+    chainId: 7777,
+  },
+];
+
+// DefiLlama /chains sample: string chainId must coerce, entries without a
+// chainId (non-EVM) or without a positive numeric tvl must be ignored.
+const LLAMA_SAMPLE = [
+  { chainId: 1, name: 'Ethereum', tvl: 80e9 },
+  { chainId: 10, name: 'OP', tvl: 5e8 },
+  { chainId: '42161', name: 'Arb', tvl: 2e9 },
+  { name: 'Solana', tvl: 1e10 },
+  { chainId: 2, tvl: null },
 ];
 
 function makeDeps(overrides?: {
@@ -51,9 +71,10 @@ function makeDeps(overrides?: {
   const files = overrides?.files ?? new Map<string, unknown>();
   const fetchImpl =
     overrides?.fetchImpl ??
-    ((async () => ({
+    ((async (url: string | URL) => ({
       ok: true,
-      json: async () => CHAINLIST_SAMPLE,
+      json: async () =>
+        String(url).includes('api.llama.fi') ? LLAMA_SAMPLE : CHAINLIST_SAMPLE,
     })) as unknown as typeof fetch);
   return {
     files,
@@ -83,7 +104,7 @@ describe('ChainRegistry', () => {
     const data = await registry.listChains();
     // Broken entry (no chainId), non-integer chainId and zero chainId are
     // all dropped; templated RPC URL filtered.
-    expect(data.total).toBe(3);
+    expect(data.total).toBe(4);
     expect(data.chains.some((c) => c.chainId === 1.5)).toBe(false);
     expect(data.chains.some((c) => c.chainId === 0)).toBe(false);
     const eth = data.chains.find((c) => c.chainId === 1)!;
@@ -108,15 +129,21 @@ describe('ChainRegistry', () => {
   });
 
   it('serves the cache without refetching while fresh', async () => {
-    const fetchSpy = vi.fn(async () => ({
+    const fetchSpy = vi.fn(async (url: string | URL) => ({
       ok: true,
-      json: async () => CHAINLIST_SAMPLE,
+      json: async () =>
+        String(url).includes('api.llama.fi') ? LLAMA_SAMPLE : CHAINLIST_SAMPLE,
     }));
     const { deps } = makeDeps({ fetchImpl: fetchSpy as unknown as typeof fetch });
     const registry = new ChainRegistry(deps);
     await registry.listChains();
     await registry.listChains();
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // One refresh = one chainlist fetch + one DefiLlama TVL fetch; the
+    // second listChains is served entirely from cache.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const urls = fetchSpy.mock.calls.map(([u]) => String(u));
+    expect(urls.filter((u) => u.includes('chainid.network'))).toHaveLength(1);
+    expect(urls.filter((u) => u.includes('api.llama.fi'))).toHaveLength(1);
   });
 
   it('serves stale cache when a refresh attempt fails', async () => {
@@ -196,7 +223,7 @@ describe('ChainRegistry', () => {
     const registry = new ChainRegistry(deps);
     const limited = await registry.listChains({ limit: 1 });
     expect(limited.chains).toHaveLength(1);
-    expect(limited.total).toBe(3);
+    expect(limited.total).toBe(4);
   });
 
   it('deleteCustomChain removes custom entries and rejects non-custom ids', async () => {
@@ -242,5 +269,110 @@ describe('ChainRegistry', () => {
     await expect(registry.deleteCustomChain(1)).rejects.toMatchObject({
       code: 'CHAIN_NOT_CUSTOM',
     });
+  });
+
+  it('orders chainlist entries by TVL descending, zero-TVL last with alpha tiebreak', async () => {
+    const { deps } = makeDeps();
+    const registry = new ChainRegistry(deps);
+    const data = await registry.listChains();
+    // Ethereum ($80B) > OP ($0.5B) > zero-TVL chains alphabetically
+    // (Aardvark Testnet before Bad Decimals).
+    expect(data.chains.map((c) => c.chainId)).toEqual([1, 10, 7777, 42]);
+    // TVL is cache-internal ordering data and must never appear on the
+    // ChainInfo entries themselves.
+    expect(data.chains.some((c) => 'tvl' in c)).toBe(false);
+  });
+
+  it('coerces string chainIds from DefiLlama and ignores entries missing chainId or tvl', async () => {
+    const { deps, files } = makeDeps();
+    const registry = new ChainRegistry(deps);
+    await registry.listChains();
+    const cache = files.get('/chains/chainlist-cache.json') as {
+      tvls?: Record<string, number>;
+    };
+    // '42161' (string) coerced; Solana (no chainId) and chainId 2 (null
+    // tvl) dropped.
+    expect(cache.tvls).toEqual({ '1': 80e9, '10': 5e8, '42161': 2e9 });
+  });
+
+  it('still refreshes chains when the DefiLlama fetch fails, ordering by name', async () => {
+    const llamaDown = (async (url: string | URL) => {
+      if (String(url).includes('api.llama.fi')) throw new Error('llama down');
+      return { ok: true, json: async () => CHAINLIST_SAMPLE };
+    }) as unknown as typeof fetch;
+    const { deps } = makeDeps({ fetchImpl: llamaDown });
+    const registry = new ChainRegistry(deps);
+    const data = await registry.listChains();
+    expect(data.total).toBe(4);
+    // No TVL data at all → pure name-alpha order.
+    expect(data.chains.map((c) => c.chainId)).toEqual([7777, 42, 1, 10]);
+  });
+
+  it('keeps the previous TVLs when a refresh succeeds but the DefiLlama fetch fails', async () => {
+    const files = new Map<string, unknown>();
+    files.set('/chains/chainlist-cache.json', {
+      fetchedAt: new Date(0).toISOString(), // ancient → stale, forces refresh
+      chains: [],
+      tvls: { '10': 123 }, // stale TVL beats none
+    });
+    const llamaDown = (async (url: string | URL) => {
+      if (String(url).includes('api.llama.fi')) throw new Error('llama down');
+      return { ok: true, json: async () => CHAINLIST_SAMPLE };
+    }) as unknown as typeof fetch;
+    const { deps } = makeDeps({ fetchImpl: llamaDown, files });
+    const registry = new ChainRegistry(deps);
+    const data = await registry.listChains();
+    expect(data.total).toBe(4);
+    // Chain 10 leads on the preserved stale TVL; the rest fall back to
+    // name-alpha.
+    expect(data.chains.map((c) => c.chainId)).toEqual([10, 7777, 42, 1]);
+    const cache = files.get('/chains/chainlist-cache.json') as {
+      tvls?: Record<string, number>;
+    };
+    expect(cache.tvls).toEqual({ '10': 123 });
+  });
+
+  it('reads pre-TVL cache files without a tvls field', async () => {
+    const files = new Map<string, unknown>();
+    files.set('/chains/chainlist-cache.json', {
+      fetchedAt: new Date(1_800_000_000_000).toISOString(), // fresh → no refetch
+      chains: [
+        {
+          chainId: 10,
+          name: 'OP Mainnet',
+          nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+          rpc: [],
+          source: 'chainlist',
+        },
+        {
+          chainId: 1,
+          name: 'Ethereum Mainnet',
+          nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+          rpc: [],
+          source: 'chainlist',
+        },
+      ],
+    });
+    const boom = (async () => {
+      throw new Error('must not fetch');
+    }) as unknown as typeof fetch;
+    const { deps } = makeDeps({ fetchImpl: boom, files });
+    const registry = new ChainRegistry(deps);
+    const data = await registry.listChains();
+    // Missing tvls reads as an empty map → name-alpha order.
+    expect(data.chains.map((c) => c.chainId)).toEqual([1, 10]);
+  });
+
+  it('lists custom chains before chainlist entries regardless of TVL', async () => {
+    const { deps } = makeDeps();
+    const registry = new ChainRegistry(deps);
+    await registry.upsertCustomChain({
+      chainId: 555,
+      name: 'Zero TVL Local Fork',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    });
+    const data = await registry.listChains();
+    // Custom chain leads even though Ethereum has $80B TVL.
+    expect(data.chains.map((c) => c.chainId)).toEqual([555, 1, 10, 7777, 42]);
   });
 });

@@ -25,9 +25,15 @@ export interface ChainRegistryDeps {
 interface ChainlistCacheFile {
   fetchedAt: string;
   chains: ChainInfo[];
+  // chainId → DefiLlama TVL in USD, kept beside (never on) the chain entries
+  // so TVL stays cache-internal and can't leak into ChainInfo responses.
+  // Absent in caches written before TVL support: read as empty, self-heals
+  // on the next refresh.
+  tvls?: Record<string, number>;
 }
 
 const CHAINLIST_URL = 'https://chainid.network/chains.json';
+const LLAMA_TVL_URL = 'https://api.llama.fi/chains';
 const CHAINLIST_TTL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 20_000;
 const DEFAULT_LIMIT = 50;
@@ -52,9 +58,16 @@ export class ChainRegistry {
     const cache = await this.ensureFresh();
     const custom = await this.readCustomChains();
     const shadowed = new Set(custom.map((c) => c.chainId));
+    // chainlist.org order: TVL descending (missing → 0), name ascending as
+    // tiebreak. Custom chains always lead. Sorted before the q-filter/limit
+    // so the default top-N view surfaces major chains (filtering preserves
+    // order).
+    const tvls = cache?.tvls ?? {};
     const merged = [
       ...custom,
-      ...(cache?.chains ?? []).filter((c) => !shadowed.has(c.chainId)),
+      ...(cache?.chains ?? [])
+        .filter((c) => !shadowed.has(c.chainId))
+        .sort(byTvlDescThenName(tvls)),
     ];
 
     const q = opts?.q?.trim().toLowerCase();
@@ -143,23 +156,17 @@ export class ChainRegistry {
 
   private async doRefresh(): Promise<RefreshChainsData> {
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-      let raw: unknown;
-      try {
-        const response = await this.deps.fetchImpl(CHAINLIST_URL, {
-          signal: controller.signal,
-          headers: { accept: 'application/json' },
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        raw = await response.json();
-      } finally {
-        clearTimeout(timer);
-      }
+      // The chainlist fetch is load-bearing (failure fails the refresh);
+      // TVL is ordering garnish and never throws (see fetchTvls).
+      const [raw, tvls] = await Promise.all([
+        this.fetchJson(CHAINLIST_URL),
+        this.fetchTvls(),
+      ]);
       const chains = parseChainlist(raw);
       const cache: ChainlistCacheFile = {
         fetchedAt: new Date(this.deps.now()).toISOString(),
         chains,
+        tvls,
       };
       await this.deps.fileSystem.writeJsonFile(
         this.deps.fileSystem.getChainlistCachePath(),
@@ -175,6 +182,33 @@ export class ChainRegistry {
         ),
         { code: 'CHAINLIST_REFRESH_ERROR' }
       );
+    }
+  }
+
+  private async fetchJson(url: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await this.deps.fetchImpl(url, {
+        signal: controller.signal,
+        headers: { accept: 'application/json' },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // A DefiLlama failure must not fail the refresh: chains still update and
+  // ordering falls back to the previous cache's TVLs when available (stale
+  // TVL beats none), else name-alpha via an empty map.
+  private async fetchTvls(): Promise<Record<string, number>> {
+    try {
+      return parseTvls(await this.fetchJson(LLAMA_TVL_URL));
+    } catch {
+      const previous = await this.readCache();
+      return previous?.tvls ?? {};
     }
   }
 
@@ -220,6 +254,38 @@ export class ChainRegistry {
     }
     return [];
   }
+}
+
+// Defensive mapping of the DefiLlama /chains dataset: roughly half the
+// entries carry no chainId (non-EVM chains) and some send chainId as a
+// string. Only positive-integer chainIds with a positive numeric TVL are
+// kept.
+function parseTvls(raw: unknown): Record<string, number> {
+  const tvls: Record<string, number> = {};
+  if (!Array.isArray(raw)) return tvls;
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    const chainId =
+      typeof e.chainId === 'number' || typeof e.chainId === 'string'
+        ? Number(e.chainId)
+        : NaN;
+    if (!Number.isInteger(chainId) || chainId <= 0) continue;
+    if (typeof e.tvl !== 'number' || !(e.tvl > 0)) continue;
+    tvls[String(chainId)] = e.tvl;
+  }
+  return tvls;
+}
+
+function byTvlDescThenName(
+  tvls: Record<string, number>
+): (a: ChainInfo, b: ChainInfo) => number {
+  return (a, b) => {
+    const diff =
+      (tvls[String(b.chainId)] ?? 0) - (tvls[String(a.chainId)] ?? 0);
+    if (diff !== 0) return diff;
+    return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  };
 }
 
 // Defensive mapping of the remote dataset: unknown shape, entries may be
