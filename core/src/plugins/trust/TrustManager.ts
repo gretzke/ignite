@@ -54,9 +54,13 @@ export const UNTRUSTED_GRANT: PermissionGrant = Object.freeze({
 // action. Fail-closed as usual: anything but an explicit `true` is false.
 // setTrust persists only the new shape, so entries migrate on next write.
 function coerceRepoWrite(
-  permissions: PluginPermissions & { hostWrite?: unknown }
+  // Persisted JSON may predate the rename: repoWrite can be absent entirely.
+  permissions: Partial<PluginPermissions> & { hostWrite?: unknown }
 ): boolean {
-  return permissions.repoWrite === true || permissions.hostWrite === true;
+  // When the new key exists it is authoritative — a hand-edited file holding
+  // {repoWrite: false, hostWrite: true} must fail closed, not OR-escalate.
+  if ('repoWrite' in permissions) return permissions.repoWrite === true;
+  return permissions.hostWrite === true;
 }
 
 export class TrustManager {

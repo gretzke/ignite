@@ -151,3 +151,6 @@ blocking current functionality.
   frontend works around it; consider an explicit enum transform.
 - **Chain icons load from icons.llamao.fi** — external CDN; offline falls back to
   the letter tile; consider core-side caching later.
+- **Update-flow scope re-prompt asymmetry.** plugin.update only prompts on new
+  boolean permissions; newly-declared secret/file scopes on update do not
+  re-prompt the way installs now do (jobsEffects update branch).
