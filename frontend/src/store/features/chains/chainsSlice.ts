@@ -68,8 +68,11 @@ const chainsSlice = createSlice({
     ) {
       state.rpcByChain[String(action.payload.chainId)] =
         action.payload.endpoints;
-      state.providerRpcByChain[String(action.payload.chainId)] =
-        action.payload.providerEndpoints ?? [];
+      // Routes that don't compute provider endpoints (setPreferredRpc) must not clobber the cached list.
+      if (action.payload.providerEndpoints !== undefined) {
+        state.providerRpcByChain[String(action.payload.chainId)] =
+          action.payload.providerEndpoints;
+      }
     },
     rpcVerificationReceived(
       state,
@@ -322,7 +325,6 @@ export const chainsApi = {
         fetchRpcsSucceeded({
           chainId,
           endpoints: data.endpoints,
-          providerEndpoints: data.providerEndpoints,
         }),
       onError: () => fetchChainsFailed(),
     }),
