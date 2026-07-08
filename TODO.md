@@ -6,7 +6,7 @@ blocking current functionality.
 
 ## Deferred features (no consumer yet)
 
-- **Secret-scope permission dimension.** The trust model is `{ hostWrite, net }` booleans.
+- **Secret-scope permission dimension.** The trust model is `{ repoWrite, net }` booleans.
   When explorer/verifier plugins land (they receive a user's block-explorer API key), the
   grant needs a named-secret scope so the approval dialog can show "this plugin receives
   your Etherscan API key" and the runtime injects the secret only when granted. Touches
@@ -78,7 +78,7 @@ blocking current functionality.
 ## Plugin security (original)
 
 - Ensure compiler containers can only access `/workspace` (largely addressed by Phase 3: workspace is a
-  single bind mount, `:ro` unless `hostWrite`, and `RepoService.getFile` rejects symlink escapes; revisit
+  single bind mount, `:ro` unless `repoWrite`, and `RepoService.getFile` rejects symlink escapes; revisit
   if additional mounts are ever added).
 
 ## Chains & RPC store follow-ups (D1a final review, 2026-07-07)

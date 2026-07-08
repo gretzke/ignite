@@ -25,7 +25,7 @@ const PLUGINS_DIR = path.resolve(__dirname, '../../../plugins');
 // FileSystem.getInstance().getIgniteHome() at construction time, and those
 // singletons are first built inside the `it` below — so pinning a custom home
 // at module scope guarantees the registry/trust JSON never touch the real
-// ~/.ignite. This keeps state (esp. the stub's trusted/hostWrite grant) out
+// ~/.ignite. This keeps state (esp. the stub's trusted/repoWrite grant) out
 // of the developer's real Ignite install, so an interrupted run that skips
 // afterAll can't poison the next run's PERMISSION_REQUIRED assertion. It only
 // redirects the JSON stores; Docker containers/images are global, so the real
@@ -83,13 +83,13 @@ describe.skipIf(!ready)('third-party plugin runtime (Docker)', () => {
       expect(denied.error.code).toBe('PERMISSION_REQUIRED');
       expect(denied.error.details).toMatchObject({
         pluginId: 'stub-compiler',
-        permission: 'hostWrite',
+        permission: 'repoWrite',
       });
     }
 
-    // Approve hostWrite.
+    // Approve repoWrite.
     await TrustManager.getInstance().setTrust('stub-compiler', 'trusted', {
-      hostWrite: true,
+      repoWrite: true,
       net: false,
       secrets: [],
     });
@@ -100,7 +100,7 @@ describe.skipIf(!ready)('third-party plugin runtime (Docker)', () => {
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'stub-ws-'));
     await execFileAsync('git', ['init', '-q'], { cwd: workspace });
 
-    // Now the compile runs from the self-contained image, with hostWrite
+    // Now the compile runs from the self-contained image, with repoWrite
     // approved, against the host workspace bind-mounted read-write.
     const ok = await PluginExecutor.getInstance().execute(
       'stub-compiler',
@@ -110,7 +110,7 @@ describe.skipIf(!ready)('third-party plugin runtime (Docker)', () => {
     );
     expect(ok.success).toBe(true);
 
-    // Prove hostWrite actually happened: the stub's compile() wrote a marker
+    // Prove repoWrite actually happened: the stub's compile() wrote a marker
     // into /workspace, which is bind-mounted from the host workspace dir.
     const marker = await fs.readFile(
       path.join(workspace, '.stub-compiler-ran'),

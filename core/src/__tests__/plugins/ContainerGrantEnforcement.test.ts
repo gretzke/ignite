@@ -69,7 +69,7 @@ describe('ContainerOrchestrator workspaceBind grant enforcement (Phase 3)', () =
     };
   }
 
-  it('mounts the workspace read-only for an untrusted (no hostWrite) grant', async () => {
+  it('mounts the workspace read-only for an untrusted (no repoWrite) grant', async () => {
     const opts = await createWithWorkspaceBind(UNTRUSTED_GRANT);
     expect(opts.HostConfig.Binds).toEqual([
       'ignite-cache-vol:/cache',
@@ -77,7 +77,7 @@ describe('ContainerOrchestrator workspaceBind grant enforcement (Phase 3)', () =
     ]);
   });
 
-  it('mounts the workspace read-write when the grant has hostWrite', async () => {
+  it('mounts the workspace read-write when the grant has repoWrite', async () => {
     const opts = await createWithWorkspaceBind(NATIVE_GRANT);
     expect(opts.HostConfig.Binds).toEqual([
       'ignite-cache-vol:/cache',
@@ -103,17 +103,17 @@ describe('ContainerOrchestrator workspaceBind grant enforcement (Phase 3)', () =
 });
 
 describe('missingPermission', () => {
-  it('maps compile to hostWrite and verify to net', async () => {
+  it('maps compile to repoWrite and verify to net', async () => {
     const { missingPermission } = await import(
       '../../plugins/containers/PluginExecutor.js'
     );
-    expect(missingPermission('compile', UNTRUSTED_GRANT)).toBe('hostWrite');
+    expect(missingPermission('compile', UNTRUSTED_GRANT)).toBe('repoWrite');
     expect(missingPermission('verify', UNTRUSTED_GRANT)).toBe('net');
     expect(missingPermission('compile', NATIVE_GRANT)).toBeNull();
     expect(missingPermission('detect', UNTRUSTED_GRANT)).toBeNull();
   });
 
-  it('maps install to hostWrite, matching the runtime write it performs', async () => {
+  it('maps install to repoWrite, matching the runtime write it performs', async () => {
     // Clean compile runs install before compile (forge install / git
     // submodule writes into /workspace). Without this gate an untrusted
     // plugin's install runs, gets a :ro mount, and fails at the container
@@ -121,7 +121,7 @@ describe('missingPermission', () => {
     const { missingPermission } = await import(
       '../../plugins/containers/PluginExecutor.js'
     );
-    expect(missingPermission('install', UNTRUSTED_GRANT)).toBe('hostWrite');
+    expect(missingPermission('install', UNTRUSTED_GRANT)).toBe('repoWrite');
     expect(missingPermission('install', NATIVE_GRANT)).toBeNull();
   });
 });

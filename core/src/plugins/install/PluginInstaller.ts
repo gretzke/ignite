@@ -20,6 +20,7 @@ import { PluginConfigStore } from '../config/PluginConfigStore.js';
 import { getLogger } from '../../utils/logger.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 import { pluginCacheVolumeName } from '../utils/pluginCache.js';
+import { normalizeLegacyPermissions } from '../utils/permissionCompat.js';
 import { deriveTrack, inspectGitRemote } from './gitRemote.js';
 import type { InspectGitRemoteData } from '@ignite/api';
 import type { PluginBuildBackend, PluginInstallSource } from './types.js';
@@ -135,8 +136,12 @@ export class PluginInstaller {
 
   async install(source: PluginInstallSource): Promise<PluginMetadata> {
     source = await this.enrichGitSource(source);
-    const { imageTag, metadata, commit } =
-      await this.backend.buildPluginImage(source);
+    const {
+      imageTag,
+      metadata: builtMetadata,
+      commit,
+    } = await this.backend.buildPluginImage(source);
+    const metadata = this.normalizePermissionManifest(builtMetadata);
     if (source.kind === 'git' && commit) {
       source = { ...source, commit };
     }
@@ -155,7 +160,7 @@ export class PluginInstaller {
       // self-declared by the candidate image's getInfo, and trust.json grants
       // are keyed by id. Silently overwriting the registry entry would let
       // brand-new, never-approved code inherit the prior grant (e.g.
-      // hostWrite) without a fresh approval prompt. Caller must uninstall
+      // repoWrite) without a fresh approval prompt. Caller must uninstall
       // first, which revokes trust before the id becomes available again.
       if (await this.deps.pluginManager.hasPlugin(metadata.id)) {
         throw new PluginError(
@@ -215,8 +220,12 @@ export class PluginInstaller {
     this.assertSameSourceIdentity(pluginId, stored, effective);
     effective = await this.enrichGitSource(effective);
 
-    const { imageTag, metadata, commit } =
-      await this.backend.buildPluginImage(effective);
+    const {
+      imageTag,
+      metadata: builtMetadata,
+      commit,
+    } = await this.backend.buildPluginImage(effective);
+    const metadata = this.normalizePermissionManifest(builtMetadata);
     if (effective.kind === 'git' && commit) {
       effective = { ...effective, commit };
     }
@@ -287,7 +296,7 @@ export class PluginInstaller {
       });
 
       const clamped: PluginPermissions = {
-        hostWrite: grant.hostWrite && requestedIds.has('hostWrite'),
+        repoWrite: grant.repoWrite && requestedIds.has('repoWrite'),
         net: grant.net && requestedIds.has('net'),
         secrets: clampedSecrets,
       };
@@ -296,7 +305,7 @@ export class PluginInstaller {
       await this.deps.pluginManager.addPlugin(persisted, effective);
       await this.deps.trust.setTrust(
         pluginId,
-        clamped.hostWrite || clamped.net || clamped.secrets.length > 0
+        clamped.repoWrite || clamped.net || clamped.secrets.length > 0
           ? 'trusted'
           : 'untrusted',
         clamped
@@ -467,6 +476,20 @@ export class PluginInstaller {
         ErrorCodes.PLUGIN_UPDATE_INVALID
       );
     }
+  }
+
+  // Manifests authored before the hostWrite → repoWrite rename still declare
+  // the legacy id: accept them by normalizing at install/update time so the
+  // persisted registry entry (and everything downstream) carries 'repoWrite'.
+  private normalizePermissionManifest(metadata: PluginMetadata): PluginMetadata {
+    const { metadata: normalized, renamed } =
+      normalizeLegacyPermissions(metadata);
+    if (renamed) {
+      getLogger().info(
+        `ℹ️ Plugin ${metadata.id} declares the legacy permission id 'hostWrite'; normalized to 'repoWrite'`
+      );
+    }
+    return normalized;
   }
 
   // Validate metadata self-declared by the candidate image before it's

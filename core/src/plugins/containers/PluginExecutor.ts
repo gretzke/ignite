@@ -75,8 +75,8 @@ type BooleanPermission = Exclude<keyof PluginPermissions, 'secrets'>;
 // SPEC.md §3.1 operations matrix: install and compile mutate the shared
 // volume, verify talks to block explorers. detect/mount/etc. need no grant.
 export const OPERATION_PERMISSIONS: Record<string, BooleanPermission> = {
-  install: 'hostWrite',
-  compile: 'hostWrite',
+  install: 'repoWrite',
+  compile: 'repoWrite',
   verify: 'net',
 };
 
@@ -389,7 +389,7 @@ export class PluginExecutor {
 
   // Create ephemeral container with AutoRemove=true, bind-mounting the host
   // workspace directly when the plugin requiresRepo (grant enforcement — the
-  // orchestrator downgrades to :ro without hostWrite — mirrors the old
+  // orchestrator downgrades to :ro without repoWrite — mirrors the old
   // VolumesFrom rule this replaces).
   private async createEphemeralContainer(
     pluginConfig: PluginConfig,

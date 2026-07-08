@@ -15,7 +15,7 @@ const META = {
   baseImage: 'ignite/installed_git-fixture:0.0.1',
   permissions: [
     {
-      id: 'hostWrite',
+      id: 'repoWrite',
       description: 'Write a marker file into the workspace to prove writes.',
     },
   ],

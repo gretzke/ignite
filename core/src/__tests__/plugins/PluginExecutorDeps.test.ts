@@ -3,8 +3,8 @@ import { PluginExecutor } from '../../plugins/containers/PluginExecutor.js';
 import { PluginType } from '@ignite/plugin-types/types';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 
-const GRANT_NONE = { trust: 'untrusted', hostWrite: false, net: false };
-const GRANT_ALL = { trust: 'native', hostWrite: true, net: true };
+const GRANT_NONE = { trust: 'untrusted', repoWrite: false, net: false };
+const GRANT_ALL = { trust: 'native', repoWrite: true, net: true };
 
 function makeExecutor(overrides: Record<string, unknown> = {}) {
   const executeOperation = vi.fn(async () => ({ success: true, data: {} }));
@@ -48,7 +48,7 @@ function makeExecutor(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PluginExecutor with injected deps', () => {
-  it('denies a hostWrite operation for an ungranted plugin without touching Docker', async () => {
+  it('denies a repoWrite operation for an ungranted plugin without touching Docker', async () => {
     const { executor, deps } = makeExecutor({
       trust: { getGrant: async () => GRANT_NONE },
     });
@@ -162,7 +162,7 @@ describe('PluginExecutor with injected deps', () => {
         trust: {
           getGrant: async () => ({
             trust: 'trusted',
-            hostWrite: false,
+            repoWrite: false,
             net: false,
             secrets: ['grantedSecret'],
           }),
@@ -223,7 +223,7 @@ describe('PluginExecutor with injected deps', () => {
         trust: {
           getGrant: async () => ({
             trust: 'trusted',
-            hostWrite: false,
+            repoWrite: false,
             net: false,
             secrets: ['chainz-config'],
           }),
@@ -275,7 +275,7 @@ describe('PluginExecutor with injected deps', () => {
         trust: {
           getGrant: async () => ({
             trust: 'trusted',
-            hostWrite: false,
+            repoWrite: false,
             net: false,
             secrets: [],
           }),
@@ -326,7 +326,7 @@ describe('PluginExecutor with injected deps', () => {
         trust: {
           getGrant: async () => ({
             trust: 'trusted',
-            hostWrite: false,
+            repoWrite: false,
             net: false,
             secrets: ['grantedSecret'],
           }),

@@ -52,7 +52,7 @@ function makeDeps() {
       revoke: vi.fn(async () => {}),
       getGrant: vi.fn(async () => ({
         trust: 'untrusted' as const,
-        hostWrite: false,
+        repoWrite: false,
         net: false,
         secrets: [],
       })),

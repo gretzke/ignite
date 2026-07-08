@@ -141,7 +141,7 @@ describe.skipIf(!ready)('rpc-provider plugin endpoints (Docker)', () => {
     // deliberately malformed sibling entries (chainId 999 with a non-url,
     // chainId -5) must be dropped by core-side validation. ===
     await TrustManager.getInstance().setTrust(PLUGIN_ID, 'trusted', {
-      hostWrite: false,
+      repoWrite: false,
       net: false,
       secrets: ['api-key'],
     });

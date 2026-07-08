@@ -75,7 +75,7 @@ apiGate.startListening({
           api.dispatch(
             permissionRequired({
               pluginId: err.body.details.pluginId,
-              permission: err.body.details.permission as 'hostWrite' | 'net',
+              permission: err.body.details.permission as 'repoWrite' | 'net',
               retry: { endpoint: String(endpoint), params, query, body },
             })
           );

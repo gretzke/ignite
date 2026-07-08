@@ -21,7 +21,7 @@ function metadata(
 function grant(overrides: Partial<PermissionGrant> = {}): PermissionGrant {
   return {
     trust: 'trusted',
-    hostWrite: false,
+    repoWrite: false,
     net: false,
     secrets: [],
     ...overrides,

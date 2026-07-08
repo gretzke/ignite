@@ -13,11 +13,11 @@ import {
 import type { RootState } from '../store/store';
 
 const PERMISSION_TITLES: Record<string, string> = {
-  hostWrite: 'Host Write',
+  repoWrite: 'Repo Write',
   net: 'Network',
 };
 
-type Pending = { hostWrite: boolean; net: boolean };
+type Pending = { repoWrite: boolean; net: boolean };
 
 // Global permission-grant modal. Opened from a plugin card's Permissions
 // button, automatically after installing a plugin that requests permissions,
@@ -30,13 +30,13 @@ export default function PluginPermissionsModal() {
     modal ? selectPluginRow(s, modal.pluginId) : undefined
   );
   const [pending, setPending] = useState<Pending>({
-    hostWrite: false,
+    repoWrite: false,
     net: false,
   });
   // Secret-scope grants (config fields marked `secret: true`, AND `file`
   // fields — a file field's grant covers file *contents* flowing to the
   // plugin, same dimension as a secret). Bound to Switches below the
-  // hostWrite/net rows.
+  // repoWrite/net rows.
   const [pendingSecrets, setPendingSecrets] = useState<Set<string>>(new Set());
   const config = useAppSelector((s: RootState) =>
     modal ? selectPluginConfig(s, modal.pluginId) : undefined
@@ -48,14 +48,14 @@ export default function PluginPermissionsModal() {
   // Re-seed the toggles from the stored grant whenever the modal targets a
   // (possibly different) plugin or its trust state arrives from the server.
   const grantKey = modal
-    ? `${modal.pluginId}:${row?.permissions.hostWrite}:${
+    ? `${modal.pluginId}:${row?.permissions.repoWrite}:${
         row?.permissions.net
       }:${(row?.permissions.secrets ?? []).slice().sort().join(',')}`
     : '';
   useEffect(() => {
     if (!modal) return;
     setPending({
-      hostWrite: row?.permissions.hostWrite ?? false,
+      repoWrite: row?.permissions.repoWrite ?? false,
       net: row?.permissions.net ?? false,
     });
     setPendingSecrets(new Set(row?.permissions.secrets ?? []));
@@ -82,8 +82,8 @@ export default function PluginPermissionsModal() {
     // Clamp to the requested set so a stale toggle can never grant something
     // the manifest doesn't declare.
     const next: Pending = {
-      hostWrite:
-        pending.hostWrite && requested.some((r) => r.id === 'hostWrite'),
+      repoWrite:
+        pending.repoWrite && requested.some((r) => r.id === 'repoWrite'),
       net: pending.net && requested.some((r) => r.id === 'net'),
     };
     // Clamp to the plugin's declared secret keys for the same reason.
@@ -93,7 +93,7 @@ export default function PluginPermissionsModal() {
     dispatch(
       pluginsApi.setPermissions(
         modal.pluginId,
-        next.hostWrite || next.net || secretKeys.length > 0
+        next.repoWrite || next.net || secretKeys.length > 0
           ? 'trusted'
           : 'untrusted',
         { ...next, secrets: secretKeys }
@@ -131,7 +131,7 @@ export default function PluginPermissionsModal() {
           <Dialog.Description className="text-sm opacity-80 mb-4">
             {requested.length > 0 || secretFields.length > 0
               ? 'This plugin requests the following permissions. They are off by default and can be changed here at any time.'
-              : 'This plugin does not request any permissions. It can read the repository and produce artifacts, but cannot write to your machine or access the network.'}
+              : 'This plugin does not request any permissions. It can read the repository and produce artifacts, but cannot write to it or access the network.'}
           </Dialog.Description>
 
           {(requested.length > 0 || secretFields.length > 0) && (

@@ -57,21 +57,21 @@ export const jobsEffects = createListenerMiddleware();
 
 // PluginExecutor's grant gate (core/src/plugins/containers/PluginExecutor.ts)
 // denies compiler.install/compiler.compile operations for untrusted
-// third-party compiler plugins missing the 'hostWrite' permission — that
+// third-party compiler plugins missing the 'repoWrite' permission — that
 // denial surfaces as a failed job with error.code PERMISSION_REQUIRED
 // instead of the toast a generic failure gets. Read the plugin/permission
 // out of error.details (JobManager preserves it end to end) and route to
 // the same trust approval dialog apiGate.ts uses for non-job endpoints.
 function permissionDetails(
   job: JobRecord
-): { pluginId: string; permission: 'hostWrite' | 'net' } | null {
+): { pluginId: string; permission: 'repoWrite' | 'net' } | null {
   if (job.error?.code !== 'PERMISSION_REQUIRED') return null;
   const details = job.error.details as
     { pluginId?: string; permission?: string } | undefined;
   if (!details?.pluginId || !details.permission) return null;
   return {
     pluginId: details.pluginId,
-    permission: details.permission as 'hostWrite' | 'net',
+    permission: details.permission as 'repoWrite' | 'net',
   };
 }
 

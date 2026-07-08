@@ -1,6 +1,7 @@
 import { FileSystem } from './FileSystem.js';
 import type { PluginMetadata, PluginType } from '@ignite/plugin-types/types';
 import type { PluginInstallSource } from '../plugins/install/types.js';
+import { normalizeLegacyPermissions } from '../plugins/utils/permissionCompat.js';
 import { PluginError, ErrorCodes } from '../types/errors.js';
 
 // Re-export types for external usage
@@ -38,7 +39,10 @@ export class PluginManager {
       );
     }
 
-    return plugin;
+    // Registry entries persisted before the hostWrite → repoWrite rename
+    // still carry the legacy id; normalize on read so consumers (trust
+    // clamping, the plugins API, the frontend) only ever see 'repoWrite'.
+    return normalizeLegacyPermissions(plugin).metadata;
   }
 
   async listPlugins(
@@ -46,14 +50,11 @@ export class PluginManager {
   ): Promise<{ [pluginId: string]: PluginMetadata }> {
     const registry = await this.fileSystem.readPluginRegistry();
 
-    if (!type) {
-      return registry.plugins;
-    }
-
     const filtered: { [pluginId: string]: PluginMetadata } = {};
     for (const [pluginId, plugin] of Object.entries(registry.plugins)) {
-      if (plugin.type === type) {
-        filtered[pluginId] = plugin;
+      if (!type || plugin.type === type) {
+        // Same legacy-id normalization as getPlugin above.
+        filtered[pluginId] = normalizeLegacyPermissions(plugin).metadata;
       }
     }
 

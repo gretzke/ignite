@@ -1,6 +1,7 @@
 import { PluginMetadata, PluginType } from '@ignite/plugin-types/types';
 import { AssetManager } from './AssetManager.js';
 import { PluginManager } from '../filesystem/PluginManager.js';
+import { normalizeLegacyPermissions } from '../plugins/utils/permissionCompat.js';
 import { getLogger } from '../utils/logger.js';
 
 export type PluginOrigin = 'builtin' | 'installed';
@@ -135,8 +136,13 @@ export class PluginRegistryLoader {
     metadata: PluginMetadata,
     origin: PluginOrigin
   ): PluginConfig {
+    // Defensive hostWrite → repoWrite normalization: the bundled builtins
+    // declare no permissions today, and installed entries are normalized at
+    // install time and again in PluginManager's read path, but a registry
+    // written before the rename must never leak the legacy id downstream.
+    const { metadata: normalized } = normalizeLegacyPermissions(metadata);
     return {
-      metadata,
+      metadata: normalized,
       requiresRepo: this.determineRepoRequirement(pluginId, metadata),
       origin,
     };

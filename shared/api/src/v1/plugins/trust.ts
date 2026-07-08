@@ -7,7 +7,7 @@ export interface PluginTrustEntryData {
   pluginId: string;
   trust: "native" | "trusted" | "untrusted";
   permissions: {
-    hostWrite: boolean;
+    repoWrite: boolean;
     net: boolean;
     // Granted secret config-field keys.
     secrets: string[];
@@ -26,7 +26,7 @@ const PluginTrustEntrySchema = z.object({
   pluginId: z.string(),
   trust: z.enum(["native", "trusted", "untrusted"]),
   permissions: z.object({
-    hostWrite: z.boolean(),
+    repoWrite: z.boolean(),
     net: z.boolean(),
     secrets: z.array(z.string()),
   }),
@@ -50,7 +50,7 @@ export const SetPluginTrustResponseSchema =
 export const SetPluginTrustBodySchema = z.object({
   trust: z.enum(["trusted", "untrusted"]),
   permissions: z.object({
-    hostWrite: z.boolean(),
+    repoWrite: z.boolean(),
     net: z.boolean(),
     // Secret config-field keys to grant. Every call replaces the full grant
     // (omitted/empty clears all secret grants). The server rejects any key

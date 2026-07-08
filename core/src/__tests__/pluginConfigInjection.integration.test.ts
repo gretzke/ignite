@@ -166,7 +166,7 @@ describe.skipIf(!ready)('plugin config/vault/secrets injection (Docker)', () => 
 
     // === Step 2: grant `secrets: ['api-key']` via the real TrustManager. ===
     await TrustManager.getInstance().setTrust(PLUGIN_ID, 'trusted', {
-      hostWrite: false,
+      repoWrite: false,
       net: false,
       secrets: ['api-key'],
     });

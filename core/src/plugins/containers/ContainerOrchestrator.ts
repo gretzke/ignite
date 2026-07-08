@@ -80,10 +80,10 @@ export class ContainerOrchestrator {
       'ignite.created': new Date().toISOString(),
     };
 
-    // Without hostWrite, the workspace bind is mounted read-only.
+    // Without repoWrite, the workspace bind is mounted read-only.
     const allBinds = [...(binds ?? [])];
     if (workspaceBind) {
-      const suffix = grant.hostWrite ? '' : ':ro';
+      const suffix = grant.repoWrite ? '' : ':ro';
       allBinds.push(`${workspaceBind.hostPath}:/workspace${suffix}`);
     }
 

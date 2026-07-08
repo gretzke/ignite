@@ -28,9 +28,9 @@ export class StubCompilerPlugin extends CompilerPlugin {
       baseImage: 'ignite/installed_stub-compiler:0.0.1',
       permissions: [
         {
-          id: 'hostWrite',
+          id: 'repoWrite',
           description:
-            'Write marker files into the workspace to prove hostWrite works.',
+            'Write marker files into the workspace to prove repoWrite works.',
         },
       ],
     };
@@ -45,7 +45,7 @@ export class StubCompilerPlugin extends CompilerPlugin {
   }
 
   async compile(): Promise<PluginResponse<NoResult>> {
-    // Prove hostWrite: write a marker into the shared workspace volume.
+    // Prove repoWrite: write a marker into the shared workspace volume.
     try {
       await fs.writeFile(
         join('/workspace', '.stub-compiler-ran'),

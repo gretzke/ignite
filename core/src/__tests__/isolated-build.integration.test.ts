@@ -102,14 +102,14 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
       expect(denied.error.code).toBe('PERMISSION_REQUIRED');
       expect(denied.error.details).toMatchObject({
         pluginId: 'git-fixture',
-        permission: 'hostWrite',
+        permission: 'repoWrite',
       });
     }
 
-    // Approve hostWrite → the permission gate now passes: compile is no
+    // Approve repoWrite → the permission gate now passes: compile is no
     // longer PERMISSION_REQUIRED.
     await TrustManager.getInstance().setTrust('git-fixture', 'trusted', {
-      hostWrite: true,
+      repoWrite: true,
       net: false,
       secrets: [],
     });
@@ -130,12 +130,12 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
       // Idempotent: the gate test above already approved, but assert trust
       // here too so this test does not depend on inter-test ordering.
       await TrustManager.getInstance().setTrust('git-fixture', 'trusted', {
-        hostWrite: true,
+        repoWrite: true,
         net: false,
         secrets: [],
       });
 
-      // The compile runs from the isolated-build image, with hostWrite
+      // The compile runs from the isolated-build image, with repoWrite
       // approved, against the host workspace directly bind-mounted (no repo
       // container — Phase 3 deleted that tier).
       const ok = await PluginExecutor.getInstance().execute(
@@ -146,7 +146,7 @@ describe.skipIf(!dockerReady)('isolated git-source build (Docker)', () => {
       );
       expect(ok.success).toBe(true);
 
-      // Prove hostWrite actually happened: the fixture's compile() wrote a
+      // Prove repoWrite actually happened: the fixture's compile() wrote a
       // marker into /workspace, which is bind-mounted from repoDir.
       const fs = await import('node:fs/promises');
       const marker = await fs.readFile(

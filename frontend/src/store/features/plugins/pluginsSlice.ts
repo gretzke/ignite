@@ -19,7 +19,7 @@ import { wsSend } from '../../middleware/websocket';
 import type { RootState } from '../../store';
 
 export interface PluginPermissions {
-  hostWrite: boolean;
+  repoWrite: boolean;
   net: boolean;
   // Granted secret config-field keys (see PluginConfigField.secret).
   secrets: string[];
@@ -110,7 +110,7 @@ const pluginsSlice = createSlice({
           pluginId: id,
           trust: state.rows[id]?.trust ?? 'untrusted',
           permissions: state.rows[id]?.permissions ?? {
-            hostWrite: false,
+            repoWrite: false,
             net: false,
             secrets: [],
           },
@@ -302,7 +302,7 @@ export const pluginsApi = {
   setPermissions(
     pluginId: string,
     trust: 'trusted' | 'untrusted',
-    permissions: { hostWrite: boolean; net: boolean; secrets: string[] }
+    permissions: { repoWrite: boolean; net: boolean; secrets: string[] }
   ) {
     return apiClient.dispatch.setPluginTrust({
       params: { pluginId },

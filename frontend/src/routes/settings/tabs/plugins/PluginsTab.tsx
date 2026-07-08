@@ -34,7 +34,7 @@ import PluginUpdateModal from './PluginUpdateModal';
 import PluginStoreModal from './PluginStoreModal';
 
 const PERMISSION_TITLES: Record<string, string> = {
-  hostWrite: 'Host Write',
+  repoWrite: 'Repo Write',
   net: 'Network',
 };
 
@@ -75,7 +75,7 @@ function PluginCard({
 }) {
   const dispatch = useAppDispatch();
   const isNative = plugin.trust === 'native';
-  const granted = (['hostWrite', 'net'] as const).filter(
+  const granted = (['repoWrite', 'net'] as const).filter(
     (p) => plugin.permissions[p]
   );
   const manageable = !isNative && versionInfo?.source === 'git';

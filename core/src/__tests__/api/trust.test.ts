@@ -21,7 +21,7 @@ describe('trust API handlers', () => {
     // '@acme/foundry' declares both permissions in its manifest; grants are
     // clamped to that set.
     const requested = vi.fn(async (pluginId: string) =>
-      pluginId === '@acme/foundry' ? ['hostWrite', 'net'] : []
+      pluginId === '@acme/foundry' ? ['repoWrite', 'net'] : []
     );
     providers = { invalidate: vi.fn() };
     const handlers = createTrustHandlers(
@@ -49,12 +49,12 @@ describe('trust API handlers', () => {
     expect(data.plugins).toContainEqual({
       pluginId: 'local-repo',
       trust: 'native',
-      permissions: { hostWrite: true, net: true, secrets: [] },
+      permissions: { repoWrite: true, net: true, secrets: [] },
     });
     expect(data.plugins).toContainEqual({
       pluginId: '@acme/foundry',
       trust: 'untrusted',
-      permissions: { hostWrite: false, net: false, secrets: [] },
+      permissions: { repoWrite: false, net: false, secrets: [] },
     });
   });
 
@@ -64,14 +64,14 @@ describe('trust API handlers', () => {
       url: '/api/v1/plugins/@acme%2Ffoundry/trust',
       payload: {
         trust: 'trusted',
-        permissions: { hostWrite: true, net: false },
+        permissions: { repoWrite: true, net: false },
       },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().data.plugin.permissions.hostWrite).toBe(true);
+    expect(res.json().data.plugin.permissions.repoWrite).toBe(true);
     expect(res.json().data.plugin.permissions.secrets).toEqual([]);
     const grant = await manager.getGrant('@acme/foundry');
-    expect(grant.hostWrite).toBe(true);
+    expect(grant.repoWrite).toBe(true);
     expect(providers.invalidate).toHaveBeenCalledWith('@acme/foundry');
   });
 
@@ -85,7 +85,7 @@ describe('trust API handlers', () => {
     const handlers = createTrustHandlers(
       strictManager,
       vi.fn(async () => ['@acme/foundry']),
-      vi.fn(async () => ['hostWrite']), // net is not requested
+      vi.fn(async () => ['repoWrite']), // net is not requested
       undefined,
       strictProviders
     );
@@ -98,7 +98,7 @@ describe('trust API handlers', () => {
       url: '/api/v1/plugins/@acme%2Ffoundry/trust',
       payload: {
         trust: 'trusted',
-        permissions: { hostWrite: true, net: true },
+        permissions: { repoWrite: true, net: true },
       },
     });
     expect(denied.statusCode).toBe(400);
@@ -106,7 +106,7 @@ describe('trust API handlers', () => {
     // Grant unchanged (fail-closed).
     const grant = await strictManager.getGrant('@acme/foundry');
     expect(grant.net).toBe(false);
-    expect(grant.hostWrite).toBe(false);
+    expect(grant.repoWrite).toBe(false);
     expect(strictProviders.invalidate).not.toHaveBeenCalled();
 
     // Denying a non-requested permission is fine — only granting is clamped.
@@ -115,7 +115,7 @@ describe('trust API handlers', () => {
       url: '/api/v1/plugins/@acme%2Ffoundry/trust',
       payload: {
         trust: 'trusted',
-        permissions: { hostWrite: true, net: false },
+        permissions: { repoWrite: true, net: false },
       },
     });
     expect(ok.statusCode).toBe(200);
@@ -134,7 +134,7 @@ describe('trust API handlers', () => {
     const handlers = createTrustHandlers(
       secretManager,
       vi.fn(async () => ['@acme/foundry']),
-      vi.fn(async () => ['hostWrite', 'net']),
+      vi.fn(async () => ['repoWrite', 'net']),
       vi.fn(async () => ['apikey']),
       secretProviders
     );
@@ -148,7 +148,7 @@ describe('trust API handlers', () => {
       payload: {
         trust: 'trusted',
         permissions: {
-          hostWrite: false,
+          repoWrite: false,
           net: false,
           secrets: ['apikey', 'undeclaredkey'],
         },
@@ -166,7 +166,7 @@ describe('trust API handlers', () => {
       url: '/api/v1/plugins/@acme%2Ffoundry/trust',
       payload: {
         trust: 'trusted',
-        permissions: { hostWrite: false, net: false, secrets: ['apikey'] },
+        permissions: { repoWrite: false, net: false, secrets: ['apikey'] },
       },
     });
     expect(ok.statusCode).toBe(200);
@@ -189,7 +189,7 @@ describe('trust API handlers', () => {
     const handlers = createTrustHandlers(
       fileManager,
       vi.fn(async () => ['@acme/foundry']),
-      vi.fn(async () => ['hostWrite', 'net']),
+      vi.fn(async () => ['repoWrite', 'net']),
       vi.fn(async () => ['apikey', 'chainz-config']),
       fileProviders
     );
@@ -204,7 +204,7 @@ describe('trust API handlers', () => {
       payload: {
         trust: 'trusted',
         permissions: {
-          hostWrite: false,
+          repoWrite: false,
           net: false,
           secrets: ['chainz-config'],
         },
@@ -225,7 +225,7 @@ describe('trust API handlers', () => {
       payload: {
         trust: 'trusted',
         permissions: {
-          hostWrite: false,
+          repoWrite: false,
           net: false,
           secrets: ['chainz-config', 'undeclaredkey'],
         },
@@ -244,7 +244,7 @@ describe('trust API handlers', () => {
       url: '/api/v1/plugins/local-repo/trust',
       payload: {
         trust: 'trusted',
-        permissions: { hostWrite: false, net: false },
+        permissions: { repoWrite: false, net: false },
       },
     });
     expect(res.statusCode).toBe(403);
@@ -258,7 +258,7 @@ describe('trust API handlers', () => {
       url: '/api/v1/plugins/@nobody%2Fghost/trust',
       payload: {
         trust: 'trusted',
-        permissions: { hostWrite: false, net: false },
+        permissions: { repoWrite: false, net: false },
       },
     });
     expect(res.statusCode).toBe(404);

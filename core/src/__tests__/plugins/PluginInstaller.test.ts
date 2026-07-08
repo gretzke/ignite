@@ -19,7 +19,7 @@ const waffleMeta: PluginMetadata = {
   version: '1.0.0',
   baseImage: 'ignite/installed_waffle:1.0.0',
   permissions: [
-    { id: 'hostWrite', description: 'Write build artifacts to the repo.' },
+    { id: 'repoWrite', description: 'Write build artifacts to the repo.' },
   ],
 };
 
@@ -35,7 +35,7 @@ function makeDeps() {
     string,
     {
       trust: 'trusted' | 'untrusted';
-      hostWrite: boolean;
+      repoWrite: boolean;
       net: boolean;
       secrets?: string[];
     }
@@ -67,7 +67,7 @@ function makeDeps() {
       revoke: vi.fn(async () => {}),
       getGrant: vi.fn(async (id: string) => ({
         trust: grants[id]?.trust ?? ('untrusted' as const),
-        hostWrite: grants[id]?.hostWrite ?? false,
+        repoWrite: grants[id]?.repoWrite ?? false,
         net: grants[id]?.net ?? false,
         secrets: grants[id]?.secrets ?? ([] as string[]),
       })),
@@ -75,7 +75,7 @@ function makeDeps() {
         async (
           id: string,
           trust: 'trusted' | 'untrusted',
-          permissions: { hostWrite: boolean; net: boolean; secrets: string[] }
+          permissions: { repoWrite: boolean; net: boolean; secrets: string[] }
         ) => {
           grants[id] = { trust, ...permissions };
         }
@@ -279,14 +279,56 @@ describe('PluginInstaller', () => {
         id: 'waffle',
       });
     });
+
+    it("normalizes a legacy 'hostWrite' manifest to 'repoWrite' and persists the new id", async () => {
+      const legacy = backendReturning({
+        imageTag: 'ignite/installed_waffle:1.0.0',
+        metadata: {
+          ...waffleMeta,
+          permissions: [
+            { id: 'hostWrite', description: 'Write build artifacts.' },
+            { id: 'net', description: 'Download compilers.' },
+          ] as unknown as PluginPermissionRequest[],
+        },
+      });
+      const installer = new PluginInstaller(legacy, deps);
+      const meta = await installer.install(gitSource);
+      expect(meta.permissions).toEqual([
+        { id: 'repoWrite', description: 'Write build artifacts.' },
+        { id: 'net', description: 'Download compilers.' },
+      ]);
+      // The persisted registry entry carries the normalized id too.
+      expect(deps.store.waffle.permissions?.map((p) => p.id)).toEqual([
+        'repoWrite',
+        'net',
+      ]);
+    });
+
+    it("rejects a manifest declaring BOTH 'hostWrite' and 'repoWrite' (duplicate after normalization)", async () => {
+      const both = backendReturning({
+        imageTag: 'ignite/installed_bad:1.0.0',
+        metadata: {
+          ...waffleMeta,
+          id: 'bad',
+          permissions: [
+            { id: 'repoWrite', description: 'a' },
+            { id: 'hostWrite', description: 'b' },
+          ] as unknown as PluginPermissionRequest[],
+        },
+      });
+      const installer = new PluginInstaller(both, deps);
+      await expect(installer.install(gitSource)).rejects.toMatchObject({
+        code: 'PLUGIN_INSTALL_INVALID',
+      });
+    });
   });
 
   describe('update', () => {
     async function installV1(deps: ReturnType<typeof makeDeps>) {
       const installer = new PluginInstaller(backend, deps);
       await installer.install(gitSource);
-      // User granted the requested hostWrite permission.
-      deps.grants.waffle = { trust: 'trusted', hostWrite: true, net: false };
+      // User granted the requested repoWrite permission.
+      deps.grants.waffle = { trust: 'trusted', repoWrite: true, net: false };
       return installer;
     }
 
@@ -297,7 +339,7 @@ describe('PluginInstaller', () => {
         version: '2.0.0',
         baseImage: 'ignite/installed_waffle:2.0.0',
         permissions: [
-          { id: 'hostWrite', description: 'Write build artifacts.' },
+          { id: 'repoWrite', description: 'Write build artifacts.' },
           { id: 'net', description: 'Download compilers.' },
         ],
       };
@@ -315,10 +357,10 @@ describe('PluginInstaller', () => {
       expect(result.newPermissions).toEqual([
         { id: 'net', description: 'Download compilers.' },
       ]);
-      // hostWrite grant carried over, net starts denied.
+      // repoWrite grant carried over, net starts denied.
       expect(deps.grants.waffle).toEqual({
         trust: 'trusted',
-        hostWrite: true,
+        repoWrite: true,
         net: false,
         secrets: [],
       });
@@ -347,10 +389,39 @@ describe('PluginInstaller', () => {
       expect(result.newPermissions).toEqual([]);
       expect(deps.grants.waffle).toEqual({
         trust: 'untrusted',
-        hostWrite: false,
+        repoWrite: false,
         net: false,
         secrets: [],
       });
+    });
+
+    it("carries a repoWrite grant across an update whose new manifest still declares legacy 'hostWrite'", async () => {
+      await installV1(deps);
+      const updater = new PluginInstaller(
+        backendReturning({
+          imageTag: 'ignite/installed_waffle:2.0.0',
+          metadata: {
+            ...waffleMeta,
+            version: '2.0.0',
+            permissions: [
+              { id: 'hostWrite', description: 'Write build artifacts.' },
+            ] as unknown as PluginPermissionRequest[],
+          },
+        }),
+        deps
+      );
+      const result = await updater.update('waffle');
+      // Normalized: not reported as a new permission, grant carried over.
+      expect(result.newPermissions).toEqual([]);
+      expect(deps.grants.waffle).toEqual({
+        trust: 'trusted',
+        repoWrite: true,
+        net: false,
+        secrets: [],
+      });
+      expect(deps.store.waffle.permissions?.map((p) => p.id)).toEqual([
+        'repoWrite',
+      ]);
     });
 
     it('accepts a same-repo source with a different ref, but rejects a different repo', async () => {
@@ -397,7 +468,7 @@ describe('PluginInstaller', () => {
       expect(deps.store.waffle.baseImage).toBe('ignite/installed_waffle:1.0.0');
       expect(deps.grants.waffle).toEqual({
         trust: 'trusted',
-        hostWrite: true,
+        repoWrite: true,
         net: false,
       });
     });
@@ -426,7 +497,7 @@ describe('PluginInstaller', () => {
       // User previously granted two secret-scope keys.
       deps.grants.waffle = {
         trust: 'trusted',
-        hostWrite: true,
+        repoWrite: true,
         net: false,
         secrets: ['apikey', 'legacykey'],
       };
@@ -451,18 +522,18 @@ describe('PluginInstaller', () => {
 
       expect(deps.grants.waffle).toEqual({
         trust: 'trusted',
-        hostWrite: true,
+        repoWrite: true,
         net: false,
         secrets: ['apikey'],
       });
     });
 
-    it('keeps a plugin trusted on update when only secret grants survive (no hostWrite/net)', async () => {
+    it('keeps a plugin trusted on update when only secret grants survive (no repoWrite/net)', async () => {
       const installer = new PluginInstaller(backend, deps);
       await installer.install(gitSource);
       deps.grants.waffle = {
         trust: 'trusted',
-        hostWrite: false,
+        repoWrite: false,
         net: false,
         secrets: ['apikey'],
       };
@@ -486,7 +557,7 @@ describe('PluginInstaller', () => {
 
       expect(deps.grants.waffle).toEqual({
         trust: 'trusted',
-        hostWrite: false,
+        repoWrite: false,
         net: false,
         secrets: ['apikey'],
       });
@@ -517,7 +588,7 @@ describe('PluginInstaller', () => {
         await installer.install(gitSource);
         deps.grants.waffle = {
           trust: 'trusted',
-          hostWrite: false,
+          repoWrite: false,
           net: false,
           secrets: ['configfile'],
         };
@@ -551,7 +622,7 @@ describe('PluginInstaller', () => {
 
         expect(deps.grants.waffle).toEqual({
           trust: 'untrusted',
-          hostWrite: false,
+          repoWrite: false,
           net: false,
           secrets: [],
         });
@@ -587,7 +658,7 @@ describe('PluginInstaller', () => {
 
         expect(deps.grants.waffle).toEqual({
           trust: 'trusted',
-          hostWrite: false,
+          repoWrite: false,
           net: false,
           secrets: ['configfile'],
         });
@@ -620,7 +691,7 @@ describe('PluginInstaller', () => {
 
         expect(deps.grants.waffle).toEqual({
           trust: 'trusted',
-          hostWrite: false,
+          repoWrite: false,
           net: false,
           secrets: ['configfile'],
         });
@@ -644,7 +715,7 @@ describe('PluginInstaller', () => {
         await installer.install(gitSource);
         deps.grants.waffle = {
           trust: 'trusted',
-          hostWrite: false,
+          repoWrite: false,
           net: false,
           secrets: ['apikey'],
         };
@@ -678,7 +749,7 @@ describe('PluginInstaller', () => {
 
         expect(deps.grants.waffle).toEqual({
           trust: 'untrusted',
-          hostWrite: false,
+          repoWrite: false,
           net: false,
           secrets: [],
         });

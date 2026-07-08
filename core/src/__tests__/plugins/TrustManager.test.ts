@@ -26,7 +26,7 @@ describe('TrustManager', () => {
   it('fails closed for unknown plugins', async () => {
     const grant = await manager.getGrant('@evil/plugin');
     expect(grant).toEqual(UNTRUSTED_GRANT);
-    expect(grant.hostWrite).toBe(false);
+    expect(grant.repoWrite).toBe(false);
     expect(grant.net).toBe(false);
   });
 
@@ -48,36 +48,36 @@ describe('TrustManager', () => {
 
   it('persists and returns granted permissions', async () => {
     await manager.setTrust('@acme/foundry', 'trusted', {
-      hostWrite: true,
+      repoWrite: true,
       net: false,
       secrets: [],
     });
     const grant = await manager.getGrant('@acme/foundry');
     expect(grant.trust).toBe('trusted');
-    expect(grant.hostWrite).toBe(true);
+    expect(grant.repoWrite).toBe(true);
     expect(grant.net).toBe(false);
 
     // Survives a fresh instance (round-trips through the file)
     const fresh = new TrustManager(trustFile, async () => false);
     const reloaded = await fresh.getGrant('@acme/foundry');
-    expect(reloaded.hostWrite).toBe(true);
+    expect(reloaded.repoWrite).toBe(true);
   });
 
   it('a trusted plugin without a permission still lacks it', async () => {
     await manager.setTrust('@acme/foundry', 'trusted', {
-      hostWrite: false,
+      repoWrite: false,
       net: true,
       secrets: [],
     });
     const grant = await manager.getGrant('@acme/foundry');
-    expect(grant.hostWrite).toBe(false);
+    expect(grant.repoWrite).toBe(false);
     expect(grant.net).toBe(true);
   });
 
   it('refuses to set trust for native plugins', async () => {
     await expect(
       manager.setTrust('local-repo', 'trusted', {
-        hostWrite: true,
+        repoWrite: true,
         net: true,
         secrets: [],
       })
@@ -86,17 +86,89 @@ describe('TrustManager', () => {
 
   it('revoking sets untrusted with all permissions denied', async () => {
     await manager.setTrust('@acme/foundry', 'trusted', {
-      hostWrite: true,
+      repoWrite: true,
       net: true,
       secrets: [],
     });
     await manager.setTrust('@acme/foundry', 'untrusted', {
-      hostWrite: true, // must be ignored for untrusted
+      repoWrite: true, // must be ignored for untrusted
       net: true,
       secrets: ['api-key'], // must be ignored for untrusted
     });
     const grant = await manager.getGrant('@acme/foundry');
     expect(grant).toEqual(UNTRUSTED_GRANT);
+  });
+
+  describe('legacy hostWrite migration', () => {
+    it('treats a persisted hostWrite grant as repoWrite without user action', async () => {
+      await fs.writeFile(
+        trustFile,
+        JSON.stringify({
+          waffle: {
+            trust: 'trusted',
+            permissions: { hostWrite: true, net: false },
+            ts: 'now',
+          },
+        }),
+        'utf8'
+      );
+      const grant = await manager.getGrant('waffle');
+      expect(grant.trust).toBe('trusted');
+      expect(grant.repoWrite).toBe(true);
+      expect(grant.net).toBe(false);
+      expect(grant.secrets).toEqual([]);
+    });
+
+    it('fails closed on a non-true legacy hostWrite value', async () => {
+      await fs.writeFile(
+        trustFile,
+        JSON.stringify({
+          waffle: {
+            trust: 'trusted',
+            permissions: { hostWrite: 'yes', net: true },
+            ts: 'now',
+          },
+        }),
+        'utf8'
+      );
+      const grant = await manager.getGrant('waffle');
+      expect(grant.repoWrite).toBe(false);
+      expect(grant.net).toBe(true);
+    });
+
+    it('getAllTrust coerces legacy entries to the repoWrite shape', async () => {
+      await fs.writeFile(
+        trustFile,
+        JSON.stringify({
+          waffle: {
+            trust: 'trusted',
+            permissions: { hostWrite: true, net: true, secrets: [] },
+            ts: 'now',
+          },
+        }),
+        'utf8'
+      );
+      const all = await manager.getAllTrust();
+      expect(all.waffle.permissions.repoWrite).toBe(true);
+      expect(
+        (all.waffle.permissions as { hostWrite?: unknown }).hostWrite
+      ).toBeUndefined();
+    });
+
+    it('setTrust persists only the new repoWrite key', async () => {
+      await manager.setTrust('waffle', 'trusted', {
+        repoWrite: true,
+        net: false,
+        secrets: [],
+      });
+      const raw = JSON.parse(await fs.readFile(trustFile, 'utf8'));
+      expect(raw.waffle.permissions).toEqual({
+        repoWrite: true,
+        net: false,
+        secrets: [],
+      });
+      expect('hostWrite' in raw.waffle.permissions).toBe(false);
+    });
   });
 
   describe('secrets dimension', () => {
@@ -111,7 +183,7 @@ describe('TrustManager', () => {
         JSON.stringify({
           '@acme/foundry': {
             trust: 'trusted',
-            permissions: { hostWrite: true, net: false },
+            permissions: { repoWrite: true, net: false },
             ts: 'now',
           },
         }),
@@ -119,13 +191,13 @@ describe('TrustManager', () => {
       );
       const grant = await manager.getGrant('@acme/foundry');
       expect(grant.trust).toBe('trusted');
-      expect(grant.hostWrite).toBe(true);
+      expect(grant.repoWrite).toBe(true);
       expect(grant.secrets).toEqual([]);
     });
 
     it('persists and round-trips granted secret keys for a trusted plugin', async () => {
       await manager.setTrust('@acme/foundry', 'trusted', {
-        hostWrite: false,
+        repoWrite: false,
         net: false,
         secrets: ['api-key'],
       });
@@ -140,12 +212,12 @@ describe('TrustManager', () => {
 
     it('forces secrets to empty when setting untrusted', async () => {
       await manager.setTrust('@acme/foundry', 'trusted', {
-        hostWrite: false,
+        repoWrite: false,
         net: false,
         secrets: ['api-key'],
       });
       await manager.setTrust('@acme/foundry', 'untrusted', {
-        hostWrite: false,
+        repoWrite: false,
         net: false,
         secrets: ['api-key'], // must be ignored for untrusted
       });

@@ -12,7 +12,7 @@ export interface RetryCall {
 
 export interface PendingApproval {
   pluginId: string;
-  permission: 'hostWrite' | 'net';
+  permission: 'repoWrite' | 'net';
   retry: RetryCall | null;
 }
 

@@ -105,7 +105,7 @@ function makeDeps() {
     trust: {
       getGrant: vi.fn(async () => ({
         trust: 'trusted' as const,
-        hostWrite: false,
+        repoWrite: false,
         net: false,
         secrets: ['apikey'],
       })),
@@ -143,7 +143,7 @@ describe('plugin config handlers', () => {
     const { deps } = makeDeps();
     deps.trust.getGrant = vi.fn(async () => ({
       trust: 'trusted' as const,
-      hostWrite: false,
+      repoWrite: false,
       net: false,
       secrets: ['apikey', 'configfile'],
     }));
@@ -160,7 +160,7 @@ describe('plugin config handlers', () => {
     const { deps } = makeDeps();
     deps.trust.getGrant = vi.fn(async () => ({
       trust: 'native' as const,
-      hostWrite: true,
+      repoWrite: true,
       net: true,
       secrets: [],
     }));

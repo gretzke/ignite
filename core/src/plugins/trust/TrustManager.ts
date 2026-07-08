@@ -10,7 +10,7 @@ import { getLogger } from '../../utils/logger.js';
 export type TrustLevel = 'native' | 'trusted' | 'untrusted';
 
 export interface PluginPermissions {
-  hostWrite: boolean;
+  repoWrite: boolean;
   net: boolean;
   // Granted secret config-field keys (see Task 6/7). Not resolved here.
   secrets: string[];
@@ -18,7 +18,7 @@ export interface PluginPermissions {
 
 export interface PermissionGrant {
   readonly trust: TrustLevel;
-  readonly hostWrite: boolean;
+  readonly repoWrite: boolean;
   readonly net: boolean;
   readonly secrets: string[];
 }
@@ -33,7 +33,7 @@ type TrustFile = Record<string, TrustEntry>;
 
 export const NATIVE_GRANT: PermissionGrant = Object.freeze({
   trust: 'native',
-  hostWrite: true,
+  repoWrite: true,
   net: true,
   // Native means all-granted; the empty array here is not "no secrets" —
   // native grants are resolved to every declared secret downstream at
@@ -43,10 +43,21 @@ export const NATIVE_GRANT: PermissionGrant = Object.freeze({
 
 export const UNTRUSTED_GRANT: PermissionGrant = Object.freeze({
   trust: 'untrusted',
-  hostWrite: false,
+  repoWrite: false,
   net: false,
   secrets: Object.freeze([]) as unknown as string[],
 });
+
+// trust.json entries persisted before the hostWrite → repoWrite rename carry
+// the old key. The permission always gated the repo-workspace bind mount, so
+// an existing hostWrite grant IS a repoWrite grant — honor it without user
+// action. Fail-closed as usual: anything but an explicit `true` is false.
+// setTrust persists only the new shape, so entries migrate on next write.
+function coerceRepoWrite(
+  permissions: PluginPermissions & { hostWrite?: unknown }
+): boolean {
+  return permissions.repoWrite === true || permissions.hostWrite === true;
+}
 
 export class TrustManager {
   private static instance: TrustManager;
@@ -95,7 +106,7 @@ export class TrustManager {
     }
     return Object.freeze({
       trust: 'trusted',
-      hostWrite: entry.permissions.hostWrite === true,
+      repoWrite: coerceRepoWrite(entry.permissions),
       net: entry.permissions.net === true,
       // Migration path for trust.json entries persisted before this field
       // existed: fail closed to no granted secrets.
@@ -106,7 +117,21 @@ export class TrustManager {
   }
 
   async getAllTrust(): Promise<Record<string, TrustEntry>> {
-    return this.readTrustFile();
+    const entries = await this.readTrustFile();
+    // Coerce legacy `hostWrite` entries on the way out so consumers only see
+    // the new shape; the file itself is rewritten lazily (next setTrust).
+    for (const entry of Object.values(entries)) {
+      if (typeof entry?.permissions !== 'object' || entry.permissions === null)
+        continue;
+      const permissions = entry.permissions as PluginPermissions & {
+        hostWrite?: boolean;
+      };
+      if ('hostWrite' in permissions) {
+        permissions.repoWrite = coerceRepoWrite(permissions);
+        delete permissions.hostWrite;
+      }
+    }
+    return entries;
   }
 
   async setTrust(
@@ -124,11 +149,11 @@ export class TrustManager {
       permissions:
         trust === 'trusted'
           ? {
-              hostWrite: permissions.hostWrite,
+              repoWrite: permissions.repoWrite,
               net: permissions.net,
               secrets: [...permissions.secrets],
             }
-          : { hostWrite: false, net: false, secrets: [] },
+          : { repoWrite: false, net: false, secrets: [] },
       ts: new Date().toISOString(),
     };
     entries[pluginId] = entry;

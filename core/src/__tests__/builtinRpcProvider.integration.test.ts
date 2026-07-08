@@ -93,7 +93,7 @@ describe.skipIf(!ready)('builtin rpc-provider native trust (Docker)', () => {
     expect(grant.trust).toBe('native');
     await expect(
       trust.setTrust('infura', 'trusted', {
-        hostWrite: false,
+        repoWrite: false,
         net: false,
         secrets: ['api-key'],
       })

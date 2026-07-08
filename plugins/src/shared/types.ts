@@ -23,10 +23,10 @@ export enum PluginType {
 
 // The permission vocabulary core can actually enforce (container mounts and
 // network mode). Plugins request a subset in their manifest.
-export type PluginPermissionId = "hostWrite" | "net";
+export type PluginPermissionId = "repoWrite" | "net";
 
 export const PLUGIN_PERMISSION_IDS: readonly PluginPermissionId[] = [
-  "hostWrite",
+  "repoWrite",
   "net",
 ];
 
