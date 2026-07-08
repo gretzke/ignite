@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ChainRegistry, mergeCustomChain } from '../../chains/ChainRegistry.js';
+import {
+  ChainRegistry,
+  CHAINLIST_CACHE_VERSION,
+  mergeCustomChain,
+} from '../../chains/ChainRegistry.js';
 
 // Two-entry chainlist sample mirroring chainid.network/chains.json shape,
 // including a templated RPC URL that must be filtered out.
@@ -43,18 +47,21 @@ const CHAINLIST_SAMPLE = [
   },
   {
     // Second zero-TVL chain: exercises the alphabetical tiebreak
-    // ('Aardvark…' < 'Bad Decimals').
+    // ('Aardvark…' < 'Bad Decimals'). Has an icon slug but no DefiLlama
+    // entry → iconUrl must derive from the slug.
     name: 'Aardvark Testnet',
     chain: 'AARD',
     rpc: [],
     nativeCurrency: { name: 'Aard', symbol: 'AARD', decimals: 18 },
     shortName: 'aard',
+    icon: 'aardvark',
     chainId: 7777,
   },
 ];
 
 // DefiLlama /chains sample: string chainId must coerce, entries without a
-// chainId (non-EVM) or without a positive numeric tvl must be ignored.
+// chainId (non-EVM) or with neither a positive numeric tvl nor a usable
+// name must be ignored.
 const LLAMA_SAMPLE = [
   { chainId: 1, name: 'Ethereum', tvl: 80e9 },
   { chainId: 10, name: 'OP', tvl: 5e8 },
@@ -111,18 +118,26 @@ describe('ChainRegistry', () => {
     expect(eth.source).toBe('chainlist');
     expect(eth.rpc).toEqual(['https://eth.llamarpc.com']);
     expect(eth.explorers?.[0]?.url).toBe('https://etherscan.io');
-    // Icon slug maps to the llamao-hosted chainlist icon set.
+    // DefiLlama name ('Ethereum') is the primary icon key.
     expect(eth.iconUrl).toBe(
       'https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg'
     );
-    // Entries without an icon slug carry no iconUrl.
+    // No chainid.network icon slug, but a DefiLlama entry ('OP') → the icon
+    // derives from the llama name.
     const op = data.chains.find((c) => c.chainId === 10)!;
-    expect(op.iconUrl).toBeUndefined();
+    expect(op.iconUrl).toBe('https://icons.llamao.fi/icons/chains/rsz_op.jpg');
+    // Icon slug but no DefiLlama entry → the icon derives from the slug.
+    const aard = data.chains.find((c) => c.chainId === 7777)!;
+    expect(aard.iconUrl).toBe(
+      'https://icons.llamao.fi/icons/chains/rsz_aardvark.jpg'
+    );
     // Invalid (negative) decimals from the untrusted dataset default to 18
     // rather than being persisted as-is.
     const bad = data.chains.find((c) => c.chainId === 42)!;
     expect(bad.nativeCurrency.decimals).toBe(18);
-    // Icon slugs with path characters ('../evil') are rejected outright.
+    // Icon slugs with path characters ('../evil') are rejected outright, and
+    // chain 42 has no DefiLlama entry either → no iconUrl at all (frontend
+    // letter fallback).
     expect(bad.iconUrl).toBeUndefined();
     expect(files.has('/chains/chainlist-cache.json')).toBe(true);
     expect(data.fetchedAt).toBeTruthy();
@@ -394,16 +409,23 @@ describe('ChainRegistry', () => {
     expect(data.chains.some((c) => 'tvl' in c)).toBe(false);
   });
 
-  it('coerces string chainIds from DefiLlama and ignores entries missing chainId or tvl', async () => {
+  it('coerces string chainIds from DefiLlama and ignores entries missing chainId or data', async () => {
     const { deps, files } = makeDeps();
     const registry = new ChainRegistry(deps);
     await registry.listChains();
     const cache = files.get('/chains/chainlist-cache.json') as {
-      tvls?: Record<string, number>;
+      version?: number;
+      llama?: Record<string, { tvl?: number; name?: string }>;
     };
-    // '42161' (string) coerced; Solana (no chainId) and chainId 2 (null
-    // tvl) dropped.
-    expect(cache.tvls).toEqual({ '1': 80e9, '10': 5e8, '42161': 2e9 });
+    // '42161' (string) coerced; Solana (no chainId) and chainId 2 (null tvl,
+    // no name) dropped. Both tvl and name are captured per chainId.
+    expect(cache.llama).toEqual({
+      '1': { tvl: 80e9, name: 'Ethereum' },
+      '10': { tvl: 5e8, name: 'OP' },
+      '42161': { tvl: 2e9, name: 'Arb' },
+    });
+    // Refreshes stamp the current schema version.
+    expect(cache.version).toBe(CHAINLIST_CACHE_VERSION);
   });
 
   it('still refreshes chains when the DefiLlama fetch fails, ordering by name', async () => {
@@ -419,12 +441,13 @@ describe('ChainRegistry', () => {
     expect(data.chains.map((c) => c.chainId)).toEqual([7777, 42, 1, 10]);
   });
 
-  it('keeps the previous TVLs when a refresh succeeds but the DefiLlama fetch fails', async () => {
+  it('keeps the previous llama data when a refresh succeeds but the DefiLlama fetch fails', async () => {
     const files = new Map<string, unknown>();
     files.set('/chains/chainlist-cache.json', {
+      version: CHAINLIST_CACHE_VERSION,
       fetchedAt: new Date(0).toISOString(), // ancient → stale, forces refresh
       chains: [],
-      tvls: { '10': 123 }, // stale TVL beats none
+      llama: { '10': { tvl: 123 } }, // stale llama data beats none
     });
     const llamaDown = (async (url: string | URL) => {
       if (String(url).includes('api.llama.fi')) throw new Error('llama down');
@@ -438,40 +461,148 @@ describe('ChainRegistry', () => {
     // name-alpha.
     expect(data.chains.map((c) => c.chainId)).toEqual([10, 7777, 42, 1]);
     const cache = files.get('/chains/chainlist-cache.json') as {
-      tvls?: Record<string, number>;
+      llama?: Record<string, { tvl?: number; name?: string }>;
     };
-    expect(cache.tvls).toEqual({ '10': 123 });
+    expect(cache.llama).toEqual({ '10': { tvl: 123 } });
   });
 
-  it('reads pre-TVL cache files without a tvls field', async () => {
-    const files = new Map<string, unknown>();
-    files.set('/chains/chainlist-cache.json', {
-      fetchedAt: new Date(1_800_000_000_000).toISOString(), // fresh → no refetch
-      chains: [
-        {
-          chainId: 10,
-          name: 'OP Mainnet',
-          nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-          rpc: [],
-          source: 'chainlist',
-        },
-        {
-          chainId: 1,
-          name: 'Ethereum Mainnet',
-          nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-          rpc: [],
-          source: 'chainlist',
-        },
-      ],
+  describe('cache schema versioning', () => {
+    // Minimal cache chains, deliberately different from CHAINLIST_SAMPLE so
+    // "served from cache" vs "refetched" is observable in the data.
+    const cachedChains = [
+      {
+        chainId: 10,
+        name: 'OP Mainnet',
+        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+        rpc: [],
+        source: 'chainlist' as const,
+      },
+      {
+        chainId: 1,
+        name: 'Ethereum Mainnet',
+        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+        rpc: [],
+        source: 'chainlist' as const,
+      },
+    ];
+    // Matches deps.now → TTL-fresh; only the schema version can mark these
+    // caches stale.
+    const freshFetchedAt = new Date(1_800_000_000_000).toISOString();
+
+    it('refetches a TTL-fresh cache written before versioning (no version field)', async () => {
+      const files = new Map<string, unknown>();
+      files.set('/chains/chainlist-cache.json', {
+        fetchedAt: freshFetchedAt,
+        chains: cachedChains,
+        tvls: { '10': 123 }, // pre-v2 field shape
+      });
+      const fetchSpy = vi.fn(async (url: string | URL) => ({
+        ok: true,
+        json: async () =>
+          String(url).includes('api.llama.fi') ? LLAMA_SAMPLE : CHAINLIST_SAMPLE,
+      }));
+      const { deps } = makeDeps({
+        fetchImpl: fetchSpy as unknown as typeof fetch,
+        files,
+      });
+      const registry = new ChainRegistry(deps);
+      const data = await registry.listChains();
+      // Schema-stale despite fresh TTL → refetched: network sample served.
+      expect(fetchSpy).toHaveBeenCalled();
+      expect(data.total).toBe(4);
+      const cache = files.get('/chains/chainlist-cache.json') as {
+        version?: number;
+        tvls?: unknown;
+      };
+      expect(cache.version).toBe(CHAINLIST_CACHE_VERSION);
+      expect(cache.tvls).toBeUndefined();
     });
-    const boom = (async () => {
-      throw new Error('must not fetch');
-    }) as unknown as typeof fetch;
-    const { deps } = makeDeps({ fetchImpl: boom, files });
+
+    it('refetches a TTL-fresh cache with an outdated version number', async () => {
+      const files = new Map<string, unknown>();
+      files.set('/chains/chainlist-cache.json', {
+        version: 1,
+        fetchedAt: freshFetchedAt,
+        chains: cachedChains,
+      });
+      const fetchSpy = vi.fn(async (url: string | URL) => ({
+        ok: true,
+        json: async () =>
+          String(url).includes('api.llama.fi') ? LLAMA_SAMPLE : CHAINLIST_SAMPLE,
+      }));
+      const { deps } = makeDeps({
+        fetchImpl: fetchSpy as unknown as typeof fetch,
+        files,
+      });
+      const registry = new ChainRegistry(deps);
+      const data = await registry.listChains();
+      expect(fetchSpy).toHaveBeenCalled();
+      expect(data.total).toBe(4);
+    });
+
+    it('serves a TTL-fresh current-version cache without refetching', async () => {
+      const files = new Map<string, unknown>();
+      files.set('/chains/chainlist-cache.json', {
+        version: CHAINLIST_CACHE_VERSION,
+        fetchedAt: freshFetchedAt,
+        chains: cachedChains,
+      });
+      const fetchSpy = vi.fn(async () => {
+        throw new Error('must not fetch');
+      });
+      const { deps } = makeDeps({
+        fetchImpl: fetchSpy as unknown as typeof fetch,
+        files,
+      });
+      const registry = new ChainRegistry(deps);
+      const data = await registry.listChains();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      // Missing llama map reads as empty → name-alpha order.
+      expect(data.chains.map((c) => c.chainId)).toEqual([1, 10]);
+    });
+  });
+
+  it('derives iconUrl from the DefiLlama name, URL-encoding and preferring it over the slug', async () => {
+    const chainlist = [
+      {
+        // No icon slug; llama name 'zkSync Era' → space must be URL-encoded.
+        name: 'zkSync Era Mainnet',
+        chain: 'ETH',
+        rpc: [],
+        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+        shortName: 'zksync',
+        chainId: 324,
+      },
+      {
+        // Has BOTH an icon slug and a llama name → the llama name wins.
+        name: 'BNB Smart Chain Mainnet',
+        chain: 'BSC',
+        rpc: [],
+        nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+        shortName: 'bnb',
+        icon: 'bnbchain',
+        chainId: 56,
+      },
+    ];
+    const llama = [
+      { chainId: 324, name: 'zkSync Era', tvl: 1e8 },
+      { chainId: 56, name: 'Binance', tvl: 5e9 },
+    ];
+    const fetchImpl = (async (url: string | URL) => ({
+      ok: true,
+      json: async () =>
+        String(url).includes('api.llama.fi') ? llama : chainlist,
+    })) as unknown as typeof fetch;
+    const { deps } = makeDeps({ fetchImpl });
     const registry = new ChainRegistry(deps);
-    const data = await registry.listChains();
-    // Missing tvls reads as an empty map → name-alpha order.
-    expect(data.chains.map((c) => c.chainId)).toEqual([1, 10]);
+    const zk = await registry.getChain(324);
+    expect(zk?.iconUrl).toBe(
+      'https://icons.llamao.fi/icons/chains/rsz_zksync%20era.jpg'
+    );
+    const bsc = await registry.getChain(56);
+    expect(bsc?.iconUrl).toBe(
+      'https://icons.llamao.fi/icons/chains/rsz_binance.jpg'
+    );
   });
 
   it('lists custom chains before chainlist entries regardless of TVL', async () => {

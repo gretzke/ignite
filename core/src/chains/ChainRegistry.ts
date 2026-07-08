@@ -25,15 +25,24 @@ export interface ChainRegistryDeps {
   now: () => number;
 }
 
+// chainId → DefiLlama TVL (USD) and chain name, kept beside (never on) the
+// chain entries so llama data stays cache-internal and can't leak into
+// ChainInfo responses. The name doubles as the llamao icon key (see
+// doRefresh).
+type LlamaChainData = Record<string, { tvl?: number; name?: string }>;
+
 interface ChainlistCacheFile {
+  // Schema version; absent in pre-versioning caches, which read as stale
+  // (see isStale) so a TTL-fresh but schema-stale cache still refetches.
+  version?: number;
   fetchedAt: string;
   chains: ChainInfo[];
-  // chainId → DefiLlama TVL in USD, kept beside (never on) the chain entries
-  // so TVL stays cache-internal and can't leak into ChainInfo responses.
-  // Absent in caches written before TVL support: read as empty, self-heals
-  // on the next refresh.
-  tvls?: Record<string, number>;
+  llama?: LlamaChainData;
 }
+
+// Bump this constant on ANY change to the cache file shape so existing
+// TTL-fresh caches written under the old schema are refetched, not served.
+export const CHAINLIST_CACHE_VERSION = 2;
 
 const CHAINLIST_URL = 'https://chainid.network/chains.json';
 const LLAMA_TVL_URL = 'https://api.llama.fi/chains';
@@ -68,12 +77,12 @@ export class ChainRegistry {
     // counterpart (if any) so the entry appears exactly once. Sorted before
     // the q-filter/limit so the default top-N view surfaces major chains
     // (filtering preserves order).
-    const tvls = cache?.tvls ?? {};
+    const llama = cache?.llama ?? {};
     const merged = [
       ...custom.map((c) => mergeCustomChain(c, chainlistById.get(c.chainId))),
       ...chainlist
         .filter((c) => !overlaid.has(c.chainId))
-        .sort(byTvlDescThenName(tvls)),
+        .sort(byTvlDescThenName(llama)),
     ];
 
     const q = opts?.q?.trim().toLowerCase();
@@ -166,16 +175,33 @@ export class ChainRegistry {
   private async doRefresh(): Promise<RefreshChainsData> {
     try {
       // The chainlist fetch is load-bearing (failure fails the refresh);
-      // TVL is ordering garnish and never throws (see fetchTvls).
-      const [raw, tvls] = await Promise.all([
+      // llama data is ordering/icon garnish and never throws (see
+      // fetchLlama).
+      const [raw, llama] = await Promise.all([
         this.fetchJson(CHAINLIST_URL),
-        this.fetchTvls(),
+        this.fetchLlama(),
       ]);
-      const chains = parseChainlist(raw);
+      // Icon precedence, joined once at refresh time: (1) DefiLlama chain
+      // name → llamao icon (icons.llamao.fi keys icons by the llama NAME,
+      // lowercased with spaces URL-encoded — chainid.network lacks icon
+      // slugs for several majors); (2) chainid.network icon slug (set by
+      // parseChainlist); (3) none — the frontend letter fallback handles it.
+      // The name comes from our own fetched dataset and is length-guarded in
+      // parseLlama; encodeURIComponent handles the rest.
+      const chains = parseChainlist(raw).map((chain) => {
+        const name = llama[String(chain.chainId)]?.name;
+        return name
+          ? {
+              ...chain,
+              iconUrl: `https://icons.llamao.fi/icons/chains/rsz_${encodeURIComponent(name.toLowerCase())}.jpg`,
+            }
+          : chain;
+      });
       const cache: ChainlistCacheFile = {
+        version: CHAINLIST_CACHE_VERSION,
         fetchedAt: new Date(this.deps.now()).toISOString(),
         chains,
-        tvls,
+        llama,
       };
       await this.deps.fileSystem.writeJsonFile(
         this.deps.fileSystem.getChainlistCachePath(),
@@ -210,14 +236,14 @@ export class ChainRegistry {
   }
 
   // A DefiLlama failure must not fail the refresh: chains still update and
-  // ordering falls back to the previous cache's TVLs when available (stale
-  // TVL beats none), else name-alpha via an empty map.
-  private async fetchTvls(): Promise<Record<string, number>> {
+  // ordering/icons fall back to the previous cache's llama data when
+  // available (stale beats none), else name-alpha via an empty map.
+  private async fetchLlama(): Promise<LlamaChainData> {
     try {
-      return parseTvls(await this.fetchJson(LLAMA_TVL_URL));
+      return parseLlama(await this.fetchJson(LLAMA_TVL_URL));
     } catch {
       const previous = await this.readCache();
-      return previous?.tvls ?? {};
+      return previous?.llama ?? {};
     }
   }
 
@@ -236,6 +262,10 @@ export class ChainRegistry {
   }
 
   private isStale(cache: ChainlistCacheFile): boolean {
+    // Schema-stale beats TTL-fresh: a cache written under a different (or
+    // missing, pre-versioning) schema version must be refetched even if its
+    // fetchedAt is recent.
+    if (cache.version !== CHAINLIST_CACHE_VERSION) return true;
     const age = this.deps.now() - Date.parse(cache.fetchedAt);
     return Number.isNaN(age) || age > CHAINLIST_TTL_MS;
   }
@@ -288,11 +318,12 @@ export function mergeCustomChain(
 
 // Defensive mapping of the DefiLlama /chains dataset: roughly half the
 // entries carry no chainId (non-EVM chains) and some send chainId as a
-// string. Only positive-integer chainIds with a positive numeric TVL are
-// kept.
-function parseTvls(raw: unknown): Record<string, number> {
-  const tvls: Record<string, number> = {};
-  if (!Array.isArray(raw)) return tvls;
+// string. Only positive-integer chainIds are kept, carrying a positive
+// numeric TVL (ordering) and/or a non-empty name of at most 64 chars (the
+// llamao icon key); entries with neither usable field are dropped.
+function parseLlama(raw: unknown): LlamaChainData {
+  const llama: LlamaChainData = {};
+  if (!Array.isArray(raw)) return llama;
   for (const entry of raw) {
     if (typeof entry !== 'object' || entry === null) continue;
     const e = entry as Record<string, unknown>;
@@ -301,18 +332,27 @@ function parseTvls(raw: unknown): Record<string, number> {
         ? Number(e.chainId)
         : NaN;
     if (!Number.isInteger(chainId) || chainId <= 0) continue;
-    if (typeof e.tvl !== 'number' || !(e.tvl > 0)) continue;
-    tvls[String(chainId)] = e.tvl;
+    const tvl = typeof e.tvl === 'number' && e.tvl > 0 ? e.tvl : undefined;
+    const name =
+      typeof e.name === 'string' && e.name.length > 0 && e.name.length <= 64
+        ? e.name
+        : undefined;
+    if (tvl === undefined && name === undefined) continue;
+    llama[String(chainId)] = {
+      ...(tvl !== undefined ? { tvl } : {}),
+      ...(name !== undefined ? { name } : {}),
+    };
   }
-  return tvls;
+  return llama;
 }
 
 function byTvlDescThenName(
-  tvls: Record<string, number>
+  llama: LlamaChainData
 ): (a: ChainInfo, b: ChainInfo) => number {
   return (a, b) => {
     const diff =
-      (tvls[String(b.chainId)] ?? 0) - (tvls[String(a.chainId)] ?? 0);
+      (llama[String(b.chainId)]?.tvl ?? 0) -
+      (llama[String(a.chainId)]?.tvl ?? 0);
     if (diff !== 0) return diff;
     return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   };
@@ -365,7 +405,9 @@ function parseChainlist(raw: unknown): ChainInfo[] {
         : [],
       explorers: explorers?.length ? explorers : undefined,
       infoURL: typeof e.infoURL === 'string' ? e.infoURL : undefined,
-      // llamao hosts the chainlist icon set; only plain slugs are accepted
+      // Fallback icon source (a DefiLlama name, when one exists for the
+      // chainId, overrides this in doRefresh): the chainid.network icon
+      // slug on the same llamao icon set. Only plain slugs are accepted
       // (anything with path chars is dropped — untrusted dataset).
       iconUrl:
         typeof e.icon === 'string' && /^[a-z0-9_-]+$/i.test(e.icon)
