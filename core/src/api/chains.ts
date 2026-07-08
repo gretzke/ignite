@@ -178,7 +178,7 @@ export function createChainHandlers(deps?: Partial<ChainHandlerDeps>) {
     },
 
     listRpcs: async (
-      request: FastifyRequest<{ Params: ChainParams }>,
+      request: FastifyRequest<{ Params: ChainParams; Querystring: { refresh?: boolean } }>,
       reply: FastifyReply
     ): Promise<IApiResponse<ListRpcsData>> => {
       try {

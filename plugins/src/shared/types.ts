@@ -18,6 +18,7 @@ export type PluginResponse<T> =
 export enum PluginType {
   REPO_MANAGER = "repo-manager",
   COMPILER = "compiler",
+  RPC_PROVIDER = "rpc-provider",
 }
 
 // The permission vocabulary core can actually enforce (container mounts and

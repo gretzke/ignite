@@ -78,8 +78,21 @@ export interface RpcEndpoint {
   lastVerification?: RpcVerificationResult;
 }
 
+// Reported by rpc-provider plugins (getSupportedChains). Untrusted input:
+// core bounds and validates every entry before it reaches the API.
+export interface ProviderChainEndpoint {
+  chainId: number;
+  url: string;
+  label?: string;
+}
+
+export interface GetSupportedChainsResult {
+  chains: ProviderChainEndpoint[];
+}
+
 export interface ListRpcsData {
   endpoints: RpcEndpoint[];
+  providerEndpoints?: RpcEndpoint[];
 }
 
 export interface AddRpcRequest {
@@ -128,6 +141,10 @@ export const ListChainsQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).optional(),
 });
 
+export const ListRpcsQuerySchema = z.object({
+  refresh: z.coerce.boolean().optional(),
+});
+
 export const ChainNativeCurrencySchema = z.object({
   name: z.string(),
   symbol: z.string(),
@@ -172,6 +189,16 @@ export const RpcEndpointSchema = z.object({
   lastVerification: RpcVerificationResultSchema.optional(),
 });
 
+export const ProviderChainEndpointSchema = z.object({
+  chainId: z.number().int().positive(),
+  url: z.string(),
+  label: z.string().optional(),
+});
+
+export const GetSupportedChainsResultSchema = z.object({
+  chains: z.array(ProviderChainEndpointSchema),
+});
+
 export const ListChainsResponseSchema =
   createApiResponseSchema<ListChainsData>("ListChainsResponseSchema")(
     z.object({
@@ -205,7 +232,10 @@ export const RefreshChainsResponseSchema =
 
 export const ListRpcsResponseSchema = createApiResponseSchema<ListRpcsData>(
   "ListRpcsResponseSchema",
-)(z.object({ endpoints: z.array(RpcEndpointSchema) }));
+)(z.object({
+  endpoints: z.array(RpcEndpointSchema),
+  providerEndpoints: z.array(RpcEndpointSchema).optional(),
+}));
 
 export const AddRpcRequestSchema = createRequestSchema<AddRpcRequest>(
   "AddRpcRequestSchema",
@@ -295,6 +325,7 @@ export const chainRoutes = {
     method: "GET" as const,
     path: `${V1_BASE_PATH}/chains/:chainId/rpcs`,
     params: ChainParamsSchema,
+    querystring: ListRpcsQuerySchema,
     schema: {
       tags: ["chains"],
       response: { 200: ListRpcsResponseSchema },
