@@ -390,6 +390,63 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('recompile: install runs before compile for a drifted framework (dependencies may be gone after a re-clone)', async () => {
+    const dir = await createTestDirectory();
+    try {
+      await fs.mkdir(path.join(dir, 'src'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A {}');
+      const { statFingerprint } = await import('../../repos/fingerprint.js');
+      const sources = await statFingerprint(dir, ['foundry.toml', 'src']);
+      const artifacts = await statFingerprint(dir, ['out']);
+      const record: RepoRecord = {
+        pathOrUrl: '/repo-a',
+        frameworks: [
+          {
+            id: 'foundry',
+            name: 'Foundry',
+            watchPaths: {
+              config: ['foundry.toml'],
+              sources: ['src'],
+              artifacts: ['out'],
+            },
+            fingerprint: { sources, artifacts },
+            compiledAt: '2026-07-01T00:00:00.000Z',
+          },
+        ],
+      };
+      const { lifecycle, jobs, executor } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [record],
+        responses: {
+          foundry: {
+            detect: DETECTED,
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: OK,
+          },
+        },
+      });
+
+      // Drift the tree (e.g. a re-clone or manual node_modules wipe would
+      // also leave watch-path fingerprints stale) so recompile actually
+      // touches this framework.
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A { uint x; }');
+
+      lifecycle.startLifecycle('/repo-a', 'p1', 'recompile');
+      await jobs.runAll();
+
+      const foundryOps = executor.calls
+        .filter((c) => c.pluginId === 'foundry')
+        .map((c) => c.op);
+      expect(foundryOps).toContain('install');
+      expect(foundryOps.indexOf('install')).toBeLessThan(
+        foundryOps.indexOf('compile')
+      );
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('startLifecycle returns the running job instead of starting a second for the same repo', async () => {
     const dir = await createTestDirectory();
     try {

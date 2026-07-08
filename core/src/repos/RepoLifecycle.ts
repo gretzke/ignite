@@ -425,6 +425,26 @@ export class RepoLifecycle {
     } else if (mode === 'recompile') {
       for (const fw of frameworks) {
         if (!(await this.frameworkDrifted(workspacePath, fw))) continue;
+        // Install ops are idempotent by plugin contract (npm install / forge
+        // install with dependencies already present is a fast no-op), so
+        // re-running one here is cheap. A recompile must never assume the
+        // workspace still has its dependencies — a re-clone after an
+        // interrupted job or a manual `node_modules` wipe invalidates that
+        // silently, and the add pipeline is otherwise the only path that
+        // installs.
+        ctx.log(`phase: install ${fw.id}\n`);
+        const install = await this.deps.executor.execute(
+          fw.id,
+          'install',
+          { pathOrUrl },
+          { workspacePath, signal: ctx.signal, onOutput: (t) => ctx.log(t) }
+        );
+        if (!install.success) {
+          throw coded(
+            install.error?.message ?? `Install failed for ${fw.id}`,
+            install.error?.code ?? ErrorCodes.INSTALL_FAILED
+          );
+        }
         ctx.log(`phase: compile ${fw.id}\n`);
         const compile = await this.deps.executor.execute(
           fw.id,
