@@ -20,9 +20,35 @@ const RESULT_BEGIN = '<<<IGNITE_RESULT_BEGIN>>>';
 const RESULT_END = '<<<IGNITE_RESULT_END>>>';
 
 const PLUGINS = [
-  { dir: 'infura', id: 'infura', name: 'Infura', configFieldKey: 'api-key' },
-  { dir: 'alchemy', id: 'alchemy', name: 'Alchemy', configFieldKey: 'api-key' },
-  { dir: 'chainz', id: 'chainz', name: 'chainz', configFieldKey: 'chainz-config' },
+  {
+    dir: 'infura',
+    id: 'infura',
+    name: 'Infura',
+    configFieldKey: 'api-key',
+    // Strongest available check: every generated URL must actually embed
+    // the configured API key (TESTKEY), not merely look like an https URL.
+    assertUrls: (chains) => chains.every((c) => c.url.includes('TESTKEY')),
+  },
+  {
+    dir: 'alchemy',
+    id: 'alchemy',
+    name: 'Alchemy',
+    configFieldKey: 'api-key',
+    assertUrls: (chains) => chains.every((c) => c.url.includes('TESTKEY')),
+  },
+  {
+    dir: 'chainz',
+    id: 'chainz',
+    name: 'chainz',
+    configFieldKey: 'chainz-config',
+    // chainz URLs are user-supplied and don't all carry a key (e.g. a bare
+    // public RPC URL) — the strongest available check is that the
+    // interpolated *selected* URL contains the configured variable value.
+    assertUrls: (chains) => {
+      const selected = chains.find((c) => c.label.includes('(selected)'));
+      return Boolean(selected) && selected.url.includes('KEY123');
+    },
+  },
 ];
 
 let failures = 0;
@@ -162,11 +188,11 @@ for (const plugin of PLUGINS) {
           {
             name: 'Test',
             chain_id: 1,
-            rpc_urls: ['https://test.example.com/TESTKEY'],
-            selected_rpc: 'https://test.example.com/TESTKEY',
+            rpc_urls: ['https://test.example.com/${TEST_KEY}'],
+            selected_rpc: 'https://test.example.com/${TEST_KEY}',
           },
         ],
-        variables: {},
+        variables: { TEST_KEY: 'KEY123' },
       }),
     };
   } else {
@@ -195,6 +221,12 @@ for (const plugin of PLUGINS) {
     !badUrl,
     `${plugin.name}: every chain URL starts with https://`,
     badUrl
+  );
+
+  assert(
+    typeof plugin.assertUrls === 'function' && plugin.assertUrls(chains),
+    `${plugin.name}: chain URLs satisfy the plugin-specific key-containment check`,
+    chains
   );
 
   const chainIds = chains.map((c) => c.chainId);
@@ -297,12 +329,34 @@ for (const plugin of PLUGINS) {
       wsUrl
     );
 
-    // No URLs with unmatched variables
-    const badVarUrl = chainzChains.find((c) => c.url.includes('${'));
+    // No URLs with unmatched variables. Checking for a literal '${' is not
+    // enough — the historical bug coerced a null replacer return value into
+    // the *string* "null" via String.prototype.replace, silently emitting
+    // "https://x.example/null" instead of skipping the URL. Assert the
+    // unmatched-variable URL is absent entirely: neither its synthetic host
+    // (x.example) nor a null-coercion artifact may appear in any URL.
+    const unmatchedHostUrl = chainzChains.find((c) => c.url.includes('x.example'));
     assert(
-      !badVarUrl,
-      'chainz: URLs with unmatched variables are skipped',
-      badVarUrl
+      !unmatchedHostUrl,
+      'chainz: URLs with unmatched variables are skipped entirely (x.example host absent)',
+      unmatchedHostUrl
+    );
+    const nullCoercedUrl = chainzChains.find((c) => c.url.includes('null'));
+    assert(
+      !nullCoercedUrl,
+      'chainz: no URL contains a null-coerced placeholder',
+      nullCoercedUrl
+    );
+
+    // Exact entry count for the Sepolia chain: selected (interpolated KEY123)
+    // + rpc.sepolia.org, with the Infura-key duplicate, literal duplicate,
+    // ws:// URL, and unmatched-variable URL all skipped. A skipped-URL
+    // regression (e.g. the null-coercion bug re-emitting the MISSING_VAR
+    // URL) changes this count.
+    assert(
+      chainzChains.length === 2,
+      'chainz: exactly 2 chain entries survive dedup/https/variable filtering for Sepolia',
+      chainzChains
     );
 
     // All chainIds should be 11155111

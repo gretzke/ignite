@@ -37,6 +37,7 @@ const META = {
       label: 'chainz config (paste ~/.chainz.json)',
       type: 'string',
       secret: true,
+      required: true,
       description:
         'Contents of your ~/.chainz.json. It contains RPC keys and API keys, so it is stored in the encrypted vault.',
     },
@@ -58,18 +59,19 @@ function getInfo() {
   return ok(META);
 }
 
+// Returns the interpolated URL, or null when any ${VAR} has no matching
+// variable — such URLs must be skipped entirely, never emitted.
 function interpolateUrl(url, variables) {
-  // Interpolate ${VAR} with values from variables.
-  // If any ${...} has no matching variable, return null (skip this URL).
-  if (!variables) return url;
-
-  return url.replace(/\$\{([^}]+)\}/g, (match, varName) => {
-    if (varName in variables) {
-      return variables[varName];
+  let missing = false;
+  const interpolated = url.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+    const value = variables[varName];
+    if (typeof value !== 'string') {
+      missing = true;
+      return match; // placeholder retained; result discarded via the flag
     }
-    // Variable not found — skip this URL by returning null as a sentinel.
-    return null;
+    return value;
   });
+  return missing ? null : interpolated;
 }
 
 function getSupportedChains(options) {
