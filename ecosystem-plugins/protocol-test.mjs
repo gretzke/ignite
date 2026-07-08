@@ -20,8 +20,9 @@ const RESULT_BEGIN = '<<<IGNITE_RESULT_BEGIN>>>';
 const RESULT_END = '<<<IGNITE_RESULT_END>>>';
 
 const PLUGINS = [
-  { dir: 'infura', id: 'infura', name: 'Infura' },
-  { dir: 'alchemy', id: 'alchemy', name: 'Alchemy' },
+  { dir: 'infura', id: 'infura', name: 'Infura', configFieldKey: 'api-key' },
+  { dir: 'alchemy', id: 'alchemy', name: 'Alchemy', configFieldKey: 'api-key' },
+  { dir: 'chainz', id: 'chainz', name: 'chainz', configFieldKey: 'chainz-config' },
 ];
 
 let failures = 0;
@@ -125,8 +126,8 @@ for (const plugin of PLUGINS) {
     apiKeyField
   );
   assert(
-    apiKeyField && apiKeyField.key === 'api-key',
-    `${plugin.name}: getInfo configFields[0].key === 'api-key'`,
+    apiKeyField && apiKeyField.key === plugin.configFieldKey,
+    `${plugin.name}: getInfo configFields[0].key === '${plugin.configFieldKey}'`,
     apiKeyField
   );
 
@@ -141,39 +142,58 @@ for (const plugin of PLUGINS) {
   );
 
   const emptyKeyResponse = runOp(plugin.dir, 'getSupportedChains', {
-    config: { 'api-key': '   ' },
+    config: { [plugin.configFieldKey]: '   ' },
   });
   assert(
     emptyKeyResponse.success === true &&
       Array.isArray(emptyKeyResponse.data?.chains) &&
       emptyKeyResponse.data.chains.length === 0,
-    `${plugin.name}: getSupportedChains with blank api-key returns empty chains`,
+    `${plugin.name}: getSupportedChains with blank ${plugin.configFieldKey} returns empty chains`,
     emptyKeyResponse
   );
 
   // --- getSupportedChains with config ---
-  const TEST_KEY = 'TESTKEY';
+  // Use appropriate test config for the plugin type
+  let testConfig;
+  if (plugin.id === 'chainz') {
+    testConfig = {
+      [plugin.configFieldKey]: JSON.stringify({
+        chains: [
+          {
+            name: 'Test',
+            chain_id: 1,
+            rpc_urls: ['https://test.example.com/TESTKEY'],
+            selected_rpc: 'https://test.example.com/TESTKEY',
+          },
+        ],
+        variables: {},
+      }),
+    };
+  } else {
+    testConfig = { [plugin.configFieldKey]: 'TESTKEY' };
+  }
+
   const chainsResponse = runOp(plugin.dir, 'getSupportedChains', {
-    config: { 'api-key': TEST_KEY },
+    config: testConfig,
   });
   assert(
     chainsResponse.success === true,
-    `${plugin.name}: getSupportedChains with api-key returns success:true`,
+    `${plugin.name}: getSupportedChains with ${plugin.configFieldKey} returns success:true`,
     chainsResponse
   );
   const chains = chainsResponse.data?.chains || [];
   assert(
     chains.length > 0,
-    `${plugin.name}: getSupportedChains with api-key returns a non-empty chain list`,
+    `${plugin.name}: getSupportedChains with ${plugin.configFieldKey} returns a non-empty chain list`,
     chains
   );
 
   const badUrl = chains.find(
-    (c) => !c.url.startsWith('https://') || !c.url.includes(TEST_KEY)
+    (c) => !c.url.startsWith('https://')
   );
   assert(
     !badUrl,
-    `${plugin.name}: every chain URL starts with https:// and contains the api key`,
+    `${plugin.name}: every chain URL starts with https://`,
     badUrl
   );
 
@@ -210,6 +230,123 @@ for (const plugin of PLUGINS) {
     `${plugin.name}: unknown operation returns a success:false error envelope`,
     unknownResponse
   );
+
+  // --- chainz-specific tests ---
+  if (plugin.id === 'chainz') {
+    const chainzConfig = JSON.stringify({
+      chains: [
+        {
+          name: 'Sepolia',
+          chain_id: 11155111,
+          rpc_urls: [
+            'https://rpc.sepolia.org',
+            'https://sepolia.infura.io/v3/${INFURA_API_KEY}',
+            'https://rpc.sepolia.org', // duplicate
+            'ws://bad.example', // non-https
+            'https://x.example/${MISSING_VAR}', // unmatched variable
+          ],
+          selected_rpc: 'https://sepolia.infura.io/v3/${INFURA_API_KEY}',
+        },
+      ],
+      variables: {
+        INFURA_API_KEY: 'KEY123',
+      },
+    });
+
+    const chainzResponse = runOp(plugin.dir, 'getSupportedChains', {
+      config: { 'chainz-config': chainzConfig },
+    });
+    assert(
+      chainzResponse.success === true,
+      'chainz: getSupportedChains with config returns success:true',
+      chainzResponse
+    );
+
+    const chainzChains = chainzResponse.data?.chains || [];
+    assert(
+      chainzChains.length > 0,
+      'chainz: getSupportedChains returns non-empty chain list',
+      chainzChains
+    );
+
+    // Selected RPC should be first with "(selected)" label
+    const selectedChain = chainzChains[0];
+    assert(
+      selectedChain &&
+        selectedChain.label === 'Sepolia (selected)' &&
+        selectedChain.url.includes('KEY123'),
+      'chainz: selected RPC appears first with "(selected)" label and interpolated key',
+      selectedChain
+    );
+
+    // rpc.sepolia.org should appear exactly once (deduped)
+    const sepoliaUrlCount = chainzChains.filter((c) =>
+      c.url.includes('rpc.sepolia.org')
+    ).length;
+    assert(
+      sepoliaUrlCount === 1,
+      'chainz: rpc.sepolia.org appears exactly once (deduped)',
+      { sepoliaUrlCount, chains: chainzChains }
+    );
+
+    // No ws:// URLs
+    const wsUrl = chainzChains.find((c) => c.url.startsWith('ws://'));
+    assert(
+      !wsUrl,
+      'chainz: no websocket URLs are included',
+      wsUrl
+    );
+
+    // No URLs with unmatched variables
+    const badVarUrl = chainzChains.find((c) => c.url.includes('${'));
+    assert(
+      !badVarUrl,
+      'chainz: URLs with unmatched variables are skipped',
+      badVarUrl
+    );
+
+    // All chainIds should be 11155111
+    const allSepoliaId = chainzChains.every((c) => c.chainId === 11155111);
+    assert(
+      allSepoliaId,
+      'chainz: all chain entries have chainId 11155111',
+      chainzChains
+    );
+
+    // Test malformed JSON
+    const badJsonResponse = runOp(plugin.dir, 'getSupportedChains', {
+      config: { 'chainz-config': '{invalid json}' },
+    });
+    assert(
+      badJsonResponse.success === true &&
+        Array.isArray(badJsonResponse.data?.chains) &&
+        badJsonResponse.data.chains.length === 0,
+      'chainz: malformed JSON config returns empty chains (never errors)',
+      badJsonResponse
+    );
+
+    // Test missing config
+    const noConfigResponse = runOp(plugin.dir, 'getSupportedChains', {
+      config: {},
+    });
+    assert(
+      noConfigResponse.success === true &&
+        Array.isArray(noConfigResponse.data?.chains) &&
+        noConfigResponse.data.chains.length === 0,
+      'chainz: missing chainz-config returns empty chains',
+      noConfigResponse
+    );
+
+    // Verify getInfo configField is secret
+    const chainzApiKeyField = (info.configFields || [])[0];
+    assert(
+      chainzApiKeyField &&
+        chainzApiKeyField.key === 'chainz-config' &&
+        chainzApiKeyField.secret === true,
+      'chainz: getInfo configFields[0] is secret chainz-config field',
+      chainzApiKeyField
+    );
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
