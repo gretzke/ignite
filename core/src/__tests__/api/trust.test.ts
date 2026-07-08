@@ -177,6 +177,67 @@ describe('trust API handlers', () => {
     await secretApp.close();
   });
 
+  it('clamps granted secret-scope keys against declared secret AND file fields alike, still rejecting undeclared keys', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-trust-api4-'));
+    const fileManager = new TrustManager(
+      path.join(dir, 'trust.json'),
+      async () => false
+    );
+    // '@acme/foundry' declares 'apikey' (secret: true) and 'chainz-config'
+    // (type: 'file') — both live in the same secret-scope grant dimension.
+    const fileProviders = { invalidate: vi.fn() };
+    const handlers = createTrustHandlers(
+      fileManager,
+      vi.fn(async () => ['@acme/foundry']),
+      vi.fn(async () => ['hostWrite', 'net']),
+      vi.fn(async () => ['apikey', 'chainz-config']),
+      fileProviders
+    );
+    const fileApp = fastify();
+    fileApp.post('/api/v1/plugins/:pluginId/trust', handlers.setPluginTrust);
+    await fileApp.ready();
+
+    // Granting the file-field key succeeds exactly like a secret field key.
+    const ok = await fileApp.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/@acme%2Ffoundry/trust',
+      payload: {
+        trust: 'trusted',
+        permissions: {
+          hostWrite: false,
+          net: false,
+          secrets: ['chainz-config'],
+        },
+      },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().data.plugin.permissions.secrets).toEqual([
+      'chainz-config',
+    ]);
+    const grant = await fileManager.getGrant('@acme/foundry');
+    expect(grant.secrets).toEqual(['chainz-config']);
+    expect(fileProviders.invalidate).toHaveBeenCalledWith('@acme/foundry');
+
+    // An undeclared key is still rejected fail-closed, unchanged grant.
+    const denied = await fileApp.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/@acme%2Ffoundry/trust',
+      payload: {
+        trust: 'trusted',
+        permissions: {
+          hostWrite: false,
+          net: false,
+          secrets: ['chainz-config', 'undeclaredkey'],
+        },
+      },
+    });
+    expect(denied.statusCode).toBe(400);
+    expect(denied.json().code).toBe('PERMISSION_NOT_REQUESTED');
+    const unchangedGrant = await fileManager.getGrant('@acme/foundry');
+    expect(unchangedGrant.secrets).toEqual(['chainz-config']);
+    await fileApp.close();
+  });
+
   it('refuses to modify native plugin trust', async () => {
     const res = await app.inject({
       method: 'POST',

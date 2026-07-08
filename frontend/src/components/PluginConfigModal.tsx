@@ -94,6 +94,80 @@ function GlobalValueControl({
   );
 }
 
+// A `file` field's VALUE is a host file PATH (plaintext, non-secret — the
+// same store as a string field), shown/edited here like one. Core reads the
+// file at that path and injects its CONTENTS under the field's key at
+// invocation time, gated by the secret-scope grant (see
+// PluginPermissionsModal) — never the path itself, which is always visible.
+function FileValueControl({
+  pluginId,
+  field,
+  value,
+  onSaved,
+}: {
+  pluginId: string;
+  field: PluginConfigField;
+  value: PluginConfigPrimitive | undefined;
+  onSaved?: () => void;
+}) {
+  const dispatch = useAppDispatch();
+  const currentStr = value === undefined ? '' : String(value);
+  const [draft, setDraft] = useState(currentStr);
+
+  useEffect(() => {
+    setDraft(currentStr);
+  }, [currentStr]);
+
+  const dirty = draft !== currentStr;
+
+  const save = () => {
+    dispatch(
+      pluginsApi.setConfigValue(pluginId, { key: field.key, value: draft })
+    );
+    onSaved?.();
+  };
+
+  const reset = () => {
+    dispatch(pluginsApi.deleteConfigValue(pluginId, field.key));
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          className="input-glass mono-data flex-1"
+          placeholder={field.default}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        {dirty && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={save}
+          >
+            Save
+          </button>
+        )}
+        {value !== undefined && (
+          <button
+            type="button"
+            className="btn-sm btn-secondary-borderless"
+            onClick={reset}
+          >
+            Reset to default
+          </button>
+        )}
+      </div>
+      <span className="text-xs text-muted">
+        File contents are provided to the plugin when it runs — requires the
+        access grant in Manage Permissions.
+      </span>
+    </div>
+  );
+}
+
 // Secret values are never read back — only whether an entry is currently
 // stored (`present`). Submits via setSecret; a stored entry can be cleared
 // via deleteConfigValue but never displayed.
@@ -215,6 +289,8 @@ function ConfigFieldCard({
           field={field}
           present={config.secretsPresent.includes(field.key)}
         />
+      ) : field.type === 'file' ? (
+        <FileValueControl pluginId={pluginId} field={field} value={shape?.global} />
       ) : (
         <GlobalValueControl pluginId={pluginId} field={field} value={shape?.global} />
       )}

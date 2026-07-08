@@ -192,6 +192,107 @@ describe('PluginExecutor with injected deps', () => {
       );
     });
 
+    it('injects file field contents when granted, and omits them (never reading the file) when ungranted', async () => {
+      const getFileContents = vi.fn(async (_pluginId: string, path: string) =>
+        path.endsWith('.chainz.json') ? 'FILE CONTENTS' : undefined
+      );
+      const getValues = vi.fn(async () => ({
+        'chainz-config': { global: '/home/user/.chainz.json' },
+      }));
+
+      const { executor, executeOperation } = makeExecutor({
+        registryLoader: {
+          getPluginConfig: async () => ({
+            metadata: {
+              id: 'chainz',
+              type: PluginType.RPC_PROVIDER,
+              baseImage: 'img:latest',
+              configFields: [
+                {
+                  key: 'chainz-config',
+                  label: 'Chainz Config',
+                  type: 'file',
+                  default: '~/.chainz.json',
+                },
+              ],
+            },
+            requiresRepo: false,
+            origin: 'builtin',
+          }),
+        },
+        trust: {
+          getGrant: async () => ({
+            trust: 'trusted',
+            hostWrite: false,
+            net: false,
+            secrets: ['chainz-config'],
+          }),
+        },
+        pluginConfigStore: { getValues },
+        getFileContents,
+      });
+
+      await executor.execute('chainz', 'detect', {});
+
+      expect(executeOperation).toHaveBeenCalledTimes(1);
+      const calls = executeOperation.mock.calls[0] as unknown as unknown[];
+      const calledOptions = calls[3] as Record<string, unknown>;
+      expect(calledOptions.config).toEqual({
+        'chainz-config': 'FILE CONTENTS',
+      });
+      expect(getFileContents).toHaveBeenCalledWith(
+        'chainz',
+        '/home/user/.chainz.json'
+      );
+    });
+
+    it('never calls getFileContents for an ungranted file field (security-critical)', async () => {
+      const getFileContents = vi.fn(async () => 'this-should-never-be-read');
+      const getValues = vi.fn(async () => ({
+        'chainz-config': { global: '/home/user/.chainz.json' },
+      }));
+
+      const { executor, executeOperation } = makeExecutor({
+        registryLoader: {
+          getPluginConfig: async () => ({
+            metadata: {
+              id: 'chainz',
+              type: PluginType.RPC_PROVIDER,
+              baseImage: 'img:latest',
+              configFields: [
+                {
+                  key: 'chainz-config',
+                  label: 'Chainz Config',
+                  type: 'file',
+                  default: '~/.chainz.json',
+                },
+              ],
+            },
+            requiresRepo: false,
+            origin: 'builtin',
+          }),
+        },
+        trust: {
+          getGrant: async () => ({
+            trust: 'trusted',
+            hostWrite: false,
+            net: false,
+            secrets: [],
+          }),
+        },
+        pluginConfigStore: { getValues },
+        getFileContents,
+      });
+
+      await executor.execute('chainz', 'detect', {});
+
+      expect(executeOperation).toHaveBeenCalledTimes(1);
+      const calls = executeOperation.mock.calls[0] as unknown as unknown[];
+      const calledOptions = calls[3] as Record<string, unknown>;
+      expect(calledOptions.config).toEqual({});
+      expect(getFileContents).not.toHaveBeenCalled();
+    });
+
     it('rejects without ever creating a container when vault secret resolution fails', async () => {
       const vaultError = new Error('vault locked: master key unavailable');
       const getSecret = vi.fn(async () => {

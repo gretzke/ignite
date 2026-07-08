@@ -48,12 +48,14 @@ export const PluginConfigSelectOptionSchema = z.object({
 export const PluginConfigFieldSchema = z.object({
   key: z.string(),
   label: z.string(),
-  type: z.enum(["string", "number", "boolean", "select"]),
+  type: z.enum(["string", "number", "boolean", "select", "file"]),
   description: z.string().optional(),
   secret: z.boolean().optional(),
   perChain: z.boolean().optional(),
   required: z.boolean().optional(),
   options: z.array(PluginConfigSelectOptionSchema).optional(),
+  // file fields only: default host path (e.g. "~/.foo.json").
+  default: z.string().optional(),
 });
 
 export const PluginMetadataSchema = z.object({

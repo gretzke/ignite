@@ -1,4 +1,5 @@
 import os from 'node:os';
+import fs from 'node:fs/promises';
 import { getLogger } from '../../utils/logger.js';
 import {
   PluginRegistryLoader,
@@ -25,6 +26,46 @@ import { createDefaultPluginInstaller } from '../install/defaultInstaller.js';
 import { PluginConfigStore } from '../config/PluginConfigStore.js';
 import { VaultStore } from '../vault/VaultStore.js';
 import { resolveConfig } from '../config/resolveConfig.js';
+
+// Upper bound on a `file` config field's contents: stat'd before reading so
+// an oversized host file is never even opened for read. Never logs contents
+// on rejection — only the plugin id and path (see readFileContents below).
+const FILE_CONFIG_MAX_BYTES = 1024 * 1024; // 1 MiB
+
+// Production `getFileContents` for a `file` config field: reads the
+// (already home-expanded) host path as utf8, capped at FILE_CONFIG_MAX_BYTES.
+// Any failure — missing file, oversized, permission denied, not a regular
+// file — resolves to undefined (the caller omits the field) rather than
+// throwing, so one bad file config never fails the whole operation. NEVER
+// logs the file's contents, only the plugin id and path.
+async function readFileContents(
+  pluginId: string,
+  path: string
+): Promise<string | undefined> {
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- User-configured (or plugin-declared default) file config path, read-only stat probe before the read below.
+    const stats = await fs.stat(path);
+    if (!stats.isFile()) {
+      getLogger().warn(
+        `⚠️ Config file for plugin ${pluginId} at ${path} is not a regular file; skipping`
+      );
+      return undefined;
+    }
+    if (stats.size > FILE_CONFIG_MAX_BYTES) {
+      getLogger().warn(
+        `⚠️ Config file for plugin ${pluginId} at ${path} exceeds ${FILE_CONFIG_MAX_BYTES} bytes; skipping`
+      );
+      return undefined;
+    }
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Same user-configured file config path, already size-checked above.
+    return await fs.readFile(path, 'utf8');
+  } catch (error) {
+    getLogger().warn(
+      `⚠️ Could not read config file for plugin ${pluginId} at ${path}: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return undefined;
+  }
+}
 
 // The boolean-flag permissions gate-checked here — `secrets` is a granted-key
 // list, not a boolean flag, and is resolved separately at injection time
@@ -94,6 +135,10 @@ export interface PluginExecutorDeps {
   // configFields, so plugins without a schema pay zero extra cost.
   pluginConfigStore: Pick<PluginConfigStore, 'getValues'>;
   vaultStore: Pick<VaultStore, 'getSecret' | 'listSecretKeys'>;
+  // Reads a `file` config field's contents from its (already home-expanded)
+  // host path — see resolveConfig.ts for the grant gate this sits behind.
+  // undefined = unreadable/missing/oversized (never thrown).
+  getFileContents: (pluginId: string, path: string) => Promise<string | undefined>;
   // Rebuild a deleted installed-plugin image from its recorded (pinned)
   // install source — PluginInstaller.rebuildImage in production.
   rebuildImage: (pluginId: string) => Promise<unknown>;
@@ -116,6 +161,7 @@ export class PluginExecutor {
         PluginExecutionUtils.executeOperation.bind(PluginExecutionUtils),
       pluginConfigStore: deps?.pluginConfigStore ?? new PluginConfigStore(),
       vaultStore: deps?.vaultStore ?? new VaultStore(),
+      getFileContents: deps?.getFileContents ?? readFileContents,
       rebuildImage:
         deps?.rebuildImage ??
         ((pluginId: string) =>
@@ -337,6 +383,7 @@ export class PluginExecutor {
       getSecret: (key, chainId) =>
         this.deps.vaultStore.getSecret(pluginId, key, chainId),
       getSecretChainIds,
+      getFileContents: (path) => this.deps.getFileContents(pluginId, path),
     });
   }
 

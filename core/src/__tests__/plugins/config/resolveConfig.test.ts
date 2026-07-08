@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { describe, it, expect, vi } from 'vitest';
 import { resolveConfig } from '../../../plugins/config/resolveConfig.js';
 import { PluginType } from '@ignite/plugin-types/types';
@@ -178,6 +179,133 @@ describe('resolveConfig', () => {
 
     expect(result).toEqual({
       apiKey: { default: 'global-secret', '1': 'chain-1-secret', '137': 'chain-137-secret' },
+    });
+  });
+
+  describe('file fields', () => {
+    it('injects file contents under the field key when granted and a global path is configured', async () => {
+      const getFileContents = vi.fn(async () => 'FILE CONTENTS');
+      const result = await resolveConfig({
+        metadata: metadata([
+          {
+            key: 'chainz-config',
+            label: 'Config',
+            type: 'file',
+            default: '~/.chainz.json',
+          },
+        ]),
+        grant: grant({ secrets: ['chainz-config'] }),
+        configValues: { 'chainz-config': { global: '/custom/path.json' } },
+        getSecret: vi.fn(),
+        getFileContents,
+      });
+
+      expect(result).toEqual({ 'chainz-config': 'FILE CONTENTS' });
+      expect(getFileContents).toHaveBeenCalledWith('/custom/path.json');
+    });
+
+    it('falls back to field.default and expands a leading ~ to os.homedir() when granted with no configured path', async () => {
+      const getFileContents = vi.fn(async () => 'FILE CONTENTS');
+      const result = await resolveConfig({
+        metadata: metadata([
+          {
+            key: 'chainz-config',
+            label: 'Config',
+            type: 'file',
+            default: '~/.chainz.json',
+          },
+        ]),
+        grant: grant({ secrets: ['chainz-config'] }),
+        configValues: {},
+        getSecret: vi.fn(),
+        getFileContents,
+      });
+
+      expect(result).toEqual({ 'chainz-config': 'FILE CONTENTS' });
+      expect(getFileContents).toHaveBeenCalledWith(
+        `${os.homedir()}/.chainz.json`
+      );
+    });
+
+    it('never calls getFileContents for an ungranted file field (security-critical)', async () => {
+      const getFileContents = vi.fn(async () => 'this-should-never-be-read');
+      const result = await resolveConfig({
+        metadata: metadata([
+          {
+            key: 'chainz-config',
+            label: 'Config',
+            type: 'file',
+            default: '~/.chainz.json',
+          },
+        ]),
+        grant: grant({ secrets: [] }),
+        configValues: { 'chainz-config': { global: '/custom/path.json' } },
+        getSecret: vi.fn(),
+        getFileContents,
+      });
+
+      expect(result).toEqual({});
+      expect(getFileContents).not.toHaveBeenCalled();
+    });
+
+    it('omits the field when granted but there is no configured path and no default', async () => {
+      const getFileContents = vi.fn(async () => 'unreachable');
+      const result = await resolveConfig({
+        metadata: metadata([
+          { key: 'chainz-config', label: 'Config', type: 'file' },
+        ]),
+        grant: grant({ secrets: ['chainz-config'] }),
+        configValues: {},
+        getSecret: vi.fn(),
+        getFileContents,
+      });
+
+      expect(result).toEqual({});
+      expect(getFileContents).not.toHaveBeenCalled();
+    });
+
+    it('omits the field when the file is unreadable (getFileContents resolves undefined)', async () => {
+      const getFileContents = vi.fn(async () => undefined);
+      const result = await resolveConfig({
+        metadata: metadata([
+          {
+            key: 'chainz-config',
+            label: 'Config',
+            type: 'file',
+            default: '~/.chainz.json',
+          },
+        ]),
+        grant: grant({ secrets: ['chainz-config'] }),
+        configValues: {},
+        getSecret: vi.fn(),
+        getFileContents,
+      });
+
+      expect(result).toEqual({});
+    });
+
+    it('grants a file field under native trust regardless of the secrets list, and leaves non-file fields unaffected', async () => {
+      const getFileContents = vi.fn(async () => 'FILE CONTENTS');
+      const result = await resolveConfig({
+        metadata: metadata([
+          {
+            key: 'chainz-config',
+            label: 'Config',
+            type: 'file',
+            default: '~/.chainz.json',
+          },
+          { key: 'apiUrl', label: 'API URL', type: 'string' },
+        ]),
+        grant: grant({ trust: 'native', secrets: [] }),
+        configValues: { apiUrl: { global: 'https://example.com' } },
+        getSecret: vi.fn(),
+        getFileContents,
+      });
+
+      expect(result).toEqual({
+        'chainz-config': 'FILE CONTENTS',
+        apiUrl: 'https://example.com',
+      });
     });
   });
 

@@ -241,12 +241,14 @@ export class PluginInstaller {
       // Clamp grants to the new requested set: a permission the new version
       // no longer requests is revoked; new requests start denied. Secret
       // grants get the same treatment against the new manifest's declared
-      // secret config-field keys — a key the new version no longer declares
-      // as secret can't stay granted.
+      // secret-scope config-field keys (secret fields AND file fields — a
+      // file field's grant covers file *contents* flowing to the plugin,
+      // same dimension as a secret) — a key the new version no longer
+      // declares in either shape can't stay granted.
       const grant = await this.deps.trust.getGrant(pluginId);
       const declaredSecretKeys = new Set(
         (metadata.configFields ?? [])
-          .filter((field) => field.secret)
+          .filter((field) => field.secret || field.type === 'file')
           .map((field) => field.key)
       );
       const clamped: PluginPermissions = {
@@ -530,7 +532,7 @@ export class PluginInstaller {
     const keyPattern = /^[a-z0-9][a-z0-9._-]*$/;
     // eslint-disable-next-line no-control-regex
     const controlChars = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
-    const types = new Set(['string', 'number', 'boolean', 'select']);
+    const types = new Set(['string', 'number', 'boolean', 'select', 'file']);
     const seen = new Set<string>();
     for (const field of fields) {
       if (typeof field !== 'object' || field === null) {
@@ -590,6 +592,31 @@ export class PluginInstaller {
         }
       } else if (f.options !== undefined) {
         throw invalid(`field '${f.key}' may not declare options`);
+      }
+
+      // `default` is a file-field-only concept (the plugin-declared default
+      // host path, e.g. "~/.foo.json"): a non-file field declaring it is
+      // rejected outright, and when a file field declares one it's checked
+      // against the same short-plain-text discipline as label/description.
+      if (f.type === 'file') {
+        if (f.default !== undefined) {
+          if (typeof f.default !== 'string' || f.default.length === 0 || f.default.length > 256) {
+            throw invalid(`file field '${f.key}' default must be 1-256 characters`);
+          }
+          if (controlChars.test(f.default)) {
+            throw invalid(
+              `file field '${f.key}' default contains control characters`
+            );
+          }
+        }
+        if (f.secret !== undefined) {
+          throw invalid(`file field '${f.key}' may not declare secret`);
+        }
+        if (f.perChain !== undefined) {
+          throw invalid(`file field '${f.key}' may not declare perChain`);
+        }
+      } else if (f.default !== undefined) {
+        throw invalid(`field '${f.key}' may not declare a default`);
       }
     }
   }

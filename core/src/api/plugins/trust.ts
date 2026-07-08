@@ -24,8 +24,9 @@ type SetTrustBody = {
 // trustHandlers below wire production defaults. getRequestedPermissions
 // returns the permission ids a plugin's manifest declares — grants are
 // clamped to that set (an undeclared permission can never be granted).
-// getDeclaredSecretKeys returns the plugin's declared secret config-field
-// keys — secret grants are clamped to that set the same way.
+// getDeclaredSecretKeys returns the plugin's declared secret-scope config-
+// field keys (secret fields AND file fields) — secret grants are clamped to
+// that set the same way.
 export function createTrustHandlers(
   manager: TrustManager,
   listInstalledPluginIds: () => Promise<string[]>,
@@ -187,13 +188,17 @@ async function getRequestedPermissionsFromRegistry(
   }
 }
 
+// Declared secret-scope keys: fields marked `secret: true` AND `file` fields
+// (a file field's grant covers file *contents* flowing to the plugin — same
+// grant dimension as a secret, just sourced from a host path instead of the
+// vault).
 async function getDeclaredSecretKeysFromRegistry(
   pluginId: string
 ): Promise<string[]> {
   try {
     const metadata = await PluginManager.getInstance().getPlugin(pluginId);
     return (metadata.configFields ?? [])
-      .filter((field) => field.secret)
+      .filter((field) => field.secret || field.type === 'file')
       .map((field) => field.key);
   } catch {
     // Fail-closed: unknown plugin → nothing is grantable.

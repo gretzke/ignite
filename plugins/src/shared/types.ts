@@ -42,8 +42,16 @@ export interface PluginPermissionRequest {
 // A single field in a plugin's declared config schema, rendered as a form
 // control in the settings UI. `secret` fields are stored in the vault,
 // gated by a secret-scope grant; `perChain` fields get a global value plus
-// per-chain overrides.
-export type PluginConfigFieldType = "string" | "number" | "boolean" | "select";
+// per-chain overrides. `file` fields store a host file PATH (plaintext, in
+// the same non-secret config store as string fields) — core reads the file
+// at that path and injects its CONTENTS under the field's key, gated by the
+// same secret-scope grant dimension as `secret` fields (see resolveConfig).
+export type PluginConfigFieldType =
+  | "string"
+  | "number"
+  | "boolean"
+  | "select"
+  | "file";
 
 export interface PluginConfigSelectOption {
   value: string;
@@ -59,6 +67,7 @@ export interface PluginConfigField {
   perChain?: boolean; // global value + per-chain overrides
   required?: boolean;
   options?: PluginConfigSelectOption[]; // required iff type === "select"
+  default?: string; // file fields only: default host path (e.g. "~/.foo.json")
 }
 
 // Upper bound on how many config fields a plugin manifest may declare.

@@ -93,8 +93,11 @@ async function buildConfigPayload(
   metadata: PluginMetadata
 ): Promise<GetPluginConfigData> {
   const fields = metadata.configFields ?? [];
-  const declaredSecretKeys = new Set(
-    fields.filter((f) => f.secret).map((f) => f.key)
+  // Secret-scope keys for the grantedSecrets computation below: secret
+  // fields AND file fields (a file field's grant covers file *contents*
+  // flowing to the plugin — same grant dimension as a secret).
+  const declaredSecretScopeKeys = new Set(
+    fields.filter((f) => f.secret || f.type === 'file').map((f) => f.key)
   );
 
   // Only schema-declared, non-secret fields are surfaced — an undeclared or
@@ -121,8 +124,8 @@ async function buildConfigPayload(
   const grant = await d.trust.getGrant(pluginId);
   const grantedSecrets =
     grant.trust === 'native'
-      ? [...declaredSecretKeys]
-      : grant.secrets.filter((key) => declaredSecretKeys.has(key));
+      ? [...declaredSecretScopeKeys]
+      : grant.secrets.filter((key) => declaredSecretScopeKeys.has(key));
 
   return { fields, values, secretsPresent, grantedSecrets };
 }

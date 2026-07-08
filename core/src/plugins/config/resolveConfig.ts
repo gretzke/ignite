@@ -1,10 +1,15 @@
 // Resolves a plugin's declared config schema into the flat object injected
 // into a container's stdin options (see PluginExecutor.executeEphemeralPlugin).
-// SECURITY-CRITICAL: this is the single gate between the vault and the
-// container. A secret field's value is only ever read (getSecret is only
-// ever called) when the grant covers it — native trust, or an explicit key
-// in grant.secrets. Undeclared config keys (present in configValues but not
-// in metadata.configFields) are never surfaced: the schema is authoritative.
+// SECURITY-CRITICAL: this is the single gate between the vault (and the host
+// filesystem, for `file` fields) and the container. A secret field's value is
+// only ever read (getSecret is only ever called) when the grant covers it —
+// native trust, or an explicit key in grant.secrets. A `file` field's PATH is
+// non-secret (visible in `values`, editable in Configure), but its CONTENTS
+// are gated the same way: getFileContents is only ever called when the grant
+// covers the field's key. Undeclared config keys (present in configValues but
+// not in metadata.configFields) are never surfaced: the schema is
+// authoritative.
+import os from 'node:os';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 import type { PermissionGrant } from '../trust/TrustManager.js';
 import type { ConfigValue } from './PluginConfigStore.js';
@@ -22,12 +27,25 @@ export interface ResolveConfigArgs {
   // fields. Derived upstream via VaultStore.listSecretKeys. Only needed when
   // the schema declares a perChain secret field.
   getSecretChainIds?: (key: string) => Promise<number[]>;
+  // Reads a host file's contents for a `file` field's (already-expanded)
+  // path. undefined = unreadable, missing, or oversized — never call this
+  // for an ungranted file field (security-critical, see module doc above).
+  // Optional only so existing callers/tests without file fields don't need
+  // to pass it; a schema with a file field but no getFileContents omits it.
+  getFileContents?: (path: string) => Promise<string | undefined>;
 }
 
 export async function resolveConfig(
   args: ResolveConfigArgs
 ): Promise<Record<string, unknown>> {
-  const { metadata, grant, configValues, getSecret, getSecretChainIds } = args;
+  const {
+    metadata,
+    grant,
+    configValues,
+    getSecret,
+    getSecretChainIds,
+    getFileContents,
+  } = args;
   const result: Record<string, unknown> = {};
 
   for (const field of metadata.configFields ?? []) {
@@ -51,6 +69,24 @@ export async function resolveConfig(
         const value = await getSecret(field.key);
         if (value !== undefined) result[field.key] = value;
       }
+      continue;
+    }
+
+    if (field.type === 'file') {
+      const granted =
+        grant.trust === 'native' || grant.secrets.includes(field.key);
+      if (!granted) continue; // Never call getFileContents for an ungranted key.
+
+      const configuredPath =
+        typeof global === 'string' ? global : undefined;
+      const path = configuredPath ?? field.default;
+      if (!path || !getFileContents) continue;
+
+      const expanded = path.startsWith('~/')
+        ? `${os.homedir()}${path.slice(1)}`
+        : path;
+      const contents = await getFileContents(expanded);
+      if (contents !== undefined) result[field.key] = contents;
       continue;
     }
 

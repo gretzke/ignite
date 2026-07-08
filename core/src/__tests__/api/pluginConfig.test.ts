@@ -47,6 +47,12 @@ const METADATA: PluginMetadata = {
     { key: 'endpoint', label: 'Endpoint', type: 'string' },
     { key: 'timeout', label: 'Timeout', type: 'number' },
     { key: 'apikey', label: 'API Key', type: 'string', secret: true },
+    {
+      key: 'configfile',
+      label: 'Config File',
+      type: 'file',
+      default: '~/.acme.json',
+    },
   ],
 };
 
@@ -133,6 +139,39 @@ describe('plugin config handlers', () => {
     expect(JSON.stringify(body)).not.toContain(LEAKED_SECRET);
   });
 
+  it('GET grantedSecrets includes a file field key when explicitly granted, and secretsPresent never includes it (not a vault entry)', async () => {
+    const { deps } = makeDeps();
+    deps.trust.getGrant = vi.fn(async () => ({
+      trust: 'trusted' as const,
+      hostWrite: false,
+      net: false,
+      secrets: ['apikey', 'configfile'],
+    }));
+    const h = createPluginConfigHandlers(deps);
+    const reply = makeReply();
+    await h.getPluginConfig(req({ params: { pluginId: PLUGIN_ID } }), reply);
+
+    const body = reply.body as { data: GetPluginConfigData };
+    expect(body.data.grantedSecrets.sort()).toEqual(['apikey', 'configfile']);
+    expect(body.data.secretsPresent).toEqual(['apikey']);
+  });
+
+  it('GET grantedSecrets includes all secret AND file fields under native trust', async () => {
+    const { deps } = makeDeps();
+    deps.trust.getGrant = vi.fn(async () => ({
+      trust: 'native' as const,
+      hostWrite: true,
+      net: true,
+      secrets: [],
+    }));
+    const h = createPluginConfigHandlers(deps);
+    const reply = makeReply();
+    await h.getPluginConfig(req({ params: { pluginId: PLUGIN_ID } }), reply);
+
+    const body = reply.body as { data: GetPluginConfigData };
+    expect(body.data.grantedSecrets.sort()).toEqual(['apikey', 'configfile']);
+  });
+
   it('GET 404s for an unknown plugin', async () => {
     const { deps } = makeDeps();
     const h = createPluginConfigHandlers(deps);
@@ -183,6 +222,52 @@ describe('plugin config handlers', () => {
     );
     expect(deps.configStore.setValue).not.toHaveBeenCalled();
     expect(deps.providers.invalidate).not.toHaveBeenCalled();
+  });
+
+  it('PUT config accepts a file field path (non-secret) and it round-trips in values', async () => {
+    const { deps, configValues } = makeDeps();
+    const h = createPluginConfigHandlers(deps);
+    const reply = makeReply();
+    await h.setPluginConfigValue(
+      req({
+        params: { pluginId: PLUGIN_ID },
+        body: { key: 'configfile', value: '/home/user/.acme.json' },
+      }),
+      reply
+    );
+    expect(reply.statusCode).toBe(200);
+    expect(deps.configStore.setValue).toHaveBeenCalledWith(
+      PLUGIN_ID,
+      'configfile',
+      '/home/user/.acme.json',
+      undefined
+    );
+    expect(configValues.configfile).toEqual({ global: '/home/user/.acme.json' });
+    const body = reply.body as { data: GetPluginConfigData };
+    expect(body.data.values.configfile).toEqual({
+      global: '/home/user/.acme.json',
+    });
+    // The path is plaintext config, never routed to the vault.
+    expect(deps.vaultStore.setSecret).not.toHaveBeenCalled();
+  });
+
+  it('DELETE routes a file field to the config store (not the vault)', async () => {
+    const { deps, configValues } = makeDeps();
+    configValues.configfile = { global: '/home/user/.acme.json' };
+    const h = createPluginConfigHandlers(deps);
+    const reply = makeReply();
+    await h.deletePluginConfigValue(
+      req({ params: { pluginId: PLUGIN_ID }, query: { key: 'configfile' } }),
+      reply
+    );
+    expect(reply.statusCode).toBe(200);
+    expect(deps.configStore.deleteValue).toHaveBeenCalledWith(
+      PLUGIN_ID,
+      'configfile',
+      undefined
+    );
+    expect(deps.vaultStore.deleteSecret).not.toHaveBeenCalled();
+    expect(configValues.configfile).toBeUndefined();
   });
 
   it('PUT config rejects an unknown key with CONFIG_UNKNOWN_FIELD', async () => {

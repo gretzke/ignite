@@ -93,6 +93,29 @@ describe('validateConfigSchema (via install)', () => {
           },
           { key: 'api-key', label: 'API Key', type: 'string', secret: true },
           { key: 'rpc', label: 'RPC', type: 'string', perChain: true },
+          {
+            key: 'config-file',
+            label: 'Config File',
+            type: 'file',
+            default: '~/.acme.json',
+          },
+        ],
+      },
+    });
+    const installer = new PluginInstaller(backend, deps);
+    await expect(installer.install(gitSource)).resolves.toMatchObject({
+      id: 'cfg-plugin',
+    });
+  });
+
+  it('accepts a file field without a default', async () => {
+    const deps = makeDeps();
+    const backend = backendReturning({
+      imageTag: baseMeta.baseImage,
+      metadata: {
+        ...baseMeta,
+        configFields: [
+          { key: 'config-file', label: 'Config File', type: 'file' },
         ],
       },
     });
@@ -221,6 +244,43 @@ describe('validateConfigSchema (via install)', () => {
         },
       ],
       /invalid option/i,
+    ],
+    [
+      'a non-file field declaring a default',
+      [{ key: 'k', label: 'L', type: 'string', default: '~/.foo' }],
+      /may not declare a default/i,
+    ],
+    [
+      'a file field with an empty default',
+      [{ key: 'k', label: 'L', type: 'file', default: '' }],
+      /default must be 1-256/i,
+    ],
+    [
+      'a file field with control characters in default',
+      [{ key: 'k', label: 'L', type: 'file', default: '~/.foo\x00' }],
+      /control/i,
+    ],
+    [
+      'a file field declaring secret',
+      [{ key: 'k', label: 'L', type: 'file', secret: true }],
+      /may not declare secret/i,
+    ],
+    [
+      'a file field declaring perChain',
+      [{ key: 'k', label: 'L', type: 'file', perChain: true }],
+      /may not declare perChain/i,
+    ],
+    [
+      'a file field declaring options',
+      [
+        {
+          key: 'k',
+          label: 'L',
+          type: 'file',
+          options: [{ value: 'a', label: 'A' }],
+        },
+      ],
+      /may not declare options/i,
     ],
   ];
 
