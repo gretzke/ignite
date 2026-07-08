@@ -161,12 +161,12 @@ for (const plugin of PLUGINS) {
   );
 
   // --- getSupportedChains without config ---
+  // null means "needs configuration" — distinct from an empty array, which
+  // would mean the provider ran fine but has nothing to report.
   const emptyResponse = runOp(plugin.entry, 'getSupportedChains', {});
   assert(
-    emptyResponse.success === true &&
-      Array.isArray(emptyResponse.data?.chains) &&
-      emptyResponse.data.chains.length === 0,
-    `${plugin.name}: getSupportedChains with no config returns empty chains`,
+    emptyResponse.success === true && emptyResponse.data?.chains === null,
+    `${plugin.name}: getSupportedChains with no config returns chains: null`,
     emptyResponse
   );
 
@@ -174,10 +174,8 @@ for (const plugin of PLUGINS) {
     config: { [plugin.configFieldKey]: '   ' },
   });
   assert(
-    emptyKeyResponse.success === true &&
-      Array.isArray(emptyKeyResponse.data?.chains) &&
-      emptyKeyResponse.data.chains.length === 0,
-    `${plugin.name}: getSupportedChains with blank ${plugin.configFieldKey} returns empty chains`,
+    emptyKeyResponse.success === true && emptyKeyResponse.data?.chains === null,
+    `${plugin.name}: getSupportedChains with blank ${plugin.configFieldKey} returns chains: null`,
     emptyKeyResponse
   );
 

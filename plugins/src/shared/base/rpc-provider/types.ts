@@ -31,6 +31,9 @@ export interface SupportedChainEndpoint {
   label?: string;
 }
 
+// null means "nothing configured yet" (e.g. missing/blank API key) — distinct
+// from an empty array, which means the plugin ran fine but has nothing to
+// report. Core turns null into a "needs configuration" hint for the user.
 export interface SupportedChainsResult {
-  chains: SupportedChainEndpoint[];
+  chains: SupportedChainEndpoint[] | null;
 }

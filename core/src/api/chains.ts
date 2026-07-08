@@ -36,7 +36,7 @@ export interface ChainHandlerDeps {
     RpcStore,
     'list' | 'add' | 'remove' | 'setPreferred' | 'updateVerification'
   >;
-  providers: Pick<RpcProviderService, 'getEndpoints'>;
+  providers: Pick<RpcProviderService, 'getEndpoints' | 'getStatuses'>;
   verify: (
     url: string,
     expectedChainId: number
@@ -199,7 +199,23 @@ export function createChainHandlers(deps?: Partial<ChainHandlerDeps>) {
           // good at this point.
           providerEndpoints = [];
         }
-        return reply.status(200).send({ data: { endpoints, providerEndpoints } });
+        // Sequential (not Promise.all): getStatuses shares getEndpoints's
+        // just-populated per-plugin cache, so this costs no extra plugin
+        // executions within the TTL window. Degrades independently — a
+        // statuses failure must not hide providerEndpoints or vice versa.
+        let providerStatuses: Awaited<
+          ReturnType<ChainHandlerDeps['providers']['getStatuses']>
+        > | undefined;
+        try {
+          providerStatuses = await d.providers.getStatuses(
+            request.query?.refresh
+          );
+        } catch {
+          providerStatuses = undefined;
+        }
+        return reply
+          .status(200)
+          .send({ data: { endpoints, providerEndpoints, providerStatuses } });
       } catch (error) {
         return sendCodedOrCaught(
           reply,

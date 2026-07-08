@@ -3,6 +3,7 @@ import type {
   AddRpcRequest,
   ChainInfo,
   ListChainsData,
+  ProviderStatus,
   RpcEndpoint,
   RpcVerificationResult,
   UpsertChainRequest,
@@ -19,6 +20,10 @@ export interface IChainsState {
   loading: boolean;
   rpcByChain: Record<string, RpcEndpoint[]>;
   providerRpcByChain: Record<string, RpcEndpoint[]>;
+  // Per-plugin summary (ok / needs-config), keyed by chainId like the maps
+  // above — a provider's config state doesn't actually vary per chain, but
+  // the response is per-chain-request so it's stored the same way.
+  providerStatusesByChain: Record<string, ProviderStatus[]>;
   // Ephemeral pre-save URL check (add-RPC dialog)
   rpcCheck: {
     url: string | null;
@@ -38,6 +43,7 @@ const initialState: IChainsState = {
   loading: false,
   rpcByChain: {},
   providerRpcByChain: {},
+  providerStatusesByChain: {},
   rpcCheck: { url: null, checking: false, result: null, error: null },
   providerChecks: {},
 };
@@ -67,6 +73,9 @@ const chainsSlice = createSlice({
       if (state.providerRpcByChain[chainIdStr] === undefined) {
         state.providerRpcByChain[chainIdStr] = [];
       }
+      if (state.providerStatusesByChain[chainIdStr] === undefined) {
+        state.providerStatusesByChain[chainIdStr] = [];
+      }
     },
     fetchRpcsSucceeded(
       state,
@@ -74,6 +83,7 @@ const chainsSlice = createSlice({
         chainId: number;
         endpoints: RpcEndpoint[];
         providerEndpoints?: RpcEndpoint[];
+        providerStatuses?: ProviderStatus[];
       }>
     ) {
       state.rpcByChain[String(action.payload.chainId)] =
@@ -82,6 +92,12 @@ const chainsSlice = createSlice({
       if (action.payload.providerEndpoints !== undefined) {
         state.providerRpcByChain[String(action.payload.chainId)] =
           action.payload.providerEndpoints;
+      }
+      // Same guard as providerEndpoints above: undefined (degraded response)
+      // must not clobber a previously-known-good statuses list.
+      if (action.payload.providerStatuses !== undefined) {
+        state.providerStatusesByChain[String(action.payload.chainId)] =
+          action.payload.providerStatuses;
       }
     },
     rpcVerificationReceived(
@@ -188,6 +204,7 @@ const refetchRpcs = (chainId: number, refresh?: boolean) =>
         chainId,
         endpoints: data.endpoints,
         providerEndpoints: data.providerEndpoints,
+        providerStatuses: data.providerStatuses,
       }),
     onError: () => fetchRpcsFailed({ chainId }),
   });

@@ -27,7 +27,6 @@ import {
 import {
   openConfigModal,
   pluginsApi,
-  selectPluginRows,
 } from '../../../../store/features/plugins/pluginsSlice';
 import Tooltip from '../../../../components/Tooltip';
 import ChainIcon from './ChainIcon';
@@ -130,8 +129,8 @@ export default function ChainRpcModal({
   );
   const providerChecks = useAppSelector((state) => state.chains.providerChecks);
   const rpcCheck = useAppSelector((state) => state.chains.rpcCheck);
-  const rpcProviderPlugins = useAppSelector(selectPluginRows).filter(
-    (p) => p.type === 'rpc-provider'
+  const providerStatuses = useAppSelector(
+    (state) => state.chains.providerStatusesByChain[String(chain.chainId)] ?? []
   );
   const [newUrl, setNewUrl] = useState('');
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
@@ -144,11 +143,17 @@ export default function ChainRpcModal({
   const verifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (open) dispatch(chainsApi.fetchRpcs(chain.chainId));
+    // refresh: true bypasses the provider cache on every open — the user may
+    // have edited something Ignite can't see on its own (e.g. hand-editing
+    // ~/.chainz.json for a config-file-based provider), so a stale "needs
+    // configuration" hint or endpoint list would be actively misleading.
+    // The section refresh button below covers re-checking without reopening.
+    if (open) dispatch(chainsApi.fetchRpcs(chain.chainId, true));
   }, [open, chain.chainId, dispatch]);
 
-  // Plugin metadata (name/type) for the "no endpoints for this chain" hint
-  // rows below — refreshed on open so a just-installed plugin shows up.
+  // Plugin metadata (configFields etc.) that PluginConfigModal needs once the
+  // user clicks Configure from a needs-config hint row — refreshed on open
+  // so a just-installed plugin is present in the store.
   useEffect(() => {
     if (open) pluginsApi.refresh().forEach((a) => dispatch(a));
   }, [open, dispatch]);
@@ -209,14 +214,12 @@ export default function ChainRpcModal({
   const availableProviderEndpoints = providerEndpoints.filter(
     (e) => !storedUrls.has(e.url)
   );
-  // Installed rpc-provider plugins that contributed zero endpoints for this
-  // chain — the frontend can't tell "unconfigured key" from "chain not
-  // supported by this provider" apart, so the hint copy covers both.
-  const pluginIdsWithEndpoints = new Set(
-    providerEndpoints.map((e) => e.pluginId)
-  );
-  const pluginsWithoutEndpoints = rpcProviderPlugins.filter(
-    (p) => !pluginIdsWithEndpoints.has(p.pluginId)
+  // Providers the backend explicitly reports as unconfigured (getSupportedChains
+  // returned chains: null). Providers that are configured but simply have no
+  // endpoints for this particular chain render nothing — that's not
+  // something the user needs to act on.
+  const needsConfigProviders = providerStatuses.filter(
+    (s) => s.state === 'needs-config'
   );
 
   // Auto-probe plugin endpoints that haven't been checked yet, capped at
@@ -307,84 +310,86 @@ export default function ChainRpcModal({
             </div>
           </div>
 
-          <div className="eyebrow mb-1">Configured</div>
-          <div className="glass-list mb-3">
-            {rpcsLoading && (
-              <div className="list-row text-muted flex items-center justify-center gap-2">
-                <Loader2 size={14} className="animate-spin" />
-                Loading endpoints…
-              </div>
-            )}
-            {!rpcsLoading && endpoints.length === 0 && (
-              <div className="list-row text-muted">
-                No stored endpoints yet. Add one below.
-              </div>
-            )}
-            {endpoints.map((endpoint) => (
-              <div key={endpoint.id} className="list-row">
-                <div className="flex items-center justify-between gap-2 w-full min-w-0">
-                  <div className="min-w-0">
-                    <div className="mono-data truncate">{endpoint.url}</div>
-                    <div className="flex items-center gap-2 mt-1">
-                      {endpoint.preferred && (
-                        <span className="pill pill-primary">preferred</span>
-                      )}
-                      <HealthChip endpoint={endpoint} />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Tooltip label="Verify now">
-                      <button
-                        className="btn btn-sm btn-secondary-borderless"
-                        onClick={() => handleVerify(endpoint.id)}
-                        aria-label={`Verify ${endpoint.url}`}
-                      >
-                        {verifyingId === endpoint.id ? (
-                          <Loader2 size={16} className="animate-spin" />
-                        ) : (
-                          <Activity size={16} />
+          <div className="grid gap-1 mb-3">
+            <div className="eyebrow">Configured</div>
+            <div className="glass-list">
+              {rpcsLoading && (
+                <div className="list-row text-muted flex items-center justify-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading endpoints…
+                </div>
+              )}
+              {!rpcsLoading && endpoints.length === 0 && (
+                <div className="list-row text-muted">
+                  No stored endpoints yet. Add one below.
+                </div>
+              )}
+              {endpoints.map((endpoint) => (
+                <div key={endpoint.id} className="list-row">
+                  <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                    <div className="min-w-0">
+                      <div className="mono-data truncate">{endpoint.url}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        {endpoint.preferred && (
+                          <span className="pill pill-primary">preferred</span>
                         )}
-                      </button>
-                    </Tooltip>
-                    {!endpoint.preferred && (
-                      <Tooltip label="Set as preferred">
+                        <HealthChip endpoint={endpoint} />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Tooltip label="Verify now">
+                        <button
+                          className="btn btn-sm btn-secondary-borderless"
+                          onClick={() => handleVerify(endpoint.id)}
+                          aria-label={`Verify ${endpoint.url}`}
+                        >
+                          {verifyingId === endpoint.id ? (
+                            <Loader2 size={16} className="animate-spin" />
+                          ) : (
+                            <Activity size={16} />
+                          )}
+                        </button>
+                      </Tooltip>
+                      {!endpoint.preferred && (
+                        <Tooltip label="Set as preferred">
+                          <button
+                            className="btn btn-sm btn-secondary-borderless"
+                            onClick={() =>
+                              dispatch(
+                                chainsApi.setPreferredRpc(
+                                  chain.chainId,
+                                  endpoint.id
+                                )
+                              )
+                            }
+                            aria-label={`Prefer ${endpoint.url}`}
+                          >
+                            <Star size={16} />
+                          </button>
+                        </Tooltip>
+                      )}
+                      <Tooltip label="Remove endpoint">
                         <button
                           className="btn btn-sm btn-secondary-borderless"
                           onClick={() =>
                             dispatch(
-                              chainsApi.setPreferredRpc(
-                                chain.chainId,
-                                endpoint.id
-                              )
+                              chainsApi.deleteRpc(chain.chainId, endpoint.id)
                             )
                           }
-                          aria-label={`Prefer ${endpoint.url}`}
+                          aria-label={`Remove ${endpoint.url}`}
                         >
-                          <Star size={16} />
+                          <Trash2 size={16} />
                         </button>
                       </Tooltip>
-                    )}
-                    <Tooltip label="Remove endpoint">
-                      <button
-                        className="btn btn-sm btn-secondary-borderless"
-                        onClick={() =>
-                          dispatch(
-                            chainsApi.deleteRpc(chain.chainId, endpoint.id)
-                          )
-                        }
-                        aria-label={`Remove ${endpoint.url}`}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </Tooltip>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
 
           <div className="grid gap-1 mb-3">
-            <span className="text-xs text-muted">Add endpoint</span>
+            <span className="eyebrow">Add endpoint</span>
             <div className="flex items-center gap-2">
               <input
                 className="input-glass mono-data flex-1"
@@ -436,7 +441,7 @@ export default function ChainRpcModal({
 
           {!rpcsLoading &&
             (availableProviderEndpoints.length > 0 ||
-              pluginsWithoutEndpoints.length > 0) && (
+              needsConfigProviders.length > 0) && (
               <div className="grid gap-1 mb-3">
                 <div className="eyebrow flex items-center justify-between">
                   <span>Plugin endpoints</span>
@@ -493,18 +498,17 @@ export default function ChainRpcModal({
                       </div>
                     </div>
                   ))}
-                  {pluginsWithoutEndpoints.map((plugin) => (
-                    <div key={plugin.pluginId} className="list-row text-muted">
+                  {needsConfigProviders.map((provider) => (
+                    <div key={provider.pluginId} className="list-row text-muted">
                       <div className="flex items-center justify-between gap-2 w-full min-w-0">
                         <span className="truncate">
-                          {plugin.name ?? plugin.pluginId} — no endpoints for
-                          this chain (check its configuration)
+                          {provider.name} — needs configuration
                         </span>
                         <button
                           className="btn btn-sm btn-secondary-borderless shrink-0"
                           onClick={() =>
                             dispatch(
-                              openConfigModal({ pluginId: plugin.pluginId })
+                              openConfigModal({ pluginId: provider.pluginId })
                             )
                           }
                         >

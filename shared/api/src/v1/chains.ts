@@ -87,13 +87,26 @@ export interface ProviderChainEndpoint {
   label?: string;
 }
 
+// null means "the provider has nothing usable configured yet" (e.g. no API
+// key) — distinct from an empty array, which means the provider ran fine but
+// genuinely has nothing to report (e.g. configured but no chains match).
 export interface GetSupportedChainsResult {
-  chains: ProviderChainEndpoint[];
+  chains: ProviderChainEndpoint[] | null;
+}
+
+// Per-plugin summary surfaced alongside providerEndpoints so the frontend
+// can tell "this provider needs configuration" apart from "this provider is
+// fine but has nothing for this chain" without guessing from endpoint counts.
+export interface ProviderStatus {
+  pluginId: string;
+  name: string;
+  state: "ok" | "needs-config";
 }
 
 export interface ListRpcsData {
   endpoints: RpcEndpoint[];
   providerEndpoints?: RpcEndpoint[];
+  providerStatuses?: ProviderStatus[];
 }
 
 export interface AddRpcRequest {
@@ -198,7 +211,13 @@ export const ProviderChainEndpointSchema = z.object({
 });
 
 export const GetSupportedChainsResultSchema = z.object({
-  chains: z.array(ProviderChainEndpointSchema),
+  chains: z.array(ProviderChainEndpointSchema).nullable(),
+});
+
+export const ProviderStatusSchema = z.object({
+  pluginId: z.string(),
+  name: z.string(),
+  state: z.enum(["ok", "needs-config"]),
 });
 
 export const ListChainsResponseSchema =
@@ -237,6 +256,7 @@ export const ListRpcsResponseSchema = createApiResponseSchema<ListRpcsData>(
 )(z.object({
   endpoints: z.array(RpcEndpointSchema),
   providerEndpoints: z.array(RpcEndpointSchema).optional(),
+  providerStatuses: z.array(ProviderStatusSchema).optional(),
 }));
 
 export const AddRpcRequestSchema = createRequestSchema<AddRpcRequest>(

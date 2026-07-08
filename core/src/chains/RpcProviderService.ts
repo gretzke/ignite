@@ -29,9 +29,20 @@ export interface RpcProviderServiceDeps {
   logger: { warn: (message: string) => void };
 }
 
-interface CacheEntry {
-  ts: number;
+// 'needs-config' means a provider successfully ran but has nothing configured
+// yet (getSupportedChains returned chains: null) — distinct from 'ok', which
+// covers both "has entries" and "ran fine, genuinely nothing to report".
+// Op failures/timeouts/malformed results are never 'needs-config': those are
+// provider bugs, not a configuration nag for the user.
+export type ProviderState = 'ok' | 'needs-config';
+
+interface ProviderCacheData {
   entries: ProviderChainEndpoint[];
+  state: ProviderState;
+}
+
+interface CacheEntry extends ProviderCacheData {
+  ts: number;
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -48,8 +59,9 @@ export class RpcProviderService {
   private cache = new Map<string, CacheEntry>();
   // Single-flight: concurrent fetches for the same plugin share one promise.
   // Cleared once the fetch settles (success or rejection) so a later call
-  // starts fresh instead of being stuck on a poisoned promise.
-  private inflight = new Map<string, Promise<ProviderChainEndpoint[]>>();
+  // starts fresh instead of being stuck on a poisoned promise. Shared by
+  // getEndpoints and getStatuses so the two readers never double-execute.
+  private inflight = new Map<string, Promise<ProviderCacheData>>();
 
   constructor(deps?: Partial<RpcProviderServiceDeps>) {
     this.deps = {
@@ -77,12 +89,12 @@ export class RpcProviderService {
   async getEndpoints(chainId: number, refresh = false): Promise<RpcEndpoint[]> {
     const providers = await this.deps.getProviders();
     const perProvider = await Promise.all(
-      providers.map((provider) => this.getProviderEntries(provider.id, refresh))
+      providers.map((provider) => this.getProviderCache(provider.id, refresh))
     );
 
     const endpoints: RpcEndpoint[] = [];
     providers.forEach((provider, i) => {
-      const forChain = perProvider[i].filter(
+      const forChain = perProvider[i].entries.filter(
         (entry) => entry.chainId === chainId
       );
       forChain.forEach((entry, n) => {
@@ -98,6 +110,23 @@ export class RpcProviderService {
     return endpoints;
   }
 
+  // Same per-plugin cache as getEndpoints (see getProviderCache) — calling
+  // this right after/before getEndpoints within the same TTL window costs no
+  // extra plugin executions, only a cache read.
+  async getStatuses(
+    refresh = false
+  ): Promise<{ pluginId: string; name: string; state: ProviderState }[]> {
+    const providers = await this.deps.getProviders();
+    const perProvider = await Promise.all(
+      providers.map((provider) => this.getProviderCache(provider.id, refresh))
+    );
+    return providers.map((provider, i) => ({
+      pluginId: provider.id,
+      name: provider.name,
+      state: perProvider[i].state,
+    }));
+  }
+
   // undefined clears every plugin's cache; a pluginId clears just that one.
   invalidate(pluginId?: string): void {
     if (pluginId === undefined) {
@@ -107,14 +136,17 @@ export class RpcProviderService {
     this.cache.delete(pluginId);
   }
 
-  private async getProviderEntries(
+  // Single fetch point shared by getEndpoints and getStatuses: both read the
+  // same per-plugin cache/inflight entry, so a plugin is executed at most
+  // once per TTL window no matter which (or both) readers ask for it.
+  private async getProviderCache(
     pluginId: string,
     refresh: boolean
-  ): Promise<ProviderChainEndpoint[]> {
+  ): Promise<ProviderCacheData> {
     if (!refresh) {
       const cached = this.cache.get(pluginId);
       if (cached && this.deps.now() - cached.ts < CACHE_TTL_MS) {
-        return cached.entries;
+        return cached;
       }
     }
 
@@ -126,20 +158,20 @@ export class RpcProviderService {
     const attempt = this.fetchAndValidate(pluginId);
     this.inflight.set(pluginId, attempt);
     try {
-      const entries = await attempt;
-      this.cache.set(pluginId, { ts: this.deps.now(), entries });
-      return entries;
+      const data = await attempt;
+      this.cache.set(pluginId, { ts: this.deps.now(), ...data });
+      return data;
     } finally {
       this.inflight.delete(pluginId);
     }
   }
 
-  // Never rejects: a broken/slow/malformed provider degrades to an empty
-  // (still cached) result so it can't take down other providers or be
-  // hammered every request.
-  private async fetchAndValidate(
-    pluginId: string
-  ): Promise<ProviderChainEndpoint[]> {
+  // Never rejects: a broken/slow/malformed provider degrades to an empty,
+  // 'ok'-state (still cached) result so it can't take down other providers,
+  // be hammered every request, or wrongly nag the user to configure it —
+  // 'needs-config' is reserved for a provider that ran fine and explicitly
+  // reported chains: null.
+  private async fetchAndValidate(pluginId: string): Promise<ProviderCacheData> {
     const controller = new AbortController();
     const timer = setTimeout(
       () =>
@@ -168,7 +200,7 @@ export class RpcProviderService {
             response.error.code
           }): ${sanitizeErrorMessage(response.error.message)}`
         );
-        return [];
+        return { entries: [], state: 'ok' };
       }
       return validateResult(pluginId, response.data);
     } catch (error) {
@@ -178,7 +210,7 @@ export class RpcProviderService {
           error instanceof Error ? error.message : String(error)
         )}`
       );
-      return [];
+      return { entries: [], state: 'ok' };
     } finally {
       clearTimeout(timer);
     }
@@ -194,35 +226,41 @@ function sanitizeErrorMessage(message: string): string {
   return stripSentinelBlocks(message).slice(0, MAX_LOGGED_ERROR_CHARS);
 }
 
-// The overall shape (an object with a `chains` array) must hold or the whole
-// batch is untrustworthy and gets dropped. Beyond that, validation is
-// per-entry: each entry is re-parsed with the same zod schema the API layer
-// uses for ProviderChainEndpoint (covers chainId int/positive, basic field
-// types), then the extra bounds the schema doesn't express — URL scheme
-// (isValidRpcUrl) and label length/control-characters — are applied on top.
-// A single malformed entry only drops that entry, not its well-formed
-// siblings from the same provider.
-function validateResult(
-  pluginId: string,
-  data: unknown
-): ProviderChainEndpoint[] {
-  if (
-    typeof data !== 'object' ||
-    data === null ||
-    !Array.isArray((data as { chains?: unknown }).chains)
-  ) {
+// The overall shape (an object with a `chains` field that's either an array
+// or null) must hold or the whole batch is untrustworthy and gets dropped.
+// `chains: null` is the plugin's explicit "needs configuration" signal and
+// short-circuits straight to that state with no entries. Otherwise,
+// validation is per-entry: each entry is re-parsed with the same zod schema
+// the API layer uses for ProviderChainEndpoint (covers chainId int/positive,
+// basic field types), then the extra bounds the schema doesn't express — URL
+// scheme (isValidRpcUrl) and label length/control-characters — are applied
+// on top. A single malformed entry only drops that entry, not its
+// well-formed siblings from the same provider.
+function validateResult(pluginId: string, data: unknown): ProviderCacheData {
+  if (typeof data !== 'object' || data === null) {
     getLogger().warn(
-      `RPC provider ${pluginId} returned a malformed getSupportedChains result (chains is not an array); dropping`
+      `RPC provider ${pluginId} returned a malformed getSupportedChains result (not an object); dropping`
     );
-    return [];
+    return { entries: [], state: 'ok' };
   }
 
-  const rawChains = (data as { chains: unknown[] }).chains;
+  const rawResult = (data as { chains?: unknown }).chains;
+  if (rawResult === null) {
+    return { entries: [], state: 'needs-config' };
+  }
+  if (!Array.isArray(rawResult)) {
+    getLogger().warn(
+      `RPC provider ${pluginId} returned a malformed getSupportedChains result (chains is not an array or null); dropping`
+    );
+    return { entries: [], state: 'ok' };
+  }
+
+  const rawChains = rawResult;
   if (rawChains.length > MAX_ENTRIES) {
     getLogger().warn(
       `RPC provider ${pluginId} returned ${rawChains.length} entries (max ${MAX_ENTRIES}); dropping`
     );
-    return [];
+    return { entries: [], state: 'ok' };
   }
 
   const valid: ProviderChainEndpoint[] = [];
@@ -237,7 +275,7 @@ function validateResult(
     }
     valid.push(entry);
   }
-  return valid;
+  return { entries: valid, state: 'ok' };
 }
 
 async function defaultGetProviders(): Promise<{ id: string; name: string }[]> {

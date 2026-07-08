@@ -72,7 +72,7 @@ export class AlchemyPlugin extends RpcProviderPlugin {
     const rawKey = options?.config?.["api-key"];
     const apiKey = typeof rawKey === "string" ? rawKey.trim() : "";
     if (!apiKey) {
-      return { success: true, data: { chains: [] } };
+      return { success: true, data: { chains: null } };
     }
 
     const chains = NETWORKS.map(({ subdomain, chainId, name }) => ({

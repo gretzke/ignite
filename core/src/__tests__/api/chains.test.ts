@@ -68,6 +68,7 @@ function makeDeps(): ChainHandlerDeps {
     },
     providers: {
       getEndpoints: vi.fn(async () => []),
+      getStatuses: vi.fn(async () => []),
     },
     verify: vi.fn(async () => ({
       ok: true,
@@ -181,7 +182,7 @@ describe('chain handlers', () => {
     expect(body.data.providerEndpoints).toEqual([providerEndpoint]);
   });
 
-  it('listRpcs forwards refresh=true to providers.getEndpoints', async () => {
+  it('listRpcs forwards refresh=true to providers.getEndpoints and providers.getStatuses', async () => {
     const deps = makeDeps();
     const h = createChainHandlers(deps);
     const reply = makeReply();
@@ -190,6 +191,7 @@ describe('chain handlers', () => {
       reply
     );
     expect(deps.providers.getEndpoints).toHaveBeenCalledWith(1, true);
+    expect(deps.providers.getStatuses).toHaveBeenCalledWith(true);
     expect(reply.statusCode).toBe(200);
   });
 
@@ -210,6 +212,44 @@ describe('chain handlers', () => {
     };
     expect(body.data.endpoints).toEqual([ENDPOINT]);
     expect(body.data.providerEndpoints).toEqual([]);
+  });
+
+  it('listRpcs includes providerStatuses from the provider service', async () => {
+    const deps = makeDeps();
+    const status = { pluginId: 'infura', name: 'Infura', state: 'needs-config' as const };
+    deps.providers.getStatuses = vi.fn(async () => [status]);
+    const h = createChainHandlers(deps);
+    const reply = makeReply();
+    await h.listRpcs(
+      req({ params: { chainId: '1' }, query: {} }) as never,
+      reply
+    );
+    expect(reply.statusCode).toBe(200);
+    const body = reply.body as { data: { providerStatuses: unknown[] } };
+    expect(body.data.providerStatuses).toEqual([status]);
+  });
+
+  it('listRpcs omits providerStatuses when the provider service throws, while endpoints/providerEndpoints are unaffected', async () => {
+    const deps = makeDeps();
+    deps.providers.getStatuses = vi.fn(async () => {
+      throw new Error('status fetch failed');
+    });
+    const h = createChainHandlers(deps);
+    const reply = makeReply();
+    await h.listRpcs(
+      req({ params: { chainId: '1' }, query: {} }) as never,
+      reply
+    );
+    expect(reply.statusCode).toBe(200);
+    const body = reply.body as {
+      data: {
+        endpoints: unknown[];
+        providerEndpoints: unknown[];
+        providerStatuses: unknown;
+      };
+    };
+    expect(body.data.endpoints).toEqual([ENDPOINT]);
+    expect(body.data.providerStatuses).toBeUndefined();
   });
 
   it('verifyRpc verifies the stored endpoint and persists the result', async () => {

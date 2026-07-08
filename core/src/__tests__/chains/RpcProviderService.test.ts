@@ -320,6 +320,65 @@ describe('RpcProviderService', () => {
     expect(r1).toEqual(r2);
   });
 
+  it('reports needs-config when the plugin returns chains: null, with no entries', async () => {
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      data: { chains: null },
+    }));
+    const deps = makeDeps({ execute });
+    const service = new RpcProviderService(deps);
+    const endpoints = await service.getEndpoints(1);
+    expect(endpoints).toEqual([]);
+    const statuses = await service.getStatuses();
+    expect(statuses).toEqual([{ pluginId: 'acme-rpc', name: 'Acme RPC', state: 'needs-config' }]);
+  });
+
+  it('reports ok when the plugin returns an empty array (configured but nothing to report)', async () => {
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      data: { chains: [] },
+    }));
+    const deps = makeDeps({ execute });
+    const service = new RpcProviderService(deps);
+    const statuses = await service.getStatuses();
+    expect(statuses).toEqual([{ pluginId: 'acme-rpc', name: 'Acme RPC', state: 'ok' }]);
+  });
+
+  it('stays ok (not needs-config) on op failure, timeout, or malformed result', async () => {
+    const failing = vi.fn(async () => ({
+      success: false as const,
+      error: { code: 'BOOM', message: 'plugin exploded' },
+    }));
+    const deps = makeDeps({ execute: failing });
+    const service = new RpcProviderService(deps);
+    expect(await service.getStatuses()).toEqual([
+      { pluginId: 'acme-rpc', name: 'Acme RPC', state: 'ok' },
+    ]);
+
+    RpcProviderService.resetInstance();
+    const malformed = vi.fn(async () => ({
+      success: true as const,
+      data: { chains: 'not-an-array-or-null' },
+    }));
+    const deps2 = makeDeps({ execute: malformed });
+    const service2 = new RpcProviderService(deps2);
+    expect(await service2.getStatuses()).toEqual([
+      { pluginId: 'acme-rpc', name: 'Acme RPC', state: 'ok' },
+    ]);
+  });
+
+  it('getStatuses and getEndpoints share a single execute per plugin within the TTL', async () => {
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      data: { chains: [{ chainId: 1, url: 'https://rpc.acme.example/eth' }] },
+    }));
+    const deps = makeDeps({ execute });
+    const service = new RpcProviderService(deps);
+    await service.getEndpoints(1);
+    await service.getStatuses();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it('getInstance returns a singleton, resetInstance drops it', () => {
     const a = RpcProviderService.getInstance();
     const b = RpcProviderService.getInstance();
