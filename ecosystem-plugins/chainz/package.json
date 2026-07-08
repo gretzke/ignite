@@ -1,8 +1,0 @@
-{
-  "name": "ignite-chainz-plugin",
-  "version": "0.1.0",
-  "private": true,
-  "description": "chainz RPC-provider plugin for Ignite — exposes RPC endpoints from a chainz configuration file",
-  "main": "index.cjs",
-  "license": "MIT"
-}

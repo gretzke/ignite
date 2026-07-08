@@ -1,14 +1,13 @@
 #!/usr/bin/env node
-// Standalone protocol conformance test for Ignite ecosystem plugins.
+// Standalone protocol conformance test for Ignite's builtin rpc-provider
+// plugin bundles (third-party ecosystem plugins live in their own repos,
+// e.g. ../ignite-chainz-plugin, and carry their own copy of this harness).
 //
-// No test framework: these plugins are dependency-free CLI programs (see
-// ../ignite-waffle-plugin/index.cjs for the protocol they implement), so a
-// plain node script keeps the test suite dependency-free too. Run with:
+// No test framework: the bundles are dependency-free CLI programs, so a
+// plain node script keeps the suite dependency-free too. Requires a plugins
+// build (cd plugins && npm run build). Run with:
 //
-//   node ecosystem-plugins/protocol-test.mjs
-//
-// Generic by design: add a plugin by appending to PLUGINS below (Task 5
-// appends "chainz" the same way).
+//   node plugins/protocol-test.mjs
 
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -24,7 +23,7 @@ const RESULT_END = '<<<IGNITE_RESULT_END>>>';
 // but speak the exact same CLI protocol (runPluginCLI reads the operation
 // from the last argv element and options from stdin), so this suite drives
 // their built bundles directly.
-const BUILTIN_BUNDLE_DIR = path.resolve(__dirname, '..', 'plugins', 'dist', 'js');
+const BUILTIN_BUNDLE_DIR = path.resolve(__dirname, 'dist', 'js');
 
 const PLUGINS = [
   {
@@ -42,19 +41,6 @@ const PLUGINS = [
     name: 'Alchemy',
     configFieldKey: 'api-key',
     assertUrls: (chains) => chains.every((c) => c.url.includes('TESTKEY')),
-  },
-  {
-    entry: path.join(__dirname, 'chainz', 'index.cjs'),
-    id: 'chainz',
-    name: 'chainz',
-    configFieldKey: 'chainz-config',
-    // chainz URLs are user-supplied and don't all carry a key (e.g. a bare
-    // public RPC URL) — the strongest available check is that the
-    // interpolated *selected* URL contains the configured variable value.
-    assertUrls: (chains) => {
-      const selected = chains.find((c) => c.label.includes('(selected)'));
-      return Boolean(selected) && selected.url.includes('KEY123');
-    },
   },
 ];
 
@@ -196,25 +182,7 @@ for (const plugin of PLUGINS) {
   );
 
   // --- getSupportedChains with config ---
-  // Use appropriate test config for the plugin type
-  let testConfig;
-  if (plugin.id === 'chainz') {
-    testConfig = {
-      [plugin.configFieldKey]: JSON.stringify({
-        chains: [
-          {
-            name: 'Test',
-            chain_id: 1,
-            rpc_urls: ['https://test.example.com/${TEST_KEY}'],
-            selected_rpc: 'https://test.example.com/${TEST_KEY}',
-          },
-        ],
-        variables: { TEST_KEY: 'KEY123' },
-      }),
-    };
-  } else {
-    testConfig = { [plugin.configFieldKey]: 'TESTKEY' };
-  }
+  const testConfig = { [plugin.configFieldKey]: 'TESTKEY' };
 
   const chainsResponse = runOp(plugin.entry, 'getSupportedChains', {
     config: testConfig,
@@ -280,144 +248,6 @@ for (const plugin of PLUGINS) {
     unknownResponse
   );
 
-  // --- chainz-specific tests ---
-  if (plugin.id === 'chainz') {
-    const chainzConfig = JSON.stringify({
-      chains: [
-        {
-          name: 'Sepolia',
-          chain_id: 11155111,
-          rpc_urls: [
-            'https://rpc.sepolia.org',
-            'https://sepolia.infura.io/v3/${INFURA_API_KEY}',
-            'https://rpc.sepolia.org', // duplicate
-            'ws://bad.example', // non-https
-            'https://x.example/${MISSING_VAR}', // unmatched variable
-          ],
-          selected_rpc: 'https://sepolia.infura.io/v3/${INFURA_API_KEY}',
-        },
-      ],
-      variables: {
-        INFURA_API_KEY: 'KEY123',
-      },
-    });
-
-    const chainzResponse = runOp(plugin.entry, 'getSupportedChains', {
-      config: { 'chainz-config': chainzConfig },
-    });
-    assert(
-      chainzResponse.success === true,
-      'chainz: getSupportedChains with config returns success:true',
-      chainzResponse
-    );
-
-    const chainzChains = chainzResponse.data?.chains || [];
-    assert(
-      chainzChains.length > 0,
-      'chainz: getSupportedChains returns non-empty chain list',
-      chainzChains
-    );
-
-    // Selected RPC should be first with "(selected)" label
-    const selectedChain = chainzChains[0];
-    assert(
-      selectedChain &&
-        selectedChain.label === 'Sepolia (selected)' &&
-        selectedChain.url.includes('KEY123'),
-      'chainz: selected RPC appears first with "(selected)" label and interpolated key',
-      selectedChain
-    );
-
-    // rpc.sepolia.org should appear exactly once (deduped)
-    const sepoliaUrlCount = chainzChains.filter((c) =>
-      c.url.includes('rpc.sepolia.org')
-    ).length;
-    assert(
-      sepoliaUrlCount === 1,
-      'chainz: rpc.sepolia.org appears exactly once (deduped)',
-      { sepoliaUrlCount, chains: chainzChains }
-    );
-
-    // No ws:// URLs
-    const wsUrl = chainzChains.find((c) => c.url.startsWith('ws://'));
-    assert(
-      !wsUrl,
-      'chainz: no websocket URLs are included',
-      wsUrl
-    );
-
-    // No URLs with unmatched variables. Checking for a literal '${' is not
-    // enough — the historical bug coerced a null replacer return value into
-    // the *string* "null" via String.prototype.replace, silently emitting
-    // "https://x.example/null" instead of skipping the URL. Assert the
-    // unmatched-variable URL is absent entirely: neither its synthetic host
-    // (x.example) nor a null-coercion artifact may appear in any URL.
-    const unmatchedHostUrl = chainzChains.find((c) => c.url.includes('x.example'));
-    assert(
-      !unmatchedHostUrl,
-      'chainz: URLs with unmatched variables are skipped entirely (x.example host absent)',
-      unmatchedHostUrl
-    );
-    const nullCoercedUrl = chainzChains.find((c) => c.url.includes('null'));
-    assert(
-      !nullCoercedUrl,
-      'chainz: no URL contains a null-coerced placeholder',
-      nullCoercedUrl
-    );
-
-    // Exact entry count for the Sepolia chain: selected (interpolated KEY123)
-    // + rpc.sepolia.org, with the Infura-key duplicate, literal duplicate,
-    // ws:// URL, and unmatched-variable URL all skipped. A skipped-URL
-    // regression (e.g. the null-coercion bug re-emitting the MISSING_VAR
-    // URL) changes this count.
-    assert(
-      chainzChains.length === 2,
-      'chainz: exactly 2 chain entries survive dedup/https/variable filtering for Sepolia',
-      chainzChains
-    );
-
-    // All chainIds should be 11155111
-    const allSepoliaId = chainzChains.every((c) => c.chainId === 11155111);
-    assert(
-      allSepoliaId,
-      'chainz: all chain entries have chainId 11155111',
-      chainzChains
-    );
-
-    // Test malformed JSON
-    const badJsonResponse = runOp(plugin.entry, 'getSupportedChains', {
-      config: { 'chainz-config': '{invalid json}' },
-    });
-    assert(
-      badJsonResponse.success === true &&
-        Array.isArray(badJsonResponse.data?.chains) &&
-        badJsonResponse.data.chains.length === 0,
-      'chainz: malformed JSON config returns empty chains (never errors)',
-      badJsonResponse
-    );
-
-    // Test missing config
-    const noConfigResponse = runOp(plugin.entry, 'getSupportedChains', {
-      config: {},
-    });
-    assert(
-      noConfigResponse.success === true &&
-        Array.isArray(noConfigResponse.data?.chains) &&
-        noConfigResponse.data.chains.length === 0,
-      'chainz: missing chainz-config returns empty chains',
-      noConfigResponse
-    );
-
-    // Verify getInfo configField is secret
-    const chainzApiKeyField = (info.configFields || [])[0];
-    assert(
-      chainzApiKeyField &&
-        chainzApiKeyField.key === 'chainz-config' &&
-        chainzApiKeyField.secret === true,
-      'chainz: getInfo configFields[0] is secret chainz-config field',
-      chainzApiKeyField
-    );
-  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
