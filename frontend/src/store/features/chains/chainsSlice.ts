@@ -18,6 +18,7 @@ export interface IChainsState {
   fetchedAt: string | null;
   loading: boolean;
   rpcByChain: Record<string, RpcEndpoint[]>;
+  providerRpcByChain: Record<string, RpcEndpoint[]>;
   // Ephemeral pre-save URL check (add-RPC dialog)
   rpcCheck: {
     url: string | null;
@@ -25,6 +26,9 @@ export interface IChainsState {
     result: RpcVerificationResult | null;
     error: string | null;
   };
+  // Ephemeral verification results for plugin-provided endpoints, keyed by
+  // the synthetic endpoint id. Separate from rpcCheck (the add-input slot).
+  providerChecks: Record<string, RpcVerificationResult | 'checking'>;
 }
 
 const initialState: IChainsState = {
@@ -33,7 +37,9 @@ const initialState: IChainsState = {
   fetchedAt: null,
   loading: false,
   rpcByChain: {},
+  providerRpcByChain: {},
   rpcCheck: { url: null, checking: false, result: null, error: null },
+  providerChecks: {},
 };
 
 const chainsSlice = createSlice({
@@ -54,10 +60,16 @@ const chainsSlice = createSlice({
     },
     fetchRpcsSucceeded(
       state,
-      action: PayloadAction<{ chainId: number; endpoints: RpcEndpoint[] }>
+      action: PayloadAction<{
+        chainId: number;
+        endpoints: RpcEndpoint[];
+        providerEndpoints?: RpcEndpoint[];
+      }>
     ) {
       state.rpcByChain[String(action.payload.chainId)] =
         action.payload.endpoints;
+      state.providerRpcByChain[String(action.payload.chainId)] =
+        action.payload.providerEndpoints ?? [];
     },
     rpcVerificationReceived(
       state,
@@ -100,6 +112,28 @@ const chainsSlice = createSlice({
     rpcCheckReset(state) {
       state.rpcCheck = { url: null, checking: false, result: null, error: null };
     },
+    providerCheckStarted(state, action: PayloadAction<string>) {
+      state.providerChecks[action.payload] = 'checking';
+    },
+    providerCheckReceived(
+      state,
+      action: PayloadAction<{ id: string; result: RpcVerificationResult }>
+    ) {
+      state.providerChecks[action.payload.id] = action.payload.result;
+    },
+    providerCheckFailed(
+      state,
+      action: PayloadAction<{ id: string; error: string }>
+    ) {
+      state.providerChecks[action.payload.id] = {
+        ok: false,
+        error: action.payload.error,
+        checkedAt: new Date().toISOString(),
+      };
+    },
+    providerChecksReset(state) {
+      state.providerChecks = {};
+    },
   },
 });
 
@@ -113,6 +147,10 @@ export const {
   rpcCheckFinished,
   rpcCheckFailed,
   rpcCheckReset,
+  providerCheckStarted,
+  providerCheckReceived,
+  providerCheckFailed,
+  providerChecksReset,
 } = chainsSlice.actions;
 
 export const chainsReducer = chainsSlice.reducer;
@@ -124,11 +162,19 @@ const refetchChains = () =>
     onError: () => fetchChainsFailed(),
   });
 
-const refetchRpcs = (chainId: number) =>
+const refetchRpcs = (chainId: number, refresh?: boolean) =>
   apiClient.dispatch.listRpcs({
     params: { chainId: String(chainId) },
+    // Never send refresh=false: the zod coercion on the query treats any
+    // non-empty string as true, so the query key must be omitted entirely
+    // when refresh isn't truthy.
+    ...(refresh ? { query: { refresh: true } } : {}),
     onSuccess: (data) =>
-      fetchRpcsSucceeded({ chainId, endpoints: data.endpoints }),
+      fetchRpcsSucceeded({
+        chainId,
+        endpoints: data.endpoints,
+        providerEndpoints: data.providerEndpoints,
+      }),
     onError: () => fetchChainsFailed(),
   });
 
@@ -216,7 +262,8 @@ export const chainsApi = {
     });
   },
 
-  fetchRpcs: (chainId: number) => refetchRpcs(chainId),
+  fetchRpcs: (chainId: number, refresh?: boolean) =>
+    refetchRpcs(chainId, refresh),
 
   addRpc: (chainId: number, body: AddRpcRequest) => {
     const apiAction = apiClient.dispatch.addRpc({
@@ -272,7 +319,11 @@ export const chainsApi = {
     apiClient.dispatch.setPreferredRpc({
       params: { chainId: String(chainId), endpointId },
       onSuccess: (data) =>
-        fetchRpcsSucceeded({ chainId, endpoints: data.endpoints }),
+        fetchRpcsSucceeded({
+          chainId,
+          endpoints: data.endpoints,
+          providerEndpoints: data.providerEndpoints,
+        }),
       onError: () => fetchChainsFailed(),
     }),
 
@@ -294,6 +345,23 @@ export const chainsApi = {
           url,
           error:
             (err as { message?: string })?.message || 'Endpoint check failed',
+        }),
+    }),
+  ],
+
+  // Ephemeral verification of a plugin-provided endpoint. Uses the shared
+  // checkRpc backend call but stores results in providerChecks (keyed by
+  // the synthetic endpoint id) rather than the add-input's rpcCheck slot.
+  checkProviderRpc: (chainId: number, endpoint: RpcEndpoint) => [
+    providerCheckStarted(endpoint.id),
+    apiClient.dispatch.checkRpc({
+      body: { url: endpoint.url, expectedChainId: chainId },
+      onSuccess: (data) =>
+        providerCheckReceived({ id: endpoint.id, result: data.result }),
+      onError: (err) =>
+        providerCheckFailed({
+          id: endpoint.id,
+          error: (err as { message?: string })?.message ?? 'Check failed',
         }),
     }),
   ],

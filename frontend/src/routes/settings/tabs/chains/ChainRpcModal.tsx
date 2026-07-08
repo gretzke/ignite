@@ -4,12 +4,20 @@
 // debounced pre-save health check (eth_chainId must match the chain).
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Loader2, Plus, Star, Trash2, Activity } from 'lucide-react';
-import type { ChainInfo, RpcEndpoint } from '@ignite/api';
+import {
+  Loader2,
+  Plus,
+  Star,
+  Trash2,
+  Activity,
+  RefreshCw,
+} from 'lucide-react';
+import type { ChainInfo, RpcEndpoint, RpcVerificationResult } from '@ignite/api';
 import { useAppDispatch, useAppSelector } from '../../../../store';
 import {
   chainsApi,
   rpcCheckReset,
+  providerChecksReset,
 } from '../../../../store/features/chains/chainsSlice';
 import Tooltip from '../../../../components/Tooltip';
 
@@ -45,6 +53,37 @@ function HealthChip({ endpoint }: { endpoint: RpcEndpoint }) {
   );
 }
 
+function ProviderHealthChip({
+  checkState,
+}: {
+  checkState: RpcVerificationResult | 'checking' | undefined;
+}) {
+  if (checkState === 'checking') {
+    return <Loader2 size={14} className="animate-spin" />;
+  }
+  if (!checkState) {
+    return null;
+  }
+  if (checkState.ok) {
+    return (
+      <span className="chip chip-ok">
+        <span className="chip-dot" />
+        {checkState.latencyMs !== undefined
+          ? `${checkState.latencyMs} ms`
+          : 'healthy'}
+      </span>
+    );
+  }
+  return (
+    <Tooltip label={checkState.error ?? 'Verification failed'}>
+      <span className="chip chip-err">
+        <span className="chip-dot" />
+        unhealthy
+      </span>
+    </Tooltip>
+  );
+}
+
 export default function ChainRpcModal({
   chain,
   open,
@@ -53,6 +92,12 @@ export default function ChainRpcModal({
   const dispatch = useAppDispatch();
   const endpoints = useAppSelector(
     (state) => state.chains.rpcByChain[String(chain.chainId)] ?? []
+  );
+  const providerEndpoints = useAppSelector(
+    (state) => state.chains.providerRpcByChain[String(chain.chainId)] ?? []
+  );
+  const providerChecks = useAppSelector(
+    (state) => state.chains.providerChecks
   );
   const rpcCheck = useAppSelector((state) => state.chains.rpcCheck);
   const [newUrl, setNewUrl] = useState('');
@@ -113,6 +158,7 @@ export default function ChainRpcModal({
   useEffect(
     () => () => {
       dispatch(rpcCheckReset());
+      dispatch(providerChecksReset());
     },
     [dispatch]
   );
@@ -293,6 +339,65 @@ export default function ChainRpcModal({
               </span>
             )}
           </div>
+
+          {providerEndpoints.length > 0 && (
+            <div className="grid gap-1 mb-3">
+              <div className="eyebrow flex items-center justify-between">
+                <span>Provider endpoints</span>
+                <Tooltip label="Refresh">
+                  <button
+                    className="btn btn-sm btn-secondary-borderless"
+                    onClick={() =>
+                      dispatch(chainsApi.fetchRpcs(chain.chainId, true))
+                    }
+                    aria-label="Refresh provider endpoints"
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                </Tooltip>
+              </div>
+              <div className="glass-list">
+                {providerEndpoints.map((endpoint) => (
+                  <div key={endpoint.id} className="list-row">
+                    <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                      <div className="min-w-0">
+                        <div className="mono-data truncate">
+                          {endpoint.url}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="pill">{endpoint.pluginId}</span>
+                          {endpoint.label && (
+                            <span className="text-xs text-muted">
+                              {endpoint.label}
+                            </span>
+                          )}
+                          <ProviderHealthChip
+                            checkState={providerChecks[endpoint.id]}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Tooltip label="Verify now">
+                          <button
+                            className="btn btn-sm btn-secondary-borderless"
+                            disabled={providerChecks[endpoint.id] === 'checking'}
+                            onClick={() =>
+                              chainsApi
+                                .checkProviderRpc(chain.chainId, endpoint)
+                                .forEach(dispatch)
+                            }
+                            aria-label={`Verify ${endpoint.url}`}
+                          >
+                            <Activity size={16} />
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {suggestions.length > 0 && (
             <div className="grid gap-1 mb-3">
