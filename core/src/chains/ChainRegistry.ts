@@ -1,6 +1,9 @@
 // Per-user chain registry: cached chainid.network dataset + user-defined
-// chains. Custom entries shadow chainlist entries by chainId. Chain data is
-// per-user only and never leaves ~/.ignite (SPEC §6.3).
+// chains. A custom entry sharing a chainlist chainId is MERGED with that
+// entry — chainlist data wins, the custom record contributes RPC overrides
+// (see mergeCustomChain); deleting the custom entry reveals the pure
+// chainlist entry again. Chain data is per-user only and never leaves
+// ~/.ignite (SPEC §6.3).
 import type {
   ChainInfo,
   ListChainsData,
@@ -57,16 +60,19 @@ export class ChainRegistry {
   }): Promise<ListChainsData> {
     const cache = await this.ensureFresh();
     const custom = await this.readCustomChains();
-    const shadowed = new Set(custom.map((c) => c.chainId));
+    const chainlist = cache?.chains ?? [];
+    const overlaid = new Set(custom.map((c) => c.chainId));
+    const chainlistById = new Map(chainlist.map((c) => [c.chainId, c]));
     // chainlist.org order: TVL descending (missing → 0), name ascending as
-    // tiebreak. Custom chains always lead. Sorted before the q-filter/limit
-    // so the default top-N view surfaces major chains (filtering preserves
-    // order).
+    // tiebreak. Custom chains always lead, each merged with its chainlist
+    // counterpart (if any) so the entry appears exactly once. Sorted before
+    // the q-filter/limit so the default top-N view surfaces major chains
+    // (filtering preserves order).
     const tvls = cache?.tvls ?? {};
     const merged = [
-      ...custom,
-      ...(cache?.chains ?? [])
-        .filter((c) => !shadowed.has(c.chainId))
+      ...custom.map((c) => mergeCustomChain(c, chainlistById.get(c.chainId))),
+      ...chainlist
+        .filter((c) => !overlaid.has(c.chainId))
         .sort(byTvlDescThenName(tvls)),
     ];
 
@@ -91,9 +97,12 @@ export class ChainRegistry {
   async getChain(chainId: number): Promise<ChainInfo | undefined> {
     const custom = await this.readCustomChains();
     const own = custom.find((c) => c.chainId === chainId);
-    if (own) return own;
+    // ensureFresh never throws (offline reads null), so a custom chain still
+    // resolves — as-is — when the chainlist has never been fetched.
     const cache = await this.ensureFresh();
-    return cache?.chains.find((c) => c.chainId === chainId);
+    const listed = cache?.chains.find((c) => c.chainId === chainId);
+    if (own) return mergeCustomChain(own, listed);
+    return listed;
   }
 
   async upsertCustomChain(input: UpsertChainRequest): Promise<ChainInfo> {
@@ -254,6 +263,27 @@ export class ChainRegistry {
     }
     return [];
   }
+}
+
+// Merge a custom chain with the chainlist entry sharing its chainId (no
+// counterpart → the custom entry as-is). Once a chain appears on the
+// chainlist, the chainlist entry is the source of truth for everything —
+// name, nativeCurrency, explorers, iconUrl, shortName, infoURL — and the
+// user's record degrades to RPC overrides: `rpc` is the union, chainlist
+// suggestions first, then the custom extras, deduped by exact string.
+// `source` stays 'custom' purely as a management marker (custom-first
+// grouping, custom pill, deletable — deleting the user record reveals the
+// pure chainlist entry).
+export function mergeCustomChain(
+  custom: ChainInfo,
+  chainlistEntry: ChainInfo | undefined
+): ChainInfo {
+  if (!chainlistEntry) return custom;
+  return {
+    ...chainlistEntry,
+    rpc: [...new Set([...chainlistEntry.rpc, ...custom.rpc])],
+    source: 'custom',
+  };
 }
 
 // Defensive mapping of the DefiLlama /chains dataset: roughly half the

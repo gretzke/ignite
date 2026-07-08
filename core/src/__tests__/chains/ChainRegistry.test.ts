@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ChainRegistry } from '../../chains/ChainRegistry.js';
+import { ChainRegistry, mergeCustomChain } from '../../chains/ChainRegistry.js';
 
 // Two-entry chainlist sample mirroring chainid.network/chains.json shape,
 // including a templated RPC URL that must be filtered out.
@@ -181,19 +181,130 @@ describe('ChainRegistry', () => {
     });
   });
 
-  it('custom chains shadow chainlist entries with the same chainId', async () => {
+  // Old behavior: a custom chain fully SHADOWED (replaced) the chainlist
+  // entry with the same chainId. New behavior: the two are MERGED — the
+  // chainlist entry is the source of truth for all chain data; the custom
+  // record only contributes extra RPC URLs and the 'custom' management
+  // marker.
+  it('custom chains merge with chainlist entries sharing their chainId', async () => {
     const { deps } = makeDeps();
     const registry = new ChainRegistry(deps);
     await registry.upsertCustomChain({
       chainId: 1,
       name: 'My Fork',
-      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      nativeCurrency: { name: 'Fork Ether', symbol: 'fETH', decimals: 18 },
+      explorers: [{ name: 'forkscan', url: 'https://forkscan.local' }],
+      // One extra endpoint plus an exact duplicate of a chainlist suggestion:
+      // the union must keep chainlist order first and dedupe the repeat.
+      rpc: ['https://rpc.myfork.local', 'https://eth.llamarpc.com'],
     });
+
     const chain = await registry.getChain(1);
-    expect(chain?.name).toBe('My Fork');
+    // Chainlist is the source of truth: the custom name/currency/explorers
+    // do NOT survive the merge.
+    expect(chain?.name).toBe('Ethereum Mainnet');
+    expect(chain?.nativeCurrency).toEqual({
+      name: 'Ether',
+      symbol: 'ETH',
+      decimals: 18,
+    });
+    expect(chain?.explorers).toEqual([
+      { name: 'etherscan', url: 'https://etherscan.io', standard: 'EIP3091' },
+    ]);
+    expect(chain?.shortName).toBe('eth');
+    expect(chain?.infoURL).toBe('https://ethereum.org');
+    expect(chain?.iconUrl).toBe(
+      'https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg'
+    );
+    // rpc union: chainlist suggestions first, custom extras appended, deduped.
+    expect(chain?.rpc).toEqual([
+      'https://eth.llamarpc.com',
+      'https://rpc.myfork.local',
+    ]);
+    // 'custom' survives purely as the management marker.
     expect(chain?.source).toBe('custom');
+
+    // The merged entry appears exactly once, in the custom-first position,
+    // and listChains returns the same merged shape getChain does.
     const list = await registry.listChains();
-    expect(list.chains.filter((c) => c.chainId === 1)).toHaveLength(1);
+    const listed = list.chains.filter((c) => c.chainId === 1);
+    expect(listed).toHaveLength(1);
+    expect(list.chains[0]).toEqual(chain);
+  });
+
+  it('custom chains without a chainlist counterpart are returned as-is', async () => {
+    const { deps } = makeDeps();
+    const registry = new ChainRegistry(deps);
+    await registry.upsertCustomChain({
+      chainId: 999999,
+      name: 'Stealth Testnet',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpc: ['https://rpc.stealth.local'],
+    });
+    const chain = await registry.getChain(999999);
+    expect(chain).toEqual({
+      chainId: 999999,
+      name: 'Stealth Testnet',
+      shortName: undefined,
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpc: ['https://rpc.stealth.local'],
+      explorers: undefined,
+      infoURL: undefined,
+      source: 'custom',
+    });
+  });
+
+  describe('mergeCustomChain', () => {
+    const custom = {
+      chainId: 1,
+      name: 'My Fork',
+      nativeCurrency: { name: 'Fork Ether', symbol: 'fETH', decimals: 18 },
+      rpc: ['https://rpc.myfork.local'],
+      source: 'custom' as const,
+    };
+
+    it('returns the custom chain untouched without a chainlist entry', () => {
+      expect(mergeCustomChain(custom, undefined)).toBe(custom);
+    });
+
+    it('takes everything from chainlist except the rpc union and source', () => {
+      const merged = mergeCustomChain(custom, {
+        chainId: 1,
+        name: 'Ethereum Mainnet',
+        shortName: 'eth',
+        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+        rpc: ['https://eth.llamarpc.com', 'https://rpc.myfork.local'],
+        explorers: [{ name: 'etherscan', url: 'https://etherscan.io' }],
+        infoURL: 'https://ethereum.org',
+        iconUrl: 'https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg',
+        source: 'chainlist',
+      });
+      expect(merged).toEqual({
+        chainId: 1,
+        name: 'Ethereum Mainnet',
+        shortName: 'eth',
+        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+        rpc: ['https://eth.llamarpc.com', 'https://rpc.myfork.local'],
+        explorers: [{ name: 'etherscan', url: 'https://etherscan.io' }],
+        infoURL: 'https://ethereum.org',
+        iconUrl: 'https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg',
+        source: 'custom',
+      });
+    });
+
+    it('appends only unseen custom rpc URLs after the chainlist suggestions', () => {
+      const merged = mergeCustomChain(
+        { ...custom, rpc: ['https://b.example', 'https://a.example'] },
+        {
+          chainId: 1,
+          name: 'Ethereum Mainnet',
+          nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+          rpc: ['https://a.example'],
+          source: 'chainlist',
+        }
+      );
+      expect(merged.rpc).toEqual(['https://a.example', 'https://b.example']);
+    });
   });
 
   it('lists custom chains first and filters by q on name, shortName and chainId', async () => {

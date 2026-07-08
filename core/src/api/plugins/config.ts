@@ -18,7 +18,7 @@ import type { PluginMetadata } from '@ignite/plugin-types/types';
 import { PluginConfigStore } from '../../plugins/config/PluginConfigStore.js';
 import { VaultStore } from '../../plugins/vault/VaultStore.js';
 import { TrustManager } from '../../plugins/trust/TrustManager.js';
-import { PluginManager } from '../../filesystem/PluginManager.js';
+import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 import { RpcProviderService } from '../../chains/RpcProviderService.js';
 import { ErrorCodes, type ErrorCode } from '../../types/errors.js';
 import { sendCaughtError, sendBadRequest } from '../utils/errors.js';
@@ -69,11 +69,17 @@ function pluginNotFound(reply: FastifyReply, pluginId: string) {
   return reply.status(404).send(body);
 }
 
+// Resolve through the merged builtin+installed catalog, not PluginManager's
+// installed-only registry — builtin plugins (foundry, hardhat, …) exist only
+// in the bundled catalog and would otherwise 404 on every config route.
+// Fail-closed: any resolution error reads as "not installed".
 async function getMetadataFromRegistry(
   pluginId: string
 ): Promise<PluginMetadata | undefined> {
   try {
-    return await PluginManager.getInstance().getPlugin(pluginId);
+    const config =
+      await PluginRegistryLoader.getInstance().getPluginConfig(pluginId);
+    return config.metadata;
   } catch {
     return undefined;
   }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { FastifyReply } from 'fastify';
 import { PluginType } from '@ignite/plugin-types/types';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
@@ -7,6 +7,10 @@ import {
   createPluginConfigHandlers,
   type PluginConfigHandlerDeps,
 } from '../../api/plugins/config.js';
+import {
+  PluginRegistryLoader,
+  type PluginConfig,
+} from '../../assets/PluginRegistryLoader.js';
 
 function makeReply() {
   const reply = {
@@ -295,6 +299,73 @@ describe('plugin config handlers', () => {
     expect(deps.vaultStore.deleteSecret).not.toHaveBeenCalled();
     expect(configValues.endpoint).toBeUndefined();
     expect(deps.providers.invalidate).toHaveBeenCalledWith(PLUGIN_ID);
+  });
+
+  // User-reported bug: builtin plugins (foundry, hardhat, …) 404'd on every
+  // config route because the default metadata resolver read only the
+  // *installed* registry (PluginManager) — builtins live solely in the
+  // bundled catalog. These tests exercise the REAL default `getMetadata`
+  // (deps.getMetadata omitted) against a faked PluginRegistryLoader
+  // singleton, seeded through the same private-static seam
+  // PluginRegistryLoader.test.ts uses (the class has no resetInstance()).
+  describe('default metadata resolution (builtin plugins)', () => {
+    const BUILTIN_ID = 'test-builtin';
+    const BUILTIN_METADATA: PluginMetadata = {
+      id: BUILTIN_ID,
+      type: PluginType.COMPILER,
+      name: 'Test Builtin',
+      version: '1.0.0',
+      baseImage: 'ignite/compiler_test-builtin:latest',
+      configFields: [{ key: 'endpoint', label: 'Endpoint', type: 'string' }],
+    };
+
+    function seedRegistryLoader() {
+      const fake = {
+        getPluginConfig: async (pluginId: string): Promise<PluginConfig> => {
+          if (pluginId !== BUILTIN_ID) {
+            throw new Error(`Unknown plugin: ${pluginId}`);
+          }
+          return {
+            metadata: BUILTIN_METADATA,
+            requiresRepo: true,
+            origin: 'builtin',
+          };
+        },
+      };
+      (PluginRegistryLoader as unknown as { instance?: unknown }).instance =
+        fake;
+    }
+
+    afterEach(() => {
+      (PluginRegistryLoader as unknown as { instance?: unknown }).instance =
+        undefined;
+    });
+
+    it('GET resolves builtin plugin metadata through the merged registry view', async () => {
+      seedRegistryLoader();
+      const { deps } = makeDeps();
+      const { getMetadata: _injected, ...rest } = deps;
+      const h = createPluginConfigHandlers(rest); // real default resolver
+      const reply = makeReply();
+      await h.getPluginConfig(
+        req({ params: { pluginId: BUILTIN_ID } }),
+        reply
+      );
+      expect(reply.statusCode).toBe(200);
+      const body = reply.body as { data: GetPluginConfigData };
+      expect(body.data.fields).toEqual(BUILTIN_METADATA.configFields);
+    });
+
+    it('GET still 404s fail-closed for ids unknown to the merged view', async () => {
+      seedRegistryLoader();
+      const { deps } = makeDeps();
+      const { getMetadata: _injected, ...rest } = deps;
+      const h = createPluginConfigHandlers(rest);
+      const reply = makeReply();
+      await h.getPluginConfig(req({ params: { pluginId: 'ghost' } }), reply);
+      expect(reply.statusCode).toBe(404);
+      expect((reply.body as { code: string }).code).toBe('PLUGIN_NOT_FOUND');
+    });
   });
 
   it('DELETE rejects an unknown key with CONFIG_UNKNOWN_FIELD', async () => {
