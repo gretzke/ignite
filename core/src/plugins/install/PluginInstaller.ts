@@ -514,12 +514,6 @@ export class PluginInstaller {
         ErrorCodes.PLUGIN_INSTALL_INVALID
       );
     }
-    if (metadata.type === PluginType.REPO_MANAGER) {
-      throw new PluginError(
-        `Cannot install '${metadata.id}': repo-manager plugins are native infrastructure and cannot be installed as third-party plugins`,
-        ErrorCodes.PLUGIN_INSTALL_INVALID
-      );
-    }
     this.validatePermissionRequests(metadata);
     this.validateConfigSchema(metadata);
   }

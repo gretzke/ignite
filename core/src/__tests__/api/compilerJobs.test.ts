@@ -61,7 +61,7 @@ const hardhatConfig = makeConfig('hardhat', 'Hardhat', PluginType.COMPILER);
 const nonCompilerConfig = makeConfig(
   'gitrepo',
   'GitRepo',
-  PluginType.REPO_MANAGER
+  'repo-manager' as unknown as PluginType
 );
 
 function makeFakeRegistry(

@@ -16,7 +16,6 @@ export type PluginResponse<T> =
 
 // Plugin metadata and configuration
 export enum PluginType {
-  REPO_MANAGER = "repo-manager",
   COMPILER = "compiler",
   RPC_PROVIDER = "rpc-provider",
 }

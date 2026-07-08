@@ -197,13 +197,13 @@ describe('PluginInstaller', () => {
     );
   });
 
-  it('rejects installing a repo-manager-typed plugin (PLUGIN_INSTALL_INVALID), removes the image, and does not persist it', async () => {
+  it('rejects installing a repo-manager-typed plugin via generic type validation (PLUGIN_INSTALL_INVALID), removes the image, and does not persist it', async () => {
     const repoManagerBackend = backendReturning({
       imageTag: 'ignite/installed_evilrepo:1.0.0',
       metadata: {
         ...waffleMeta,
         id: 'evilrepo',
-        type: PluginType.REPO_MANAGER,
+        type: 'repo-manager' as unknown as typeof waffleMeta.type,
       },
     });
     const installer = new PluginInstaller(repoManagerBackend, deps);
