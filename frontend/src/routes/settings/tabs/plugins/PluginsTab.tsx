@@ -78,19 +78,25 @@ function PluginCard({
   const granted = (['repoWrite', 'net'] as const).filter(
     (p) => plugin.permissions[p]
   );
-  // Granted secret/file config scopes, rendered as pills next to the
-  // permission pills. Native plugins have every declared scope implicitly
-  // granted, so their pills come straight from the manifest; third-party
-  // pills reflect the actual grant. Labels come from the declared config
-  // field, falling back to the raw key.
+  // Granted secret/file config scopes, rendered as unified category pills.
+  // Native plugins have every declared scope implicitly granted; third-party
+  // pills reflect the actual grant. We group FILE and SECRET fields into
+  // single pills per category, with tooltips listing the specific field labels.
   const scopeFields = (plugin.configFields ?? []).filter(
     (f) => f.secret || f.type === 'file'
   );
   const grantedScopes = isNative
     ? scopeFields.map((f) => f.key)
     : plugin.permissions.secrets;
-  const scopeLabel = (key: string) =>
-    scopeFields.find((f) => f.key === key)?.label ?? key;
+
+  // Group granted scopes by type: FILE (type === 'file') and SECRET (secret === true)
+  const grantedFileFields = grantedScopes
+    .map((key) => scopeFields.find((f) => f.key === key))
+    .filter((f): f is typeof scopeFields[0] => f !== undefined && f.type === 'file');
+  const grantedSecretFields = grantedScopes
+    .map((key) => scopeFields.find((f) => f.key === key))
+    .filter((f): f is typeof scopeFields[0] => f !== undefined && !!f.secret);
+
   const manageable = !isNative && versionInfo?.source === 'git';
   const updateAvailable = !isNative && versionInfo?.updateAvailable;
   const hasConfig = Boolean(plugin.configFields?.length);
@@ -141,14 +147,26 @@ function PluginCard({
                   {PERMISSION_TITLES[p]}
                 </span>
               ))}
-            {grantedScopes.map((key) => (
-              <span
-                key={`scope-${key}`}
-                className="text-xs rounded-full pill px-2 py-0.5 shrink-0"
+            {grantedFileFields.length > 0 && (
+              <Tooltip
+                label={grantedFileFields.map((f) => f.label).join(', ')}
+                placement="top"
               >
-                {scopeLabel(key)}
-              </span>
-            ))}
+                <span className="text-xs rounded-full pill pill-primary px-2 py-0.5 shrink-0 cursor-help">
+                  File Read
+                </span>
+              </Tooltip>
+            )}
+            {grantedSecretFields.length > 0 && (
+              <Tooltip
+                label={grantedSecretFields.map((f) => f.label).join(', ')}
+                placement="top"
+              >
+                <span className="text-xs rounded-full pill pill-primary px-2 py-0.5 shrink-0 cursor-help">
+                  Secrets
+                </span>
+              </Tooltip>
+            )}
             {updateAvailable && (
               <span className="text-xs rounded-full pill pill-primary px-2 py-0.5 shrink-0">
                 Update available
