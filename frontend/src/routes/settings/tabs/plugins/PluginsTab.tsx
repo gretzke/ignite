@@ -11,6 +11,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { PluginVersionInfoData } from '@ignite/api';
+import { isSecretScopeField } from '@ignite/api';
 import Dropdown from '../../../../components/Dropdown';
 import Tooltip from '../../../../components/Tooltip';
 import ConfirmDialog from '../../../../components/ConfirmDialog';
@@ -82,9 +83,7 @@ function PluginCard({
   // Native plugins have every declared scope implicitly granted; third-party
   // pills reflect the actual grant. We group FILE and SECRET fields into
   // single pills per category, with tooltips listing the specific field labels.
-  const scopeFields = (plugin.configFields ?? []).filter(
-    (f) => f.secret || f.type === 'file'
-  );
+  const scopeFields = (plugin.configFields ?? []).filter(isSecretScopeField);
   const grantedScopes = isNative
     ? scopeFields.map((f) => f.key)
     : plugin.permissions.secrets;

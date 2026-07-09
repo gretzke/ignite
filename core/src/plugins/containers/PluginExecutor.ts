@@ -245,13 +245,18 @@ export class PluginExecutor {
       };
     }
 
-    // Signer-provider containers only get network for sendTransaction. Every
-    // other signer op that may hold key material runs with NetworkMode 'none'
-    // regardless of grant, including native builtins.
-    const KEY_HOLDING_SIGNER_OPS = ['getAccounts', 'signTransaction'];
+    // Signer-provider containers only get network for sendTransaction (the
+    // one op that must reach a provider-defined submission target). Config
+    // injection is NOT operation-scoped — every granted secret (including
+    // key material) reaches every operation of the plugin — so for a plugin
+    // that signs, ALL other ops must run with NetworkMode 'none' regardless
+    // of grant, native builtins included. This deliberately covers a
+    // multi-surface plugin's non-signer ops too (e.g. chainz
+    // getSupportedChains): a signer-typed plugin that needs network anywhere
+    // but sendTransaction is unsupported by design.
     const effectiveGrant =
       pluginConfig.metadata.types.includes(PluginType.SIGNER_PROVIDER) &&
-      KEY_HOLDING_SIGNER_OPS.includes(operation)
+      operation !== 'sendTransaction'
         ? { ...grant, net: false }
         : grant;
 

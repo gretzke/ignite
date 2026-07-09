@@ -16,6 +16,8 @@ export type {
   PluginConfigListItemField,
   PluginConfigSelectOption,
 } from "@ignite/plugin-types/types";
+// Value re-export: the one secret-scope predicate every grant surface uses.
+export { isSecretScopeField } from "@ignite/plugin-types/types";
 
 // Interface definitions
 export interface ListPluginsData {

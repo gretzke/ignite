@@ -115,7 +115,11 @@ blocking current functionality.
   not checked against options) — robustness only, user-initiated.
 - **Store write serialization.** Vault/config stores are instantiated per consumer
   (API/executor/installer); temp+rename prevents corruption but concurrent RMW can
-  resurrect entries. Shared singleton or per-file mutex.
+  resurrect entries. Shared singleton or per-file mutex. Widened by D2a list-item
+  CRUD (2026-07-09 review): two concurrent list-item adds can drop one item from
+  the config JSON while its secret stays orphaned in the vault (visible via
+  secretsPresent); the fix should also reconcile orphaned `field.item.subkey`
+  vault entries against the stored item list.
 - **Surface newly-declared secret fields on plugin update** like newPermissions
   (installer TODO).
 - **Cross-platform master-key backends** (raised 2026-07-09, D2 design — real
@@ -190,3 +194,8 @@ smells, ranked:
 - **`--input-type=module` discovery.** Bare `node -e` only worked while
   builtin bundles happened to contain no residual ESM syntax; now it's
   explicit. If a builtin ever needs CJS interop, revisit per-plugin.
+- **Send accepts unverified RPC endpoints** (2026-07-09 review, accepted for
+  D2a). `POST /signers/send` takes any stored/provider endpoint id without
+  requiring a fresh `lastVerification.ok && chainIdMatch`; the dev panel
+  shows verification state but doesn't enforce it. Enforcement belongs to
+  the D3 wizard's pre-deployment validation (which owns RPC preflight).

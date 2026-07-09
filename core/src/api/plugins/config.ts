@@ -20,6 +20,7 @@ import type {
 import {
   LIST_ITEM_ID_PATTERN,
   MAX_LIST_ITEMS,
+  isSecretScopeField,
   type PluginMetadata,
 } from '@ignite/plugin-types/types';
 import { PluginConfigStore } from '../../plugins/config/PluginConfigStore.js';
@@ -106,14 +107,7 @@ async function buildConfigPayload(
   // fields AND file fields (a file field's grant covers file *contents*
   // flowing to the plugin — same grant dimension as a secret).
   const declaredSecretScopeKeys = new Set(
-    fields
-      .filter(
-        (f) =>
-          f.secret ||
-          f.type === 'file' ||
-          (f.type === 'list' && (f.itemFields ?? []).some((i) => i.secret))
-      )
-      .map((f) => f.key)
+    fields.filter(isSecretScopeField).map((f) => f.key)
   );
 
   // Only schema-declared, non-secret fields are surfaced — an undeclared or

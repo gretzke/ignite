@@ -325,10 +325,20 @@ export class SignerProviderService {
     field: string
   ): Hex {
     if (!response.success) {
-      throw new IgniteError(
-        `Signer ${pluginId} failed (${response.error.code}): ${sanitize(
+      // Thrown message becomes the job's persisted+broadcast error text, so
+      // it must NEVER carry plugin-authored content: parse failures quote
+      // the framed payload, and a MALFORMED frame (the parse-failure case)
+      // defeats stripSentinelBlocks by construction — with an injected key
+      // potentially inside the quoted tail. Code only; the sanitized detail
+      // goes to the core log, where the global parsePluginOutput quoting
+      // concern (TODO.md) already applies.
+      this.deps.logger.warn(
+        `Signer ${pluginId} failed producing ${field} (${response.error.code}): ${sanitize(
           response.error.message
-        )}`,
+        )}`
+      );
+      throw new IgniteError(
+        `Signer ${pluginId} failed (${response.error.code}). See core logs for detail.`,
         ErrorCodes.SIGNER_SEND_ERROR
       );
     }

@@ -9,6 +9,7 @@ import {
   PluginType,
   PLUGIN_PERMISSION_IDS,
   MAX_CONFIG_FIELDS,
+  isSecretScopeField,
 } from '@ignite/plugin-types/types';
 import { normalizeRepoUrl } from '@ignite/plugin-types';
 import { PluginManager } from '../../filesystem/PluginManager.js';
@@ -260,7 +261,7 @@ export class PluginInstaller {
       const grant = await this.deps.trust.getGrant(pluginId);
       const declaredSecretKeys = new Set(
         (metadata.configFields ?? [])
-          .filter((field) => field.secret || field.type === 'file')
+          .filter(isSecretScopeField)
           .map((field) => field.key)
       );
 

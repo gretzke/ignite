@@ -1,6 +1,7 @@
 import { createListenerMiddleware, isAnyOf } from '@reduxjs/toolkit';
 import type { UnknownAction } from '@reduxjs/toolkit';
-import type { JobRecord, JobState } from '@ignite/api';
+import type { JobRecord, JobState, PluginConfigField } from '@ignite/api';
+import { isSecretScopeField } from '@ignite/api';
 import { apiClient } from '../api/client';
 import { wsSend } from './websocket';
 import { triggerToast } from './toastListener';
@@ -380,13 +381,13 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
                 plugin?: {
                   id?: string;
                   permissions?: Array<{ id: string }>;
-                  configFields?: Array<{ secret?: boolean; type?: string }>;
+                  configFields?: PluginConfigField[];
                 };
               }
             | undefined
         )?.plugin;
         const declaresScopes = (installed?.configFields ?? []).some(
-          (f) => f.secret === true || f.type === 'file'
+          isSecretScopeField
         );
         if (
           installed?.id &&

@@ -116,6 +116,21 @@ export interface PluginConfigField {
 // Upper bound on how many config fields a plugin manifest may declare.
 export const MAX_CONFIG_FIELDS = 32;
 
+// The single definition of "this config field is secret-scoped": its value
+// (or file contents / per-item secret values) only ever flows to the plugin
+// under a secret-scope grant covering the field's key. Every scope surface —
+// trust grants, grant clamping on update, the grant dialogs, config payloads —
+// MUST use this predicate; a site that hand-rolls it will silently disagree
+// on which fields are grantable (list fields were missed exactly this way).
+export function isSecretScopeField(field: PluginConfigField): boolean {
+  return (
+    field.secret === true ||
+    field.type === "file" ||
+    (field.type === "list" &&
+      (field.itemFields ?? []).some((item) => item.secret === true))
+  );
+}
+
 export interface PluginMetadata {
   id: string;
   // Capability surfaces this plugin implements. types[0] is the primary type:

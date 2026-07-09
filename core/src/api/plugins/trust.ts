@@ -8,7 +8,9 @@ import type {
   SetPluginTrustData,
   PluginTrustEntryData,
 } from '@ignite/api';
+import { isSecretScopeField } from '@ignite/plugin-types/types';
 import { TrustManager } from '../../plugins/trust/TrustManager.js';
+import { SignerProviderService } from '../../signers/SignerProviderService.js';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 import { PluginManager } from '../../filesystem/PluginManager.js';
 import { RpcProviderService } from '../../chains/RpcProviderService.js';
@@ -36,7 +38,10 @@ export function createTrustHandlers(
   getDeclaredSecretKeys: (
     pluginId: string
   ) => Promise<string[]> = getDeclaredSecretKeysFromRegistry,
-  providers: Pick<RpcProviderService, 'invalidate'> = RpcProviderService.getInstance()
+  providers: Pick<RpcProviderService, 'invalidate'> = RpcProviderService.getInstance(),
+  // Trust/secret-scope changes alter what a signer plugin can decrypt, so its
+  // cached account list must not outlive the grant that produced it.
+  signers: Pick<SignerProviderService, 'invalidate'> = SignerProviderService.getInstance()
 ) {
   return {
     listPluginTrust: async (
@@ -143,6 +148,7 @@ export function createTrustHandlers(
           secrets: requestedSecrets,
         });
         providers.invalidate(pluginId);
+        signers.invalidate(pluginId);
         const body: IApiResponse<SetPluginTrustData> = {
           data: {
             plugin: {
@@ -198,7 +204,7 @@ async function getDeclaredSecretKeysFromRegistry(
   try {
     const metadata = await PluginManager.getInstance().getPlugin(pluginId);
     return (metadata.configFields ?? [])
-      .filter((field) => field.secret || field.type === 'file')
+      .filter(isSecretScopeField)
       .map((field) => field.key);
   } catch {
     // Fail-closed: unknown plugin → nothing is grantable.

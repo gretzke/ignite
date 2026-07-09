@@ -1,3 +1,4 @@
+import { isSecretScopeField } from '@ignite/api';
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ShieldCheck } from 'lucide-react';
@@ -43,7 +44,7 @@ export default function PluginPermissionsModal() {
   );
 
   const secretFields =
-    row?.configFields?.filter((f) => f.secret || f.type === 'file') ?? [];
+    row?.configFields?.filter(isSecretScopeField) ?? [];
 
   // Re-seed the toggles from the stored grant whenever the modal targets a
   // (possibly different) plugin or its trust state arrives from the server.

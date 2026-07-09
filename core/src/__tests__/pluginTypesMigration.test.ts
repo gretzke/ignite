@@ -97,14 +97,19 @@ describe('PluginExecutor signer-provider network clamp', () => {
     });
   }
 
-  it('removes network for key-holding signer ops but not sendTransaction', async () => {
+  it('removes network for every signer-plugin op except sendTransaction', async () => {
     const seenGrants: PermissionGrant[] = [];
     const executor = makeExecutor(seenGrants);
 
     await executor.execute('native-signer', 'signTransaction', {});
     await executor.execute('native-signer', 'sendTransaction', {});
+    // Config injection is not operation-scoped, so a multi-surface signer
+    // plugin's OTHER surfaces' ops (e.g. chainz getSupportedChains) hold key
+    // material too and must be clamped as well.
+    await executor.execute('native-signer', 'getSupportedChains', {});
 
     expect(seenGrants[0].net).toBe(false);
     expect(seenGrants[1].net).toBe(true);
+    expect(seenGrants[2].net).toBe(false);
   });
 });
