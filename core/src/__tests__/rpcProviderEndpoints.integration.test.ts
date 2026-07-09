@@ -103,7 +103,7 @@ describe.skipIf(!ready)('rpc-provider plugin endpoints (Docker)', () => {
       dockerfile: 'Dockerfile',
     });
     expect(meta.id).toBe(PLUGIN_ID);
-    expect(meta.type).toBe('rpc-provider');
+    expect(meta.types).toEqual(['rpc-provider']);
     expect(meta.configFields?.map((f) => f.key)).toEqual(['api-key']);
 
     // --- Store the key in the REAL VaultStore (fake master key: fixed

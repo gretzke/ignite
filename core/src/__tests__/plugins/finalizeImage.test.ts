@@ -12,7 +12,7 @@ describe('parsePluginMetadata', () => {
       )
     );
     expect(meta.id).toBe('waffle');
-    expect(meta.type).toBe('compiler');
+    expect(meta.types).toEqual(['compiler']);
   });
 
   it('unwraps a { data } envelope (getInfo shape), ignoring surrounding noise', () => {
@@ -38,9 +38,9 @@ describe('parsePluginMetadata', () => {
     );
   });
 
-  it('throws when id or type is missing', () => {
+  it('throws when id or types are missing', () => {
     expect(() => parsePluginMetadata(wrap('{"id":"waffle"}'))).toThrow(
-      /missing id\/type/i
+      /missing id\/types/i
     );
   });
 

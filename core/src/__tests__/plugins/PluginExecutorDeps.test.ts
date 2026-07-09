@@ -13,7 +13,7 @@ function makeExecutor(overrides: Record<string, unknown> = {}) {
       getPluginConfig: async () => ({
         metadata: {
           id: 'stub',
-          type: PluginType.COMPILER,
+          types: [PluginType.COMPILER],
           baseImage: 'img:latest',
         },
         requiresRepo: false,
@@ -137,7 +137,7 @@ describe('PluginExecutor with injected deps', () => {
           getPluginConfig: async () => ({
             metadata: {
               id: 'stub-with-config',
-              type: PluginType.COMPILER,
+              types: [PluginType.COMPILER],
               baseImage: 'img:latest',
               configFields: [
                 { key: 'apiUrl', label: 'API URL', type: 'string' },
@@ -205,7 +205,7 @@ describe('PluginExecutor with injected deps', () => {
           getPluginConfig: async () => ({
             metadata: {
               id: 'chainz',
-              type: PluginType.RPC_PROVIDER,
+              types: [PluginType.RPC_PROVIDER],
               baseImage: 'img:latest',
               configFields: [
                 {
@@ -257,7 +257,7 @@ describe('PluginExecutor with injected deps', () => {
           getPluginConfig: async () => ({
             metadata: {
               id: 'chainz',
-              type: PluginType.RPC_PROVIDER,
+              types: [PluginType.RPC_PROVIDER],
               baseImage: 'img:latest',
               configFields: [
                 {
@@ -308,7 +308,7 @@ describe('PluginExecutor with injected deps', () => {
           getPluginConfig: async () => ({
             metadata: {
               id: 'stub-with-config',
-              type: PluginType.COMPILER,
+              types: [PluginType.COMPILER],
               baseImage: 'img:latest',
               configFields: [
                 {
@@ -354,7 +354,7 @@ describe('PluginExecutor with injected deps', () => {
           getPluginConfig: async () => ({
             metadata: {
               id: 'stub-compiler',
-              type: PluginType.COMPILER,
+              types: [PluginType.COMPILER],
               baseImage: 'img:latest',
             },
             requiresRepo: true,
@@ -447,7 +447,7 @@ describe('PluginExecutor with injected deps', () => {
       getPluginConfig: async () => ({
         metadata: {
           id: 'stub',
-          type: PluginType.COMPILER,
+          types: [PluginType.COMPILER],
           baseImage: 'img:latest',
         },
         requiresRepo: false,

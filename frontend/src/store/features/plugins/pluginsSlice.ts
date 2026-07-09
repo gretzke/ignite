@@ -28,7 +28,7 @@ export interface PluginPermissions {
 export interface PluginRow {
   pluginId: string;
   name?: string;
-  type?: string;
+  types: string[];
   version?: string;
   trust: 'native' | 'trusted' | 'untrusted';
   permissions: PluginPermissions;
@@ -96,7 +96,7 @@ const pluginsSlice = createSlice({
           string,
           {
             name: string;
-            type: string;
+            types: string[];
             version: string;
             requested: PluginPermissionRequest[];
             configFields?: PluginConfigField[];
@@ -115,7 +115,7 @@ const pluginsSlice = createSlice({
             secrets: [],
           },
           name: m.name,
-          type: m.type,
+          types: m.types,
           version: m.version,
           requested: m.requested,
           configFields: m.configFields,
@@ -165,6 +165,7 @@ const pluginsSlice = createSlice({
           trust: t.trust,
           permissions: t.permissions,
           requested: state.rows[t.pluginId]?.requested ?? [],
+          types: state.rows[t.pluginId]?.types ?? [],
         };
       }
     },
@@ -228,7 +229,7 @@ export const pluginsApi = {
                 id,
                 {
                   name: m.name,
-                  type: m.type,
+                  types: m.types,
                   version: m.version,
                   requested: m.permissions ?? [],
                   configFields: m.configFields,

@@ -95,7 +95,7 @@ export class FoundryPlugin extends CompilerPlugin {
   protected static getMetadata(): PluginMetadata {
     return {
       id: "foundry",
-      type: PluginType.COMPILER,
+      types: [PluginType.COMPILER],
       name: "Foundry",
       version: PLUGIN_VERSION,
       baseImage: "ignite/compiler_foundry:latest",

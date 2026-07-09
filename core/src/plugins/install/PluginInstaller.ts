@@ -20,7 +20,10 @@ import { PluginConfigStore } from '../config/PluginConfigStore.js';
 import { getLogger } from '../../utils/logger.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 import { pluginCacheVolumeName } from '../utils/pluginCache.js';
-import { normalizeLegacyPermissions } from '../utils/permissionCompat.js';
+import {
+  normalizeLegacyPermissions,
+  normalizeLegacyType,
+} from '../utils/permissionCompat.js';
 import { deriveTrack, inspectGitRemote } from './gitRemote.js';
 import type { InspectGitRemoteData } from '@ignite/api';
 import type { PluginBuildBackend, PluginInstallSource } from './types.js';
@@ -478,12 +481,12 @@ export class PluginInstaller {
     }
   }
 
-  // Manifests authored before the hostWrite → repoWrite rename still declare
-  // the legacy id: accept them by normalizing at install/update time so the
-  // persisted registry entry (and everything downstream) carries 'repoWrite'.
+  // Accept legacy manifests at install/update time so the persisted registry
+  // entry (and everything downstream) carries canonical fields.
   private normalizePermissionManifest(metadata: PluginMetadata): PluginMetadata {
+    const typedMetadata = normalizeLegacyType(metadata);
     const { metadata: normalized, renamed } =
-      normalizeLegacyPermissions(metadata);
+      normalizeLegacyPermissions(typedMetadata);
     if (renamed) {
       getLogger().info(
         `ℹ️ Plugin ${metadata.id} declares the legacy permission id 'hostWrite'; normalized to 'repoWrite'`
@@ -508,9 +511,22 @@ export class PluginInstaller {
       );
     }
     const validTypes = Object.values(PluginType) as string[];
-    if (!validTypes.includes(metadata.type)) {
+    if (
+      !Array.isArray(metadata.types) ||
+      metadata.types.length === 0 ||
+      metadata.types.some((t) => !validTypes.includes(t)) ||
+      new Set(metadata.types).size !== metadata.types.length
+    ) {
       throw new PluginError(
-        `Invalid plugin type '${metadata.type}' for '${metadata.id}'`,
+        `Invalid plugin types '${JSON.stringify(metadata.types)}' for '${metadata.id}'`,
+        ErrorCodes.PLUGIN_INSTALL_INVALID
+      );
+    }
+    // The frontend runtime has manifest vocabulary now, but no installed
+    // plugin execution backend or sandboxing contract in D2a.
+    if (metadata.runtime !== undefined && metadata.runtime !== 'container') {
+      throw new PluginError(
+        `Plugin '${metadata.id}' declares runtime '${metadata.runtime}'; only 'container' plugins can be installed`,
         ErrorCodes.PLUGIN_INSTALL_INVALID
       );
     }

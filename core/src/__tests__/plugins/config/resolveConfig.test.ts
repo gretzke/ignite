@@ -10,7 +10,7 @@ function metadata(
 ): PluginMetadata {
   return {
     id: 'acme-plugin',
-    type: PluginType.COMPILER,
+    types: [PluginType.COMPILER],
     name: 'Acme',
     version: '1.0.0',
     baseImage: 'acme:latest',

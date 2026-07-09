@@ -75,7 +75,7 @@ describe.skipIf(!ready)('builtin rpc-provider native trust (Docker)', () => {
 
     const infura = await loader.getPluginConfig('infura');
     expect(infura.origin).toBe('builtin');
-    expect(infura.metadata.type).toBe('rpc-provider');
+    expect(infura.metadata.types).toEqual(['rpc-provider']);
     expect(infura.metadata.baseImage).toBe('ignite/rpc-provider_infura:latest');
     expect(infura.metadata.configFields).toEqual([
       expect.objectContaining({

@@ -4,6 +4,7 @@ import type { PluginMetadata } from '@ignite/plugin-types/types';
 import type { PluginBuildResult } from './types.js';
 import { INSTALLED_PLUGIN_ENTRYPOINT } from './types.js';
 import { parsePluginOutput } from '../utils/pluginTransport.js';
+import { normalizeLegacyType } from '../utils/permissionCompat.js';
 
 // A misbehaving/hung plugin entrypoint must not wedge the install (or leak the
 // temp container) forever.
@@ -33,10 +34,14 @@ export function parsePluginMetadata(logText: string): PluginMetadata {
     );
   }
   const meta = (envelope?.data ?? parsed) as Partial<PluginMetadata> | null;
-  if (!meta?.id || !meta?.type) {
-    throw new Error('Plugin metadata missing id/type in image output');
+  if (
+    !meta?.id ||
+    (!Array.isArray(meta.types) &&
+      !(meta as Partial<PluginMetadata> & { type?: unknown }).type)
+  ) {
+    throw new Error('Plugin metadata missing id/types in image output');
   }
-  return meta as PluginMetadata;
+  return normalizeLegacyType(meta as PluginMetadata & { type?: never });
 }
 
 // Run the built image's getInfo op and return its metadata. No Tty: installed

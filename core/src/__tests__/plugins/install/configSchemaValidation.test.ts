@@ -17,7 +17,7 @@ import type {
 
 const baseMeta: PluginMetadata = {
   id: 'cfg-plugin',
-  type: PluginType.COMPILER,
+  types: [PluginType.COMPILER],
   name: 'Cfg',
   version: '1.0.0',
   baseImage: 'ignite/installed_cfg-plugin:1.0.0',

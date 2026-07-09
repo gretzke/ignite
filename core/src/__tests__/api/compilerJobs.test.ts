@@ -46,7 +46,7 @@ function makeConfig(id: string, name: string, type: PluginType): PluginConfig {
   return {
     metadata: {
       id,
-      type,
+      types: [type],
       name,
       version: '1.0.0',
       baseImage: `ignite/installed_${id}:1.0.0`,
@@ -74,7 +74,7 @@ function makeFakeRegistry(
       return config;
     }),
     getPluginsByType: vi.fn(async (type: PluginType) =>
-      Object.values(configs).filter((c) => c.metadata.type === type)
+      Object.values(configs).filter((c) => c.metadata.types.includes(type))
     ),
   };
 }

@@ -133,9 +133,9 @@ function PluginCard({
             <span className="text-sm font-semibold truncate">
               {plugin.name ?? plugin.pluginId}
             </span>
-            {plugin.type && (
+            {plugin.types[0] && (
               <span className="text-xs rounded-full pill px-2 py-0.5 shrink-0 capitalize">
-                {plugin.type}
+                {plugin.types[0]}
               </span>
             )}
             {!isNative &&

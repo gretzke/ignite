@@ -9,6 +9,7 @@
 import type {
   PluginMetadata,
   PluginPermissionRequest,
+  PluginType,
 } from '@ignite/plugin-types/types';
 
 export const LEGACY_REPO_WRITE_ID = 'hostWrite';
@@ -40,4 +41,22 @@ export function normalizeLegacyPermissions(metadata: PluginMetadata): {
   });
   if (!renamed) return { metadata, renamed: false };
   return { metadata: { ...metadata, permissions: normalized }, renamed: true };
+}
+
+// Manifests written before the types[] migration carry a single `type`
+// string. Normalize on every read path so downstream code can treat
+// metadata.types as the canonical capability list.
+export function normalizeLegacyType(
+  metadata: PluginMetadata & { type?: PluginType }
+): PluginMetadata {
+  if (Array.isArray(metadata.types) && metadata.types.length > 0) {
+    return metadata;
+  }
+  const { type, ...rest } = metadata;
+  if (!type) {
+    throw new Error(
+      `Plugin manifest ${metadata.id ?? '<unknown>'} declares neither types[] nor a legacy type`
+    );
+  }
+  return { ...rest, types: [type] };
 }

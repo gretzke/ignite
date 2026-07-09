@@ -97,7 +97,7 @@ function makeCompilerConfigs(ids: string[]) {
   return ids.map((id) => ({
     metadata: {
       id,
-      type: PluginType.COMPILER,
+      types: [PluginType.COMPILER],
       name: id[0].toUpperCase() + id.slice(1),
       version: '1.0.0',
       baseImage: `ignite/compiler_${id}:latest`,

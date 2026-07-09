@@ -8,7 +8,7 @@ import type { JobRunner, JobContext } from '../../jobs/JobManager.js';
 const builtinConfig: PluginConfig = {
   metadata: {
     id: 'foundry',
-    type: PluginType.COMPILER,
+    types: [PluginType.COMPILER],
     name: 'Foundry',
     version: '1.0.0',
     baseImage: 'ignite/foundry:latest',
@@ -21,7 +21,7 @@ const builtinConfig: PluginConfig = {
 const installedConfig: PluginConfig = {
   metadata: {
     id: 'waffle',
-    type: PluginType.COMPILER,
+    types: [PluginType.COMPILER],
     name: 'Waffle',
     version: '0.5.1',
     baseImage: 'ignite/installed_waffle:0.5.1',

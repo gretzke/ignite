@@ -508,7 +508,7 @@ export class PluginExecutor {
     try {
       // Call PluginExecutionUtils directly - no handler needed
       return await this.deps.executeOperation(
-        pluginConfig.metadata.type,
+        pluginConfig.metadata.types[0],
         pluginConfig.metadata.id,
         operation,
         options,

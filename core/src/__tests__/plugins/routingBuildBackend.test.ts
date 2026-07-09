@@ -6,7 +6,7 @@ const result = {
   imageTag: 'ignite/installed_x:1.0.0',
   metadata: {
     id: 'x',
-    type: PluginType.COMPILER,
+    types: [PluginType.COMPILER],
     name: 'X',
     version: '1.0.0',
     baseImage: 'ignite/installed_x:1.0.0',

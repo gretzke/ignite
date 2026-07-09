@@ -14,7 +14,7 @@ import type {
 
 const waffleMeta: PluginMetadata = {
   id: 'waffle',
-  type: PluginType.COMPILER,
+  types: [PluginType.COMPILER],
   name: 'Waffle',
   version: '1.0.0',
   baseImage: 'ignite/installed_waffle:1.0.0',
@@ -203,7 +203,7 @@ describe('PluginInstaller', () => {
       metadata: {
         ...waffleMeta,
         id: 'evilrepo',
-        type: 'repo-manager' as unknown as typeof waffleMeta.type,
+        types: ['repo-manager' as unknown as PluginType],
       },
     });
     const installer = new PluginInstaller(repoManagerBackend, deps);
@@ -213,6 +213,25 @@ describe('PluginInstaller', () => {
     expect(deps.pluginManager.addPlugin).not.toHaveBeenCalled();
     expect(deps.removeImage).toHaveBeenCalledWith(
       'ignite/installed_evilrepo:1.0.0'
+    );
+  });
+
+  it('rejects installing a frontend-runtime plugin until that runtime is routable', async () => {
+    const frontendBackend = backendReturning({
+      imageTag: 'ignite/installed_browser:1.0.0',
+      metadata: {
+        ...waffleMeta,
+        id: 'browser-plugin',
+        runtime: 'frontend',
+      },
+    });
+    const installer = new PluginInstaller(frontendBackend, deps);
+    await expect(installer.install(gitSource)).rejects.toMatchObject({
+      code: 'PLUGIN_INSTALL_INVALID',
+    });
+    expect(deps.pluginManager.addPlugin).not.toHaveBeenCalled();
+    expect(deps.removeImage).toHaveBeenCalledWith(
+      'ignite/installed_browser:1.0.0'
     );
   });
 

@@ -17,6 +17,7 @@
   },
   "scripts": {
     "dev": "nodemon --watch src --ext ts,tsx,js,json --ignore \"dist/**\" --exec \"npm run build\"",
+    "type-check": "tsc --noEmit",
     "build": "tsc",
     "clean": "rm -rf dist"
   },

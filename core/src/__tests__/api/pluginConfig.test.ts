@@ -39,7 +39,7 @@ const PLUGIN_ID = 'acme-plugin';
 
 const METADATA: PluginMetadata = {
   id: PLUGIN_ID,
-  type: PluginType.COMPILER,
+  types: [PluginType.COMPILER],
   name: 'Acme',
   version: '1.0.0',
   baseImage: 'ignite/installed_acme:1.0.0',
@@ -415,7 +415,7 @@ describe('plugin config handlers', () => {
     const BUILTIN_ID = 'test-builtin';
     const BUILTIN_METADATA: PluginMetadata = {
       id: BUILTIN_ID,
-      type: PluginType.COMPILER,
+      types: [PluginType.COMPILER],
       name: 'Test Builtin',
       version: '1.0.0',
       baseImage: 'ignite/compiler_test-builtin:latest',

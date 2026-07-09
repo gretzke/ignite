@@ -26,7 +26,7 @@ export abstract class BasePlugin<T extends PluginType = PluginType> {
   }
 
   getType(): T {
-    return BasePlugin.getMetadata().type as T;
+    return BasePlugin.getMetadata().types[0] as T;
   }
 
   getBaseImage(): string {

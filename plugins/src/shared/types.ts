@@ -18,7 +18,14 @@ export type PluginResponse<T> =
 export enum PluginType {
   COMPILER = "compiler",
   RPC_PROVIDER = "rpc-provider",
+  SIGNER_PROVIDER = "signer-provider",
 }
+
+// Where a plugin's code executes. "container" (default when absent) runs in
+// an ephemeral Docker container via PluginExecutor; "frontend" is declared so
+// manifests and validation know the vocabulary, but installed frontend
+// plugins have no execution backend yet.
+export type PluginRuntime = "container" | "frontend";
 
 // The permission vocabulary core can actually enforce (container mounts and
 // network mode). Plugins request a subset in their manifest.
@@ -74,7 +81,11 @@ export const MAX_CONFIG_FIELDS = 32;
 
 export interface PluginMetadata {
   id: string;
-  type: PluginType;
+  // Capability surfaces this plugin implements. types[0] is the primary type:
+  // for builtin plugins it must equal the src/<dir> the plugin lives in
+  // (bundle assets are named `<primaryType>_<name>.js`).
+  types: PluginType[];
+  runtime?: PluginRuntime;
   name: string;
   version: string;
   baseImage: string;

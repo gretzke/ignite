@@ -10,7 +10,7 @@ import type { JobContext, JobRunner } from '../../jobs/JobManager.js';
 
 const waffleMeta = {
   id: 'waffle',
-  type: PluginType.COMPILER,
+  types: [PluginType.COMPILER],
   name: 'Waffle',
   version: '1.0.0',
   baseImage: 'ignite/installed_waffle:1.0.0',

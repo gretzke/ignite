@@ -60,7 +60,8 @@ export const PluginConfigFieldSchema = z.object({
 
 export const PluginMetadataSchema = z.object({
   id: z.string(),
-  type: PluginTypeSchema,
+  types: z.array(PluginTypeSchema).min(1),
+  runtime: z.enum(["container", "frontend"]).optional(),
   name: z.string(),
   version: z.string(),
   baseImage: z.string(),

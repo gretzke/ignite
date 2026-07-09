@@ -56,7 +56,7 @@ describe('PluginManager', () => {
       expect(plugin.name).toBe('Test Plugin');
       expect(plugin.version).toBe('1.0.0');
       expect(plugin.baseImage).toBe('test/plugin:latest');
-      expect(plugin.type).toBe(PluginTypeEnum.COMPILER);
+      expect(plugin.types).toEqual([PluginTypeEnum.COMPILER]);
       expect(plugin.id).toBe('test-plugin');
     });
 
@@ -81,7 +81,7 @@ describe('PluginManager', () => {
             name: 'Plugin 2',
             version: '2.0.0',
             baseImage: 'test/plugin2:latest',
-            type: 'signer' as PluginType,
+            type: PluginTypeEnum.SIGNER_PROVIDER,
           },
         },
       };
@@ -109,7 +109,7 @@ describe('PluginManager', () => {
             name: 'Signer Plugin',
             version: '1.0.0',
             baseImage: 'test/signer:latest',
-            type: 'signer' as PluginType,
+            type: PluginTypeEnum.SIGNER_PROVIDER,
           },
         },
       };
@@ -119,7 +119,9 @@ describe('PluginManager', () => {
       const compilers = await pluginManager.listPlugins(
         PluginTypeEnum.COMPILER
       );
-      const signers = await pluginManager.listPlugins('signer' as PluginType);
+      const signers = await pluginManager.listPlugins(
+        PluginTypeEnum.SIGNER_PROVIDER
+      );
 
       expect(Object.keys(compilers)).toHaveLength(1);
       expect(compilers['compiler1']).toBeDefined();

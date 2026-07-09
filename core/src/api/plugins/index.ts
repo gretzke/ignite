@@ -27,7 +27,7 @@ export const pluginHandlers = {
       const builtin = await PluginRegistryLoader.getInstance().getAllPlugins();
       const merged: ListPluginsData['plugins'] = {};
       for (const [id, config] of Object.entries(builtin)) {
-        if (!validType || config.metadata.type === validType) {
+        if (!validType || config.metadata.types.includes(validType)) {
           merged[id] = config.metadata;
         }
       }

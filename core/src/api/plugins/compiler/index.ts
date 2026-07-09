@@ -75,7 +75,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
   ): Promise<boolean> {
     try {
       const config = await d.registryLoader.getPluginConfig(pluginId);
-      if (config.metadata.type !== PluginType.COMPILER) {
+      if (!config.metadata.types.includes(PluginType.COMPILER)) {
         sendBadRequest(
           reply,
           ErrorCodes.NOT_A_COMPILER_PLUGIN,

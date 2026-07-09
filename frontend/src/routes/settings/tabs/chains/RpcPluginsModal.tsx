@@ -34,7 +34,7 @@ export default function RpcPluginsModal({
   const rows = useAppSelector(selectPluginRows);
   const loading = useAppSelector(selectPluginsLoading);
   const rpcPlugins = rows
-    .filter((p) => p.type === 'rpc-provider')
+    .filter((p) => p.types.includes('rpc-provider'))
     .sort((a, b) => (a.name ?? a.pluginId).localeCompare(b.name ?? b.pluginId));
 
   // Refresh on open so trust/config-field metadata reflects any recent

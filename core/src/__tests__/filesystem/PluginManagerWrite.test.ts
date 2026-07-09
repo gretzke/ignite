@@ -8,7 +8,7 @@ import { PluginType } from '@ignite/plugin-types/types';
 
 const meta = (id: string) => ({
   id,
-  type: PluginType.COMPILER,
+  types: [PluginType.COMPILER],
   name: `Plugin ${id}`,
   version: '1.0.0',
   baseImage: `ignite/installed_${id}:1.0.0`,

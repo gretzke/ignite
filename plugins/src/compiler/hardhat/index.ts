@@ -47,7 +47,7 @@ export class HardhatPlugin extends CompilerPlugin {
   protected static getMetadata(): PluginMetadata {
     return {
       id: "hardhat",
-      type: PluginType.COMPILER,
+      types: [PluginType.COMPILER],
       name: "Hardhat",
       version: PLUGIN_VERSION,
       baseImage: "ignite/compiler_hardhat:latest",

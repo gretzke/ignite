@@ -51,7 +51,7 @@ export class InfuraPlugin extends RpcProviderPlugin {
   protected static getMetadata(): PluginMetadata {
     return {
       id: "infura",
-      type: PluginType.RPC_PROVIDER,
+      types: [PluginType.RPC_PROVIDER],
       name: "Infura",
       version: PLUGIN_VERSION,
       baseImage: "ignite/rpc-provider_infura:latest",

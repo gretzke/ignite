@@ -1,7 +1,10 @@
 import { PluginMetadata, PluginType } from '@ignite/plugin-types/types';
 import { AssetManager } from './AssetManager.js';
 import { PluginManager } from '../filesystem/PluginManager.js';
-import { normalizeLegacyPermissions } from '../plugins/utils/permissionCompat.js';
+import {
+  normalizeLegacyPermissions,
+  normalizeLegacyType,
+} from '../plugins/utils/permissionCompat.js';
 import { getLogger } from '../utils/logger.js';
 
 export type PluginOrigin = 'builtin' | 'installed';
@@ -127,7 +130,7 @@ export class PluginRegistryLoader {
 
   async getPluginsByType(type: PluginType): Promise<PluginConfig[]> {
     return Object.values(await this.getAllPlugins()).filter(
-      (config) => config.metadata.type === type
+      (config) => config.metadata.types.includes(type)
     );
   }
 
@@ -140,10 +143,11 @@ export class PluginRegistryLoader {
     // declare no permissions today, and installed entries are normalized at
     // install time and again in PluginManager's read path, but a registry
     // written before the rename must never leak the legacy id downstream.
-    const { metadata: normalized } = normalizeLegacyPermissions(metadata);
+    const typedMetadata = normalizeLegacyType(metadata);
+    const { metadata: normalized } = normalizeLegacyPermissions(typedMetadata);
     return {
       metadata: normalized,
-      requiresRepo: this.determineRepoRequirement(pluginId, metadata),
+      requiresRepo: this.determineRepoRequirement(pluginId, normalized),
       origin,
     };
   }
@@ -152,6 +156,6 @@ export class PluginRegistryLoader {
     _pluginId: string,
     metadata: PluginMetadata
   ): boolean {
-    return metadata.type === PluginType.COMPILER;
+    return metadata.types.includes(PluginType.COMPILER);
   }
 }

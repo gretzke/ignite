@@ -22,7 +22,7 @@ export class StubCompilerPlugin extends CompilerPlugin {
   protected static getMetadata(): PluginMetadata {
     return {
       id: 'stub-compiler',
-      type: PluginType.COMPILER,
+      types: [PluginType.COMPILER],
       name: 'Stub Compiler',
       version: typeof PLUGIN_VERSION === 'string' ? PLUGIN_VERSION : '0.0.1',
       baseImage: 'ignite/installed_stub-compiler:0.0.1',

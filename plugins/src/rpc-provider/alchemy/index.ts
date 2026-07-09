@@ -46,7 +46,7 @@ export class AlchemyPlugin extends RpcProviderPlugin {
   protected static getMetadata(): PluginMetadata {
     return {
       id: "alchemy",
-      type: PluginType.RPC_PROVIDER,
+      types: [PluginType.RPC_PROVIDER],
       name: "Alchemy",
       version: PLUGIN_VERSION,
       baseImage: "ignite/rpc-provider_alchemy:latest",
