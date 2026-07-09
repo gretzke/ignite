@@ -13,6 +13,7 @@ import { systemHandlers } from './system.js';
 import { profileHandlers } from './profiles.js';
 import { jobsHandlers } from './jobs.js';
 import { pluginHandlers } from './plugins/index.js';
+import { pluginBundleHandlers } from './plugins/bundle.js';
 import { trustHandlers } from './plugins/trust.js';
 import { pluginConfigHandlers } from './plugins/config.js';
 import { installHandlers } from './plugins/install.js';
@@ -86,6 +87,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...profileHandlers,
     ...jobsHandlers,
     ...pluginHandlers,
+    ...pluginBundleHandlers,
     ...trustHandlers,
     ...pluginConfigHandlers,
     ...installHandlers,

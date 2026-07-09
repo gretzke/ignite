@@ -30,6 +30,8 @@ export interface GetPluginData {
   plugin: PluginMetadata;
 }
 
+export type GetPluginBundleData = string;
+
 // Zod schemas for validation
 const PluginTypeSchema = z.enum(PluginType);
 
@@ -128,6 +130,17 @@ export const pluginRoutes = {
       tags: ["plugins"],
       response: {
         200: GetPluginResponseSchema,
+      },
+    },
+  },
+  getPluginBundle: {
+    method: "GET" as const,
+    path: `${V1_BASE_PATH}/plugins/:pluginId/bundle`,
+    params: GetPluginParamsSchema,
+    schema: {
+      tags: ["plugins"],
+      response: {
+        200: z.string(),
       },
     },
   },

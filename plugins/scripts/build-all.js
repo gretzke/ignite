@@ -191,7 +191,9 @@ async function generatePluginRegistry(builtResults) {
     const metadata = await extractPluginMetadata(plugin, filePath);
     if (metadata) {
       // Record the Dockerfile hash so core can detect stale images at startup
-      metadata.imageHash = imageHash(metadata.baseImage);
+      if (metadata.runtime !== "frontend") {
+        metadata.imageHash = imageHash(metadata.baseImage);
+      }
       registry[metadata.id] = metadata;
       log(`✅ Added to registry: ${metadata.id} (${metadata.name})`, "green");
     }
