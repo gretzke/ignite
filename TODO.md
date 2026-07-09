@@ -199,3 +199,12 @@ smells, ranked:
   requiring a fresh `lastVerification.ok && chainIdMatch`; the dev panel
   shows verification state but doesn't enforce it. Enforcement belongs to
   the D3 wizard's pre-deployment validation (which owns RPC preflight).
+- **Full-run Docker integration flake widened** (2026-07-09, D2b). The
+  documented contention mode (vitest.config.ts comment: Docker suites flake
+  in full runs, never isolated) now hits `thirdparty-plugin` /
+  `rpcProviderEndpoints` occasionally — the integration project runs
+  sequentially but CONCURRENTLY with the parallel unit project, and the two
+  new Docker suites (signer send, frontend runtime send) lengthen the
+  contention window. `npx vitest run --project integration` alone is 12/12
+  green. Fix direction: order the projects (unit first, then integration)
+  instead of running them side by side.
