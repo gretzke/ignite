@@ -11,6 +11,7 @@ import {
   jobSnapshotReceived,
   jobEventReceived,
 } from '../features/jobs/jobsSlice';
+import { runtimeHost } from '../../runtime/RuntimeHost';
 
 // Reconnection policy: fixed interval attempts for a bounded window
 export const RECONNECT_INTERVAL_MS = 200;
@@ -37,6 +38,14 @@ interface JobEventFrame {
   type: 'job-event';
   jobId: string;
   event: JobEvent;
+}
+
+interface RuntimeRequestFrame {
+  type: 'runtime-request';
+  requestId: string;
+  pluginId: string;
+  operation: string;
+  params: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -69,6 +78,21 @@ function isJobEventFrame(
     typeof frame.event.seq === 'number' &&
     typeof frame.event.kind === 'string'
   );
+}
+
+function isRuntimeRequestFrame(
+  frame: Record<string, unknown>
+): frame is Record<string, unknown> & RuntimeRequestFrame {
+  return (
+    frame.type === 'runtime-request' &&
+    typeof frame.requestId === 'string' &&
+    typeof frame.pluginId === 'string' &&
+    typeof frame.operation === 'string'
+  );
+}
+
+function hostErrorMessage(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 200);
 }
 
 export const websocketMiddleware: Middleware = (store) => {
@@ -115,6 +139,15 @@ export const websocketMiddleware: Middleware = (store) => {
       ws.onopen = () => {
         reconnectStartTs = null;
         store.dispatch(setStatus(ConnectionStatus.CONNECTED));
+        runtimeHost
+          .load()
+          .then((pluginIds) => {
+            store.dispatch(wsSend({ type: 'runtime-register', pluginIds }));
+          })
+          .catch((error) => {
+            console.warn('Failed to register frontend runtime host', error);
+            store.dispatch(wsSend({ type: 'runtime-register', pluginIds: [] }));
+          });
       };
       ws.onmessage = (messageEvent: MessageEvent) => {
         let parsed: unknown;
@@ -131,6 +164,27 @@ export const websocketMiddleware: Middleware = (store) => {
           store.dispatch(
             jobEventReceived({ jobId: parsed.jobId, event: parsed.event })
           );
+        } else if (isRuntimeRequestFrame(parsed)) {
+          runtimeHost
+            .handleRequest(parsed)
+            .then((response) => {
+              store.dispatch(
+                wsSend({
+                  type: 'runtime-response',
+                  requestId: response.requestId,
+                  result: response.result,
+                })
+              );
+            })
+            .catch((error) => {
+              store.dispatch(
+                wsSend({
+                  type: 'runtime-response',
+                  requestId: parsed.requestId,
+                  error: hostErrorMessage(error),
+                })
+              );
+            });
         }
         // 'connected', 'error', unknown, or malformed frame types: ignored.
       };

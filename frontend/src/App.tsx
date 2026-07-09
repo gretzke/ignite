@@ -8,6 +8,7 @@ import { repositoriesApi } from './store/features/repositories/repositoriesApi';
 import PermissionApprovalDialog from './components/PermissionApprovalDialog';
 import PluginPermissionsModal from './components/PluginPermissionsModal';
 import PluginConfigModal from './components/PluginConfigModal';
+import { runtimeHost } from './runtime/RuntimeHost';
 
 type CSSVars = React.CSSProperties & { ['--profile-color']?: string };
 
@@ -41,6 +42,12 @@ export default function App() {
   useEffect(() => {
     dispatch(startConnect());
   }, [dispatch]);
+
+  useEffect(() => {
+    runtimeHost.load().catch((error) => {
+      console.warn('Failed to bootstrap frontend runtime host', error);
+    });
+  }, []);
 
   // Focus-triggered fingerprint check: when the user comes back to the tab
   // after editing sources, the backend compares stat fingerprints and starts

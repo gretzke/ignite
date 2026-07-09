@@ -1,13 +1,12 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import type {
-  SendSignerTxRequest,
-  SignerProviderAccounts,
-} from '@ignite/api';
+import type { SendSignerTxRequest, SignerProviderAccounts } from '@ignite/api';
 import type { ApiError } from '@ignite/api/client';
 import { apiClient } from '../../api/client';
 import { formatApiError } from '../../middleware/apiGate';
 import { jobStarted } from '../jobs/jobsSlice';
 import { wsSend } from '../../middleware/websocket';
+import { runtimeHost } from '../../../runtime/RuntimeHost';
+import type { AppDispatch } from '../../store';
 
 interface SignersState {
   providers: SignerProviderAccounts[];
@@ -16,6 +15,8 @@ interface SignersState {
   error: string | null;
   sendError: string | null;
   lastSendJobId: string | null;
+  connectingPluginId: string | null;
+  connectError: { pluginId: string; message: string } | null;
 }
 
 const initialState: SignersState = {
@@ -25,6 +26,8 @@ const initialState: SignersState = {
   error: null,
   sendError: null,
   lastSendJobId: null,
+  connectingPluginId: null,
+  connectError: null,
 };
 
 const signersSlice = createSlice({
@@ -60,6 +63,21 @@ const signersSlice = createSlice({
       state.sending = false;
       state.sendError = action.payload;
     },
+    connectWalletStarted(state, action: PayloadAction<string>) {
+      state.connectingPluginId = action.payload;
+      state.connectError = null;
+    },
+    connectWalletSucceeded(state) {
+      state.connectingPluginId = null;
+      state.connectError = null;
+    },
+    connectWalletFailed(
+      state,
+      action: PayloadAction<{ pluginId: string; message: string }>
+    ) {
+      state.connectingPluginId = null;
+      state.connectError = action.payload;
+    },
   },
 });
 
@@ -70,6 +88,9 @@ export const {
   sendSignerTxStarted,
   sendSignerTxSucceeded,
   sendSignerTxFailed,
+  connectWalletStarted,
+  connectWalletSucceeded,
+  connectWalletFailed,
 } = signersSlice.actions;
 
 export const signersReducer = signersSlice.reducer;
@@ -80,9 +101,7 @@ export const signersApi = {
       listSignerAccountsStarted(),
       apiClient.dispatch.listSignerAccounts({
         query: refresh ? { refresh: 'true' } : undefined,
-        onSuccess: (data) => [
-          listSignerAccountsSucceeded(data.providers),
-        ],
+        onSuccess: (data) => [listSignerAccountsSucceeded(data.providers)],
         onError: (error) => [
           listSignerAccountsFailed(formatApiError(error).description),
         ],
@@ -108,5 +127,22 @@ export const signersApi = {
         ],
       }),
     ];
+  },
+  connectWallet(pluginId: string) {
+    return async (dispatch: AppDispatch) => {
+      dispatch(connectWalletStarted(pluginId));
+      const result = await runtimeHost.invokeLocal(pluginId, 'connect');
+      if (!result.success) {
+        dispatch(
+          connectWalletFailed({
+            pluginId,
+            message: result.error.message,
+          })
+        );
+        return;
+      }
+      dispatch(connectWalletSucceeded());
+      signersApi.listAccounts(true).forEach((action) => dispatch(action));
+    };
   },
 };

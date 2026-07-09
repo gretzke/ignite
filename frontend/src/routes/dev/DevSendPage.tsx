@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, RefreshCw, Send } from 'lucide-react';
+import { Activity, RefreshCw, Send, Wallet } from 'lucide-react';
 import type { RpcEndpoint, SendSignerTxRequest } from '@ignite/api';
 import Select from '../../components/Select';
 import Tooltip from '../../components/Tooltip';
@@ -7,6 +7,7 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { chainsApi } from '../../store/features/chains/chainsSlice';
 import { signersApi } from '../../store/features/signers/signersSlice';
 import { selectJob } from '../../store/features/jobs/jobsSlice';
+import { runtimeHost } from '../../runtime/RuntimeHost';
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const VALUE_RE = /^\d+$/;
@@ -65,7 +66,8 @@ function jobStateChip(state: string) {
 
 function providerHint(state: string): string {
   if (state === 'needs-config') return 'Configure in Settings -> Plugins';
-  if (state === 'needs-browser') return 'Requires an open browser wallet (D2b)';
+  if (state === 'needs-browser')
+    return 'Open Ignite in a browser to use this wallet';
   if (state === 'error') return 'Provider returned an error';
   return 'No accounts available';
 }
@@ -91,11 +93,24 @@ export default function DevSendPage() {
   const [to, setTo] = useState('');
   const [value, setValue] = useState('0');
   const [data, setData] = useState('');
+  const [runtimePluginIds, setRuntimePluginIds] = useState(
+    runtimeHost.getLoadedPluginIds()
+  );
 
   useEffect(() => {
     chainsApi.fetchChains().forEach((action) => dispatch(action));
     signersApi.listAccounts().forEach((action) => dispatch(action));
   }, [dispatch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    runtimeHost.load().then((pluginIds) => {
+      if (!cancelled) setRuntimePluginIds(pluginIds);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!chainId && chainsState.chains.length > 0) {
@@ -127,7 +142,10 @@ export default function DevSendPage() {
   }, [chainId, chainsState.providerRpcByChain, chainsState.rpcByChain]);
 
   useEffect(() => {
-    if (rpcEndpointId && rpcEndpoints.some((endpoint) => endpoint.id === rpcEndpointId)) {
+    if (
+      rpcEndpointId &&
+      rpcEndpoints.some((endpoint) => endpoint.id === rpcEndpointId)
+    ) {
       return;
     }
     const preferred = rpcEndpoints.find((endpoint) => endpoint.preferred);
@@ -142,9 +160,14 @@ export default function DevSendPage() {
         : endpoint.source,
       rpcStatusLabel(endpoint),
     ];
-    return { value: endpoint.id, label: labelParts.filter(Boolean).join(' · ') };
+    return {
+      value: endpoint.id,
+      label: labelParts.filter(Boolean).join(' · '),
+    };
   });
-  const selectedRpc = rpcEndpoints.find((endpoint) => endpoint.id === rpcEndpointId);
+  const selectedRpc = rpcEndpoints.find(
+    (endpoint) => endpoint.id === rpcEndpointId
+  );
 
   const accountStillExists =
     account &&
@@ -191,6 +214,10 @@ export default function DevSendPage() {
     signersApi.sendTx(body).forEach((action) => dispatch(action));
   };
 
+  const handleConnectWallet = (pluginId: string) => {
+    dispatch(signersApi.connectWallet(pluginId));
+  };
+
   const resultTxHash = resultField(activeJob?.result, 'txHash');
   const resultStatus = resultField(activeJob?.result, 'status');
   const resultBlockNumber = resultField(activeJob?.result, 'blockNumber');
@@ -204,7 +231,9 @@ export default function DevSendPage() {
             type="button"
             className="btn btn-sm btn-secondary"
             onClick={() =>
-              signersApi.listAccounts(true).forEach((action) => dispatch(action))
+              signersApi
+                .listAccounts(true)
+                .forEach((action) => dispatch(action))
             }
           >
             <RefreshCw size={14} />
@@ -220,7 +249,9 @@ export default function DevSendPage() {
             <Select
               options={chainOptions}
               value={chainId || undefined}
-              placeholder={chainsState.loading ? 'Loading chains...' : 'Select chain'}
+              placeholder={
+                chainsState.loading ? 'Loading chains...' : 'Select chain'
+              }
               onValueChange={setChainId}
             />
           </div>
@@ -232,7 +263,9 @@ export default function DevSendPage() {
                 <button
                   type="button"
                   className="btn btn-sm btn-secondary-borderless"
-                  onClick={() => dispatch(chainsApi.fetchRpcs(Number(chainId), true))}
+                  onClick={() =>
+                    dispatch(chainsApi.fetchRpcs(Number(chainId), true))
+                  }
                 >
                   <RefreshCw size={14} />
                   Refresh
@@ -267,17 +300,23 @@ export default function DevSendPage() {
           <div className="eyebrow">Account</div>
           <div className="glass-list">
             {signersState.loading && (
-              <div className="list-row text-muted">Loading signer accounts...</div>
+              <div className="list-row text-muted">
+                Loading signer accounts...
+              </div>
             )}
             {!signersState.loading && signersState.providers.length === 0 && (
-              <div className="list-row text-muted">No signer providers found.</div>
+              <div className="list-row text-muted">
+                No signer providers found.
+              </div>
             )}
             {signersState.providers.map((provider) => (
               <div key={provider.pluginId} className="list-row">
                 <div className="grid gap-2 w-full min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-medium truncate">{provider.name}</div>
+                      <div className="font-medium truncate">
+                        {provider.name}
+                      </div>
                       <div className="text-xs text-muted mono-data truncate">
                         {provider.pluginId}
                       </div>
@@ -297,8 +336,41 @@ export default function DevSendPage() {
                   </div>
 
                   {provider.accounts.length === 0 ? (
-                    <div className="text-sm text-muted">
-                      {providerHint(provider.state)}
+                    <div className="grid gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm text-muted">
+                          {providerHint(provider.state)}
+                        </span>
+                        {runtimePluginIds.includes(provider.pluginId) &&
+                          (provider.state === 'needs-browser' ||
+                            provider.state === 'ok') && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-secondary"
+                              disabled={
+                                signersState.connectingPluginId ===
+                                provider.pluginId
+                              }
+                              onClick={() =>
+                                handleConnectWallet(provider.pluginId)
+                              }
+                            >
+                              {signersState.connectingPluginId ===
+                              provider.pluginId ? (
+                                <Activity size={14} />
+                              ) : (
+                                <Wallet size={14} />
+                              )}
+                              Connect wallet
+                            </button>
+                          )}
+                      </div>
+                      {signersState.connectError?.pluginId ===
+                        provider.pluginId && (
+                        <span className="text-xs text-err">
+                          {signersState.connectError.message}
+                        </span>
+                      )}
                     </div>
                   ) : (
                     <div className="grid gap-1">
@@ -329,7 +401,9 @@ export default function DevSendPage() {
                                 {entry.address}
                               </span>
                             </span>
-                            <span className="pill shrink-0">{entry.capability}</span>
+                            <span className="pill shrink-0">
+                              {entry.capability}
+                            </span>
                           </button>
                         );
                       })}
@@ -357,7 +431,9 @@ export default function DevSendPage() {
               onChange={(event) => setTo(event.target.value)}
             />
             {to && !toValid && (
-              <span className="text-xs text-err">Expected a 20-byte hex address.</span>
+              <span className="text-xs text-err">
+                Expected a 20-byte hex address.
+              </span>
             )}
           </div>
 
@@ -372,7 +448,9 @@ export default function DevSendPage() {
               onChange={(event) => setValue(event.target.value)}
             />
             {value && !valueValid && (
-              <span className="text-xs text-err">Expected a decimal wei string.</span>
+              <span className="text-xs text-err">
+                Expected a decimal wei string.
+              </span>
             )}
           </div>
 
@@ -424,11 +502,15 @@ export default function DevSendPage() {
             </div>
             <div className="glass-list">
               {activeJob.logTail.length === 0 ? (
-                <div className="list-row text-muted">Waiting for job logs...</div>
+                <div className="list-row text-muted">
+                  Waiting for job logs...
+                </div>
               ) : (
                 activeJob.logTail.map((line, index) => (
                   <div key={`${index}-${line}`} className="list-row">
-                    <span className="mono-data text-sm break-words">{line}</span>
+                    <span className="mono-data text-sm break-words">
+                      {line}
+                    </span>
                   </div>
                 ))
               )}
@@ -438,7 +520,9 @@ export default function DevSendPage() {
                 {resultTxHash && (
                   <div className="text-sm">
                     <span className="text-muted">txHash </span>
-                    <span className="mono-data break-words">{resultTxHash}</span>
+                    <span className="mono-data break-words">
+                      {resultTxHash}
+                    </span>
                   </div>
                 )}
                 {resultStatus && (
