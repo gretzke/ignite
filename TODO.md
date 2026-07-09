@@ -118,6 +118,13 @@ blocking current functionality.
   resurrect entries. Shared singleton or per-file mutex.
 - **Surface newly-declared secret fields on plugin update** like newPermissions
   (installer TODO).
+- **Cross-platform master-key backends** (raised 2026-07-09, D2 design — real
+  signing keys now live in the vault). macOS has the Keychain; Windows/Linux
+  fall back to a plain `0600` file at `~/.ignite/plugins/vault.key`, so the
+  key sits next to the lock. Add Windows Credential Manager (DPAPI) and Linux
+  Secret Service (libsecret) backends, same pattern as the `security` CLI
+  integration in `masterKey.ts`. Longer-horizon generalization: IDEAS.md
+  "Vault key-management plugin surfaces".
 
 ## RPC provider follow-ups (D1c, 2026-07-08)
 
