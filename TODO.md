@@ -208,3 +208,12 @@ smells, ranked:
   contention window. `npx vitest run --project integration` alone is 12/12
   green. Fix direction: order the projects (unit first, then integration)
   instead of running them side by side.
+- **Frontend-runtime bridge edge cases** (2026-07-09, D2b final review,
+  accepted as minors). (1) A tab that disconnects between the `hasHost`
+  check and the bridge request surfaces provider state `error` ("Provider
+  returned an error") instead of `needs-browser` — cosmetic, tiny race
+  window. (2) `registerHost` re-registration with a narrower pluginIds set
+  leaves pending requests for the dropped plugins waiting out their timeout
+  instead of settling them immediately. (3) `GET /plugins/:id/bundle`
+  resolves the asset via `types[0]` — fine while frontend builtins are
+  single-type; revisit if a multi-type frontend plugin ever lands.
