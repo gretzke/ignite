@@ -34,7 +34,7 @@ export class PluginExecutionUtils {
         'Built-in plugin execution requires injected bundle code'
       );
     }
-    return ['node', '-e', pluginCode];
+    return ['node', '--input-type=module', '-e', pluginCode];
   }
 
   // Execute a plugin operation in a container
