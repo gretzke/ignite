@@ -16,6 +16,7 @@ export * from "./filesystem.js";
 export * from "./jobs.js";
 export * from "./git.js";
 export * from "./chains.js";
+export * from "./signers.js";
 
 import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
@@ -30,6 +31,7 @@ import { filesystemRoutes } from "./filesystem.js";
 import { jobsRoutes } from "./jobs.js";
 import { gitRoutes } from "./git.js";
 import { chainRoutes } from "./chains.js";
+import { signerRoutes } from "./signers.js";
 
 export interface IApiError {
   statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 499 | 500 | 503;
@@ -70,6 +72,7 @@ const allRoutes = {
   ...jobsRoutes,
   ...gitRoutes,
   ...chainRoutes,
+  ...signerRoutes,
 } as const;
 
 export const v1Routes = allRoutes satisfies ValidateRoutes<typeof allRoutes>;
