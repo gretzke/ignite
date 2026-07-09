@@ -177,3 +177,16 @@ smells, ranked:
    manifest-declared capability (e.g. `repoRead`), installer-validated.
 4. **Dead `PluginType.REPO_MANAGER` enum value** — remove or mark
    non-functional legacy so plugin authors aren't misled.
+
+## Signer surface follow-ups (D2a, 2026-07-09)
+
+- **Builtin bundle injection via argv won't scale.** Builtin plugins run as
+  `node --input-type=module -e <bundle>` — the whole bundle is a docker exec
+  argv. The viem-heavy signer bundles needed minification to stay comfortably
+  under the argv ceiling (77-95 KB today vs ~1 MB limit). A future heavier
+  builtin (WalletConnect, Safe SDK) will blow this. Alternatives: pipe the
+  bundle over stdin alongside options, or bake builtin bundles into the shared
+  image at plugins-build time.
+- **`--input-type=module` discovery.** Bare `node -e` only worked while
+  builtin bundles happened to contain no residual ESM syntax; now it's
+  explicit. If a builtin ever needs CJS interop, revisit per-plugin.
