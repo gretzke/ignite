@@ -22,6 +22,7 @@ import { filesystemHandlers } from './filesystem.js';
 import { versionsHandlers } from './plugins/versions.js';
 import { gitHandlers } from './git.js';
 import { chainHandlers } from './chains.js';
+import { signerHandlers } from './signers.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
@@ -54,6 +55,7 @@ export async function registerApi(app: FastifyInstance) {
         { name: 'compiler', description: 'Compiler plugin operations' },
         { name: 'filesystem', description: 'Host filesystem browsing' },
         { name: 'chains', description: 'Chain registry and RPC endpoints' },
+        { name: 'signers', description: 'Signer providers and sending' },
       ],
     },
     transform: jsonSchemaTransform,
@@ -93,6 +95,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...versionsHandlers,
     ...gitHandlers,
     ...chainHandlers,
+    ...signerHandlers,
   };
 
   checkHandlers(allHandlers);

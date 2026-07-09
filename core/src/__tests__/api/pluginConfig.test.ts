@@ -113,6 +113,9 @@ function makeDeps() {
     providers: {
       invalidate: vi.fn(),
     },
+    signers: {
+      invalidate: vi.fn(),
+    },
   };
   return { deps, configValues, vaultEntries };
 }

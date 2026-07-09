@@ -27,6 +27,7 @@ import { VaultStore } from '../../plugins/vault/VaultStore.js';
 import { TrustManager } from '../../plugins/trust/TrustManager.js';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 import { RpcProviderService } from '../../chains/RpcProviderService.js';
+import { SignerProviderService } from '../../signers/SignerProviderService.js';
 import { ErrorCodes, type ErrorCode } from '../../types/errors.js';
 import { sendCaughtError, sendBadRequest } from '../utils/errors.js';
 
@@ -39,6 +40,7 @@ export interface PluginConfigHandlerDeps {
   vaultStore: Pick<VaultStore, 'setSecret' | 'deleteSecret' | 'listSecretKeys'>;
   trust: Pick<TrustManager, 'getGrant'>;
   providers: Pick<RpcProviderService, 'invalidate'>;
+  signers: Pick<SignerProviderService, 'invalidate'>;
 }
 
 // Domain services throw Errors tagged with a `code`; map the known ones to
@@ -153,6 +155,7 @@ export function createPluginConfigHandlers(
     vaultStore: deps?.vaultStore ?? new VaultStore(),
     trust: deps?.trust ?? TrustManager.getInstance(),
     providers: deps?.providers ?? RpcProviderService.getInstance(),
+    signers: deps?.signers ?? SignerProviderService.getInstance(),
   };
 
   return {
@@ -228,6 +231,7 @@ export function createPluginConfigHandlers(
 
         await d.configStore.setValue(pluginId, key, value, chainId);
         d.providers.invalidate(pluginId);
+        d.signers.invalidate(pluginId);
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -266,6 +270,7 @@ export function createPluginConfigHandlers(
 
         await d.vaultStore.setSecret(pluginId, key, value, chainId);
         d.providers.invalidate(pluginId);
+        d.signers.invalidate(pluginId);
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -369,6 +374,7 @@ export function createPluginConfigHandlers(
           await d.vaultStore.setSecret(pluginId, `${fieldKey}.${id}.${k}`, v);
         }
         d.providers.invalidate(pluginId);
+        d.signers.invalidate(pluginId);
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -429,6 +435,7 @@ export function createPluginConfigHandlers(
           );
         }
         d.providers.invalidate(pluginId);
+        d.signers.invalidate(pluginId);
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -471,6 +478,7 @@ export function createPluginConfigHandlers(
           await d.configStore.deleteValue(pluginId, key, chainId);
         }
         d.providers.invalidate(pluginId);
+        d.signers.invalidate(pluginId);
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
