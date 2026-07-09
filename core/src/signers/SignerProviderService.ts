@@ -13,7 +13,6 @@ import {
   type Hex,
   type PluginResponse,
   type PluginRuntime,
-  type UnsignedTx,
 } from '@ignite/plugin-types/types';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { PluginInvoker } from '../plugins/invoke/PluginInvoker.js';

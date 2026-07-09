@@ -435,7 +435,7 @@ export class PluginInstaller {
     source: PluginInstallSource
   ): Promise<PluginInstallSource> {
     if (source.kind !== 'git') return source;
-    let enriched = { ...source };
+    const enriched = { ...source };
     try {
       const remote = await this.deps.inspectRemote(source.url);
       if (!enriched.track) {
@@ -574,9 +574,8 @@ export class PluginInstaller {
         );
       }
       // eslint-disable-next-line no-control-regex
-      if (
-        /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(request.description)
-      ) {
+      const controlChars = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
+      if (controlChars.test(request.description)) {
         throw invalid(
           `permission '${request.id}' description contains control characters`
         );

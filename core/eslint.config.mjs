@@ -41,6 +41,7 @@ export default [
         NodeJS: 'readonly',
         fetch: 'readonly',
         performance: 'readonly',
+        crypto: 'readonly',
       },
     },
     plugins: {
