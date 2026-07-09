@@ -3,6 +3,7 @@
 import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginRegistryLoader } from '../../assets/PluginRegistryLoader.js';
 import { PluginExecutor } from '../containers/PluginExecutor.js';
+import { FrontendRuntimeBridge } from './FrontendRuntimeBridge.js';
 import { ErrorCodes } from '../../types/errors.js';
 
 export interface PluginInvokerDeps {
@@ -13,6 +14,7 @@ export interface PluginInvokerDeps {
     options: Record<string, unknown>,
     opts?: { signal?: AbortSignal }
   ) => Promise<PluginResponse<unknown>>;
+  bridge: Pick<FrontendRuntimeBridge, 'request'>;
 }
 
 export class PluginInvoker {
@@ -21,7 +23,8 @@ export class PluginInvoker {
 
   constructor(deps?: Partial<PluginInvokerDeps>) {
     this.deps = {
-      registryLoader: deps?.registryLoader ?? PluginRegistryLoader.getInstance(),
+      registryLoader:
+        deps?.registryLoader ?? PluginRegistryLoader.getInstance(),
       executeContainer:
         deps?.executeContainer ??
         ((pluginId, operation, options, opts) =>
@@ -31,6 +34,7 @@ export class PluginInvoker {
             options,
             opts
           )),
+      bridge: deps?.bridge ?? FrontendRuntimeBridge.getInstance(),
     };
   }
 
@@ -49,13 +53,25 @@ export class PluginInvoker {
   ): Promise<PluginResponse<unknown>> {
     const config = await this.deps.registryLoader.getPluginConfig(pluginId);
     if (config.metadata.runtime === 'frontend') {
-      return {
-        success: false,
-        error: {
-          code: ErrorCodes.FRONTEND_RUNTIME_UNAVAILABLE,
-          message: `Plugin ${pluginId} runs in the browser; the frontend runtime lands in D2b.`,
-        },
-      };
+      if (config.origin !== 'builtin') {
+        return {
+          success: false,
+          error: {
+            code: ErrorCodes.PERMISSION_REQUIRED,
+            message: 'Installed plugins cannot use the frontend runtime.',
+          },
+        };
+      }
+      const timeoutMs =
+        operation === 'sendTransaction' || operation === 'connect'
+          ? 120_000
+          : operation === 'getAccounts'
+            ? 15_000
+            : 30_000;
+      return this.deps.bridge.request(config.metadata.id, operation, params, {
+        signal: opts?.signal,
+        timeoutMs,
+      });
     }
     return this.deps.executeContainer(pluginId, operation, params, opts);
   }

@@ -23,6 +23,7 @@ function makeService(overrides?: {
     op: string,
     params: Record<string, unknown>
   ) => Promise<PluginResponse<unknown>>;
+  hasFrontendHost?: (pluginId: string) => boolean;
   txService?: Partial<TxService>;
 }) {
   SignerProviderService.resetInstance();
@@ -40,6 +41,7 @@ function makeService(overrides?: {
           ? { success: true, data: { accounts: [VALID] } }
           : { success: false, error: { code: 'X', message: 'boom' } }),
     txService: (overrides?.txService as TxService) ?? new TxService(),
+    hasFrontendHost: overrides?.hasFrontendHost ?? (() => false),
     logger: { warn: vi.fn() },
     now: () => 0,
     timeoutMs: 1000,
@@ -85,13 +87,14 @@ describe('SignerProviderService.listAccounts', () => {
     expect(other?.accounts).toEqual([VALID]);
   });
 
-  it('marks frontend-runtime providers as needs-browser without invoking', async () => {
+  it('marks frontend-runtime providers as needs-browser when no host is live', async () => {
     const invoke = vi.fn();
     const svc = makeService({
       getProviders: async () => [
         { id: 'wallet-browser', name: 'Wallet', runtime: 'frontend' },
       ],
       invoke,
+      hasFrontendHost: () => false,
     });
     await expect(svc.listAccounts()).resolves.toEqual({
       providers: [
@@ -104,6 +107,67 @@ describe('SignerProviderService.listAccounts', () => {
       ],
     });
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('fetches and validates frontend accounts when a browser host is live', async () => {
+    const invoke = vi.fn(
+      async (): Promise<PluginResponse<unknown>> => ({
+        success: true,
+        data: { accounts: [VALID] },
+      })
+    );
+    const svc = makeService({
+      getProviders: async () => [
+        { id: 'wallet-browser', name: 'Wallet', runtime: 'frontend' },
+      ],
+      invoke,
+      hasFrontendHost: (pluginId) => pluginId === 'wallet-browser',
+    });
+
+    await expect(svc.listAccounts()).resolves.toEqual({
+      providers: [
+        {
+          pluginId: 'wallet-browser',
+          name: 'Wallet',
+          state: 'ok',
+          accounts: [VALID],
+        },
+      ],
+    });
+    expect(invoke).toHaveBeenCalledWith(
+      'wallet-browser',
+      'getAccounts',
+      {},
+      expect.any(Object)
+    );
+  });
+
+  it('does not cache frontend account results across sequential list calls', async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        data: { accounts: [{ ...VALID, id: 'first' }] },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { accounts: [{ ...VALID, id: 'second' }] },
+      });
+    const svc = makeService({
+      getProviders: async () => [
+        { id: 'wallet-browser', name: 'Wallet', runtime: 'frontend' },
+      ],
+      invoke,
+      hasFrontendHost: () => true,
+    });
+
+    await expect(svc.listAccounts()).resolves.toMatchObject({
+      providers: [{ accounts: [{ id: 'first' }] }],
+    });
+    await expect(svc.listAccounts()).resolves.toMatchObject({
+      providers: [{ accounts: [{ id: 'second' }] }],
+    });
+    expect(invoke).toHaveBeenCalledTimes(2);
   });
 });
 

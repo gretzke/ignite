@@ -17,6 +17,7 @@ import {
 } from '@ignite/plugin-types/types';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { PluginInvoker } from '../plugins/invoke/PluginInvoker.js';
+import { FrontendRuntimeBridge } from '../plugins/invoke/FrontendRuntimeBridge.js';
 import { TxService } from '../tx/TxService.js';
 import { stripSentinelBlocks } from '../plugins/utils/pluginTransport.js';
 import { getLogger } from '../utils/logger.js';
@@ -51,6 +52,7 @@ export interface SignerProviderServiceDeps {
     opts?: { signal?: AbortSignal }
   ) => Promise<PluginResponse<unknown>>;
   txService: TxService;
+  hasFrontendHost: (pluginId: string) => boolean;
   now: () => number;
   timeoutMs: number;
   logger: { warn: (message: string) => void };
@@ -84,6 +86,7 @@ export class SignerProviderService {
       getProviders: deps?.getProviders ?? defaultGetProviders,
       invoke: deps?.invoke ?? defaultInvoke,
       txService: deps?.txService ?? new TxService(),
+      hasFrontendHost: deps?.hasFrontendHost ?? defaultHasFrontendHost,
       now: deps?.now ?? Date.now,
       timeoutMs: deps?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       logger: deps?.logger ?? getLogger(),
@@ -106,12 +109,17 @@ export class SignerProviderService {
     const providers = await this.deps.getProviders();
     const perProvider = await Promise.all(
       providers.map((provider) =>
-        provider.runtime === 'frontend'
+        provider.runtime === 'frontend' &&
+        !this.deps.hasFrontendHost(provider.id)
           ? Promise.resolve<ProviderAccountsData>({
               accounts: [],
               state: 'needs-browser',
             })
-          : this.getProviderAccounts(provider.id, refresh)
+          : this.getProviderAccounts(
+              provider.id,
+              refresh,
+              provider.runtime !== 'frontend'
+            )
       )
     );
 
@@ -138,7 +146,9 @@ export class SignerProviderService {
     accountId: string
   ): Promise<{ account: SignerAccount } | undefined> {
     const data = await this.listAccounts(false);
-    const provider = data.providers.find((entry) => entry.pluginId === pluginId);
+    const provider = data.providers.find(
+      (entry) => entry.pluginId === pluginId
+    );
     const account = provider?.accounts.find((entry) => entry.id === accountId);
     return account ? { account } : undefined;
   }
@@ -156,7 +166,9 @@ export class SignerProviderService {
     }
 
     const { account } = resolved;
-    ctx.log(`Building transaction (chain ${args.chainId}, from ${account.address})`);
+    ctx.log(
+      `Building transaction (chain ${args.chainId}, from ${account.address})`
+    );
     const tx = await this.deps.txService.buildTransaction({
       rpcUrl: args.rpcUrl,
       chainId: args.chainId,
@@ -212,17 +224,22 @@ export class SignerProviderService {
       rawTransaction
     );
     ctx.log(`Broadcast: ${txHash}; waiting for receipt`);
-    const receipt = await this.deps.txService.waitForReceipt(args.rpcUrl, txHash, {
-      signal: ctx.signal,
-    });
+    const receipt = await this.deps.txService.waitForReceipt(
+      args.rpcUrl,
+      txHash,
+      {
+        signal: ctx.signal,
+      }
+    );
     return { txHash, ...receipt };
   }
 
   private async getProviderAccounts(
     pluginId: string,
-    refresh: boolean
+    refresh: boolean,
+    cacheable = true
   ): Promise<ProviderAccountsData> {
-    if (!refresh) {
+    if (cacheable && !refresh) {
       const cached = this.cache.get(pluginId);
       if (cached && this.deps.now() - cached.ts < CACHE_TTL_MS) {
         return cached;
@@ -236,14 +253,18 @@ export class SignerProviderService {
     this.inflight.set(pluginId, attempt);
     try {
       const data = await attempt;
-      this.cache.set(pluginId, { ts: this.deps.now(), ...data });
+      if (cacheable) {
+        this.cache.set(pluginId, { ts: this.deps.now(), ...data });
+      }
       return data;
     } finally {
       this.inflight.delete(pluginId);
     }
   }
 
-  private async fetchAndValidate(pluginId: string): Promise<ProviderAccountsData> {
+  private async fetchAndValidate(
+    pluginId: string
+  ): Promise<ProviderAccountsData> {
     const controller = new AbortController();
     const timer = setTimeout(
       () =>
@@ -375,4 +396,8 @@ function defaultInvoke(
   opts?: { signal?: AbortSignal }
 ): Promise<PluginResponse<unknown>> {
   return PluginInvoker.getInstance().invoke(pluginId, operation, params, opts);
+}
+
+function defaultHasFrontendHost(pluginId: string): boolean {
+  return FrontendRuntimeBridge.getInstance().hasHost(pluginId);
 }
