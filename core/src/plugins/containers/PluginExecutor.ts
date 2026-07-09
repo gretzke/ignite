@@ -9,7 +9,10 @@ import {
   ContainerOrchestrator,
   ContainerLifecycle,
 } from './ContainerOrchestrator.js';
-import type { PluginResponse } from '@ignite/plugin-types/types';
+import {
+  PluginType,
+  type PluginResponse,
+} from '@ignite/plugin-types/types';
 import { PluginExecutionUtils } from '../utils/PluginExecutionUtils.js';
 import {
   TrustManager,
@@ -78,6 +81,9 @@ export const OPERATION_PERMISSIONS: Record<string, BooleanPermission> = {
   install: 'repoWrite',
   compile: 'repoWrite',
   verify: 'net',
+  // sendTransaction submits to a provider-defined target (API/RPC) and needs
+  // network. getAccounts/signTransaction are pure over injected config.
+  sendTransaction: 'net',
 };
 
 // Returns the permission the operation needs but the grant lacks, or null.
@@ -239,11 +245,21 @@ export class PluginExecutor {
       };
     }
 
+    // Signer-provider containers only get network for sendTransaction. Every
+    // other signer op that may hold key material runs with NetworkMode 'none'
+    // regardless of grant, including native builtins.
+    const KEY_HOLDING_SIGNER_OPS = ['getAccounts', 'signTransaction'];
+    const effectiveGrant =
+      pluginConfig.metadata.types.includes(PluginType.SIGNER_PROVIDER) &&
+      KEY_HOLDING_SIGNER_OPS.includes(operation)
+        ? { ...grant, net: false }
+        : grant;
+
     return await this.executeEphemeralPlugin(
       pluginConfig,
       operation,
       options,
-      grant,
+      effectiveGrant,
       opts
     );
   }
