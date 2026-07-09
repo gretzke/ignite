@@ -2,11 +2,14 @@
 import type { PluginResponse } from "./types.js";
 import type { CompilerOperations } from "./base/compiler/types.js";
 import type { RpcProviderOperations } from "./base/rpc-provider/types.js";
+import type { SignerProviderOperations } from "./base/signer-provider/types.js";
 import { frameResult } from "./utils/protocol.js";
 
 // Built-in plugins are compiler or rpc-provider plugins (the repo-manager
 // tier was deleted — repos are host data managed by core's RepoService).
-type AllOperations = CompilerOperations & RpcProviderOperations;
+type AllOperations = CompilerOperations &
+  RpcProviderOperations &
+  SignerProviderOperations;
 
 // Generic plugin execution interface
 export type IPluginExecutor<T extends keyof AllOperations> = {

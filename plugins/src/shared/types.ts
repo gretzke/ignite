@@ -14,6 +14,28 @@ export type PluginResponse<T> =
     }
   | IApiError;
 
+export type Hex = `0x${string}`;
+
+// A fully-built transaction. Core owns construction; signers sign/submit it
+// verbatim and never reinterpret calldata. Quantities are hex strings so the
+// payload is JSON-safe end-to-end.
+export interface UnsignedTx {
+  chainId: number;
+  to: Hex | null;
+  data: Hex;
+  value: Hex;
+  nonce: number;
+  gas: Hex;
+  maxFeePerGas: Hex;
+  maxPriorityFeePerGas: Hex;
+}
+
+// Chain display metadata passed to sign-and-send providers.
+export interface ChainMetadata {
+  name: string;
+  nativeCurrency: { name: string; symbol: string; decimals: number };
+}
+
 // Plugin metadata and configuration
 export enum PluginType {
   COMPILER = "compiler",
