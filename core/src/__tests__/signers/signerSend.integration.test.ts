@@ -95,7 +95,7 @@ describe.skipIf(!ready)(
       ]);
       await vaultStore.setSecret(
         PRIVATE_KEY_PLUGIN_ID,
-        `keys.${LIST_ITEM_ID}.privateKey`,
+        `keys.${LIST_ITEM_ID}.private-key`,
         ANVIL_PRIVATE_KEY_0
       );
 

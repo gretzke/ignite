@@ -1,6 +1,7 @@
 // Built-in private-key signer plugin (sign-only). Keys are stored in the
 // encrypted vault as items of the `keys` list config field; Ignite resolves
-// and injects them on stdin as options.config.keys = [{id,label,privateKey}].
+// and injects them on stdin as options.config.keys =
+// [{id, label, "private-key"}].
 // This process runs in an ephemeral container with no network: the raw key
 // cannot leave except as the signed tx on stdout, which core verifies before
 // broadcast.
@@ -21,10 +22,13 @@ import { runPluginCLI } from "../../shared/plugin-runner.js";
 
 declare const PLUGIN_VERSION: string;
 
+// Item shape injected by core for the `keys` list field. The secret item
+// field's key is `private-key` (itemField keys are lowercase-kebab like every
+// other config key — the API schema enforces ^[a-z0-9][a-z0-9_-]*$).
 interface KeyItem {
   id: string;
   label?: string;
-  privateKey?: string;
+  "private-key"?: string;
 }
 
 function readKeys(options?: { config?: Record<string, unknown> }): KeyItem[] {
@@ -58,7 +62,7 @@ export class PrivateKeyPlugin extends SignerProviderPlugin {
           itemFields: [
             { key: "label", label: "Label", type: "string", required: true },
             {
-              key: "privateKey",
+              key: "private-key",
               label: "Private Key",
               type: "string",
               secret: true,
@@ -80,7 +84,8 @@ export class PrivateKeyPlugin extends SignerProviderPlugin {
 
     const accounts: SignerAccount[] = [];
     for (const item of items) {
-      const key = item.privateKey ? normalizeKey(item.privateKey) : null;
+      const raw = item["private-key"];
+      const key = raw ? normalizeKey(raw) : null;
       if (!key) continue;
       accounts.push({
         id: item.id,
@@ -97,7 +102,8 @@ export class PrivateKeyPlugin extends SignerProviderPlugin {
     options: SignTransactionParams & { config?: Record<string, unknown> },
   ): Promise<PluginResponse<SignTransactionResult>> {
     const item = readKeys(options).find((k) => k.id === options.accountId);
-    const key = item?.privateKey ? normalizeKey(item.privateKey) : null;
+    const raw = item?.["private-key"];
+    const key = raw ? normalizeKey(raw) : null;
     if (!key) {
       return {
         success: false,

@@ -16,7 +16,7 @@ const metadata: PluginMetadata = {
       type: 'list',
       itemFields: [
         { key: 'label', label: 'Label', type: 'string', required: true },
-        { key: 'privateKey', label: 'Private Key', type: 'string', secret: true, required: true },
+        { key: 'private-key', label: 'Private Key', type: 'string', secret: true, required: true },
       ],
     },
   ],
@@ -32,8 +32,8 @@ const storedItems = [
 
 function makeArgs(grant: PermissionGrant) {
   const getSecret = vi.fn(async (key: string) =>
-    key === 'keys.ab12cd34.privateKey' ? '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'
-      : key === 'keys.ef56gh78.privateKey' ? '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba'
+    key === 'keys.ab12cd34.private-key' ? '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'
+      : key === 'keys.ef56gh78.private-key' ? '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba'
       : undefined
   );
   return {
@@ -52,12 +52,12 @@ describe('resolveConfig list fields', () => {
       {
         id: 'ab12cd34',
         label: 'deployer',
-        privateKey: '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+        'private-key': '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
       },
       {
         id: 'ef56gh78',
         label: 'ops',
-        privateKey: '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba',
+        'private-key': '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba',
       },
     ]);
   });
