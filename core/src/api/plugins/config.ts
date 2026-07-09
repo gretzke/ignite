@@ -3,6 +3,7 @@
 // `grantedSecrets` (declared secret keys the current trust grant covers).
 // Secret-scope grants themselves are set via setPluginTrust (../plugins/trust.ts);
 // this file only reads/writes the values those grants gate.
+import crypto from 'node:crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type {
   IApiError,
@@ -13,8 +14,14 @@ import type {
   SetPluginConfigValueRequest,
   SetPluginSecretRequest,
   DeletePluginConfigQuery,
+  UpsertPluginConfigListItemRequest,
+  DeletePluginConfigListItemQuery,
 } from '@ignite/api';
-import type { PluginMetadata } from '@ignite/plugin-types/types';
+import {
+  LIST_ITEM_ID_PATTERN,
+  MAX_LIST_ITEMS,
+  type PluginMetadata,
+} from '@ignite/plugin-types/types';
 import { PluginConfigStore } from '../../plugins/config/PluginConfigStore.js';
 import { VaultStore } from '../../plugins/vault/VaultStore.js';
 import { TrustManager } from '../../plugins/trust/TrustManager.js';
@@ -97,7 +104,14 @@ async function buildConfigPayload(
   // fields AND file fields (a file field's grant covers file *contents*
   // flowing to the plugin — same grant dimension as a secret).
   const declaredSecretScopeKeys = new Set(
-    fields.filter((f) => f.secret || f.type === 'file').map((f) => f.key)
+    fields
+      .filter(
+        (f) =>
+          f.secret ||
+          f.type === 'file' ||
+          (f.type === 'list' && (f.itemFields ?? []).some((i) => i.secret))
+      )
+      .map((f) => f.key)
   );
 
   // Only schema-declared, non-secret fields are surfaced — an undeclared or
@@ -192,6 +206,13 @@ export function createPluginConfigHandlers(
             `Config field '${key}' is a secret; set it via PUT /plugins/${pluginId}/config/secret`
           );
         }
+        if (field.type === 'list') {
+          return sendBadRequest(
+            reply,
+            ErrorCodes.CONFIG_SET_ERROR,
+            `Config field '${key}' is a list field; set it via PUT /plugins/${pluginId}/config/list-item`
+          );
+        }
         // A file field's value is a host filesystem path that later gets
         // read and injected into the plugin's container — a non-string
         // (e.g. an object or boolean) would either crash that later read or
@@ -253,6 +274,169 @@ export function createPluginConfigHandlers(
           error,
           ErrorCodes.SECRET_SET_ERROR,
           'Failed to set plugin secret'
+        );
+      }
+    },
+
+    upsertPluginConfigListItem: async (
+      request: FastifyRequest<{
+        Params: PluginConfigParams;
+        Body: UpsertPluginConfigListItemRequest;
+      }>,
+      reply: FastifyReply
+    ): Promise<IApiResponse<GetPluginConfigData>> => {
+      try {
+        const { pluginId } = request.params;
+        const { fieldKey, itemId, values, secrets } = request.body;
+        const metadata = await d.getMetadata(pluginId);
+        if (!metadata) return pluginNotFound(reply, pluginId);
+
+        const field = (metadata.configFields ?? []).find(
+          (f) => f.key === fieldKey && f.type === 'list'
+        );
+        if (!field) {
+          return sendBadRequest(
+            reply,
+            ErrorCodes.CONFIG_UNKNOWN_FIELD,
+            `Plugin ${pluginId} does not declare a list config field '${fieldKey}'`
+          );
+        }
+        if (itemId !== undefined && !LIST_ITEM_ID_PATTERN.test(itemId)) {
+          return sendBadRequest(
+            reply,
+            ErrorCodes.CONFIG_SET_ERROR,
+            `Invalid item id for '${fieldKey}'`
+          );
+        }
+
+        const itemFields = field.itemFields ?? [];
+        const known = new Set(itemFields.map((f) => f.key));
+        const secretKeys = new Set(
+          itemFields.filter((f) => f.secret).map((f) => f.key)
+        );
+        for (const k of Object.keys(values ?? {})) {
+          if (!known.has(k) || secretKeys.has(k)) {
+            return sendBadRequest(
+              reply,
+              ErrorCodes.CONFIG_SET_ERROR,
+              `'${k}' is not a non-secret itemField of '${fieldKey}'`
+            );
+          }
+        }
+        for (const k of Object.keys(secrets ?? {})) {
+          if (!secretKeys.has(k)) {
+            return sendBadRequest(
+              reply,
+              ErrorCodes.SECRET_NOT_DECLARED,
+              `'${k}' is not a secret itemField of '${fieldKey}'`
+            );
+          }
+        }
+
+        const stored = await d.configStore.getValues(pluginId);
+        const list = Array.isArray(stored[fieldKey]?.global)
+          ? ([...(stored[fieldKey]!.global as never[])] as {
+              id: string;
+              values: Record<string, string>;
+            }[])
+          : [];
+
+        let id = itemId;
+        if (id === undefined) {
+          if (list.length >= MAX_LIST_ITEMS) {
+            return sendBadRequest(
+              reply,
+              ErrorCodes.CONFIG_SET_ERROR,
+              `'${fieldKey}' already has ${MAX_LIST_ITEMS} items`
+            );
+          }
+          id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+          list.push({ id, values: values ?? {} });
+        } else {
+          const existing = list.find((item) => item.id === id);
+          if (!existing) {
+            return sendBadRequest(
+              reply,
+              ErrorCodes.CONFIG_SET_ERROR,
+              `No item '${id}' in '${fieldKey}'`
+            );
+          }
+          existing.values = { ...existing.values, ...(values ?? {}) };
+        }
+
+        await d.configStore.setValue(pluginId, fieldKey, list);
+        for (const [k, v] of Object.entries(secrets ?? {})) {
+          await d.vaultStore.setSecret(pluginId, `${fieldKey}.${id}.${k}`, v);
+        }
+        d.providers.invalidate(pluginId);
+        const data = await buildConfigPayload(d, pluginId, metadata);
+        return reply.status(200).send({ data });
+      } catch (error) {
+        return sendCodedOrCaught(
+          reply,
+          error,
+          ErrorCodes.CONFIG_SET_ERROR,
+          'Failed to upsert list item'
+        );
+      }
+    },
+
+    deletePluginConfigListItem: async (
+      request: FastifyRequest<{
+        Params: PluginConfigParams;
+        Querystring: DeletePluginConfigListItemQuery;
+      }>,
+      reply: FastifyReply
+    ): Promise<IApiResponse<GetPluginConfigData>> => {
+      try {
+        const { pluginId } = request.params;
+        const { fieldKey, itemId } = request.query;
+        const metadata = await d.getMetadata(pluginId);
+        if (!metadata) return pluginNotFound(reply, pluginId);
+        const field = (metadata.configFields ?? []).find(
+          (f) => f.key === fieldKey && f.type === 'list'
+        );
+        if (!field) {
+          return sendBadRequest(
+            reply,
+            ErrorCodes.CONFIG_UNKNOWN_FIELD,
+            `Plugin ${pluginId} does not declare a list config field '${fieldKey}'`
+          );
+        }
+        if (!LIST_ITEM_ID_PATTERN.test(itemId)) {
+          return sendBadRequest(
+            reply,
+            ErrorCodes.CONFIG_SET_ERROR,
+            `Invalid item id for '${fieldKey}'`
+          );
+        }
+
+        const stored = await d.configStore.getValues(pluginId);
+        const list = Array.isArray(stored[fieldKey]?.global)
+          ? ([...(stored[fieldKey]!.global as never[])] as {
+              id: string;
+              values: Record<string, string>;
+            }[])
+          : [];
+        const next = list.filter((item) => item.id !== itemId);
+        await d.configStore.setValue(pluginId, fieldKey, next);
+        for (const itemField of (field.itemFields ?? []).filter(
+          (f) => f.secret
+        )) {
+          await d.vaultStore.deleteSecret(
+            pluginId,
+            `${fieldKey}.${itemId}.${itemField.key}`
+          );
+        }
+        d.providers.invalidate(pluginId);
+        const data = await buildConfigPayload(d, pluginId, metadata);
+        return reply.status(200).send({ data });
+      } catch (error) {
+        return sendCodedOrCaught(
+          reply,
+          error,
+          ErrorCodes.CONFIG_SET_ERROR,
+          'Failed to delete list item'
         );
       }
     },

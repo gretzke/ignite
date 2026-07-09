@@ -16,8 +16,14 @@ import type {
   GetPluginConfigData,
   PluginConfigField,
   PluginConfigPrimitive,
+  PluginConfigStoredValue,
 } from '@ignite/api';
 import type { RootState } from '../store/store';
+
+const asPrimitive = (
+  value: PluginConfigStoredValue | undefined
+): PluginConfigPrimitive | undefined =>
+  Array.isArray(value) ? undefined : value;
 
 // A non-secret value: string/number free-text fields use a local draft +
 // explicit Save (so we don't fire a request per keystroke); booleans and
@@ -289,10 +295,18 @@ function ConfigFieldCard({
           field={field}
           present={config.secretsPresent.includes(field.key)}
         />
-      ) : field.type === 'file' ? (
-        <FileValueControl pluginId={pluginId} field={field} value={shape?.global} />
+      ) : field.type === 'list' ? null : field.type === 'file' ? (
+        <FileValueControl
+          pluginId={pluginId}
+          field={field}
+          value={asPrimitive(shape?.global)}
+        />
       ) : (
-        <GlobalValueControl pluginId={pluginId} field={field} value={shape?.global} />
+        <GlobalValueControl
+          pluginId={pluginId}
+          field={field}
+          value={asPrimitive(shape?.global)}
+        />
       )}
 
       {field.perChain && (

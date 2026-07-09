@@ -13,6 +13,7 @@ export type {
   PluginPermissionRequest,
   PluginConfigField,
   PluginConfigFieldType,
+  PluginConfigListItemField,
   PluginConfigSelectOption,
 } from "@ignite/plugin-types/types";
 
@@ -45,10 +46,18 @@ export const PluginConfigSelectOptionSchema = z.object({
   label: z.string(),
 });
 
+export const PluginConfigListItemFieldSchema = z.object({
+  key: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/),
+  label: z.string(),
+  type: z.literal("string"),
+  secret: z.boolean().optional(),
+  required: z.boolean().optional(),
+});
+
 export const PluginConfigFieldSchema = z.object({
   key: z.string(),
   label: z.string(),
-  type: z.enum(["string", "number", "boolean", "select", "file"]),
+  type: z.enum(["string", "number", "boolean", "select", "file", "list"]),
   description: z.string().optional(),
   secret: z.boolean().optional(),
   perChain: z.boolean().optional(),
@@ -56,6 +65,7 @@ export const PluginConfigFieldSchema = z.object({
   options: z.array(PluginConfigSelectOptionSchema).optional(),
   // file fields only: default host path (e.g. "~/.foo.json").
   default: z.string().optional(),
+  itemFields: z.array(PluginConfigListItemFieldSchema).max(16).optional(),
 });
 
 export const PluginMetadataSchema = z.object({

@@ -10,16 +10,19 @@
 // not in metadata.configFields) are never surfaced: the schema is
 // authoritative.
 import os from 'node:os';
-import type { PluginMetadata } from '@ignite/plugin-types/types';
+import {
+  LIST_ITEM_ID_PATTERN,
+  type PluginMetadata,
+} from '@ignite/plugin-types/types';
 import type { PermissionGrant } from '../trust/TrustManager.js';
-import type { ConfigValue } from './PluginConfigStore.js';
+import type { ConfigPrimitive, ConfigValue } from './PluginConfigStore.js';
 
 export interface ResolveConfigArgs {
   metadata: PluginMetadata;
   grant: PermissionGrant;
   configValues: Record<
     string,
-    { global?: ConfigValue; perChain?: Record<string, ConfigValue> }
+    { global?: ConfigValue; perChain?: Record<string, ConfigPrimitive> }
   >;
   // Bound to the plugin's VaultStore scope by the caller.
   getSecret: (key: string, chainId?: number) => Promise<string | undefined>;
@@ -90,9 +93,50 @@ export async function resolveConfig(
       continue;
     }
 
+    if (field.type === 'list') {
+      const items = Array.isArray(global) ? (global as unknown[]) : [];
+      const secretItemFields = (field.itemFields ?? []).filter(
+        (f) => f.secret
+      );
+      const hasSecrets = secretItemFields.length > 0;
+      const granted =
+        grant.trust === 'native' || grant.secrets.includes(field.key);
+      const inject = hasSecrets ? granted : true;
+      const resolved: Record<string, string>[] = [];
+
+      for (const raw of items) {
+        const item = raw as { id?: unknown; values?: unknown };
+        if (
+          typeof item.id !== 'string' ||
+          !LIST_ITEM_ID_PATTERN.test(item.id)
+        ) {
+          continue;
+        }
+        const values =
+          item.values && typeof item.values === 'object'
+            ? (item.values as Record<string, string>)
+            : {};
+        const entry: Record<string, string> = { id: item.id, ...values };
+        if (granted) {
+          for (const itemField of secretItemFields) {
+            const secret = await getSecret(
+              `${field.key}.${item.id}.${itemField.key}`
+            );
+            if (secret !== undefined) entry[itemField.key] = secret;
+          }
+        }
+        resolved.push(entry);
+      }
+
+      if (inject) result[field.key] = resolved;
+      continue;
+    }
+
     if (field.perChain) {
-      const value: Record<string, ConfigValue> = { ...(perChain ?? {}) };
-      if (global !== undefined) value.default = global;
+      const value: Record<string, ConfigPrimitive> = { ...(perChain ?? {}) };
+      if (global !== undefined && !Array.isArray(global)) {
+        value.default = global;
+      }
       if (Object.keys(value).length > 0) result[field.key] = value;
     } else if (global !== undefined) {
       result[field.key] = global;

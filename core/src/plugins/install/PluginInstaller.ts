@@ -600,7 +600,14 @@ export class PluginInstaller {
     const keyPattern = /^[a-z0-9][a-z0-9._-]*$/;
     // eslint-disable-next-line no-control-regex
     const controlChars = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
-    const types = new Set(['string', 'number', 'boolean', 'select', 'file']);
+    const types = new Set([
+      'string',
+      'number',
+      'boolean',
+      'select',
+      'file',
+      'list',
+    ]);
     const seen = new Set<string>();
     for (const field of fields) {
       if (typeof field !== 'object' || field === null) {
@@ -660,6 +667,57 @@ export class PluginInstaller {
         }
       } else if (f.options !== undefined) {
         throw invalid(`field '${f.key}' may not declare options`);
+      }
+
+      if (f.type === 'list') {
+        const itemFields = f.itemFields ?? [];
+        if (!Array.isArray(itemFields) || itemFields.length === 0 || itemFields.length > 16) {
+          throw invalid(
+            `list config field '${f.key}' must declare 1-16 itemFields`
+          );
+        }
+        const itemKeyPattern = /^[a-z0-9][a-z0-9_-]*$/;
+        const keys = new Set<string>();
+        for (const itemField of itemFields) {
+          const i = itemField as Record<string, unknown>;
+          if (typeof i.key !== 'string' || !itemKeyPattern.test(i.key) || keys.has(i.key)) {
+            throw invalid(
+              `list config field '${f.key}' has an invalid or duplicate itemField key '${String(i.key)}'`
+            );
+          }
+          keys.add(i.key);
+          if (typeof i.label !== 'string' || i.label.length === 0 || i.label.length > 280) {
+            throw invalid(
+              `list config field '${f.key}' itemField '${i.key}' has an invalid label`
+            );
+          }
+          if (controlChars.test(i.label)) {
+            throw invalid(
+              `list config field '${f.key}' itemField '${i.key}' label contains control characters`
+            );
+          }
+          if (i.type !== 'string') {
+            throw invalid(
+              `list config field '${f.key}' itemField '${i.key}' must be type "string"`
+            );
+          }
+          for (const boolField of ['secret', 'required'] as const) {
+            if (i[boolField] !== undefined && typeof i[boolField] !== 'boolean') {
+              throw invalid(
+                `list config field '${f.key}' itemField '${i.key}' ${boolField} must be a boolean`
+              );
+            }
+          }
+        }
+        if (f.secret || f.perChain) {
+          throw invalid(
+            `list config field '${f.key}' cannot itself be secret or perChain`
+          );
+        }
+      } else if (f.itemFields !== undefined) {
+        throw invalid(
+          `config field '${f.key}' declares itemFields but is not a list`
+        );
       }
 
       // `default` is a file-field-only concept (the plugin-declared default

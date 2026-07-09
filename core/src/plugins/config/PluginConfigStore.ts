@@ -4,11 +4,17 @@
 // and must only ever hold values a plugin's manifest marks as non-secret.
 import { FileSystem } from '../../filesystem/FileSystem.js';
 
-export type ConfigValue = string | number | boolean;
+export interface ConfigListItemValue {
+  id: string;
+  values: Record<string, string>;
+}
+
+export type ConfigPrimitive = string | number | boolean;
+export type ConfigValue = ConfigPrimitive | ConfigListItemValue[];
 
 interface ConfigFieldSlot {
   global?: ConfigValue;
-  perChain?: Record<string, ConfigValue>;
+  perChain?: Record<string, ConfigPrimitive>;
 }
 
 // { "<pluginId>": { "<key>": { global?, perChain?: { "<chainId>": value } } } }
@@ -50,6 +56,9 @@ export class PluginConfigStore {
     if (chainId === undefined) {
       slot.global = value;
     } else {
+      if (Array.isArray(value)) {
+        throw new Error('List config values cannot be stored per-chain');
+      }
       slot.perChain = { ...(slot.perChain ?? {}), [String(chainId)]: value };
     }
     plugin[key] = slot;

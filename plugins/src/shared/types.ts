@@ -79,12 +79,26 @@ export type PluginConfigFieldType =
   | "number"
   | "boolean"
   | "select"
-  | "file";
+  | "file"
+  | "list";
 
 export interface PluginConfigSelectOption {
   value: string;
   label: string;
 }
+
+// One column of a `list` config field's items. v1: strings only. Secret item
+// values live in the vault under `${fieldKey}.${itemId}.${itemFieldKey}`.
+export interface PluginConfigListItemField {
+  key: string;
+  label: string;
+  type: "string";
+  secret?: boolean;
+  required?: boolean;
+}
+
+export const MAX_LIST_ITEMS = 64;
+export const LIST_ITEM_ID_PATTERN = /^[a-z0-9]{4,16}$/;
 
 export interface PluginConfigField {
   key: string; // stable identifier, ^[a-z0-9][a-z0-9._-]*$
@@ -96,6 +110,7 @@ export interface PluginConfigField {
   required?: boolean;
   options?: PluginConfigSelectOption[]; // required iff type === "select"
   default?: string; // file fields only: default host path (e.g. "~/.foo.json")
+  itemFields?: PluginConfigListItemField[]; // required iff type === "list"
 }
 
 // Upper bound on how many config fields a plugin manifest may declare.

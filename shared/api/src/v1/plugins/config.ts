@@ -15,8 +15,17 @@ import type { PluginConfigField } from "./index.js";
 
 export type PluginConfigPrimitive = string | number | boolean;
 
+export interface PluginConfigListItemValue {
+  id: string;
+  values: Record<string, string>;
+}
+
+export type PluginConfigStoredValue =
+  | PluginConfigPrimitive
+  | PluginConfigListItemValue[];
+
 export interface PluginConfigValueShape {
-  global?: PluginConfigPrimitive;
+  global?: PluginConfigStoredValue;
   perChain?: Record<string, PluginConfigPrimitive>;
 }
 
@@ -46,6 +55,18 @@ export interface SetPluginSecretRequest {
   chainId?: number;
 }
 
+export interface UpsertPluginConfigListItemRequest {
+  fieldKey: string;
+  itemId?: string;
+  values?: Record<string, string>;
+  secrets?: Record<string, string>;
+}
+
+export interface DeletePluginConfigListItemQuery {
+  fieldKey: string;
+  itemId: string;
+}
+
 export const PluginConfigParamsSchema =
   createRequestSchema<PluginConfigParams>("PluginConfigParamsSchema")(
     z.object({ pluginId: z.string().min(1) }),
@@ -57,8 +78,18 @@ const PluginConfigPrimitiveSchema = z.union([
   z.boolean(),
 ]);
 
+const PluginConfigListItemValueSchema = z.object({
+  id: z.string(),
+  values: z.record(z.string(), z.string()),
+});
+
+const PluginConfigStoredValueSchema = z.union([
+  PluginConfigPrimitiveSchema,
+  z.array(PluginConfigListItemValueSchema),
+]);
+
 const PluginConfigValueShapeSchema = z.object({
-  global: PluginConfigPrimitiveSchema.optional(),
+  global: PluginConfigStoredValueSchema.optional(),
   perChain: z.record(z.string(), PluginConfigPrimitiveSchema).optional(),
 }) satisfies z.ZodType<PluginConfigValueShape>;
 
@@ -92,6 +123,18 @@ export const SetPluginSecretRequestSchema =
     }),
   );
 
+export const UpsertPluginConfigListItemRequestSchema =
+  createRequestSchema<UpsertPluginConfigListItemRequest>(
+    "UpsertPluginConfigListItemRequestSchema",
+  )(
+    z.object({
+      fieldKey: z.string().min(1),
+      itemId: z.string().optional(),
+      values: z.record(z.string(), z.string()).optional(),
+      secrets: z.record(z.string(), z.string()).optional(),
+    }),
+  );
+
 export const DeletePluginConfigQuerySchema = z.object({
   key: z.string().min(1),
   chainId: z.coerce.number().int().positive().optional(),
@@ -99,6 +142,11 @@ export const DeletePluginConfigQuerySchema = z.object({
 export type DeletePluginConfigQuery = z.infer<
   typeof DeletePluginConfigQuerySchema
 >;
+
+export const DeletePluginConfigListItemQuerySchema = z.object({
+  fieldKey: z.string().min(1),
+  itemId: z.string().min(1),
+});
 
 export const configRoutes = {
   getPluginConfig: {
@@ -130,6 +178,26 @@ export const configRoutes = {
     schema: {
       tags: ["plugins"],
       body: SetPluginSecretRequestSchema,
+      response: { 200: GetPluginConfigResponseSchema },
+    },
+  },
+  upsertPluginConfigListItem: {
+    method: "PUT" as const,
+    path: `${V1_BASE_PATH}/plugins/:pluginId/config/list-item`,
+    params: PluginConfigParamsSchema,
+    schema: {
+      tags: ["plugins"],
+      body: UpsertPluginConfigListItemRequestSchema,
+      response: { 200: GetPluginConfigResponseSchema },
+    },
+  },
+  deletePluginConfigListItem: {
+    method: "DELETE" as const,
+    path: `${V1_BASE_PATH}/plugins/:pluginId/config/list-item`,
+    params: PluginConfigParamsSchema,
+    querystring: DeletePluginConfigListItemQuerySchema,
+    schema: {
+      tags: ["plugins"],
       response: { 200: GetPluginConfigResponseSchema },
     },
   },

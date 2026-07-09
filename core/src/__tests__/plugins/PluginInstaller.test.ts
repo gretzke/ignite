@@ -5,7 +5,10 @@ import type {
   PluginPermissionRequest,
 } from '@ignite/plugin-types/types';
 import { PluginInstaller } from '../../plugins/install/PluginInstaller.js';
-import type { ConfigValue } from '../../plugins/config/PluginConfigStore.js';
+import type {
+  ConfigPrimitive,
+  ConfigValue,
+} from '../../plugins/config/PluginConfigStore.js';
 import type {
   PluginBuildBackend,
   PluginBuildResult,
@@ -44,7 +47,7 @@ function makeDeps() {
   const configDeletedPlugins: string[] = [];
   const configValues: Record<
     string,
-    Record<string, { global?: ConfigValue; perChain?: Record<string, ConfigValue> }>
+    Record<string, { global?: ConfigValue; perChain?: Record<string, ConfigPrimitive> }>
   > = {};
   return {
     pluginManager: {
