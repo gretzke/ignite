@@ -8,6 +8,7 @@ import type {
   SetPluginConfigValueRequest,
   SetPluginSecretRequest,
   StorePluginData,
+  UpsertPluginConfigListItemRequest,
 } from '@ignite/api';
 import type { ApiError } from '@ignite/api/client';
 import { apiClient, apiDispatchAction } from '../../api/client';
@@ -508,6 +509,52 @@ export const pluginsApi = {
       loading: { title: 'Saving secret…', variant: 'info' },
       onSuccess: () => ({
         title: 'Secret saved',
+        variant: 'success',
+        duration: 3000,
+      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return { title, description, variant: 'error', duration: 6000 };
+      },
+    });
+  },
+  // Writes one item inside a list config field. Non-secret values merge into
+  // the stored item; secret values go to the vault and are only reflected via
+  // secretsPresent in the refreshed config payload.
+  upsertConfigListItem(
+    pluginId: string,
+    body: UpsertPluginConfigListItemRequest
+  ) {
+    const apiAction = apiClient.dispatch.upsertPluginConfigListItem({
+      params: { pluginId },
+      body,
+      onSuccess: (data) => configReceived({ pluginId, config: data }),
+    });
+    return triggerToast({
+      apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
+      loading: { title: 'Saving item…', variant: 'info' },
+      onSuccess: () => ({
+        title: 'Item saved',
+        variant: 'success',
+        duration: 3000,
+      }),
+      onError: (err) => {
+        const { title, description } = formatApiError(err as ApiError);
+        return { title, description, variant: 'error', duration: 6000 };
+      },
+    });
+  },
+  deleteConfigListItem(pluginId: string, fieldKey: string, itemId: string) {
+    const apiAction = apiClient.dispatch.deletePluginConfigListItem({
+      params: { pluginId },
+      query: { fieldKey, itemId },
+      onSuccess: (data) => configReceived({ pluginId, config: data }),
+    });
+    return triggerToast({
+      apiAction: apiAction as ReturnType<typeof apiDispatchAction>,
+      loading: { title: 'Removing item…', variant: 'info' },
+      onSuccess: () => ({
+        title: 'Item removed',
         variant: 'success',
         duration: 3000,
       }),
