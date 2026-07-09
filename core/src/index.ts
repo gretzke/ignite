@@ -24,6 +24,7 @@ import { PluginRegistryLoader } from './assets/PluginRegistryLoader.js';
 import { AssetManager } from './assets/AssetManager.js';
 import { RepoLifecycle } from './repos/RepoLifecycle.js';
 import { JobManager } from './jobs/JobManager.js';
+import { FrontendRuntimeBridge } from './plugins/invoke/FrontendRuntimeBridge.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -69,7 +70,10 @@ async function ignite(workspacePath: string): Promise<{
     fastify.get(
       '/ws',
       { websocket: true },
-      createWsHandler(JobManager.getInstance())
+      createWsHandler(
+        JobManager.getInstance(),
+        FrontendRuntimeBridge.getInstance()
+      )
     );
   });
 

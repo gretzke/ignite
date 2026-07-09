@@ -9,6 +9,10 @@
 // unit-testable with a plain fake socket (see __tests__/api/ws.test.ts).
 import type { JobEvent } from '@ignite/api';
 import type { JobManager } from '../jobs/JobManager.js';
+import {
+  FrontendRuntimeBridge,
+  type RuntimeResponseFrame,
+} from '../plugins/invoke/FrontendRuntimeBridge.js';
 import { getLogger } from '../utils/logger.js';
 
 // Minimal structural shape of the socket @fastify/websocket hands the route
@@ -30,7 +34,16 @@ interface UnsubscribeFrame {
   jobId: string;
 }
 
-type ClientFrame = SubscribeFrame | UnsubscribeFrame;
+interface RuntimeRegisterFrame {
+  type: 'runtime-register';
+  pluginIds: string[];
+}
+
+type ClientFrame =
+  | SubscribeFrame
+  | UnsubscribeFrame
+  | RuntimeRegisterFrame
+  | RuntimeResponseFrame;
 
 function parseClientFrame(raw: unknown): ClientFrame | undefined {
   let parsed: unknown;
@@ -57,11 +70,32 @@ function parseClientFrame(raw: unknown): ClientFrame | undefined {
   if (frame.type === 'unsubscribe' && typeof frame.jobId === 'string') {
     return { type: 'unsubscribe', jobId: frame.jobId };
   }
+  if (
+    frame.type === 'runtime-register' &&
+    Array.isArray(frame.pluginIds) &&
+    frame.pluginIds.length <= 32 &&
+    frame.pluginIds.every((pluginId) => typeof pluginId === 'string')
+  ) {
+    return { type: 'runtime-register', pluginIds: frame.pluginIds };
+  }
+  if (
+    frame.type === 'runtime-response' &&
+    typeof frame.requestId === 'string' &&
+    (frame.error === undefined || typeof frame.error === 'string')
+  ) {
+    return {
+      type: 'runtime-response',
+      requestId: frame.requestId,
+      result: frame.result,
+      error: frame.error as string | undefined,
+    };
+  }
   return undefined;
 }
 
 export function createWsHandler(
-  jobs: JobManager
+  jobs: JobManager,
+  bridge = FrontendRuntimeBridge.getInstance()
 ): (socket: WsSocket) => void {
   return (socket: WsSocket) => {
     // One live-event unsubscribe per jobId this socket currently cares
@@ -120,8 +154,12 @@ export function createWsHandler(
       }
       if (frame.type === 'subscribe') {
         handleSubscribe(frame.jobId, frame.afterSeq);
-      } else {
+      } else if (frame.type === 'unsubscribe') {
         teardown(frame.jobId);
+      } else if (frame.type === 'runtime-register') {
+        bridge.registerHost(socket, frame.pluginIds);
+      } else {
+        bridge.handleResponse(socket, frame);
       }
     });
 
@@ -129,6 +167,7 @@ export function createWsHandler(
       for (const jobId of [...subscriptions.keys()]) {
         teardown(jobId);
       }
+      bridge.unregisterHost(socket);
     });
 
     safeSend({ type: 'connected' });
