@@ -18,12 +18,12 @@ function run(id = 'run-1'): RunRecord {
     updatedAt: '2026-07-10T00:00:00.000Z',
     plan: {
       schemaVersion: 1,
-      contracts: [],
-      steps: [],
+      contracts: [{ id: 'c', repoPathOrUrl: 'repo', frameworkId: 'f', artifactPath: 'a', contractName: 'C', sourcePath: 'C.sol' }],
+      steps: [{ id: 's', kind: 'deploy', contractId: 'c' }],
       chains: [1],
       signers: {},
     },
-    inputs: {},
+    inputs: { c: { abi: [], creationBytecode: '0x6000', compiler: { pluginId: 'f', version: '1', settingsHash: HASH }, artifactHash: HASH, repoDirty: false } },
     rpcSelection: {
       '1': { endpointId: 'rpc-1', label: 'Anvil', urlFingerprint: HASH },
     },

@@ -33,6 +33,7 @@ import { jobsRoutes } from "./jobs.js";
 import { gitRoutes } from "./git.js";
 import { chainRoutes } from "./chains.js";
 import { signerRoutes } from "./signers.js";
+import { deploymentRoutes } from "./deployments.js";
 
 export interface IApiError {
   statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 499 | 500 | 503;
@@ -74,8 +75,7 @@ const allRoutes = {
   ...gitRoutes,
   ...chainRoutes,
   ...signerRoutes,
-  // deploymentRoutes joins the registry in D3a Task 8 together with its
-  // handlers — registering contract-only routes leaves core unbuildable.
+  ...deploymentRoutes,
 } as const;
 
 export const v1Routes = allRoutes satisfies ValidateRoutes<typeof allRoutes>;

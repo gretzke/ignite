@@ -8,7 +8,7 @@ import type {
 } from '@ignite/api';
 import { DeploymentArtifactSchema } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
-import { effectiveValue, mergeArgs, resolveSigner } from './resolver.js';
+import { effectiveValue, mergeArgs, mergeGas, resolveSigner } from './resolver.js';
 
 export function renderArtifact(run: RunRecord): DeploymentArtifact {
   const contracts = run.plan.contracts.map((contract) => {
@@ -17,12 +17,12 @@ export function renderArtifact(run: RunRecord): DeploymentArtifact {
       throw new Error(`Frozen input is missing for contract ${contract.id}`);
     }
     return {
-      id: contract.id,
+      id: sanitizeText(contract.id),
       repoName: portableRepoName(contract.repoPathOrUrl),
       sourcePath: portableSourcePath(contract.sourcePath),
       contractName: sanitizeText(contract.contractName),
       artifactHash: input.artifactHash,
-      compiler: input.compiler,
+      compiler: { ...input.compiler, pluginId: sanitizeText(input.compiler.pluginId), version: sanitizeText(input.compiler.version) },
     };
   });
 
@@ -31,9 +31,11 @@ export function renderArtifact(run: RunRecord): DeploymentArtifact {
       key,
       {
         chainId: lane.chainId,
+        status: lane.status,
         providerLabel: sanitizeText(
           run.rpcSelection[key]?.label ?? 'RPC endpoint'
         ),
+        ...(lane.pause ? { pause: { reason: lane.pause.reason, error: sanitizeText(lane.pause.error) } } : {}),
         steps: lane.steps.map((laneStep) => {
           const step = run.plan.steps.find(
             (candidate) => candidate.id === laneStep.stepId
@@ -42,10 +44,11 @@ export function renderArtifact(run: RunRecord): DeploymentArtifact {
             ? resolveSigner(run.plan, step, lane.chainId)
             : undefined;
           return {
-            stepId: laneStep.stepId,
+            stepId: sanitizeText(laneStep.stepId),
             status: laneStep.status,
             args: sanitizeValue(step ? mergeArgs(step, lane.chainId) : {}),
             value: step ? effectiveValue(step, lane.chainId).toString() : '0',
+            ...(step ? { gasOverrides: sanitizeValue(mergeGas(step, lane.chainId)) } : {}),
             ...(signer ? { signerAddress: signer.address } : {}),
             ...(laneStep.address ? { address: laneStep.address } : {}),
             ...(laneStep.unresolvedTx
@@ -60,10 +63,11 @@ export function renderArtifact(run: RunRecord): DeploymentArtifact {
 
   return DeploymentArtifactSchema.parse({
     schemaVersion: 1,
-    runId: run.id,
-    profileId: run.profileId,
+    runId: sanitizeText(run.id),
+    profileId: sanitizeText(run.profileId),
     name: sanitizeText(run.name),
     status: run.status,
+    ...(run.abortRequested ? { abortRequested: true } : {}),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     contracts,
@@ -150,7 +154,7 @@ function sanitizeValue<T>(value: T): T {
           ([key]) =>
             !['rawTx', 'urlFingerprint', 'repoPathOrUrl', 'url'].includes(key)
         )
-        .map(([key, child]) => [key, sanitizeValue(child)])
+        .map(([key, child]) => [sanitizeText(key), sanitizeValue(child)])
     ) as T;
   }
   return value;

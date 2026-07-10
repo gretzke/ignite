@@ -205,7 +205,7 @@ async function validateRpc(
   }
   bindings[String(chainId)] = {
     endpointId: endpoint.id,
-    label: endpoint.label ?? 'RPC endpoint',
+    label: safeMessage(new Error(endpoint.label ?? 'RPC endpoint'), 'RPC endpoint'),
     urlFingerprint: crypto
       .createHash('sha256')
       .update(endpoint.url)
@@ -228,43 +228,27 @@ async function validateSigners(
   deps: ValidationDeps
 ) {
   const signers = new Map<string, Hex>();
+  const failures: string[] = [];
   for (const step of plan.steps) {
     const signer = resolveSigner(plan, step, chainId);
-    if (!signer)
-      return {
-        item: failure(
-          'SIGNER_ACCOUNT_NOT_FOUND',
-          `No signer is configured for step ${step.id}`
-        ),
-        signers,
-      };
+    if (!signer) { failures.push(`No signer is configured for step ${step.id}`); continue; }
     const resolved = await deps.resolveAccount(
       signer.pluginId,
       signer.accountId,
       { refresh: true }
     );
-    if (!resolved)
-      return {
-        item: failure(
-          'SIGNER_ACCOUNT_NOT_FOUND',
-          `Signer account for step ${step.id} is not available`
-        ),
-        signers,
-      };
+    if (!resolved) { failures.push(`Signer account for step ${step.id} is not available`); continue; }
     if (
       resolved.account.address.toLowerCase() !== signer.address.toLowerCase()
     ) {
-      return {
-        item: failure(
-          'SIGNER_ADDRESS_MISMATCH',
-          `Signer address for step ${step.id} no longer matches the plan`
-        ),
-        signers,
-      };
+      failures.push(`Signer address for step ${step.id} no longer matches the plan`);
+      continue;
     }
     signers.set(step.id, signer.address as Hex);
   }
-  return { item: success('All signer accounts are available'), signers };
+  return failures.length
+    ? { item: failure('SIGNER_ACCOUNT_NOT_FOUND', failures.join('; '), { failures }), signers }
+    : { item: success('All signer accounts are available'), signers };
 }
 
 function validateArgs(
@@ -288,6 +272,9 @@ function validateArgs(
         );
       const ctor = constructorInputs(input.abi);
       const merged = mergeArgs(step, chainId);
+      const known = new Set(constructorInputs(input.abi).map((entry, index) => entry.name || `arg${index}`));
+      const unknown = Object.keys(merged).filter((key) => !known.has(key));
+      if (unknown.length) return failure('UNKNOWN_ARGUMENT', `Unknown constructor arguments for step ${step.id}`, { fields: unknown });
       const missing = missingArgKeys(ctor, merged);
       if (missing.length)
         return failure(
@@ -400,29 +387,29 @@ async function validateBalance(
       const estimate = estimates.get(step.id);
       if (!signer || estimate === undefined)
         throw new Error('A deployment transaction could not be estimated');
-      const gas = mergeGas(step, chainId).gasLimit;
+      const overrides = mergeGas(step, chainId);
+      const gas = overrides.gasLimit;
       const gasLimit = gas === undefined ? estimate : BigInt(gas);
+      const maxFeePerGas = overrides.maxFeePerGas === undefined ? fees.maxFeePerGas : BigInt(overrides.maxFeePerGas);
       required.set(
         signer,
         (required.get(signer) ?? 0n) +
-          gasLimit * fees.maxFeePerGas +
+          gasLimit * maxFeePerGas +
           effectiveValue(step, chainId)
       );
     }
+    const balances: Record<string, { requiredWei: string; balanceWei: string }> = {};
+    let insufficient = false;
     for (const [address, amount] of required) {
       const withBuffer = amount + (amount * BigInt(deps.bufferPct)) / 100n;
       const balance = await client.getBalance({ address });
-      if (balance < withBuffer)
-        return failure(
-          'INSUFFICIENT_BALANCE',
-          'Signer balance is insufficient for the selected deployments',
-          { requiredWei: withBuffer.toString(), balanceWei: balance.toString() }
-        );
-      return success('Signer balance covers all planned deployments', {
-        requiredWei: withBuffer.toString(),
-        balanceWei: balance.toString(),
-      });
+      balances[address] = { requiredWei: withBuffer.toString(), balanceWei: balance.toString() };
+      if (balance < withBuffer) insufficient = true;
     }
+    const first = Object.values(balances)[0];
+    const details = required.size === 1 ? { ...first, balances } : { balances };
+    if (insufficient) return failure('INSUFFICIENT_BALANCE', 'Signer balance is insufficient for the selected deployments', details);
+    if (required.size) return success('Signer balance covers all planned deployments', details);
     return success('No transaction value is required');
   } catch (error) {
     return failure(

@@ -22,21 +22,14 @@ export class RunStore {
   }
 
   async create(run: RunRecord): Promise<void> {
-    const existing = await this.findByIdempotencyKey(
-      run.profileId,
-      run.idempotencyKey
-    );
-    if (existing) {
-      throw new Error(
-        `A deployment run already exists for idempotency key ${run.idempotencyKey}`
-      );
-    }
-    const file = this.runPath(run.profileId, run.id);
-    if (await this.fileSystem.fileExists(file)) {
-      throw new Error(`Deployment run ${run.id} already exists`);
-    }
-    RunRecordSchema.parse(run);
-    await this.fileSystem.writeJsonFile(file, run);
+    await this.queued(run.profileId, async () => {
+      const existing = await this.findByIdempotencyKey(run.profileId, run.idempotencyKey);
+      if (existing) throw new Error(`A deployment run already exists for idempotency key ${run.idempotencyKey}`);
+      const file = this.runPath(run.profileId, run.id);
+      if (await this.fileSystem.fileExists(file)) throw new Error(`Deployment run ${run.id} already exists`);
+      RunRecordSchema.parse(run);
+      await this.fileSystem.writeJsonFile(file, run);
+    });
   }
 
   async findByIdempotencyKey(
@@ -87,7 +80,6 @@ export class RunStore {
     runId: string,
     fn: (run: RunRecord) => void
   ): Promise<RunRecord> {
-    const key = `${profileId}:${runId}`;
     let result!: RunRecord;
     const operation = async () => {
       const file = this.runPath(profileId, runId);
@@ -100,14 +92,15 @@ export class RunStore {
       await this.fileSystem.writeJsonFile(file, next);
       result = next;
     };
-    const previous = this.queues.get(key) ?? Promise.resolve();
-    const queued = previous.then(operation, operation);
-    this.queues.set(
-      key,
-      queued.catch(() => undefined)
-    );
-    await queued;
+    await this.queued(profileId, operation);
     return result;
+  }
+
+  private async queued<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.queues.get(key) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    this.queues.set(key, current.then(() => undefined, () => undefined));
+    return current;
   }
 
   async recoverStartup(): Promise<RunRecord[]> {
@@ -204,6 +197,8 @@ function claimInterruptedLanes(run: RunRecord): boolean {
     // and error — re-stamping it as interrupted would destroy the context the
     // user needs to resolve it (and widen the allowed verb set incorrectly).
     if (lane.status === 'paused') continue;
+    const firstNonTerminal = lane.steps.findIndex((step) => !['confirmed', 'skipped'].includes(step.status));
+    lane.currentStepIndex = firstNonTerminal < 0 ? lane.steps.length : firstNonTerminal;
     lane.status = 'paused';
     lane.pause = {
       reason: 'interrupted',

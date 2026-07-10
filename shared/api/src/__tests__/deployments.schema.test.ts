@@ -71,6 +71,19 @@ describe("deployment schemas", () => {
     ).toThrow();
   });
 
+  it.each([
+    (plan: ReturnType<typeof basePlan>) => ({ ...plan, contracts: [] }),
+    (plan: ReturnType<typeof basePlan>) => ({ ...plan, steps: [] }),
+    (plan: ReturnType<typeof basePlan>) => ({ ...plan, chains: [] }),
+    (plan: ReturnType<typeof basePlan>) => ({ ...plan, contracts: [...plan.contracts, { ...plan.contracts[0] }] }),
+    (plan: ReturnType<typeof basePlan>) => ({ ...plan, steps: [...plan.steps, { ...plan.steps[0] }] }),
+    (plan: ReturnType<typeof basePlan>) => ({ ...plan, chains: [1, 1] }),
+    (plan: ReturnType<typeof basePlan>) => ({ ...plan, steps: [{ ...plan.steps[0], contractId: 'missing' }] }),
+    (plan: ReturnType<typeof basePlan>) => ({ ...plan, signers: { perChain: { '01': signer } } }),
+  ])("enforces plan identity and chain-key invariants", (mutate) => {
+    expect(() => DeploymentPlanSchema.parse(mutate(basePlan()))).toThrow();
+  });
+
   it("allows raw transactions in persisted attempts", () => {
     expect(
       AttemptSchema.parse({

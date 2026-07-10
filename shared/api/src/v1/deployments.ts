@@ -8,7 +8,7 @@ import {
 } from "../utils/schema.js";
 
 const DECIMAL = /^\d+$/;
-const CHAIN_ID_KEY = /^\d+$/;
+const CHAIN_ID_KEY = /^[1-9]\d*$/;
 const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
@@ -125,6 +125,16 @@ export const DeploymentPlanSchema = createRequestSchema<DeploymentPlan>(
     steps: z.array(StepSchema),
     chains: z.array(z.number().int().positive()),
     signers: SignerCascadeSchema,
+  }).superRefine((plan, ctx) => {
+    if (plan.contracts.length === 0) ctx.addIssue({ code: 'custom', message: 'at least one contract is required', path: ['contracts'] });
+    if (plan.steps.length === 0) ctx.addIssue({ code: 'custom', message: 'at least one step is required', path: ['steps'] });
+    if (plan.chains.length === 0) ctx.addIssue({ code: 'custom', message: 'at least one chain is required', path: ['chains'] });
+    const duplicate = (values: string[]) => values.find((value, index) => values.indexOf(value) !== index);
+    if (duplicate(plan.contracts.map((contract) => contract.id))) ctx.addIssue({ code: 'custom', message: 'contract ids must be unique', path: ['contracts'] });
+    if (duplicate(plan.steps.map((step) => step.id))) ctx.addIssue({ code: 'custom', message: 'step ids must be unique', path: ['steps'] });
+    if (new Set(plan.chains).size !== plan.chains.length) ctx.addIssue({ code: 'custom', message: 'chains must be unique', path: ['chains'] });
+    const ids = new Set(plan.contracts.map((contract) => contract.id));
+    plan.steps.forEach((step, index) => { if (!ids.has(step.contractId)) ctx.addIssue({ code: 'custom', message: 'step contractId must reference a contract', path: ['steps', index, 'contractId'] }); });
   }),
 );
 
@@ -667,6 +677,7 @@ export interface DeploymentArtifact {
   profileId: string;
   name: string;
   status: RunStatus;
+  abortRequested?: boolean;
   createdAt: string;
   updatedAt: string;
   contracts: Array<{
@@ -682,12 +693,15 @@ export interface DeploymentArtifact {
     string,
     {
       chainId: number;
+      status: LaneStatus;
       providerLabel: string;
+      pause?: { reason: PauseReason; error: string };
       steps: Array<{
         stepId: string;
         status: StepStatus;
         args: ArgValues;
         value: string;
+        gasOverrides?: GasOverrides;
         signerAddress?: string;
         address?: Hex;
         unresolvedTx?: { txHash?: Hex; note?: string };
@@ -794,6 +808,7 @@ export const DeploymentArtifactSchema = z.object({
   profileId: z.string().min(1),
   name: z.string().min(1),
   status: RunStatusSchema,
+  abortRequested: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   contracts: z.array(
@@ -811,13 +826,16 @@ export const DeploymentArtifactSchema = z.object({
     ChainIdKeySchema,
     z.object({
       chainId: z.number().int().positive(),
+      status: LaneStatusSchema,
       providerLabel: z.string(),
+      pause: z.object({ reason: PauseReasonSchema, error: z.string() }).optional(),
       steps: z.array(
         z.object({
           stepId: z.string().min(1),
           status: StepStatusSchema,
           args: ArgValuesSchema,
           value: DecimalStringSchema,
+          gasOverrides: GasOverridesSchema.optional(),
           signerAddress: z.string().regex(HEX_ADDRESS).optional(),
           address: z.string().regex(HEX_ADDRESS).optional() as z.ZodType<
             Hex | undefined
