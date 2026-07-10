@@ -195,6 +195,10 @@ export class TxService {
     return client.sendRawTransaction({ serializedTransaction: rawTransaction });
   }
 
+  async getBalance(rpcUrl: string, address: Hex): Promise<bigint> {
+    return this.deps.createClient(rpcUrl).getBalance({ address });
+  }
+
   async waitForReceipt(
     rpcUrl: string,
     txHash: Hex,
@@ -221,9 +225,18 @@ export class TxService {
         hash: txHash,
         timeout: opts?.timeoutMs ?? RECEIPT_TIMEOUT_MS,
       });
-    const receipt = await (abortPromise
-      ? Promise.race([receiptPromise, abortPromise])
-      : receiptPromise);
+    let receipt: Awaited<typeof receiptPromise>;
+    try {
+      receipt = await (abortPromise
+        ? Promise.race([receiptPromise, abortPromise])
+        : receiptPromise);
+    } catch (error) {
+      if (error instanceof IgniteError) throw error;
+      if (/timed?\s*out|timeout/i.test(error instanceof Error ? error.message : String(error))) {
+        throw new IgniteError('Transaction receipt timed out', ErrorCodes.RECEIPT_TIMEOUT);
+      }
+      throw error;
+    }
 
     return {
       status: receipt.status,

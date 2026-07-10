@@ -300,6 +300,7 @@ describe('SignerProviderService.executeTx', () => {
       txService: {
         buildTransaction: async () => tx,
         withAccountLock: async (_chainId, _address, fn) => fn(),
+        getBalance: async () => 1_000_000_000n,
         waitForReceipt: async () => ({
           status: 'success',
           blockNumber: 1,

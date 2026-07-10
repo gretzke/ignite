@@ -308,6 +308,14 @@ export class SignerProviderService {
         });
         await args.onPhase?.('built', { tx });
 
+        // Recheck immediately before submission. Validation can be minutes old
+        // and another application may have spent this account's funds since.
+        const balance = await this.deps.txService.getBalance(args.rpcUrl, account.address as Hex);
+        const required = BigInt(tx.gas) * BigInt(tx.maxFeePerGas) + args.value;
+        if (balance < required) {
+          throw new IgniteError('Signer balance is insufficient for this transaction', ErrorCodes.INSUFFICIENT_FUNDS);
+        }
+
         if (account.capability === 'sign-and-send') {
           await args.onPhase?.('broadcasting', { tx });
           const response = await this.deps.invoke(
@@ -349,6 +357,9 @@ export class SignerProviderService {
           args.rpcUrl,
           rawTx
         );
+        if (broadcastHash.toLowerCase() !== txHash.toLowerCase()) {
+          throw new IgniteError('RPC returned a transaction hash different from the signed transaction', ErrorCodes.SIGNER_SEND_ERROR);
+        }
         const receipt = await this.deps.txService.waitForReceipt(
           args.rpcUrl,
           broadcastHash,
