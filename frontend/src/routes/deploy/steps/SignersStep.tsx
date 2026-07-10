@@ -40,6 +40,31 @@ export default function SignersStep() {
     signersApi.listAccounts(true).forEach((action) => dispatch(action));
   }, [dispatch]);
 
+  // One connect button per installed wallet extension: connecting without an
+  // rdns prompts EVERY wallet (MetaMask and Flask both pop up).
+  const [walletsByPlugin, setWalletsByPlugin] = useState<
+    Record<string, Array<{ rdns: string; name: string }>>
+  >({});
+  useEffect(() => {
+    let cancelled = false;
+    for (const pluginId of runtimePluginIds) {
+      void runtimeHost.invokeLocal(pluginId, 'listWallets').then((result) => {
+        if (cancelled || !result.success) return;
+        const wallets = (
+          result.data as { wallets?: Array<{ rdns: string; name: string }> }
+        )?.wallets;
+        if (Array.isArray(wallets))
+          setWalletsByPlugin((current) => ({
+            ...current,
+            [pluginId]: wallets,
+          }));
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [runtimePluginIds]);
+
   const refs = signers.providers.flatMap((provider) =>
     provider.accounts.map((account) => ({
       value: `${provider.pluginId}:${account.id}`,
@@ -85,30 +110,55 @@ export default function SignersStep() {
             runtimePluginIds.includes(provider.pluginId) &&
             (provider.state === 'needs-browser' || provider.state === 'ok')
         )
-        .map((provider) => (
-          <div
-            key={provider.pluginId}
-            className="card-milky p-3 flex items-center gap-3"
-          >
-            <span className="text-sm">
-              {provider.state === 'needs-browser'
-                ? `${provider.name} needs a browser connection.`
-                : `${provider.name} is available — connect it to list accounts.`}
-            </span>
-            <button
-              type="button"
-              className="btn btn-sm btn-primary ml-auto"
-              disabled={signers.connectingPluginId === provider.pluginId}
-              onClick={() =>
-                dispatch(signersApi.connectWallet(provider.pluginId))
-              }
+        .map((provider) => {
+          const wallets = walletsByPlugin[provider.pluginId] ?? [];
+          const connecting = signers.connectingPluginId === provider.pluginId;
+          return (
+            <div
+              key={provider.pluginId}
+              className="card-milky p-3 flex items-center gap-3 flex-wrap"
             >
-              {signers.connectingPluginId === provider.pluginId
-                ? 'Connecting…'
-                : 'Connect wallet'}
-            </button>
-          </div>
-        ))}
+              <span className="text-sm">
+                {provider.state === 'needs-browser'
+                  ? `${provider.name} needs a browser connection.`
+                  : `${provider.name} is available — connect it to list accounts.`}
+              </span>
+              <div className="flex items-center gap-2 ml-auto">
+                {wallets.length > 1 ? (
+                  wallets.map((wallet) => (
+                    <button
+                      key={wallet.rdns}
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      disabled={connecting}
+                      onClick={() =>
+                        dispatch(
+                          signersApi.connectWallet(
+                            provider.pluginId,
+                            wallet.rdns
+                          )
+                        )
+                      }
+                    >
+                      {connecting ? 'Connecting…' : `Connect ${wallet.name}`}
+                    </button>
+                  ))
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    disabled={connecting}
+                    onClick={() =>
+                      dispatch(signersApi.connectWallet(provider.pluginId))
+                    }
+                  >
+                    {connecting ? 'Connecting…' : 'Connect wallet'}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
       {signers.loading && refs.length === 0 && (
         <div className="card-milky p-4 flex items-center gap-2 text-sm text-muted">
           <Loader2 size={15} className="animate-spin" /> Loading signer

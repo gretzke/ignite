@@ -128,10 +128,16 @@ export const signersApi = {
       }),
     ];
   },
-  connectWallet(pluginId: string) {
+  connectWallet(pluginId: string, rdns?: string) {
     return async (dispatch: AppDispatch) => {
       dispatch(connectWalletStarted(pluginId));
-      const result = await runtimeHost.invokeLocal(pluginId, 'connect');
+      // With an rdns only that wallet extension prompts; without one the
+      // plugin loops eth_requestAccounts over every installed wallet.
+      const result = await runtimeHost.invokeLocal(
+        pluginId,
+        'connect',
+        rdns ? { rdns } : undefined
+      );
       if (!result.success) {
         dispatch(
           connectWalletFailed({

@@ -285,6 +285,23 @@ export class BrowserWalletPlugin extends SignerProviderPlugin {
     return { success: true, data: { accounts } };
   }
 
+  // Frontend-only helper (like connect): lets the UI offer one connect
+  // button per installed wallet extension instead of prompting all of them.
+  async listWallets(): Promise<
+    PluginResponse<{ wallets: Array<{ rdns: string; name: string }> }>
+  > {
+    const providers = await discoverProviders();
+    return {
+      success: true,
+      data: {
+        wallets: [...providers.values()].map((detail) => ({
+          rdns: detail.info.rdns,
+          name: detail.info.name,
+        })),
+      },
+    };
+  }
+
   async connect(params?: {
     rdns?: string;
   }): Promise<PluginResponse<GetAccountsResult>> {
