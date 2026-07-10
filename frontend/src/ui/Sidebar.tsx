@@ -5,6 +5,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Send,
+  Rocket,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../store';
@@ -13,6 +14,7 @@ import { setSidebarCollapsed } from '../store/features/app/appSlice';
 const NAV_ITEMS = [
   { to: '/repositories', label: 'Repositories', Icon: Folder },
   { to: '/dev/send', label: 'Dev Send', Icon: Send },
+  { to: '/deployments', label: 'Deployments', Icon: Rocket },
 ] as const;
 
 function navClass({ isActive }: { isActive: boolean }) {

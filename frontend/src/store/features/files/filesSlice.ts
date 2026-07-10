@@ -33,8 +33,8 @@ export interface FileData {
   loading: boolean;
   error?: string;
   content?: FileContent;
-  // Keyed by framework/plugin id: in multi-framework repos the same source
-  // file has a different artifact per framework
+  // Keyed by `${frameworkId}:${artifactPath}` so multiple contracts from one
+  // Solidity source never overwrite each other's artifact details.
   artifactData?: Record<string, ArtifactData>;
 }
 
@@ -96,10 +96,12 @@ const filesSlice = createSlice({
         repoPath: string;
         filePath: string;
         frameworkId: string;
+        artifactPath: string;
         artifactData: ArtifactData;
       }>
     ) {
-      const { repoPath, filePath, frameworkId, artifactData } = action.payload;
+      const { repoPath, filePath, frameworkId, artifactPath, artifactData } =
+        action.payload;
       const key = `${repoPath}:${filePath}`;
 
       if (!state.files[key]) {
@@ -107,7 +109,7 @@ const filesSlice = createSlice({
       }
       state.files[key].artifactData = {
         ...state.files[key].artifactData,
-        [frameworkId]: artifactData,
+        [`${frameworkId}:${artifactPath}`]: artifactData,
       };
     },
     setFileError(
@@ -201,6 +203,7 @@ export const filesApi = {
           repoPath,
           filePath, // Use the source file path as the key
           frameworkId: pluginId,
+          artifactPath,
           artifactData: data,
         });
       },

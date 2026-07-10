@@ -13,6 +13,9 @@ import RepositoriesPage from './routes/repositories/RepositoriesPage';
 import RepositoryPage from './routes/repositories/repository/RepositoryPage.tsx';
 import FilePage from './routes/repositories/repository/file/FilePage.tsx';
 import DevSendPage from './routes/dev/DevSendPage.tsx';
+import DeployWizardPage from './routes/deploy/DeployWizardPage.tsx';
+import DeploymentsPage from './routes/deployments/DeploymentsPage.tsx';
+import RunPage from './routes/deployments/RunPage.tsx';
 import './index.css';
 import { ToastProvider } from './ui/toast/ToastProvider';
 
@@ -26,6 +29,9 @@ const router = createBrowserRouter([
       { path: 'repositories/:repoPath', element: <RepositoryPage /> },
       { path: 'repositories/:repoPath/file/*', element: <FilePage /> },
       { path: 'dev/send', element: <DevSendPage /> },
+      { path: 'deploy', element: <DeployWizardPage /> },
+      { path: 'deployments', element: <DeploymentsPage /> },
+      { path: 'deployments/:runId', element: <RunPage /> },
       { path: 'plugins', element: <Navigate to="/settings#plugins" replace /> },
       { path: 'settings', element: <SettingsPage /> },
     ],

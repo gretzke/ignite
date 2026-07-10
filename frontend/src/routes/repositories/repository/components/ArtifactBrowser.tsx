@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Loader2, Folder, FileCode, ChevronRight } from 'lucide-react';
+import { Loader2, Folder, FileCode, ChevronRight, Rocket } from 'lucide-react';
 import {
   buildPathTree,
   getDirectoryContents,
@@ -8,6 +8,8 @@ import {
   type FileNode,
 } from '../../../../utils/pathTree';
 import type { ArtifactLocation } from '@ignite/api';
+import { useAppDispatch } from '../../../../store';
+import { seedDraft } from '../../../../store/features/deployments/deployDraftSlice';
 
 interface ArtifactBrowserProps {
   artifacts: ArtifactLocation[];
@@ -22,12 +24,16 @@ export default function ArtifactBrowser({
   frameworkId,
 }: ArtifactBrowserProps) {
   const navigate = useNavigate();
+  const dispatch = useAppDispatch();
   const { repoPath } = useParams<{ repoPath: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Get current directory path from URL params, default to empty (root)
   const [currentPath, setCurrentPath] = useState<string>(
     searchParams.get('path') || ''
+  );
+  const [selected, setSelected] = useState<Record<string, ArtifactLocation>>(
+    {}
   );
 
   // Sync currentPath with URL params when it changes
@@ -78,6 +84,8 @@ export default function ArtifactBrowser({
     if (currentPath) {
       params.set('path', currentPath);
     }
+    params.set('artifact', file.artifact.artifactPath);
+    params.set('contract', file.artifact.contractName);
     const queryString = params.toString();
     const queryParams = queryString ? `?${queryString}` : '';
 
@@ -131,6 +139,20 @@ export default function ArtifactBrowser({
 
   const currentPathDisplay = currentPath || 'root';
   const { directories, files } = directoryContents;
+  const deploySelected = () => {
+    if (!frameworkId || !repoPath) return;
+    const decodedRepoPath = decodeURIComponent(repoPath);
+    const contracts = Object.values(selected).map((artifact) => ({
+      id: `${frameworkId}:${artifact.artifactPath}:${artifact.contractName}`,
+      repoPathOrUrl: decodedRepoPath,
+      frameworkId,
+      artifactPath: artifact.artifactPath,
+      contractName: artifact.contractName,
+      sourcePath: artifact.sourcePath,
+    }));
+    dispatch(seedDraft(contracts));
+    navigate('/deploy');
+  };
 
   return (
     <div>
@@ -153,9 +175,21 @@ export default function ArtifactBrowser({
               {currentPathDisplay}
             </span>
           </div>
-          <span className="text-xs text-muted">
-            {files.length} contract{files.length !== 1 ? 's' : ''}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted">
+              {files.length} contract{files.length !== 1 ? 's' : ''}
+            </span>
+            {Object.keys(selected).length > 0 && (
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={deploySelected}
+              >
+                <Rocket size={14} /> Deploy selected (
+                {Object.keys(selected).length})
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -168,9 +202,7 @@ export default function ArtifactBrowser({
             className="list-row clickable flex items-center gap-3"
           >
             <Folder size={16} className="text-info flex-shrink-0" />
-            <span className="text-sm text-[var(--text)]">
-              {directory.name}
-            </span>
+            <span className="text-sm text-[var(--text)]">{directory.name}</span>
             <ChevronRight
               size={14}
               className="text-muted ml-auto flex-shrink-0"
@@ -179,19 +211,35 @@ export default function ArtifactBrowser({
         ))}
 
         {files.map((file) => (
-          <button
-            key={file.path}
-            onClick={() => handleFileClick(file)}
+          <div
+            key={file.identity}
             className="list-row clickable flex items-center gap-3"
           >
+            <input
+              type="checkbox"
+              checked={Boolean(selected[file.identity])}
+              aria-label={`Select ${file.artifact.contractName}`}
+              onChange={(event) =>
+                setSelected((current) => {
+                  const next = { ...current };
+                  if (event.target.checked) next[file.identity] = file.artifact;
+                  else delete next[file.identity];
+                  return next;
+                })
+              }
+            />
             <FileCode size={16} className="text-ok flex-shrink-0" />
-            <div className="flex-1 min-w-0">
+            <button
+              type="button"
+              onClick={() => handleFileClick(file)}
+              className="flex-1 min-w-0 text-left"
+            >
               <div className="text-sm text-[var(--text)] truncate">
                 {file.artifact.contractName}
               </div>
               <div className="mono-data text-muted truncate">{file.name}</div>
-            </div>
-          </button>
+            </button>
+          </div>
         ))}
       </div>
     </div>

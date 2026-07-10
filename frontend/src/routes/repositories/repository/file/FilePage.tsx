@@ -6,13 +6,21 @@ import {
   Link,
 } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { ArrowLeft, ChevronRight, Copy, Check, Loader2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronRight,
+  Copy,
+  Check,
+  Loader2,
+  Rocket,
+} from 'lucide-react';
 import { getRepoName } from '../../../../utils/repo';
 import type { RootState, AppDispatch } from '../../../../store/store';
 import { filesApi } from '../../../../store/features/files/filesSlice';
 import { useSelector as useCompilerSelector } from 'react-redux';
 import { listArtifacts } from '../../../../store/features/compiler/compilerSlice';
 import { SyntaxHighlighter } from '../../../../components/SyntaxHighlighter';
+import { seedDraft } from '../../../../store/features/deployments/deployDraftSlice';
 
 interface CopyButtonProps {
   content: string;
@@ -114,6 +122,8 @@ export default function FilePage() {
   // Extract framework ID and directory path from query parameters
   const frameworkId = searchParams.get('framework');
   const directoryPath = searchParams.get('path');
+  const artifactPath = searchParams.get('artifact');
+  const contractName = searchParams.get('contract');
 
   // Get file data from store
   const fileKey = `${decodedRepoPath}:${decodedFilePath}`;
@@ -162,14 +172,16 @@ export default function FilePage() {
     if (
       frameworkId &&
       frameworkData?.artifacts &&
-      !fileData?.artifactData?.[frameworkId]
+      artifactPath &&
+      !fileData?.artifactData?.[`${frameworkId}:${artifactPath}`]
     ) {
       const artifact = frameworkData.artifacts.find(
         (art: {
           sourcePath: string;
           artifactPath: string;
           contractName: string;
-        }) => art.sourcePath === decodedFilePath
+        }) =>
+          art.artifactPath === artifactPath && art.contractName === contractName
       );
 
       if (artifact) {
@@ -187,6 +199,8 @@ export default function FilePage() {
     decodedRepoPath,
     decodedFilePath,
     frameworkId,
+    artifactPath,
+    contractName,
     fileData?.artifactData,
     frameworkData?.artifacts,
   ]);
@@ -214,8 +228,33 @@ export default function FilePage() {
   const error = fileData?.error;
   const content = fileData?.content?.content;
   const artifactData = frameworkId
-    ? fileData?.artifactData?.[frameworkId]
+    ? fileData?.artifactData?.[`${frameworkId}:${artifactPath}`]
     : undefined;
+  const selectedArtifact = frameworkData?.artifacts?.find(
+    (artifact) =>
+      artifact.artifactPath === artifactPath &&
+      artifact.contractName === contractName
+  );
+  const hasUnlinkedLibraries = Boolean(
+    artifactData?.creationCodeLinkReferences &&
+    Object.keys(artifactData.creationCodeLinkReferences).length > 0
+  );
+  const deploy = () => {
+    if (!frameworkId || !selectedArtifact) return;
+    dispatch(
+      seedDraft([
+        {
+          id: `${frameworkId}:${selectedArtifact.artifactPath}:${selectedArtifact.contractName}`,
+          repoPathOrUrl: decodedRepoPath,
+          frameworkId,
+          artifactPath: selectedArtifact.artifactPath,
+          contractName: selectedArtifact.contractName,
+          sourcePath: selectedArtifact.sourcePath,
+        },
+      ])
+    );
+    navigate('/deploy');
+  };
 
   // Only show main loading for file content - artifact data loads separately in the Contract Details card
   const isLoading = fileLoading || !contentLoaded;
@@ -257,7 +296,27 @@ export default function FilePage() {
       {/* Contract Details section - show immediately if we have a framework */}
       {frameworkId && (
         <div className="card-milky p-4 mb-6">
-          <h3 className="text-lg font-semibold mb-3">Contract Details</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-semibold">Contract Details</h3>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!artifactData || hasUnlinkedLibraries}
+              title={
+                hasUnlinkedLibraries
+                  ? 'Requires library linking (planned for D5)'
+                  : undefined
+              }
+              onClick={deploy}
+            >
+              <Rocket size={15} /> Deploy
+            </button>
+          </div>
+          {hasUnlinkedLibraries && (
+            <p className="text-xs text-warn mb-3">
+              Requires library linking (planned for D5).
+            </p>
+          )}
           {artifactData ? (
             <div className="flex flex-wrap gap-6 text-xs">
               <div>

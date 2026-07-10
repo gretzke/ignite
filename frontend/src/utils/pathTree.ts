@@ -11,6 +11,7 @@ export interface DirectoryNode {
 export interface FileNode extends DirectoryNode {
   type: 'source' | 'artifact';
   artifact: ArtifactLocation;
+  identity: string;
 }
 
 /**
@@ -64,26 +65,21 @@ function addPathToTree(
   // Add the file node
   const fileName = pathParts[pathParts.length - 1];
   if (fileName) {
+    const identity = `${artifact.artifactPath}:${artifact.contractName}`;
     const fileNode: FileNode = {
       name: fileName,
       path: filePath,
       type: fileType,
       children: {},
       artifact,
+      identity,
     };
 
     // If a file with this name already exists, we need to handle it
     // This can happen when source and artifact have the same relative path structure
-    if (currentNode.children[fileName]) {
-      const existing = currentNode.children[fileName];
-      // Add artifact reference to existing node
-      if (!existing.artifacts) {
-        existing.artifacts = [];
-      }
-      existing.artifacts.push(artifact);
-    } else {
-      currentNode.children[fileName] = fileNode;
-    }
+    // A Solidity source can contain several deployable contracts. Keep one
+    // row per artifact identity instead of collapsing by source path.
+    currentNode.children[`${fileName}:${identity}`] = fileNode;
   }
 }
 
