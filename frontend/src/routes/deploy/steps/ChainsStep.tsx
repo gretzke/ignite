@@ -68,10 +68,20 @@ export default function ChainsStep() {
 
   const selectedSet = useMemo(() => new Set(draft.chains), [draft.chains]);
   const visibleChains = useMemo(() => {
-    if (searchResults === null) return chains.chains;
-    const visible = new Set([...draft.chains, ...searchResults]);
-    return chains.chains.filter((chain) => visible.has(chain.chainId));
-  }, [chains.chains, draft.chains, searchResults]);
+    const base =
+      searchResults === null
+        ? chains.chains
+        : chains.chains.filter((chain) =>
+            new Set([...draft.chains, ...searchResults]).has(chain.chainId)
+          );
+    // Selected chains pin to the top: with hundreds of rows, a selected
+    // chain missing its RPC endpoint must never hide below the fold — that
+    // reads as "Continue is broken" with no visible reason.
+    return [...base].sort(
+      (a, b) =>
+        Number(selectedSet.has(b.chainId)) - Number(selectedSet.has(a.chainId))
+    );
+  }, [chains.chains, draft.chains, searchResults, selectedSet]);
   return (
     <section className="grid gap-4">
       <div>
@@ -116,10 +126,19 @@ export default function ChainsStep() {
               </div>
               {selected && (
                 <div className="grid gap-2 mt-3 pl-11">
+                  {!draft.rpcSelection[key] && (
+                    <p className="text-sm text-warn">
+                      Select an RPC endpoint to continue.
+                    </p>
+                  )}
                   <Select
                     options={endpoints.map((endpoint) => ({
                       value: endpoint.id,
-                      label: `${endpoint.label ?? endpoint.id} · ${endpoint.source}`,
+                      // Users pick URLs, not endpoint ids or registry
+                      // provenance — show the label only when someone set one.
+                      label: endpoint.label
+                        ? `${endpoint.label} · ${endpoint.url}`
+                        : endpoint.url,
                     }))}
                     value={draft.rpcSelection[key]?.endpointId}
                     placeholder="Select an RPC endpoint"
@@ -131,7 +150,7 @@ export default function ChainsStep() {
                         selectRpc({
                           chainId: chain.chainId,
                           endpointId,
-                          label: endpoint?.label ?? endpointId,
+                          label: endpoint?.label ?? endpoint?.url ?? endpointId,
                         })
                       );
                     }}

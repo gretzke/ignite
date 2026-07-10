@@ -19,6 +19,44 @@ const STEPS = [
   { id: 'review', label: 'Review' },
 ];
 
+function WizardNav({
+  step,
+  blocker,
+  onBack,
+  onContinue,
+}: {
+  step: number;
+  blocker?: string;
+  onBack: () => void;
+  onContinue: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <button
+        type="button"
+        className="btn btn-secondary"
+        disabled={step === 0}
+        onClick={onBack}
+      >
+        <ArrowLeft size={15} /> Back
+      </button>
+      <div className="flex items-center gap-3 min-w-0">
+        {blocker && (
+          <span className="text-sm text-warn truncate">{blocker}</span>
+        )}
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={Boolean(blocker)}
+          onClick={onContinue}
+        >
+          Continue <ArrowRight size={15} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function DeployWizardPage() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
@@ -26,25 +64,56 @@ export default function DeployWizardPage() {
   const chains = useAppSelector((state) => state.chains.chains);
   const [step, setStep] = useState(0);
   const [contractsValid, setContractsValid] = useState(false);
-  const plan = useMemo(() => {
+  const { plan, planProblem } = useMemo(() => {
     try {
-      return planFromDraft(draft, chains);
-    } catch {
-      return null;
+      return { plan: planFromDraft(draft, chains), planProblem: undefined };
+    } catch (error) {
+      return {
+        plan: null,
+        planProblem:
+          error instanceof Error ? error.message : 'The plan is incomplete',
+      };
     }
   }, [draft, chains]);
-  const resolvedSigners = draft.chains.every(
-    (chainId) =>
-      draft.signers.perChain?.[String(chainId)] || draft.signers.global
-  );
-  const valid = [
-    contractsValid,
-    draft.chains.length > 0 &&
-      draft.chains.every((chainId) => draft.rpcSelection[String(chainId)]),
-    resolvedSigners,
-    Boolean(plan),
-    true,
+  const chainName = (chainId: number) =>
+    chains.find((chain) => chain.chainId === chainId)?.name ??
+    `Chain ${chainId}`;
+
+  // The first reason the current step cannot continue — surfaced next to the
+  // disabled button. A silently disabled Continue with the offending chain
+  // scrolled off-screen reads as a dead end.
+  const blockers: Array<string | undefined> = [
+    contractsValid ? undefined : 'Select at least one deployable contract',
+    (() => {
+      if (draft.chains.length === 0) return 'Select at least one chain';
+      const missing = draft.chains.find(
+        (chainId) => !draft.rpcSelection[String(chainId)]
+      );
+      return missing === undefined
+        ? undefined
+        : `${chainName(missing)} needs an RPC endpoint`;
+    })(),
+    (() => {
+      const unresolved = draft.chains.find(
+        (chainId) =>
+          !draft.signers.perChain?.[String(chainId)] && !draft.signers.global
+      );
+      return unresolved === undefined
+        ? undefined
+        : `${chainName(unresolved)} has no signer`;
+    })(),
+    planProblem,
+    undefined,
   ];
+
+  const nav = step < STEPS.length - 1 && (
+    <WizardNav
+      step={step}
+      blocker={blockers[step]}
+      onBack={() => setStep((value) => value - 1)}
+      onContinue={() => setStep((value) => value + 1)}
+    />
+  );
 
   return (
     <div className="text-[var(--text)] max-w-5xl mx-auto">
@@ -71,6 +140,7 @@ export default function DeployWizardPage() {
           if (index <= step) setStep(index);
         }}
       />
+      {nav && <div className="mb-4">{nav}</div>}
       <div className="card-milky p-5">
         {step === 0 && (
           <ContractsStep
@@ -86,26 +156,7 @@ export default function DeployWizardPage() {
         {step === 3 && <ArgumentsStep />}
         {step === 4 && plan && <ReviewStep plan={plan} />}
       </div>
-      {step < STEPS.length - 1 && (
-        <div className="flex justify-between mt-4">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={step === 0}
-            onClick={() => setStep((value) => value - 1)}
-          >
-            <ArrowLeft size={15} /> Back
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={!valid[step]}
-            onClick={() => setStep((value) => value + 1)}
-          >
-            Continue <ArrowRight size={15} />
-          </button>
-        </div>
-      )}
+      {nav && <div className="mt-4">{nav}</div>}
     </div>
   );
 }
