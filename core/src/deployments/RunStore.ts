@@ -123,7 +123,12 @@ export class RunStore {
     const profilesDir = path.join(this.baseDir, 'profiles');
     let profileIds: string[] = [];
     try {
-      profileIds = await fs.readdir(profilesDir);
+      // Only directories are profiles: Finder drops .DS_Store (and other
+      // tools drop plain files) into profiles/, and treating one as a
+      // profileId makes the runs-dir scan throw ENOTDIR at startup.
+      profileIds = (await fs.readdir(profilesDir, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -135,7 +140,8 @@ export class RunStore {
       try {
         entries = await fs.readdir(dir);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
       }
       for (const entry of entries.sort()) {
         if (!entry.endsWith('.json')) continue;

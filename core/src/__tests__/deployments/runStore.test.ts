@@ -164,6 +164,17 @@ describe('RunStore', () => {
     expect(claimed.lanes['2'].pause).toMatchObject({ reason: 'interrupted' });
   });
 
+  it('recovery ignores stray files in the profiles directory', async () => {
+    const record = run();
+    await store.create(record);
+    // Finder metadata next to real profile dirs must not crash startup.
+    await fs.writeFile(path.join(home, 'profiles', '.DS_Store'), 'junk');
+
+    const recovered = await store.recoverStartup();
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].id).toBe(record.id);
+  });
+
   it('returns an existing run for its profile idempotency key', async () => {
     const record = run();
     await store.create(record);
