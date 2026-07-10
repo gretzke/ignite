@@ -17,6 +17,7 @@ export * from "./jobs.js";
 export * from "./git.js";
 export * from "./chains.js";
 export * from "./signers.js";
+export * from "./deployments.js";
 
 import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
@@ -73,6 +74,8 @@ const allRoutes = {
   ...gitRoutes,
   ...chainRoutes,
   ...signerRoutes,
+  // deploymentRoutes joins the registry in D3a Task 8 together with its
+  // handlers — registering contract-only routes leaves core unbuildable.
 } as const;
 
 export const v1Routes = allRoutes satisfies ValidateRoutes<typeof allRoutes>;
