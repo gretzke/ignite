@@ -509,6 +509,33 @@ function codeOf(error: unknown, fallback: string): string {
     : fallback;
 }
 function safeMessage(error: unknown, fallback: string): string {
-  const message = error instanceof Error ? error.message : fallback;
-  return message.replace(/https?:\/\/\S+/gi, 'RPC endpoint');
+  // viem errors carry the entire JSON-RPC request (including full creation
+  // calldata) in .message; .shortMessage is the human-sized diagnosis. Keep
+  // the short form, add truncated details when they say more, and clamp any
+  // surviving hex blobs so a checklist item can never be a wall of bytes.
+  const viemError = error as {
+    shortMessage?: unknown;
+    details?: unknown;
+    message?: unknown;
+  };
+  const short =
+    typeof viemError?.shortMessage === 'string'
+      ? viemError.shortMessage
+      : undefined;
+  const details =
+    typeof viemError?.details === 'string' ? viemError.details : undefined;
+  const base =
+    short ??
+    (error instanceof Error && error.message ? error.message : fallback);
+  const composed =
+    details && !base.includes(details)
+      ? `${base} (${details.slice(0, 160)})`
+      : base;
+  return composed
+    .replace(/https?:\/\/\S+/gi, 'RPC endpoint')
+    .replace(
+      /0x[0-9a-fA-F]{68,}/g,
+      (blob) => `${blob.slice(0, 22)}… (${(blob.length - 2) / 2} bytes)`
+    )
+    .slice(0, 400);
 }

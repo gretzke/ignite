@@ -50,7 +50,12 @@ export default function ValidationChecklist({
                       <div className="text-sm font-medium capitalize">
                         {key}
                       </div>
-                      <div className="text-xs text-muted">{item.message}</div>
+                      <div
+                        className="text-xs text-muted"
+                        style={{ overflowWrap: 'anywhere' }}
+                      >
+                        {item.message}
+                      </div>
                     </div>
                   </div>
                 );
