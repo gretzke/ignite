@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   useNavigate,
   useLocation,
@@ -20,6 +20,7 @@ import { filesApi } from '../../../../store/features/files/filesSlice';
 import { useSelector as useCompilerSelector } from 'react-redux';
 import { listArtifacts } from '../../../../store/features/compiler/compilerSlice';
 import { SyntaxHighlighter } from '../../../../components/SyntaxHighlighter';
+import Select from '../../../../components/Select';
 import { seedDraft } from '../../../../store/features/deployments/deployDraftSlice';
 
 interface CopyButtonProps {
@@ -106,7 +107,7 @@ export default function FilePage() {
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
   const location = useLocation();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Extract both repo path and file path from the URL
   const pathMatch = location.pathname.match(
@@ -143,6 +144,37 @@ export default function FilePage() {
       : artifact.sourcePath === decodedFilePath
   );
   const selectedArtifactPath = selectedArtifact?.artifactPath;
+
+  // Multi-solc/profile builds emit several artifacts for the same contract
+  // (UniversalRouter.json, UniversalRouter.0.8.17.json, …). Offer a version
+  // picker whenever more than one exists; the variant name is whatever sits
+  // between the contract name and .json, 'default' for the canonical file.
+  const versionVariants = useMemo(() => {
+    if (!selectedArtifact || !frameworkData?.artifacts) return [];
+    return frameworkData.artifacts
+      .filter(
+        (artifact) =>
+          artifact.sourcePath === selectedArtifact.sourcePath &&
+          artifact.contractName === selectedArtifact.contractName
+      )
+      .map((artifact) => {
+        const base = artifact.artifactPath.split('/').pop() ?? '';
+        const suffix = base
+          .replace(/\.json$/, '')
+          .slice(artifact.contractName.length)
+          .replace(/^\./, '');
+        return { artifact, label: suffix || 'default' };
+      })
+      .sort((a, b) =>
+        a.label === 'default' ? -1 : b.label === 'default' ? 1 : a.label.localeCompare(b.label)
+      );
+  }, [selectedArtifact, frameworkData?.artifacts]);
+
+  const selectArtifactVersion = (nextArtifactPath: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('artifact', nextArtifactPath);
+    setSearchParams(next, { replace: true });
+  };
 
   // Load artifacts if they're missing (happens when accessing FilePage directly)
   useEffect(() => {
@@ -286,21 +318,33 @@ export default function FilePage() {
       {/* Contract Details section - show immediately if we have a framework */}
       {frameworkId && (
         <div className="card-milky p-4 mb-6">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 gap-3">
             <h3 className="text-lg font-semibold">Contract Details</h3>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!artifactData || hasUnlinkedLibraries}
-              title={
-                hasUnlinkedLibraries
-                  ? 'Requires library linking (planned for D5)'
-                  : undefined
-              }
-              onClick={deploy}
-            >
-              <Rocket size={15} /> Deploy
-            </button>
+            <div className="flex items-center gap-2">
+              {versionVariants.length > 1 && (
+                <Select
+                  options={versionVariants.map(({ artifact, label }) => ({
+                    value: artifact.artifactPath,
+                    label: `Build: ${label}`,
+                  }))}
+                  value={selectedArtifactPath}
+                  onValueChange={selectArtifactVersion}
+                />
+              )}
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!artifactData || hasUnlinkedLibraries}
+                title={
+                  hasUnlinkedLibraries
+                    ? 'Requires library linking (planned for D5)'
+                    : undefined
+                }
+                onClick={deploy}
+              >
+                <Rocket size={15} /> Deploy
+              </button>
+            </div>
           </div>
           {hasUnlinkedLibraries && (
             <p className="text-xs text-warn mb-3">

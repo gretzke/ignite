@@ -75,6 +75,40 @@ export default function SignersStep() {
           <RefreshCw size={14} /> Refresh
         </button>
       </div>
+      {signers.providers
+        // A browser wallet with a registered host reports 'ok' with zero
+        // accounts until the user authorizes the site — it must still offer
+        // Connect here, or the wallet is simply invisible in the wizard.
+        .filter(
+          (provider) =>
+            provider.accounts.length === 0 &&
+            runtimePluginIds.includes(provider.pluginId) &&
+            (provider.state === 'needs-browser' || provider.state === 'ok')
+        )
+        .map((provider) => (
+          <div
+            key={provider.pluginId}
+            className="card-milky p-3 flex items-center gap-3"
+          >
+            <span className="text-sm">
+              {provider.state === 'needs-browser'
+                ? `${provider.name} needs a browser connection.`
+                : `${provider.name} is available — connect it to list accounts.`}
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary ml-auto"
+              disabled={signers.connectingPluginId === provider.pluginId}
+              onClick={() =>
+                dispatch(signersApi.connectWallet(provider.pluginId))
+              }
+            >
+              {signers.connectingPluginId === provider.pluginId
+                ? 'Connecting…'
+                : 'Connect wallet'}
+            </button>
+          </div>
+        ))}
       {signers.loading && refs.length === 0 && (
         <div className="card-milky p-4 flex items-center gap-2 text-sm text-muted">
           <Loader2 size={15} className="animate-spin" /> Loading signer
@@ -118,40 +152,6 @@ export default function SignersStep() {
           );
         })}
       </div>
-      {signers.providers
-        // A browser wallet with a registered host reports 'ok' with zero
-        // accounts until the user authorizes the site — it must still offer
-        // Connect here, or the wallet is simply invisible in the wizard.
-        .filter(
-          (provider) =>
-            provider.accounts.length === 0 &&
-            runtimePluginIds.includes(provider.pluginId) &&
-            (provider.state === 'needs-browser' || provider.state === 'ok')
-        )
-        .map((provider) => (
-          <div
-            key={provider.pluginId}
-            className="card-milky p-3 flex items-center gap-3"
-          >
-            <span className="text-sm">
-              {provider.state === 'needs-browser'
-                ? `${provider.name} needs a browser connection.`
-                : `${provider.name} is available — connect it to list accounts.`}
-            </span>
-            <button
-              type="button"
-              className="btn btn-sm btn-primary ml-auto"
-              disabled={signers.connectingPluginId === provider.pluginId}
-              onClick={() =>
-                dispatch(signersApi.connectWallet(provider.pluginId))
-              }
-            >
-              {signers.connectingPluginId === provider.pluginId
-                ? 'Connecting…'
-                : 'Connect wallet'}
-            </button>
-          </div>
-        ))}
     </section>
   );
 }
