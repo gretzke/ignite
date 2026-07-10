@@ -29,9 +29,13 @@ export interface DeploymentHandlerDeps {
 }
 
 export function createDeploymentHandlers(deps?: Partial<DeploymentHandlerDeps>) {
-  const engine = deps?.engine ?? DeployEngine.getInstance();
+  // Resolve the singleton per request. Tests and process lifecycle recovery
+  // replace it after shutdown; capturing it while the API module loads would
+  // keep routing requests into the stopped engine (and its stale signer/WS
+  // dependencies).
+  const engine = () => deps?.engine ?? DeployEngine.getInstance();
   const d: DeploymentHandlerDeps = {
-    engine,
+    engine: engine(),
     getProfileManager: deps?.getProfileManager ?? (() => ProfileManager.getInstance()),
     validate: deps?.validate ?? ((plan, rpc, opts) => DeployEngine.getInstance().validatePlan(plan, rpc, opts)),
     getRun: deps?.getRun ?? ((profileId, runId) => DeployEngine.getInstance().get(profileId, runId)),
@@ -51,7 +55,7 @@ export function createDeploymentHandlers(deps?: Partial<DeploymentHandlerDeps>) 
       try { const result = await d.validate(request.body.plan, request.body.rpcSelection, { profileId: await profileId() }); return reply.status(200).send({ data: { chains: result.report.chains, frozenCandidates: result.frozen as ValidateDeploymentData['frozenCandidates'] } }); } catch (error) { return deploymentError(reply, error); }
     },
     createDeploymentRun: async (request: FastifyRequest<{ Body: CreateRunRequest }>, reply: FastifyReply): Promise<IApiResponse<CreateRunData>> => {
-      try { const run = await engine.launch({ profileId: await profileId(), ...request.body }); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
+      try { const run = await engine().launch({ profileId: await profileId(), ...request.body }); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
     },
     listDeploymentRuns: async (request: FastifyRequest<{ Querystring: ListRunsQuery }>, reply: FastifyReply): Promise<IApiResponse<ListRunsData>> => {
       try { const data = await d.listRuns(await profileId()); const active = request.query.active; return reply.status(200).send({ data: { unreadable: data.unreadable, runs: active === undefined ? data.runs : data.runs.filter((run) => active === 'true' ? ['running', 'paused'].includes(run.status) : !['running', 'paused'].includes(run.status)) } }); } catch (error) { return deploymentError(reply, error); }
@@ -60,13 +64,13 @@ export function createDeploymentHandlers(deps?: Partial<DeploymentHandlerDeps>) 
       try { const run = await d.getRun(await profileId(), request.params.runId); return run ? reply.status(200).send({ data: { run } }) : notFound(reply, 'Deployment run not found'); } catch (error) { return deploymentError(reply, error); }
     },
     resolveDeploymentLane: async (request: FastifyRequest<{ Params: ResolveLaneParams; Body: ResolveLaneRequest }>, reply: FastifyReply): Promise<IApiResponse<GetRunData>> => {
-      try { const run = await engine.resolveLane(await profileId(), request.params.runId, Number(request.params.chainId), request.body); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
+      try { const run = await engine().resolveLane(await profileId(), request.params.runId, Number(request.params.chainId), request.body); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
     },
     resumeDeploymentRun: async (request: FastifyRequest<{ Params: RunIdParams }>, reply: FastifyReply): Promise<IApiResponse<GetRunData>> => {
-      try { const run = await engine.resume(await profileId(), request.params.runId); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
+      try { const run = await engine().resume(await profileId(), request.params.runId); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
     },
     abortDeploymentRun: async (request: FastifyRequest<{ Params: RunIdParams }>, reply: FastifyReply): Promise<IApiResponse<GetRunData>> => {
-      try { const run = await engine.abort(await profileId(), request.params.runId); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
+      try { const run = await engine().abort(await profileId(), request.params.runId); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
     },
     getDeploymentArtifact: async (request: FastifyRequest<{ Params: RunIdParams }>, reply: FastifyReply): Promise<IApiResponse<GetDeploymentArtifactData>> => {
       try { const run = await d.getRun(await profileId(), request.params.runId); if (!run || !Object.values(run.lanes).some((lane: any) => lane.status === 'completed' || lane.status === 'aborted')) return notFound(reply, 'Deployment artifact is not available yet'); return reply.status(200).send({ data: { artifact: renderArtifact(run) } }); } catch (error) { return deploymentError(reply, error); }

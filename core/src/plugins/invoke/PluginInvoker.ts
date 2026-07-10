@@ -45,6 +45,13 @@ export class PluginInvoker {
     return PluginInvoker.instance;
   }
 
+  // The constructor captures the bridge singleton, so a test that resets
+  // FrontendRuntimeBridge must reset this too or requests route into the
+  // orphaned bridge.
+  static resetInstance(): void {
+    PluginInvoker.instance = undefined as unknown as PluginInvoker;
+  }
+
   async invoke(
     pluginId: string,
     operation: string,
