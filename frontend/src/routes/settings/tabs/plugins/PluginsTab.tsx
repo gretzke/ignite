@@ -61,6 +61,14 @@ function trackSubtitle(
   return '';
 }
 
+// Short pill labels for manifest types; multi-type plugins (e.g. chainz:
+// rpc-provider + signer-provider) get one pill per type.
+const TYPE_PILL_LABELS: Record<string, string> = {
+  compiler: 'Compiler',
+  'rpc-provider': 'RPC',
+  'signer-provider': 'Signer',
+};
+
 function PluginCard({
   plugin,
   versionInfo,
@@ -132,11 +140,14 @@ function PluginCard({
             <span className="text-sm font-semibold truncate">
               {plugin.name ?? plugin.pluginId}
             </span>
-            {plugin.types[0] && (
-              <span className="text-xs rounded-full pill px-2 py-0.5 shrink-0 capitalize">
-                {plugin.types[0]}
+            {plugin.types.map((type) => (
+              <span
+                key={type}
+                className="text-xs rounded-full pill px-2 py-0.5 shrink-0"
+              >
+                {TYPE_PILL_LABELS[type] ?? type}
               </span>
-            )}
+            ))}
             {!isNative &&
               granted.map((p) => (
                 <span
