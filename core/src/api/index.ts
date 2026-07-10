@@ -24,6 +24,7 @@ import { versionsHandlers } from './plugins/versions.js';
 import { gitHandlers } from './git.js';
 import { chainHandlers } from './chains.js';
 import { signerHandlers } from './signers.js';
+import { deploymentHandlers } from './deployments.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
@@ -98,6 +99,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...gitHandlers,
     ...chainHandlers,
     ...signerHandlers,
+    ...deploymentHandlers,
   };
 
   checkHandlers(allHandlers);

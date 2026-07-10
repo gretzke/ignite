@@ -7,8 +7,9 @@
 //
 // No Fastify types here beyond the socket shape we actually use, so this is
 // unit-testable with a plain fake socket (see __tests__/api/ws.test.ts).
-import type { JobEvent } from '@ignite/api';
+import type { JobEvent, RunEvent } from '@ignite/api';
 import type { JobManager } from '../jobs/JobManager.js';
+import type { DeployEngine } from '../deployments/DeployEngine.js';
 import {
   FrontendRuntimeBridge,
   type RuntimeResponseFrame,
@@ -34,6 +35,9 @@ interface UnsubscribeFrame {
   jobId: string;
 }
 
+interface SubscribeRunFrame { type: 'subscribe-run'; runId: string; epoch?: string; afterSeq?: number; }
+interface UnsubscribeRunFrame { type: 'unsubscribe-run'; runId: string; }
+
 interface RuntimeRegisterFrame {
   type: 'runtime-register';
   pluginIds: string[];
@@ -42,6 +46,8 @@ interface RuntimeRegisterFrame {
 type ClientFrame =
   | SubscribeFrame
   | UnsubscribeFrame
+  | SubscribeRunFrame
+  | UnsubscribeRunFrame
   | RuntimeRegisterFrame
   | RuntimeResponseFrame;
 
@@ -70,6 +76,12 @@ function parseClientFrame(raw: unknown): ClientFrame | undefined {
   if (frame.type === 'unsubscribe' && typeof frame.jobId === 'string') {
     return { type: 'unsubscribe', jobId: frame.jobId };
   }
+  if (frame.type === 'subscribe-run' && typeof frame.runId === 'string' &&
+    (frame.epoch === undefined || typeof frame.epoch === 'string') &&
+    (frame.afterSeq === undefined || typeof frame.afterSeq === 'number')) {
+    return { type: 'subscribe-run', runId: frame.runId, epoch: frame.epoch as string | undefined, afterSeq: frame.afterSeq as number | undefined };
+  }
+  if (frame.type === 'unsubscribe-run' && typeof frame.runId === 'string') return { type: 'unsubscribe-run', runId: frame.runId };
   if (
     frame.type === 'runtime-register' &&
     Array.isArray(frame.pluginIds) &&
@@ -95,13 +107,16 @@ function parseClientFrame(raw: unknown): ClientFrame | undefined {
 
 export function createWsHandler(
   jobs: JobManager,
-  bridge = FrontendRuntimeBridge.getInstance()
+  bridge = FrontendRuntimeBridge.getInstance(),
+  runs?: Pick<DeployEngine, 'subscribe' | 'eventsSince' | 'get'>,
+  getProfileId?: () => string
 ): (socket: WsSocket) => void {
   return (socket: WsSocket) => {
     // One live-event unsubscribe per jobId this socket currently cares
     // about; re-subscribing to the same jobId tears down the old listener
     // first so we never leak a JobManager subscription.
     const subscriptions = new Map<string, () => void>();
+    const runSubscriptions = new Map<string, () => void>();
 
     const safeSend = (payload: unknown): void => {
       try {
@@ -114,6 +129,10 @@ export function createWsHandler(
     const teardown = (jobId: string): void => {
       subscriptions.get(jobId)?.();
       subscriptions.delete(jobId);
+    };
+    const teardownRun = (runId: string): void => {
+      runSubscriptions.get(runId)?.();
+      runSubscriptions.delete(runId);
     };
 
     const handleSubscribe = (jobId: string, afterSeq?: number): void => {
@@ -146,6 +165,29 @@ export function createWsHandler(
       subscriptions.set(jobId, unsubscribe);
     };
 
+    const handleSubscribeRun = async (runId: string, epoch?: string, afterSeq?: number): Promise<void> => {
+      if (!runs || !getProfileId) { safeSend({ type: 'error', message: `unknown deployment run ${runId}` }); return; }
+      const run = await runs.get(getProfileId(), runId);
+      if (!run) { safeSend({ type: 'error', message: `unknown deployment run ${runId}` }); return; }
+      teardownRun(runId);
+      // Install the listener before emitting any snapshot/replay frames. Events
+      // arriving while those frames are sent are queued and flushed after them.
+      const queued: RunEvent[] = [];
+      let sending = true;
+      const unsubscribe = runs.subscribe((eventRunId, event) => {
+        if (eventRunId !== runId) return;
+        if (sending) queued.push(event);
+        else safeSend({ type: 'run-event', runId, event });
+      });
+      runSubscriptions.set(runId, unsubscribe);
+      safeSend({ type: 'run-snapshot', run });
+      if (epoch !== undefined && afterSeq !== undefined) {
+        for (const event of runs.eventsSince(runId, epoch, afterSeq)) safeSend({ type: 'run-event', runId, event });
+      }
+      sending = false;
+      for (const event of queued) safeSend({ type: 'run-event', runId, event });
+    };
+
     socket.on('message', (raw: unknown) => {
       const frame = parseClientFrame(raw);
       if (!frame) {
@@ -156,6 +198,10 @@ export function createWsHandler(
         handleSubscribe(frame.jobId, frame.afterSeq);
       } else if (frame.type === 'unsubscribe') {
         teardown(frame.jobId);
+      } else if (frame.type === 'subscribe-run') {
+        void handleSubscribeRun(frame.runId, frame.epoch, frame.afterSeq);
+      } else if (frame.type === 'unsubscribe-run') {
+        teardownRun(frame.runId);
       } else if (frame.type === 'runtime-register') {
         bridge.registerHost(socket, frame.pluginIds);
       } else {
@@ -167,6 +213,7 @@ export function createWsHandler(
       for (const jobId of [...subscriptions.keys()]) {
         teardown(jobId);
       }
+      for (const runId of [...runSubscriptions.keys()]) teardownRun(runId);
       bridge.unregisterHost(socket);
     });
 

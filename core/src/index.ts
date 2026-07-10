@@ -25,6 +25,7 @@ import { AssetManager } from './assets/AssetManager.js';
 import { RepoLifecycle } from './repos/RepoLifecycle.js';
 import { JobManager } from './jobs/JobManager.js';
 import { FrontendRuntimeBridge } from './plugins/invoke/FrontendRuntimeBridge.js';
+import { DeployEngine } from './deployments/DeployEngine.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -54,6 +55,7 @@ async function ignite(workspacePath: string): Promise<{
   const pluginManager = PluginManager.getInstance();
   const pluginExecutor = PluginExecutor.getInstance();
   await JobManager.getInstance().recover();
+  await DeployEngine.getInstance().recoverOnStartup();
 
   // Pre-startup checks
   app.log.info(`🔍 Workspace path: ${workspacePath}`);
@@ -72,7 +74,9 @@ async function ignite(workspacePath: string): Promise<{
       { websocket: true },
       createWsHandler(
         JobManager.getInstance(),
-        FrontendRuntimeBridge.getInstance()
+        FrontendRuntimeBridge.getInstance(),
+        DeployEngine.getInstance(),
+        () => profileManager.getCurrentProfile()
       )
     );
   });
