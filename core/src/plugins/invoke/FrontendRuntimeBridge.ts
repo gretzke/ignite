@@ -108,11 +108,48 @@ export class FrontendRuntimeBridge {
     params: unknown,
     opts?: { signal?: AbortSignal; timeoutMs?: number }
   ): Promise<PluginResponse<unknown>> {
-    const socket = this.getLatestHost(pluginId);
-    if (!socket) {
+    // Newest registration first; a half-dead tab (backgrounded with a
+    // silently dropped WS) can be the latest host and eat requests, so
+    // read-only operations fall back to older registered tabs on timeout or
+    // disconnect. Mutating operations NEVER retry on another host: a lost
+    // response does not prove the wallet didn't submit, and a re-dispatch
+    // could double-send a transaction.
+    const hosts = [...(this.pluginHosts.get(pluginId) ?? [])].reverse();
+    if (hosts.length === 0) {
       return Promise.resolve(noHost(pluginId));
     }
+    if (!READ_ONLY_FALLBACK_OPS.has(operation) || hosts.length === 1) {
+      return this.requestFromSocket(
+        hosts[0],
+        pluginId,
+        operation,
+        params,
+        opts
+      );
+    }
+    return (async () => {
+      let last: PluginResponse<unknown> = noHost(pluginId);
+      for (const socket of hosts) {
+        last = await this.requestFromSocket(
+          socket,
+          pluginId,
+          operation,
+          params,
+          opts
+        );
+        if (last.success || !isDeadHostFailure(last)) return last;
+      }
+      return last;
+    })();
+  }
 
+  private requestFromSocket(
+    socket: WsSocket,
+    pluginId: string,
+    operation: string,
+    params: unknown,
+    opts?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<PluginResponse<unknown>> {
     if (opts?.signal?.aborted) {
       return Promise.resolve(aborted(operation));
     }
@@ -197,6 +234,18 @@ function isPluginResponse(value: unknown): value is PluginResponse<unknown> {
     typeof value === 'object' &&
     value !== null &&
     typeof (value as { success?: unknown }).success === 'boolean'
+  );
+}
+
+// Operations safe to re-dispatch to another browser tab: they read wallet
+// state and cause no prompts or transactions.
+const READ_ONLY_FALLBACK_OPS = new Set(['getAccounts', 'listWallets']);
+
+function isDeadHostFailure(response: PluginResponse<unknown>): boolean {
+  if (response.success) return false;
+  return (
+    response.error.code === 'FRONTEND_RUNTIME_TIMEOUT' ||
+    response.error.code === ErrorCodes.FRONTEND_RUNTIME_UNAVAILABLE
   );
 }
 

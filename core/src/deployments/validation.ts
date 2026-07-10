@@ -61,6 +61,9 @@ export interface ValidationDeps {
     result: Awaited<ReturnType<typeof verifyRpcEndpoint>>
   ) => Promise<void>;
   resolveAccount: SignerProviderService['resolveAccount'];
+  providerState?: (
+    pluginId: string
+  ) => Promise<{ name: string; state: string } | undefined>;
   createClient: (url: string) => Client;
   bufferPct: number;
 }
@@ -168,6 +171,17 @@ function defaultDeps(): ValidationDeps {
     resolveAccount: SignerProviderService.getInstance().resolveAccount.bind(
       SignerProviderService.getInstance()
     ),
+    providerState: async (pluginId) => {
+      const data = await SignerProviderService.getInstance().listAccounts(
+        false
+      );
+      const provider = data.providers.find(
+        (entry) => entry.pluginId === pluginId
+      );
+      return provider
+        ? { name: provider.name, state: provider.state }
+        : undefined;
+    },
     createClient: (url) =>
       createPublicClient({ transport: http(url) }) as unknown as Client,
     bufferPct: 20,
@@ -241,18 +255,34 @@ async function validateSigners(
   const signers = new Map<string, Hex>();
   const failures: string[] = [];
   for (const step of plan.steps) {
+    // Checklist copy uses the contract name — step ids embed artifact paths
+    // and read as noise in the UI.
+    const stepName =
+      plan.contracts.find((contract) => contract.id === step.contractId)
+        ?.contractName ?? step.id;
     const signer = resolveSigner(plan, step, chainId);
-    if (!signer) { failures.push(`No signer is configured for step ${step.id}`); continue; }
+    if (!signer) { failures.push(`No signer is configured for ${stepName}`); continue; }
     const resolved = await deps.resolveAccount(
       signer.pluginId,
       signer.accountId,
       { refresh: true }
     );
-    if (!resolved) { failures.push(`Signer account for step ${step.id} is not available`); continue; }
+    if (!resolved) {
+      // Say WHY the provider has no account — "not available" alone made a
+      // dead browser-tab bridge indistinguishable from a missing key.
+      const provider = await deps.providerState?.(signer.pluginId);
+      const detail = provider
+        ? `${provider.name} reports '${provider.state}'`
+        : `provider ${signer.pluginId} returned no matching account`;
+      failures.push(
+        `Signer account for ${stepName} is not available (${detail})`
+      );
+      continue;
+    }
     if (
       resolved.account.address.toLowerCase() !== signer.address.toLowerCase()
     ) {
-      failures.push(`Signer address for step ${step.id} no longer matches the plan`);
+      failures.push(`Signer address for ${stepName} no longer matches the plan`);
       continue;
     }
     signers.set(step.id, signer.address as Hex);

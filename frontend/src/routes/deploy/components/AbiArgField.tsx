@@ -30,8 +30,13 @@ function validationMessage(type: string, value: string): string | undefined {
     return 'Enter a decimal integer.';
   if (type === 'address' && !/^0x[0-9a-fA-F]{40}$/.test(value))
     return 'Enter a 20-byte 0x address.';
-  if (/^bytes/.test(type) && !/^0x(?:[0-9a-fA-F]{2})*$/.test(value))
-    return 'Enter even-length 0x-prefixed hex bytes.';
+  if (/^bytes/.test(type)) {
+    const fixed = type.match(/^bytes([0-9]+)$/)?.[1];
+    if (fixed && value.length !== 2 + Number(fixed) * 2)
+      return `Enter exactly ${fixed} bytes (0x + ${Number(fixed) * 2} hex characters).`;
+    if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(value))
+      return 'Enter even-length 0x-prefixed hex bytes.';
+  }
   if (type.endsWith(']')) {
     try {
       if (!Array.isArray(JSON.parse(value))) return 'Enter a JSON array.';

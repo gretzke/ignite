@@ -151,11 +151,16 @@ export default function FilePage() {
   // between the contract name and .json, 'default' for the canonical file.
   const versionVariants = useMemo(() => {
     if (!selectedArtifact || !frameworkData?.artifacts) return [];
+    const seenPaths = new Set<string>();
     return frameworkData.artifacts
       .filter(
         (artifact) =>
           artifact.sourcePath === selectedArtifact.sourcePath &&
-          artifact.contractName === selectedArtifact.contractName
+          artifact.contractName === selectedArtifact.contractName &&
+          // Exact duplicates in the artifact list must not become two
+          // identical picker entries.
+          !seenPaths.has(artifact.artifactPath) &&
+          seenPaths.add(artifact.artifactPath) !== undefined
       )
       .map((artifact) => {
         const base = artifact.artifactPath.split('/').pop() ?? '';
@@ -165,8 +170,22 @@ export default function FilePage() {
           .replace(/^\./, '');
         return { artifact, label: suffix || 'default' };
       })
+      .map((entry, _index, entries) => {
+        // Build profiles write identical filenames into different out dirs
+        // (out/ vs out-optimized/) — when the filename label collides,
+        // disambiguate with the artifact directory.
+        const collides =
+          entries.filter((other) => other.label === entry.label).length > 1;
+        if (!collides) return entry;
+        const dir = entry.artifact.artifactPath.split('/')[0] || 'out';
+        return { ...entry, label: `${entry.label} (${dir})` };
+      })
       .sort((a, b) =>
-        a.label === 'default' ? -1 : b.label === 'default' ? 1 : a.label.localeCompare(b.label)
+        a.label.startsWith('default')
+          ? -1
+          : b.label.startsWith('default')
+            ? 1
+            : a.label.localeCompare(b.label)
       );
   }, [selectedArtifact, frameworkData?.artifacts]);
 
