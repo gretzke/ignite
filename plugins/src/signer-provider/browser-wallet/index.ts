@@ -58,30 +58,22 @@ function walletSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-// Stable wallet keys from a set of announcements. Extensions are supposed to
-// announce unique rdns values, but MetaMask and MetaMask Flask can both
-// announce io.metamask — last-write-wins keying then routes one wallet's
-// account ids to the other extension depending on announcement order. When
-// an rdns collides, EVERY collider gets an rdns~name key so the mapping is
-// deterministic regardless of order.
+// Stable per-wallet key. Extensions are supposed to announce unique rdns
+// values, but MetaMask and MetaMask Flask can both announce io.metamask, so
+// the name is part of the key UNCONDITIONALLY: a key derived only-on-
+// collision would flip between rounds depending on which wallets happened
+// to answer inside the discovery window, breaking previously issued
+// account ids.
+export function walletKey(info: { rdns: string; name: string }): string {
+  return `${info.rdns}~${walletSlug(info.name)}`;
+}
+
 export function keyDiscoveredProviders(
   announcements: Eip6963ProviderDetail[],
 ): Map<string, Eip6963ProviderDetail> {
-  const byRdns = new Map<string, Map<string, Eip6963ProviderDetail>>();
-  for (const detail of announcements) {
-    const names = byRdns.get(detail.info.rdns) ?? new Map();
-    names.set(detail.info.name, detail);
-    byRdns.set(detail.info.rdns, names);
-  }
   const keyed = new Map<string, Eip6963ProviderDetail>();
-  for (const [rdns, names] of byRdns) {
-    if (names.size === 1) {
-      keyed.set(rdns, [...names.values()][0]);
-      continue;
-    }
-    for (const [name, detail] of names) {
-      keyed.set(`${rdns}~${walletSlug(name)}`, detail);
-    }
+  for (const detail of announcements) {
+    keyed.set(walletKey(detail.info), detail);
   }
   return keyed;
 }
@@ -108,8 +100,12 @@ async function discoverProviders(): Promise<
     win.removeEventListener("eip6963:announceProvider", onAnnounce);
   }
 
-  if (announcements.length > 0) {
-    discoveredProviders = keyDiscoveredProviders(announcements);
+  // MERGE rounds instead of replacing: a wallet that misses one 300ms
+  // announcement window must not make its accounts "unavailable" for that
+  // round. A lingering entry for a removed extension fails harmlessly at
+  // request time.
+  for (const [key, detail] of keyDiscoveredProviders(announcements)) {
+    discoveredProviders.set(key, detail);
   }
   return discoveredProviders;
 }
