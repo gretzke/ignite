@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { RefreshCw, Wallet } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Loader2, RefreshCw, Wallet } from 'lucide-react';
 import type { SignerRef } from '@ignite/api';
 import Select from '../../../components/Select';
 import { useAppDispatch, useAppSelector } from '../../../store';
@@ -19,6 +19,22 @@ export default function SignersStep() {
   const draft = useAppSelector((state) => state.deployDraft);
   const signers = useAppSelector((state) => state.signers);
   const chains = useAppSelector((state) => state.chains.chains);
+
+  // The runtime host loads plugin bundles asynchronously: read its plugin
+  // ids reactively or a fresh page load into the wizard filters the browser
+  // wallet out forever (the list was empty at first render).
+  const [runtimePluginIds, setRuntimePluginIds] = useState(
+    runtimeHost.getLoadedPluginIds()
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void runtimeHost.load().then((pluginIds) => {
+      if (!cancelled) setRuntimePluginIds(pluginIds);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     signersApi.listAccounts(true).forEach((action) => dispatch(action));
@@ -59,6 +75,12 @@ export default function SignersStep() {
           <RefreshCw size={14} /> Refresh
         </button>
       </div>
+      {signers.loading && refs.length === 0 && (
+        <div className="card-milky p-4 flex items-center gap-2 text-sm text-muted">
+          <Loader2 size={15} className="animate-spin" /> Loading signer
+          accounts…
+        </div>
+      )}
       <div className="card-milky p-4 grid gap-2">
         <span className="eyebrow">Global default</span>
         <Select
@@ -103,7 +125,7 @@ export default function SignersStep() {
         .filter(
           (provider) =>
             provider.accounts.length === 0 &&
-            runtimeHost.getLoadedPluginIds().includes(provider.pluginId) &&
+            runtimePluginIds.includes(provider.pluginId) &&
             (provider.state === 'needs-browser' || provider.state === 'ok')
         )
         .map((provider) => (

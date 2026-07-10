@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, Search } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2, Search } from 'lucide-react';
 import type { RpcEndpoint } from '@ignite/api';
 import Select from '../../../components/Select';
 import ChainRpcManager from '../../../components/chains/ChainRpcManager';
@@ -158,12 +158,22 @@ export default function ChainsStep() {
               </div>
               {selected && (
                 <div className="grid gap-2 mt-3 pl-11">
-                  {!draft.rpcSelection[key] && (
-                    <p className="text-sm text-warn">
-                      {endpoints.length === 0
-                        ? 'No endpoints for this chain yet — add one under "Manage endpoints inline".'
-                        : 'Select an RPC endpoint to continue.'}
+                  {/* undefined = fetch in flight, [] = genuinely empty (the
+                      D1 loading-state convention) — never show the empty
+                      hint while endpoints are still loading. */}
+                  {chains.rpcByChain[key] === undefined ? (
+                    <p className="text-sm text-muted flex items-center gap-2">
+                      <Loader2 size={14} className="animate-spin" /> Loading
+                      endpoints…
                     </p>
+                  ) : (
+                    !draft.rpcSelection[key] && (
+                      <p className="text-sm text-warn">
+                        {endpoints.length === 0
+                          ? 'No endpoints for this chain yet — add one under "Manage endpoints inline".'
+                          : 'Select an RPC endpoint to continue.'}
+                      </p>
+                    )
                   )}
                   <Select
                     requireSelection

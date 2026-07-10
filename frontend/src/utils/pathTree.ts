@@ -26,7 +26,23 @@ export function buildPathTree(artifacts: ArtifactLocation[]): DirectoryNode {
     children: {},
   };
 
+  // One row per contract: foundry multi-solc builds emit a versioned
+  // artifact JSON next to the canonical one (SwapProxy.json plus
+  // SwapProxy.0.8.17.json) for the same (sourcePath, contractName). Keep the
+  // shortest artifactPath — the unversioned, canonical build output.
+  const canonical = new Map<string, ArtifactLocation>();
   artifacts.forEach((artifact) => {
+    const key = `${artifact.sourcePath}:${artifact.contractName}`;
+    const existing = canonical.get(key);
+    if (
+      !existing ||
+      artifact.artifactPath.length < existing.artifactPath.length
+    ) {
+      canonical.set(key, artifact);
+    }
+  });
+
+  canonical.forEach((artifact) => {
     // Only add source files (contracts), skip artifacts
     addPathToTree(root, artifact.sourcePath, 'source', artifact);
   });
