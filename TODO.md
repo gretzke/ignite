@@ -53,6 +53,15 @@ blocking current functionality.
 - **Legacy-fee chain support.** D3 intentionally supports EIP-1559 only and blocks legacy
   fee markets during validation with `LEGACY_FEES_UNSUPPORTED`. Add typed legacy gas-price
   estimation/building before those chains can be selected for a run.
+- **Command dedup is memory-only.** Exact `commandId` replays return current run state
+  idempotently within a core session, but the consumed-command set does not survive a
+  restart, so a replay after restart gets a 409 instead of the idempotent answer. A
+  durable per-run command log would close this; low urgency (the frontend mints a fresh
+  commandId per click and surfaces the 409).
+- **Artifact write failures are silent at lane-terminal time.** The on-disk artifact is
+  best-effort at terminal transitions; a write failure (disk full) is not represented on
+  the run. Mitigated: `GET /deployments/runs/:id/artifact` re-renders from the run record
+  on demand, so the document is always recoverable.
 
 ## State / infrastructure
 

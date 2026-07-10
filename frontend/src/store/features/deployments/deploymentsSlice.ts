@@ -79,6 +79,17 @@ const deploymentsSlice = createSlice({
           (state.epochByRun[run.id] && run.updatedAt === existing.updatedAt))
       )
         return;
+      // Overlapping subscriptions (reconnect discovery + RunPage mount) can
+      // deliver a LATE same-epoch snapshot; applying it would roll back
+      // events already reduced past its lastSeq.
+      const cursor = framed ? state.epochByRun[run.id] : undefined;
+      if (
+        framed &&
+        cursor &&
+        cursor.epoch === framed.epoch &&
+        framed.lastSeq < cursor.lastSeq
+      )
+        return;
       state.runsById[run.id] = run;
       if (framed) {
         state.epochByRun[run.id] = {

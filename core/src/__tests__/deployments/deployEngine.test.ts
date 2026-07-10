@@ -187,6 +187,9 @@ describe('DeployEngine', () => {
         harness.artifactWrites += 1;
       },
       getReceipt: async () => undefined,
+      // confirm-hash provenance gate: by default the supplied hash looks
+      // like a creation tx from the plan signer, so existing flows pass.
+      getTxOrigin: async () => ({ from: ADDRESS, to: null }),
       rebroadcast: async () => TX_HASH,
       ...deps,
     });

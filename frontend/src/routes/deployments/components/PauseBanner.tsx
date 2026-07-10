@@ -48,15 +48,10 @@ export default function PauseBanner({
       </div>
     );
   }
-  const actions = actionsForPausedLane(lane, capability ?? 'sign-and-send');
-  const attempt = lane.steps[lane.pause.stepIndex]?.attempts.find(
-    (item) => item.id === lane.pause?.attemptId
-  );
-  const safeActions = attempt?.txHash
-    ? actions
-    : actions.filter(
-        (action) => action !== 'recheck' && action !== 'keep-waiting'
-      );
+  // The banner IS the shared verb table — no post-filtering. A recheck
+  // without a known hash is a harmless engine-side no-op, and hiding shared
+  // verbs here would desynchronize the UI from the enforcement contract.
+  const safeActions = actionsForPausedLane(lane, capability ?? 'sign-and-send');
   return (
     <div className="card-milky p-4 border border-warn/30">
       <div className="flex items-start gap-3">

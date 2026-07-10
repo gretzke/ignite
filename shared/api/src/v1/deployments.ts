@@ -713,6 +713,7 @@ export interface DeploymentArtifact {
       pause?: { reason: PauseReason; error: string };
       steps: Array<{
         stepId: string;
+        contractId: string;
         status: StepStatus;
         args: ArgValues;
         value: string;
@@ -847,6 +848,7 @@ export const DeploymentArtifactSchema = z.object({
       steps: z.array(
         z.object({
           stepId: z.string().min(1),
+          contractId: z.string().min(1),
           status: StepStatusSchema,
           args: ArgValuesSchema,
           value: DecimalStringSchema,

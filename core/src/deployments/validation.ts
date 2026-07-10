@@ -145,11 +145,22 @@ function defaultDeps(): ValidationDeps {
     profileId: 'default',
     freezeInputs: freeze.freezeInputs.bind(freeze),
     resolveRpcEndpoint: async (chainId, endpointId) => {
-      const endpoint = (await rpcStore.list(chainId)).find(
+      const stored = (await rpcStore.list(chainId)).find(
         (item) => item.id === endpointId
       );
-      return endpoint
-        ? { ...endpoint, label: endpoint.label, stored: true }
+      if (stored) return { ...stored, label: stored.label, stored: true };
+      // Provider-plugin endpoints (Infura/Alchemy/chainz) are ephemeral and
+      // never live in RpcStore — the wizard legitimately offers them, so
+      // authoritative validation must resolve them the same way the engine
+      // does (their verification results are transient, not persisted).
+      const { RpcProviderService } = await import(
+        '../chains/RpcProviderService.js'
+      );
+      const provided = (
+        await RpcProviderService.getInstance().getChainData(chainId)
+      ).endpoints.find((item) => item.id === endpointId);
+      return provided
+        ? { ...provided, label: provided.label, stored: false }
         : undefined;
     },
     verifyRpcEndpoint,

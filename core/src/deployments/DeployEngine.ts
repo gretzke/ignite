@@ -83,6 +83,10 @@ export interface DeployEngineDeps {
   ) => ReturnType<typeof validatePlan>;
   writeArtifact: (run: RunRecord) => Promise<unknown>;
   getReceipt: (url: string, hash: Hex) => Promise<Receipt | undefined>;
+  getTxOrigin: (
+    url: string,
+    hash: Hex
+  ) => Promise<{ from: Hex; to: Hex | null } | undefined>;
   rebroadcast: (url: string, raw: Hex) => Promise<Hex>;
   chainMetadata: (chainId: number) => Promise<ChainMetadata>;
   now: () => number;
@@ -138,6 +142,15 @@ export class DeployEngine {
             gasUsed: result.gasUsed.toString(),
             effectiveGasPrice: result.effectiveGasPrice.toString(),
           };
+        }),
+      getTxOrigin:
+        deps?.getTxOrigin ??
+        (async (url, hash) => {
+          const { createPublicClient, http } = await import('viem');
+          const tx = await createPublicClient({ transport: http(url) })
+            .getTransaction({ hash })
+            .catch(() => undefined);
+          return tx ? { from: tx.from, to: tx.to ?? null } : undefined;
         }),
       rebroadcast:
         deps?.rebroadcast ??
@@ -219,8 +232,10 @@ export class DeployEngine {
   ): Promise<RunRecord> {
     return this.queued(this.commands, `${profileId}:${runId}`, async () => {
       const replayKey = `${profileId}:${runId}:${chainId}:${cmd.commandId}`;
-      const replay = this.resolvedCommands.get(replayKey);
-      if (replay) return replay;
+      // Exact replays are idempotent but must reflect CURRENT state — the
+      // cached record is only a consumed-command marker, not the response.
+      if (this.resolvedCommands.has(replayKey))
+        return this.requireRun(profileId, runId);
       const run = await this.requireRun(profileId, runId);
       const lane = run.lanes[String(chainId)];
       if (!lane)
@@ -308,6 +323,30 @@ export class DeployEngine {
         return result;
       }
       if (cmd.action === 'confirm-hash') {
+        // The hash is operator-supplied: before treating it as this step's
+        // deployment, prove the tx is a contract creation sent by the lane's
+        // plan signer. Without this, pasting any successful transfer hash
+        // would mark the step confirmed with no deployed address.
+        const step = run.plan.steps[lane.pause.stepIndex];
+        const planSigner = step && resolveSigner(run.plan, step, chainId);
+        const origin = await this.deps.getTxOrigin(
+          (await this.rpcFor(run, chainId)).url,
+          cmd.txHash
+        );
+        if (!origin)
+          throw coded(
+            'receipt-timeout',
+            'The supplied transaction hash is not known to the RPC yet'
+          );
+        if (
+          origin.to !== null ||
+          !planSigner ||
+          origin.from.toLowerCase() !== planSigner.address.toLowerCase()
+        )
+          throw new IgniteError(
+            'The supplied hash is not a contract deployment from this lane signer',
+            ErrorCodes.ILLEGAL_RESOLVE
+          );
         await this.reconcile(profileId, runId, chainId, cmd.txHash);
         const result = await this.requireRun(profileId, runId);
         this.resolvedCommands.set(replayKey, result);
@@ -421,7 +460,7 @@ export class DeployEngine {
         if (attempt?.rawTx && attempt.txHash) {
           const rpc = await this.rpcFor(run, lane.chainId);
           const receipt = await this.safeReceipt(rpc.url, attempt.txHash);
-          if (receipt)
+          if (receipt) {
             await this.confirmReceipt(
               profileId,
               runId,
@@ -429,13 +468,13 @@ export class DeployEngine {
               attempt.txHash,
               receipt
             );
-          else {
+          } else {
             await this.deps.rebroadcast(rpc.url, attempt.rawTx);
             const afterBroadcast = await this.safeReceipt(
               rpc.url,
               attempt.txHash
             );
-            if (afterBroadcast)
+            if (afterBroadcast) {
               await this.confirmReceipt(
                 profileId,
                 runId,
@@ -443,7 +482,11 @@ export class DeployEngine {
                 attempt.txHash,
                 afterBroadcast
               );
-            else
+            } else {
+              // The raw tx is back in the mempool but unmined. The lane MUST
+              // stay paused on this attempt — falling through to clear the
+              // pause and start a fresh attempt would deploy twice as soon as
+              // the rebroadcast mines.
               await this.pause(
                 profileId,
                 runId,
@@ -454,6 +497,8 @@ export class DeployEngine {
                   'Transaction was re-broadcast; receipt is still pending'
                 )
               );
+              continue;
+            }
           }
         } else if (attempt?.txHash || lane.pause?.reason === 'needs-review')
           continue;
@@ -534,39 +579,37 @@ export class DeployEngine {
   async recoverOnStartup(): Promise<void> {
     const recovered = await this.deps.runStore.recoverStartup();
     // A sign-and-send provider owns submission and may not have exposed a
-    // durable hash. An interrupted in-flight attempt is therefore never
-    // retried automatically; it requires the explicit needs-review verbs.
+    // durable hash, so an interrupted in-flight attempt is never retried
+    // automatically. The decision is made from the RUN RECORD ALONE: a live
+    // account lookup cannot work here — a browser wallet has no connected
+    // host while core is starting up, and a missed conversion would let
+    // resume() re-execute an uncertain submission. A step that reached
+    // 'broadcasting' persisted its intent before any submission; the
+    // sign-only path always stores rawTx with that intent, so a broadcasting
+    // step WITHOUT rawTx is exactly an in-flight sign-and-send.
     await Promise.all(
       recovered.map(async (run) =>
         Promise.all(
           Object.values(run.lanes).map(async (lane) => {
             if (lane.pause?.reason !== 'interrupted') return;
-            const step = run.plan.steps[lane.pause.stepIndex];
-            const signer = step && resolveSigner(run.plan, step, lane.chainId);
-            if (!signer) return;
-            const account = await this.deps.resolveAccount(
-              signer.pluginId,
-              signer.accountId,
-              { refresh: true }
+            const step = lane.steps[lane.pause.stepIndex];
+            const attempt = step?.attempts.at(-1);
+            if (step?.status !== 'broadcasting' || attempt?.rawTx) return;
+            await this.mutate(
+              run.profileId,
+              run.id,
+              (current) => {
+                const target = current.lanes[String(lane.chainId)];
+                if (target.pause?.reason === 'interrupted')
+                  target.pause = {
+                    ...target.pause,
+                    reason: 'needs-review',
+                    error:
+                      'Signer-provider submission was interrupted and needs review',
+                  };
+              },
+              lane.chainId
             );
-            const attempt = lane.steps[lane.pause.stepIndex]?.attempts.at(-1);
-            if (account?.account.capability === 'sign-and-send' && attempt) {
-              await this.mutate(
-                run.profileId,
-                run.id,
-                (current) => {
-                  const target = current.lanes[String(lane.chainId)];
-                  if (target.pause?.reason === 'interrupted')
-                    target.pause = {
-                      ...target.pause,
-                      reason: 'needs-review',
-                      error:
-                        'Signer-provider submission was interrupted and needs review',
-                    };
-                },
-                lane.chainId
-              );
-            }
           })
         )
       )
@@ -884,11 +927,9 @@ export class DeployEngine {
       },
       { log: () => undefined, signal }
     );
-    if (result.status === 'reverted')
-      throw Object.assign(new Error('Transaction reverted'), {
-        pauseReason: 'revert',
-        result,
-      });
+    // Reverted results flow through confirmReceipt too: it persists the
+    // hash/gas/block audit data on the attempt AND raises the revert pause.
+    // Throwing here instead would discard the receipt entirely.
     await this.confirmReceipt(
       profileId,
       runId,
@@ -933,6 +974,10 @@ export class DeployEngine {
           ...(receipt.nonce === undefined ? {} : { nonce: receipt.nonce }),
         });
         if (receipt.status === 'reverted') {
+          // The attempt's own error is load-bearing: aborted-after-failure
+          // detection in runStatus keys on it, and the audit trail should
+          // say why the attempt ended even with full receipt data present.
+          attempt.error = 'Transaction reverted';
           step.status = 'failed';
           lane.status = 'paused';
           lane.pause = {
@@ -1007,12 +1052,17 @@ export class DeployEngine {
       (run) => {
         const lane = run.lanes[String(chainId)];
         const step = lane.steps[stepIndex];
-        const attempt =
+        let attempt =
           (attemptId
             ? step.attempts.find((entry) => entry.id === attemptId)
             : undefined) ?? step.attempts.at(-1);
-        if (!attempt)
-          throw coded('write-failure', 'No deployment attempt exists to pause');
+        if (!attempt) {
+          // Signer/RPC/encoding failures can precede attempt creation. A
+          // synthetic attempt keeps the pause representable — throwing here
+          // would strand the lane with no attemptId for the resolve UI.
+          attempt = { id: crypto.randomUUID(), startedAt: iso(this.deps.now()) };
+          step.attempts.push(attempt);
+        }
         attempt.error = sanitizeRunError(error);
         attempt.endedAt = iso(this.deps.now());
         if (reason === 'revert') step.status = 'failed';

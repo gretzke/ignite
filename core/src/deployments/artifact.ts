@@ -45,6 +45,10 @@ export function renderArtifact(run: RunRecord): DeploymentArtifact {
             : undefined;
           return {
             stepId: sanitizeText(laneStep.stepId),
+            // Ties each deployed address back to its frozen contract input —
+            // without this a multi-contract artifact cannot say which
+            // bytecode produced which address.
+            contractId: sanitizeText(step?.contractId ?? 'unknown'),
             status: laneStep.status,
             args: sanitizeValue(step ? mergeArgs(step, lane.chainId) : {}),
             value: step ? effectiveValue(step, lane.chainId).toString() : '0',
@@ -140,8 +144,11 @@ function portableSourcePath(sourcePath: string): string {
 function sanitizeText(value: string): string {
   return value
     .replace(/https?:\/\/[^\s"']+/gi, '[redacted endpoint]')
-    .replace(/\/(?:Users|home)\/[\w.-]+(?:\/[^\s"']*)?/g, '[redacted path]')
-    .replace(/[A-Za-z]:\\[^\s"']*/g, '[redacted path]');
+    .replace(
+      /\/(?:Users|home|private|tmp|var|etc|opt|root)\/[\w.-]+(?:\/[^\s"']*)?/g,
+      '[redacted path]'
+    )
+    .replace(/[A-Za-z]:[\\/][^\s"']*/g, '[redacted path]');
 }
 
 function sanitizeValue<T>(value: T): T {

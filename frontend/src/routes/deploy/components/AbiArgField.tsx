@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import Switch from '../../../components/Switch';
 
 export interface AbiInput {
@@ -41,6 +42,34 @@ function validationMessage(type: string, value: string): string | undefined {
   return undefined;
 }
 
+function BoolArgField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  // An untouched switch must still contribute an explicit `false` to the
+  // draft — otherwise validation reports the field missing and the user has
+  // to toggle true-and-back just to deploy with false.
+  useEffect(() => {
+    if (value === undefined) onChange(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div className="grid gap-1">
+      <span className="text-sm font-medium">{label}</span>
+      <Switch
+        label={`${label} (bool)`}
+        checked={value === true || value === 'true'}
+        onCheckedChange={onChange}
+      />
+    </div>
+  );
+}
+
 export default function AbiArgField({
   input,
   fieldKey,
@@ -49,16 +78,7 @@ export default function AbiArgField({
 }: AbiArgFieldProps) {
   const label = input.name || fieldKey;
   if (input.type === 'bool') {
-    return (
-      <div className="grid gap-1">
-        <span className="text-sm font-medium">{label}</span>
-        <Switch
-          label={`${label} (${input.type})`}
-          checked={value === true || value === 'true'}
-          onCheckedChange={onChange}
-        />
-      </div>
-    );
+    return <BoolArgField label={label} value={value} onChange={onChange} />;
   }
 
   if (input.type.startsWith('tuple') && !input.type.endsWith(']')) {
