@@ -641,7 +641,60 @@ export interface GetRunData {
 }
 
 export interface GetDeploymentArtifactData {
-  artifact: unknown;
+  artifact: DeploymentArtifact;
+}
+
+// Portable, committable projection of a run record. It intentionally has no
+// raw transaction, RPC URL/fingerprint, or repository identity fields.
+export interface DeploymentArtifactAttempt {
+  id: string;
+  startedAt: string;
+  endedAt?: string;
+  txHash?: Hex;
+  nonce?: number;
+  gasUsed?: string;
+  effectiveGasPrice?: string;
+  blockNumber?: number;
+  txStatus?: "success" | "reverted";
+  error?: string;
+  resolution?: AttemptResolution;
+  edits?: Attempt["edits"];
+}
+
+export interface DeploymentArtifact {
+  schemaVersion: 1;
+  runId: string;
+  profileId: string;
+  name: string;
+  status: RunStatus;
+  createdAt: string;
+  updatedAt: string;
+  contracts: Array<{
+    id: string;
+    repoName: string;
+    sourcePath: string;
+    contractName: string;
+    artifactHash: string;
+    compiler: FrozenInput["compiler"];
+  }>;
+  validation: ValidationReport;
+  lanes: Record<
+    string,
+    {
+      chainId: number;
+      providerLabel: string;
+      steps: Array<{
+        stepId: string;
+        status: StepStatus;
+        args: ArgValues;
+        value: string;
+        signerAddress?: string;
+        address?: Hex;
+        unresolvedTx?: { txHash?: Hex; note?: string };
+        attempts: DeploymentArtifactAttempt[];
+      }>;
+    }
+  >;
 }
 
 export const RpcSelectionSchema = z.record(ChainIdKeySchema, z.string().min(1));
@@ -718,7 +771,66 @@ export const AbortRunResponseSchema = createApiResponseSchema<GetRunData>(
 export const GetDeploymentArtifactResponseSchema =
   createApiResponseSchema<GetDeploymentArtifactData>(
     "GetDeploymentArtifactResponseSchema",
-  )(z.object({ artifact: z.unknown() }));
+  )(z.object({ artifact: z.lazy(() => DeploymentArtifactSchema) }));
+
+export const DeploymentArtifactAttemptSchema = z.object({
+  id: z.string().min(1),
+  startedAt: z.string(),
+  endedAt: z.string().optional(),
+  txHash: HexSchema.optional(),
+  nonce: z.number().int().nonnegative().optional(),
+  gasUsed: DecimalStringSchema.optional(),
+  effectiveGasPrice: DecimalStringSchema.optional(),
+  blockNumber: z.number().int().nonnegative().optional(),
+  txStatus: z.enum(["success", "reverted"]).optional(),
+  error: z.string().optional(),
+  resolution: AttemptSchema.shape.resolution,
+  edits: AttemptSchema.shape.edits,
+}) satisfies z.ZodType<DeploymentArtifactAttempt>;
+
+export const DeploymentArtifactSchema = z.object({
+  schemaVersion: z.literal(1),
+  runId: z.string().min(1),
+  profileId: z.string().min(1),
+  name: z.string().min(1),
+  status: RunStatusSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  contracts: z.array(
+    z.object({
+      id: z.string().min(1),
+      repoName: z.string().min(1),
+      sourcePath: z.string().min(1),
+      contractName: z.string().min(1),
+      artifactHash: z.string().regex(SHA256_HEX),
+      compiler: FrozenInputSchema.shape.compiler,
+    })
+  ),
+  validation: ValidationReportSchema,
+  lanes: z.record(
+    ChainIdKeySchema,
+    z.object({
+      chainId: z.number().int().positive(),
+      providerLabel: z.string(),
+      steps: z.array(
+        z.object({
+          stepId: z.string().min(1),
+          status: StepStatusSchema,
+          args: ArgValuesSchema,
+          value: DecimalStringSchema,
+          signerAddress: z.string().regex(HEX_ADDRESS).optional(),
+          address: z.string().regex(HEX_ADDRESS).optional() as z.ZodType<
+            Hex | undefined
+          >,
+          unresolvedTx: z
+            .object({ txHash: HexSchema.optional(), note: z.string().optional() })
+            .optional(),
+          attempts: z.array(DeploymentArtifactAttemptSchema),
+        })
+      ),
+    })
+  ),
+}) satisfies z.ZodType<DeploymentArtifact>;
 
 export const RunIdParamsSchema = z.object({ runId: z.string().min(1) });
 export const ResolveLaneParamsSchema = z.object({
