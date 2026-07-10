@@ -15,7 +15,7 @@ export const CURATED_PLUGINS: readonly StorePluginData[] = [
   {
     name: 'chainz',
     description:
-      'Provides RPC endpoints from your chainz config (~/.chainz.json) — each chain contributes its selected RPC.',
+      'RPC endpoints and signing accounts from your chainz config (~/.chainz.json) — each chain contributes its selected RPC, and PrivateKey entries sign transactions.',
     repoUrl: 'https://github.com/gretzke/ignite-chainz-plugin',
   },
 ];
