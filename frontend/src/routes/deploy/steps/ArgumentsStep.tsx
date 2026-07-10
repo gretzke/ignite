@@ -8,7 +8,6 @@ import {
   setGasOverride,
   setGasOverridePerChain,
   setValue,
-  setValuePerChain,
 } from '../../../store/features/deployments/deployDraftSlice';
 import AbiArgField, { type AbiInput } from '../components/AbiArgField';
 import AdvancedStepSection from '../components/AdvancedStepSection';
@@ -69,7 +68,13 @@ export default function ArgumentsStep() {
         );
         const data = artifactData[step.contractId];
         const constructor = (
-          data?.abi as Array<{ type?: string; inputs?: AbiInput[] }> | undefined
+          data?.abi as
+            | Array<{
+                type?: string;
+                inputs?: AbiInput[];
+                stateMutability?: string;
+              }>
+            | undefined
         )?.find((entry) => entry.type === 'constructor');
         return (
           <article key={step.id} className="card-milky p-4 grid gap-4">
@@ -157,45 +162,31 @@ export default function ArgumentsStep() {
               );
             })}
             <AdvancedStepSection>
-              <label className="grid gap-1">
-                <span className="eyebrow">Value in native units</span>
-                <input
-                  className="input-glass"
-                  value={step.value ?? ''}
-                  placeholder="0.0"
-                  onChange={(event) =>
-                    dispatch(
-                      setValue({
-                        stepId: step.id,
-                        value: event.target.value || undefined,
-                      })
-                    )
-                  }
-                />
-              </label>
-              {draft.chains.map((chainId) => (
-                <label key={chainId} className="grid gap-1">
+              {constructor?.stateMutability === 'payable' && (
+                <label className="grid gap-1">
                   <span className="eyebrow">
-                    {chainInfo.find((item) => item.chainId === chainId)?.name ??
-                      chainId}{' '}
-                    value override
+                    Value sent with the deployment (native units)
+                  </span>
+                  <span className="text-xs text-muted">
+                    The constructor is payable; this amount of the native
+                    currency is attached to the deploy transaction on every
+                    chain.
                   </span>
                   <input
                     className="input-glass"
-                    value={step.valuePerChain?.[String(chainId)] ?? ''}
-                    placeholder="Use global value"
+                    value={step.value ?? ''}
+                    placeholder="0.0"
                     onChange={(event) =>
                       dispatch(
-                        setValuePerChain({
+                        setValue({
                           stepId: step.id,
-                          chainId,
                           value: event.target.value || undefined,
                         })
                       )
                     }
                   />
                 </label>
-              ))}
+              )}
               <div className="grid grid-cols-3 gap-2">
                 {(
                   ['gasLimit', 'maxFeePerGas', 'maxPriorityFeePerGas'] as const
@@ -211,6 +202,7 @@ export default function ArgumentsStep() {
                     <input
                       className="input-glass"
                       value={step.gasOverrides?.[key] ?? ''}
+                      placeholder="auto"
                       onChange={(event) =>
                         dispatch(
                           setGasOverride({
