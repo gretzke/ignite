@@ -66,6 +66,38 @@ export default function ChainsStep() {
     );
   }, [dispatch, draft.chains]);
 
+  // Convenience default: bind the preferred (else first) endpoint as soon as
+  // a selected chain has endpoints and no explicit choice yet. The draft is
+  // the single source of truth — the select never displays anything the
+  // draft doesn't hold.
+  useEffect(() => {
+    for (const chainId of draft.chains) {
+      const key = String(chainId);
+      if (draft.rpcSelection[key]) continue;
+      const candidates: RpcEndpoint[] = [
+        ...(chains.rpcByChain[key] ?? []),
+        ...(chains.providerRpcByChain[key] ?? []),
+      ];
+      const pick =
+        candidates.find((endpoint) => endpoint.preferred) ?? candidates[0];
+      if (pick) {
+        dispatch(
+          selectRpc({
+            chainId,
+            endpointId: pick.id,
+            label: pick.label ?? pick.url,
+          })
+        );
+      }
+    }
+  }, [
+    dispatch,
+    draft.chains,
+    draft.rpcSelection,
+    chains.rpcByChain,
+    chains.providerRpcByChain,
+  ]);
+
   const selectedSet = useMemo(() => new Set(draft.chains), [draft.chains]);
   const visibleChains = useMemo(() => {
     const base =
@@ -128,10 +160,13 @@ export default function ChainsStep() {
                 <div className="grid gap-2 mt-3 pl-11">
                   {!draft.rpcSelection[key] && (
                     <p className="text-sm text-warn">
-                      Select an RPC endpoint to continue.
+                      {endpoints.length === 0
+                        ? 'No endpoints for this chain yet — add one under "Manage endpoints inline".'
+                        : 'Select an RPC endpoint to continue.'}
                     </p>
                   )}
                   <Select
+                    requireSelection
                     options={endpoints.map((endpoint) => ({
                       value: endpoint.id,
                       // Users pick URLs, not endpoint ids or registry

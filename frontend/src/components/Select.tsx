@@ -16,6 +16,11 @@ export interface SelectProps {
   disabled?: boolean;
   className?: string;
   anchor?: 'left' | 'right'; // Dropdown anchor position (default: 'right')
+  // When set, an undefined value shows the placeholder instead of visually
+  // defaulting to the first option. Without it the trigger can display an
+  // option that was never committed to state — the caller's model and the
+  // screen disagree, which reads as "selected but the form won't accept it".
+  requireSelection?: boolean;
   // Render the menu in place instead of a portal. Required inside modal Radix
   // dialogs: the portal'd menu lands outside the dialog, where Radix blocks
   // pointer events, so option clicks would dismiss instead of selecting.
@@ -40,6 +45,7 @@ export default function Select({
   className = '',
   anchor = 'right',
   portal = true,
+  requireSelection = false,
   renderTrigger,
 }: SelectProps) {
   // Show search if more than 10 options
@@ -60,8 +66,9 @@ export default function Select({
   }, [options, defaultPriority, value]);
 
   // Get display label for selected value
+  const effectiveValue = requireSelection ? value : value || defaultValue;
   const selectedOption = options.find(
-    (option) => option.value === (value || defaultValue)
+    (option) => option.value === effectiveValue
   );
   const displayLabel = selectedOption?.label || placeholder;
 
@@ -150,7 +157,7 @@ export default function Select({
           options={options}
           showSearch={showSearch}
           value={value}
-          defaultValue={defaultValue}
+          defaultValue={requireSelection ? '' : defaultValue}
           onValueChange={onValueChange}
           close={close}
         />

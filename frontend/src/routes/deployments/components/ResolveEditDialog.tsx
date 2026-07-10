@@ -82,11 +82,15 @@ export default function ResolveEditDialog({
               <span className="eyebrow">RPC endpoint</span>
               <Select
                 portal={false}
+                requireSelection
                 options={endpoints.map((endpoint) => ({
                   value: endpoint.id,
-                  label: endpoint.label ?? endpoint.id,
+                  label: endpoint.label
+                    ? `${endpoint.label} · ${endpoint.url}`
+                    : endpoint.url,
                 }))}
                 value={rpcEndpointId || undefined}
+                placeholder="Keep current endpoint"
                 onValueChange={setRpcEndpointId}
               />
             </label>
