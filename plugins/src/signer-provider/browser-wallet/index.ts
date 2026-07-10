@@ -54,17 +54,49 @@ function walletWindow(): WalletWindow | null {
     : null;
 }
 
+function walletSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+// Stable wallet keys from a set of announcements. Extensions are supposed to
+// announce unique rdns values, but MetaMask and MetaMask Flask can both
+// announce io.metamask — last-write-wins keying then routes one wallet's
+// account ids to the other extension depending on announcement order. When
+// an rdns collides, EVERY collider gets an rdns~name key so the mapping is
+// deterministic regardless of order.
+export function keyDiscoveredProviders(
+  announcements: Eip6963ProviderDetail[],
+): Map<string, Eip6963ProviderDetail> {
+  const byRdns = new Map<string, Map<string, Eip6963ProviderDetail>>();
+  for (const detail of announcements) {
+    const names = byRdns.get(detail.info.rdns) ?? new Map();
+    names.set(detail.info.name, detail);
+    byRdns.set(detail.info.rdns, names);
+  }
+  const keyed = new Map<string, Eip6963ProviderDetail>();
+  for (const [rdns, names] of byRdns) {
+    if (names.size === 1) {
+      keyed.set(rdns, [...names.values()][0]);
+      continue;
+    }
+    for (const [name, detail] of names) {
+      keyed.set(`${rdns}~${walletSlug(name)}`, detail);
+    }
+  }
+  return keyed;
+}
+
 async function discoverProviders(): Promise<
   Map<string, Eip6963ProviderDetail>
 > {
   const win = walletWindow();
   if (!win) return discoveredProviders;
 
-  const next = new Map(discoveredProviders);
+  const announcements: Eip6963ProviderDetail[] = [];
   const onAnnounce = (event: { detail?: Eip6963ProviderDetail }) => {
     const detail = event.detail;
     if (detail?.info?.rdns && detail.provider) {
-      next.set(detail.info.rdns, detail);
+      announcements.push(detail);
     }
   };
 
@@ -76,7 +108,9 @@ async function discoverProviders(): Promise<
     win.removeEventListener("eip6963:announceProvider", onAnnounce);
   }
 
-  discoveredProviders = next;
+  if (announcements.length > 0) {
+    discoveredProviders = keyDiscoveredProviders(announcements);
+  }
   return discoveredProviders;
 }
 
@@ -243,6 +277,7 @@ export async function sendTransactionWithProviders(
 }
 
 async function accountsForProvider(
+  walletKey: string,
   detail: Eip6963ProviderDetail,
   method: "eth_accounts" | "eth_requestAccounts",
 ): Promise<SignerAccount[]> {
@@ -251,7 +286,10 @@ async function accountsForProvider(
   return addresses
     .filter((address): address is Hex => typeof address === "string")
     .map((address) => ({
-      id: makeAccountId(detail.info.rdns, address),
+      // Account ids embed the discovery-map KEY, not the raw announced
+      // rdns: colliding announcements (MetaMask vs Flask both io.metamask)
+      // are only unambiguous under the disambiguated key.
+      id: makeAccountId(walletKey, address),
       address,
       label: `${detail.info.name} ${address.slice(0, 6)}...${address.slice(-4)}`,
       capability: "sign-and-send" as const,
@@ -275,9 +313,11 @@ export class BrowserWalletPlugin extends SignerProviderPlugin {
   async getAccounts(): Promise<PluginResponse<GetAccountsResult>> {
     const providers = await discoverProviders();
     const accounts: SignerAccount[] = [];
-    for (const detail of providers.values()) {
+    for (const [walletKey, detail] of providers) {
       try {
-        accounts.push(...(await accountsForProvider(detail, "eth_accounts")));
+        accounts.push(
+          ...(await accountsForProvider(walletKey, detail, "eth_accounts")),
+        );
       } catch {
         // Ignore one broken wallet provider without hiding the rest.
       }
@@ -294,8 +334,8 @@ export class BrowserWalletPlugin extends SignerProviderPlugin {
     return {
       success: true,
       data: {
-        wallets: [...providers.values()].map((detail) => ({
-          rdns: detail.info.rdns,
+        wallets: [...providers.entries()].map(([walletKey, detail]) => ({
+          rdns: walletKey,
           name: detail.info.name,
         })),
       },
@@ -307,16 +347,14 @@ export class BrowserWalletPlugin extends SignerProviderPlugin {
   }): Promise<PluginResponse<GetAccountsResult>> {
     const providers = await discoverProviders();
     const targets = params?.rdns
-      ? [providers.get(params.rdns)].filter(
-          (detail): detail is Eip6963ProviderDetail => detail !== undefined,
-        )
-      : [...providers.values()];
+      ? [...providers.entries()].filter(([walletKey]) => walletKey === params.rdns)
+      : [...providers.entries()];
 
     const accounts: SignerAccount[] = [];
-    for (const detail of targets) {
+    for (const [walletKey, detail] of targets) {
       try {
         accounts.push(
-          ...(await accountsForProvider(detail, "eth_requestAccounts")),
+          ...(await accountsForProvider(walletKey, detail, "eth_requestAccounts")),
         );
       } catch (error) {
         if (walletErrorCode(error) === 4001) {

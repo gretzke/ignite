@@ -1,7 +1,7 @@
-// Built-in mnemonic signer plugin (sign-only). The mnemonic is stored in the
-// encrypted vault and injected on stdin under options.config.mnemonic; account
-// indices are non-secret config. The phrase is never emitted in labels,
-// errors, logs, or command arguments.
+// Built-in mnemonic signer plugin (sign-only). Each configured list item is
+// one seed phrase stored in the encrypted vault and injected on stdin under
+// options.config.mnemonics[]; derivation indices are non-secret per-item
+// config. Phrases are never emitted in labels, errors, logs, or argv.
 import { mnemonicToAccount } from "viem/accounts";
 import {
   SignerProviderPlugin,
@@ -20,6 +20,7 @@ import { runPluginCLI } from "../../shared/plugin-runner.js";
 declare const PLUGIN_VERSION: string;
 
 export const MAX_INDICES = 64;
+const ACCOUNT_ID_SEP = ".";
 
 // "0-4,7" -> [0,1,2,3,4,7]; invalid input -> [].
 export function parseIndices(raw: string | undefined): number[] {
@@ -47,19 +48,44 @@ export function parseIndices(raw: string | undefined): number[] {
   return [...out].sort((a, b) => a - b);
 }
 
-function readMnemonic(options?: {
-  config?: Record<string, unknown>;
-}): string | null {
-  const raw = options?.config?.["mnemonic"];
-  if (typeof raw !== "string") return null;
-  const mnemonic = raw.trim();
-  return mnemonic ? mnemonic : null;
+interface MnemonicItem {
+  id: string;
+  label?: string;
+  mnemonic?: string;
+  "account-indices"?: string;
 }
 
-function readIndices(options?: { config?: Record<string, unknown> }): number[] {
-  const raw = options?.config?.["account-indices"];
-  const indicesText = typeof raw === "string" ? raw.trim() : undefined;
-  return parseIndices(indicesText ?? "0");
+function readItems(options?: {
+  config?: Record<string, unknown>;
+}): MnemonicItem[] {
+  const raw = options?.config?.["mnemonics"];
+  return Array.isArray(raw) ? (raw as MnemonicItem[]) : [];
+}
+
+function itemMnemonic(item: MnemonicItem): string | null {
+  const trimmed = typeof item.mnemonic === "string" ? item.mnemonic.trim() : "";
+  return trimmed ? trimmed : null;
+}
+
+function itemIndices(item: MnemonicItem): number[] {
+  const raw = item["account-indices"];
+  const text = typeof raw === "string" ? raw.trim() : undefined;
+  return parseIndices(text || "0");
+}
+
+export function makeAccountId(itemId: string, index: number): string {
+  return `${itemId}${ACCOUNT_ID_SEP}${index}`;
+}
+
+function parseAccountId(
+  accountId: string,
+): { itemId: string; index: number } | null {
+  const sep = accountId.lastIndexOf(ACCOUNT_ID_SEP);
+  if (sep <= 0) return null;
+  const index = Number(accountId.slice(sep + 1));
+  return Number.isInteger(index) && index >= 0
+    ? { itemId: accountId.slice(0, sep), index }
+    : null;
 }
 
 function txPayload(tx: SignTransactionParams["tx"]) {
@@ -87,20 +113,27 @@ export class MnemonicPlugin extends SignerProviderPlugin {
       permissions: [],
       configFields: [
         {
-          key: "mnemonic",
-          label: "Mnemonic Phrase",
-          type: "string",
-          secret: true,
-          required: true,
-          description: "BIP-39 seed phrase, stored in the encrypted vault.",
-        },
-        {
-          key: "account-indices",
-          label: "Account Indices",
-          type: "string",
+          key: "mnemonics",
+          label: "Mnemonics",
+          type: "list",
           description:
-            "Derivation indices to expose as accounts (m/44'/60'/0'/0/i). " +
-            "Comma-separated, ranges allowed: e.g. 0-4,7. Defaults to 0.",
+            "BIP-39 seed phrases stored in the encrypted vault. Each entry " +
+            "exposes its derivation indices as selectable accounts.",
+          itemFields: [
+            { key: "label", label: "Label", type: "string", required: true },
+            {
+              key: "mnemonic",
+              label: "Mnemonic Phrase",
+              type: "string",
+              secret: true,
+              required: true,
+            },
+            {
+              key: "account-indices",
+              label: "Account Indices (e.g. 0-4,7; default 0)",
+              type: "string",
+            },
+          ],
         },
       ],
     };
@@ -109,36 +142,51 @@ export class MnemonicPlugin extends SignerProviderPlugin {
   async getAccounts(options?: {
     config?: Record<string, unknown>;
   }): Promise<PluginResponse<GetAccountsResult>> {
-    const mnemonic = readMnemonic(options);
-    if (!mnemonic) {
+    const items = readItems(options);
+    if (items.length === 0) {
       return { success: true, data: { accounts: null } };
     }
 
-    const indices = readIndices(options);
-    if (indices.length === 0) {
-      return { success: true, data: { accounts: null } };
+    const accounts: SignerAccount[] = [];
+    for (const item of items) {
+      const mnemonic = itemMnemonic(item);
+      if (!mnemonic) continue;
+      for (const index of itemIndices(item)) {
+        try {
+          accounts.push({
+            id: makeAccountId(item.id, index),
+            address: mnemonicToAccount(mnemonic, { addressIndex: index })
+              .address,
+            label: `${item.label ?? item.id} #${index}`,
+            capability: "sign-only",
+          });
+        } catch {
+          // One malformed phrase must not hide the other items' accounts.
+          break;
+        }
+      }
     }
 
-    try {
-      const accounts: SignerAccount[] = indices.map((index) => ({
-        id: String(index),
-        address: mnemonicToAccount(mnemonic, { addressIndex: index }).address,
-        label: `Account ${index}`,
-        capability: "sign-only",
-      }));
-      return { success: true, data: { accounts } };
-    } catch {
+    // Every item unreadable = the plugin still needs configuration.
+    if (accounts.length === 0) {
       return { success: true, data: { accounts: null } };
     }
+    return { success: true, data: { accounts } };
   }
 
   async signTransaction(
     options: SignTransactionParams & { config?: Record<string, unknown> },
   ): Promise<PluginResponse<SignTransactionResult>> {
-    const mnemonic = readMnemonic(options);
-    const indices = readIndices(options);
-    const accountIndex = indices.find((index) => String(index) === options.accountId);
-    if (!mnemonic || accountIndex === undefined) {
+    const parsed = parseAccountId(options.accountId);
+    const item = parsed
+      ? readItems(options).find((entry) => entry.id === parsed.itemId)
+      : undefined;
+    const mnemonic = item ? itemMnemonic(item) : null;
+    const validIndex =
+      parsed !== null &&
+      item !== undefined &&
+      itemIndices(item).includes(parsed.index);
+    if (!parsed || !mnemonic || !validIndex) {
       return {
         success: false,
         error: {
@@ -150,7 +198,7 @@ export class MnemonicPlugin extends SignerProviderPlugin {
 
     try {
       const rawTransaction = await mnemonicToAccount(mnemonic, {
-        addressIndex: accountIndex,
+        addressIndex: parsed.index,
       }).signTransaction(txPayload(options.tx));
       return { success: true, data: { rawTransaction: rawTransaction as Hex } };
     } catch {
