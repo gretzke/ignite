@@ -17,11 +17,14 @@ import { trustReducer } from './features/plugins/trustSlice';
 import { pluginsReducer } from './features/plugins/pluginsSlice';
 import { jobsReducer } from './features/jobs/jobsSlice';
 import { signersReducer } from './features/signers/signersSlice';
+import { deployDraftReducer } from './features/deployments/deployDraftSlice';
+import { deploymentsReducer } from './features/deployments/deploymentsSlice';
 import { apiGate } from './middleware/apiGate';
 import { uiEffects } from './middleware/uiEffects';
 import { repositoriesEffects } from './middleware/repositoriesEffects';
 import { compilerEffects } from './middleware/compilerEffects';
 import { jobsEffects } from './middleware/jobsEffects';
+import { deploymentsEffects } from './middleware/deploymentsEffects';
 
 export const store = configureStore({
   reducer: {
@@ -37,6 +40,8 @@ export const store = configureStore({
     plugins: pluginsReducer,
     jobs: jobsReducer,
     signers: signersReducer,
+    deployDraft: deployDraftReducer,
+    deployments: deploymentsReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({ serializableCheck: false })
@@ -46,7 +51,8 @@ export const store = configureStore({
         toastListener.middleware,
         repositoriesEffects.middleware,
         compilerEffects.middleware,
-        jobsEffects.middleware
+        jobsEffects.middleware,
+        deploymentsEffects.middleware
       )
       .concat(websocketMiddleware),
 });

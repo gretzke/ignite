@@ -1,6 +1,6 @@
 import type { Middleware } from '@reduxjs/toolkit';
 import { createAction } from '@reduxjs/toolkit';
-import type { JobRecord, JobEvent } from '@ignite/api';
+import type { JobRecord, JobEvent, RunEvent, RunRecord } from '@ignite/api';
 import {
   reconnectRequested,
   setStatus,
@@ -11,6 +11,10 @@ import {
   jobSnapshotReceived,
   jobEventReceived,
 } from '../features/jobs/jobsSlice';
+import {
+  runEventReceived,
+  runSnapshotReceived,
+} from '../features/deployments/deploymentsSlice';
 import { runtimeHost } from '../../runtime/RuntimeHost';
 
 // Reconnection policy: fixed interval attempts for a bounded window
@@ -38,6 +42,17 @@ interface JobEventFrame {
   type: 'job-event';
   jobId: string;
   event: JobEvent;
+}
+
+interface RunSnapshotFrame {
+  type: 'run-snapshot';
+  run: RunRecord;
+}
+
+interface RunEventFrame {
+  type: 'run-event';
+  runId: string;
+  event: RunEvent;
 }
 
 interface RuntimeRequestFrame {
@@ -77,6 +92,29 @@ function isJobEventFrame(
     isRecord(frame.event) &&
     typeof frame.event.seq === 'number' &&
     typeof frame.event.kind === 'string'
+  );
+}
+
+function isRunSnapshotFrame(
+  frame: Record<string, unknown>
+): frame is Record<string, unknown> & RunSnapshotFrame {
+  return (
+    frame.type === 'run-snapshot' &&
+    isRecord(frame.run) &&
+    typeof frame.run.id === 'string'
+  );
+}
+
+function isRunEventFrame(
+  frame: Record<string, unknown>
+): frame is Record<string, unknown> & RunEventFrame {
+  return (
+    frame.type === 'run-event' &&
+    typeof frame.runId === 'string' &&
+    isRecord(frame.event) &&
+    typeof frame.event.epoch === 'string' &&
+    typeof frame.event.seq === 'number' &&
+    (frame.event.kind === 'lane' || frame.event.kind === 'run')
   );
 }
 
@@ -163,6 +201,12 @@ export const websocketMiddleware: Middleware = (store) => {
         } else if (isJobEventFrame(parsed)) {
           store.dispatch(
             jobEventReceived({ jobId: parsed.jobId, event: parsed.event })
+          );
+        } else if (isRunSnapshotFrame(parsed)) {
+          store.dispatch(runSnapshotReceived(parsed.run));
+        } else if (isRunEventFrame(parsed)) {
+          store.dispatch(
+            runEventReceived({ runId: parsed.runId, event: parsed.event })
           );
         } else if (isRuntimeRequestFrame(parsed)) {
           runtimeHost
