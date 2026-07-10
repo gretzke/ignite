@@ -50,6 +50,58 @@ export interface CompilerHandlerDeps {
   repos: CompilerRepoServiceLike;
 }
 
+// Shared compiler-artifact operation used by both the HTTP handler and the
+// deployment freeze service. Keeping the plugin invocation here prevents the
+// launch path from subtly diverging from `/artifacts/data`.
+export async function getCompilerArtifactData(
+  deps: Pick<CompilerHandlerDeps, 'executor' | 'registryLoader' | 'repos'>,
+  input: GetArtifactDataRequest & { profileId?: string }
+): Promise<ArtifactData> {
+  let config;
+  try {
+    config = await deps.registryLoader.getPluginConfig(input.pluginId);
+  } catch {
+    throw Object.assign(new Error(`Unknown plugin: ${input.pluginId}`), {
+      code: ErrorCodes.UNKNOWN_PLUGIN,
+    });
+  }
+  if (!config.metadata.types.includes(PluginType.COMPILER)) {
+    throw Object.assign(
+      new Error(`Plugin ${input.pluginId} is not a compiler plugin`),
+      { code: ErrorCodes.NOT_A_COMPILER_PLUGIN }
+    );
+  }
+  let workspacePath: string;
+  try {
+    workspacePath =
+      input.profileId === undefined
+        ? await deps.repos.resolveExistingWorkspacePath(input.pathOrUrl)
+        : await deps.repos.resolveExistingWorkspacePath(
+            input.pathOrUrl,
+            input.profileId
+          );
+  } catch (error) {
+    throw Object.assign(
+      new Error(
+        error instanceof Error ? error.message : 'Failed to resolve workspace'
+      ),
+      { code: ErrorCodes.INIT_ERROR }
+    );
+  }
+  const result = await deps.executor.execute(
+    input.pluginId,
+    'getArtifactData',
+    { pathOrUrl: input.pathOrUrl, artifactPath: input.artifactPath },
+    { workspacePath }
+  );
+  if (!result.success) {
+    throw Object.assign(new Error('Failed to get artifact data'), {
+      code: result.error?.code ?? ErrorCodes.ARTIFACT_DATA_ERROR,
+    });
+  }
+  return result.data as ArtifactData;
+}
+
 export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
   const d: CompilerHandlerDeps = {
     jobs: deps?.jobs ?? JobManager.getInstance(),
@@ -359,46 +411,36 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
     ): Promise<IApiResponse<ArtifactData>> => {
       try {
         const { pluginId, pathOrUrl, artifactPath } = request.body;
-
-        if (await rejectNonCompilerPlugin(reply, pluginId)) {
-          return reply as unknown as IApiResponse<ArtifactData>;
-        }
-
-        // Get hostPath from request body or fall back to environment/cwd
         const hostPath =
           pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
-
-        const workspacePath = await resolveWorkspaceOr400(reply, hostPath);
-        if (workspacePath === null) {
-          return reply as unknown as IApiResponse<ArtifactData>;
-        }
-
-        const result = await d.executor.execute(
+        const data = await getCompilerArtifactData(d, {
           pluginId,
-          'getArtifactData',
-          { pathOrUrl: hostPath, artifactPath },
-          { workspacePath }
-        );
-
-        if (!result.success) {
-          const notFound =
-            !result.success &&
-            (result.error?.code === ErrorCodes.ARTIFACT_NOT_FOUND ||
-              result.error?.code === ErrorCodes.ARTIFACT_PARSE_ERROR);
-          return sendPluginError(
-            reply,
-            result,
-            ErrorCodes.ARTIFACT_DATA_ERROR,
-            'Failed to get artifact data',
-            notFound ? 404 : 500
-          );
-        }
+          pathOrUrl: hostPath,
+          artifactPath,
+        });
 
         const body: IApiResponse<ArtifactData> = {
-          data: result.data as ArtifactData,
+          data,
         };
         return reply.status(200).send(body);
       } catch (error) {
+        const code =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? (error as { code?: string }).code
+            : undefined;
+        if (
+          code === ErrorCodes.NOT_A_COMPILER_PLUGIN ||
+          code === ErrorCodes.UNKNOWN_PLUGIN ||
+          code === ErrorCodes.INIT_ERROR
+        ) {
+          return sendBadRequest(
+            reply,
+            code,
+            error instanceof Error
+              ? error.message
+              : 'Failed to get artifact data'
+          ) as unknown as IApiResponse<ArtifactData>;
+        }
         return sendCaughtError(
           reply,
           error,
