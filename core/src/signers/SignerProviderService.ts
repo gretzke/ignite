@@ -13,11 +13,16 @@ import {
   type Hex,
   type PluginResponse,
   type PluginRuntime,
+  type UnsignedTx,
 } from '@ignite/plugin-types/types';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { PluginInvoker } from '../plugins/invoke/PluginInvoker.js';
 import { FrontendRuntimeBridge } from '../plugins/invoke/FrontendRuntimeBridge.js';
-import { TxService } from '../tx/TxService.js';
+import {
+  TxService,
+  type TxOverrides,
+  type TxReceiptData,
+} from '../tx/TxService.js';
 import { stripSentinelBlocks } from '../plugins/utils/pluginTransport.js';
 import { getLogger } from '../utils/logger.js';
 import { ErrorCodes, IgniteError } from '../types/errors.js';
@@ -73,6 +78,21 @@ export interface SendResult {
   status: 'success' | 'reverted';
   blockNumber: number;
 }
+
+export interface ExecuteTxArgs {
+  pluginId: string;
+  accountId: string;
+  chainId: number;
+  rpcUrl: string;
+  chain: ChainMetadata;
+  to: Hex | null;
+  value: bigint;
+  data: Hex;
+  overrides?: TxOverrides;
+  expectedAddress: Hex;
+}
+
+export type ExecutePhase = 'built' | 'signed' | 'broadcasting';
 
 export class SignerProviderService {
   private static instance: SignerProviderService;
@@ -142,9 +162,10 @@ export class SignerProviderService {
 
   async resolveAccount(
     pluginId: string,
-    accountId: string
+    accountId: string,
+    opts?: { refresh?: boolean }
   ): Promise<{ account: SignerAccount } | undefined> {
-    const data = await this.listAccounts(false);
+    const data = await this.listAccounts(opts?.refresh ?? false);
     const provider = data.providers.find(
       (entry) => entry.pluginId === pluginId
     );
@@ -168,69 +189,174 @@ export class SignerProviderService {
     ctx.log(
       `Building transaction (chain ${args.chainId}, from ${account.address})`
     );
-    const tx = await this.deps.txService.buildTransaction({
-      rpcUrl: args.rpcUrl,
-      chainId: args.chainId,
-      from: account.address as Hex,
-      to: args.to,
-      value: args.value,
-      data: args.data,
-    });
-
-    if (account.capability === 'sign-and-send') {
-      ctx.log(`Submitting via ${args.pluginId} (sign-and-send)`);
-      const response = await this.deps.invoke(
-        args.pluginId,
-        'sendTransaction',
-        {
-          accountId: args.accountId,
-          tx,
+    return this.deps.txService.withAccountLock(
+      args.chainId,
+      account.address as Hex,
+      async () => {
+        const tx = await this.deps.txService.buildTransaction({
           rpcUrl: args.rpcUrl,
-          chain: args.chain,
-        },
-        { signal: ctx.signal }
-      );
-      const txHash = this.expectHex(args.pluginId, response, 'txHash');
-      ctx.log(`Submitted: ${txHash}; waiting for receipt`);
-      const receipt = await this.deps.txService.waitForReceipt(
-        args.rpcUrl,
-        txHash,
-        { signal: ctx.signal }
-      );
-      return { txHash, ...receipt };
-    }
+          chainId: args.chainId,
+          from: account.address as Hex,
+          to: args.to,
+          value: args.value,
+          data: args.data,
+        });
 
-    ctx.log(`Signing via ${args.pluginId}`);
-    const response = await this.deps.invoke(
-      args.pluginId,
-      'signTransaction',
-      { accountId: args.accountId, tx },
-      { signal: ctx.signal }
-    );
-    const rawTransaction = this.expectHex(
-      args.pluginId,
-      response,
-      'rawTransaction'
-    );
-    await this.deps.txService.verifySignedTx(
-      rawTransaction,
-      tx,
-      account.address as Hex
-    );
-    ctx.log('Signature verified; broadcasting');
-    const txHash = await this.deps.txService.broadcast(
-      args.rpcUrl,
-      rawTransaction
-    );
-    ctx.log(`Broadcast: ${txHash}; waiting for receipt`);
-    const receipt = await this.deps.txService.waitForReceipt(
-      args.rpcUrl,
-      txHash,
-      {
-        signal: ctx.signal,
+        if (account.capability === 'sign-and-send') {
+          ctx.log(`Submitting via ${args.pluginId} (sign-and-send)`);
+          const response = await this.deps.invoke(
+            args.pluginId,
+            'sendTransaction',
+            {
+              accountId: args.accountId,
+              tx,
+              rpcUrl: args.rpcUrl,
+              chain: args.chain,
+            },
+            { signal: ctx.signal }
+          );
+          const txHash = this.expectHex(args.pluginId, response, 'txHash');
+          ctx.log(`Submitted: ${txHash}; waiting for receipt`);
+          const receipt = await this.deps.txService.waitForReceipt(
+            args.rpcUrl,
+            txHash,
+            { signal: ctx.signal }
+          );
+          return {
+            txHash,
+            status: receipt.status,
+            blockNumber: receipt.blockNumber,
+          };
+        }
+
+        ctx.log(`Signing via ${args.pluginId}`);
+        const response = await this.deps.invoke(
+          args.pluginId,
+          'signTransaction',
+          { accountId: args.accountId, tx },
+          { signal: ctx.signal }
+        );
+        const rawTransaction = this.expectHex(
+          args.pluginId,
+          response,
+          'rawTransaction'
+        );
+        await this.deps.txService.verifySignedTx(
+          rawTransaction,
+          tx,
+          account.address as Hex
+        );
+        ctx.log('Signature verified; broadcasting');
+        const txHash = await this.deps.txService.broadcast(
+          args.rpcUrl,
+          rawTransaction
+        );
+        ctx.log(`Broadcast: ${txHash}; waiting for receipt`);
+        const receipt = await this.deps.txService.waitForReceipt(
+          args.rpcUrl,
+          txHash,
+          { signal: ctx.signal }
+        );
+        return {
+          txHash,
+          status: receipt.status,
+          blockNumber: receipt.blockNumber,
+        };
       }
     );
-    return { txHash, ...receipt };
+  }
+
+  async executeTx(
+    args: ExecuteTxArgs & {
+      onPhase?: (
+        phase: ExecutePhase,
+        data: { tx: UnsignedTx; rawTx?: Hex; txHash?: Hex }
+      ) => Promise<void>;
+    },
+    ctx: { log: (line: string) => void; signal: AbortSignal }
+  ): Promise<SendResult & TxReceiptData> {
+    const resolved = await this.resolveAccount(args.pluginId, args.accountId, {
+      refresh: true,
+    });
+    if (!resolved) {
+      throw new IgniteError(
+        `Account ${args.accountId} not found on signer provider ${args.pluginId}`,
+        ErrorCodes.SIGNER_ACCOUNT_NOT_FOUND
+      );
+    }
+
+    const { account } = resolved;
+    if (account.address.toLowerCase() !== args.expectedAddress.toLowerCase()) {
+      throw new IgniteError(
+        'Signer account address no longer matches the deployment plan',
+        ErrorCodes.SIGNER_ADDRESS_MISMATCH
+      );
+    }
+
+    return this.deps.txService.withAccountLock(
+      args.chainId,
+      account.address as Hex,
+      async () => {
+        const tx = await this.deps.txService.buildTransaction({
+          rpcUrl: args.rpcUrl,
+          chainId: args.chainId,
+          from: account.address as Hex,
+          to: args.to,
+          value: args.value,
+          data: args.data,
+          overrides: args.overrides,
+        });
+        await args.onPhase?.('built', { tx });
+
+        if (account.capability === 'sign-and-send') {
+          await args.onPhase?.('broadcasting', { tx });
+          const response = await this.deps.invoke(
+            args.pluginId,
+            'sendTransaction',
+            {
+              accountId: args.accountId,
+              tx,
+              rpcUrl: args.rpcUrl,
+              chain: args.chain,
+            },
+            { signal: ctx.signal }
+          );
+          const txHash = this.expectHex(args.pluginId, response, 'txHash');
+          const receipt = await this.deps.txService.waitForReceipt(
+            args.rpcUrl,
+            txHash,
+            { signal: ctx.signal }
+          );
+          return { txHash, ...receipt };
+        }
+
+        const response = await this.deps.invoke(
+          args.pluginId,
+          'signTransaction',
+          { accountId: args.accountId, tx },
+          { signal: ctx.signal }
+        );
+        const rawTx = this.expectHex(args.pluginId, response, 'rawTransaction');
+        await this.deps.txService.verifySignedTx(
+          rawTx,
+          tx,
+          account.address as Hex
+        );
+        await args.onPhase?.('signed', { tx, rawTx });
+        const txHash = this.deps.txService.computeTxHash(rawTx);
+        await args.onPhase?.('broadcasting', { tx, rawTx, txHash });
+        const broadcastHash = await this.deps.txService.broadcast(
+          args.rpcUrl,
+          rawTx
+        );
+        const receipt = await this.deps.txService.waitForReceipt(
+          args.rpcUrl,
+          broadcastHash,
+          { signal: ctx.signal }
+        );
+        return { txHash: broadcastHash, ...receipt };
+      }
+    );
   }
 
   private async getProviderAccounts(

@@ -177,6 +177,9 @@ describe('SignerProviderService.send (sign-only path)', () => {
     const waitForReceipt = vi.fn(async () => ({
       status: 'success' as const,
       blockNumber: 1,
+      contractAddress: null,
+      gasUsed: '21000',
+      effectiveGasPrice: '1000000000',
     }));
     const buildTransaction = vi.fn(async () => ({
       chainId: 31337,
@@ -203,6 +206,7 @@ describe('SignerProviderService.send (sign-only path)', () => {
         verifySignedTx: realTx.verifySignedTx.bind(realTx),
         broadcast,
         waitForReceipt,
+        withAccountLock: async (_chainId, _address, fn) => fn(),
       },
     });
     const result = await svc.send(
@@ -227,6 +231,128 @@ describe('SignerProviderService.send (sign-only path)', () => {
       status: 'success',
       blockNumber: 1,
     });
+  });
+});
+
+describe('SignerProviderService.executeTx', () => {
+  const tx = {
+    chainId: 31337,
+    to: null,
+    data: '0x6001' as const,
+    value: '0x0' as const,
+    nonce: 0,
+    gas: '0xc350' as const,
+    maxFeePerGas: '0x1e' as const,
+    maxPriorityFeePerGas: '0x2' as const,
+  };
+  const executeArgs = {
+    pluginId: 'private-key',
+    accountId: 'k1',
+    chainId: 31337,
+    rpcUrl: 'http://localhost:8545',
+    chain: {
+      name: 'Anvil',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    },
+    to: null,
+    value: 0n,
+    data: '0x6001' as const,
+    expectedAddress: signerAccount.address,
+  };
+
+  it('rejects when the provider account no longer matches the selected address', async () => {
+    const buildTransaction = vi.fn();
+    const svc = makeService({
+      txService: { buildTransaction },
+    });
+
+    await expect(
+      svc.executeTx(
+        {
+          ...executeArgs,
+          expectedAddress: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
+        },
+        { log: () => {}, signal: new AbortController().signal }
+      )
+    ).rejects.toMatchObject({ code: 'SIGNER_ADDRESS_MISMATCH' });
+    expect(buildTransaction).not.toHaveBeenCalled();
+  });
+
+  it('awaits the broadcast phase before sign-and-send submission', async () => {
+    const sendTransaction = vi.fn(async () => ({
+      success: true as const,
+      data: { txHash: '0x1234' },
+    }));
+    let releasePhase!: () => void;
+    const phaseGate = new Promise<void>((resolve) => {
+      releasePhase = resolve;
+    });
+    const svc = makeService({
+      invoke: async (_pluginId, operation) => {
+        if (operation === 'getAccounts') {
+          return {
+            success: true,
+            data: { accounts: [{ ...VALID, capability: 'sign-and-send' }] },
+          };
+        }
+        return sendTransaction();
+      },
+      txService: {
+        buildTransaction: async () => tx,
+        withAccountLock: async (_chainId, _address, fn) => fn(),
+        waitForReceipt: async () => ({
+          status: 'success',
+          blockNumber: 1,
+          contractAddress: signerAccount.address,
+          gasUsed: '1',
+          effectiveGasPrice: '2',
+        }),
+      },
+    });
+
+    const execution = svc.executeTx(
+      {
+        ...executeArgs,
+        onPhase: async (phase) => {
+          if (phase === 'broadcasting') await phaseGate;
+        },
+      },
+      { log: () => {}, signal: new AbortController().signal }
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sendTransaction).not.toHaveBeenCalled();
+    releasePhase();
+    await expect(execution).resolves.toMatchObject({ txHash: '0x1234' });
+    expect(sendTransaction).toHaveBeenCalledOnce();
+  });
+
+  it('does not submit when the broadcast phase persistence rejects', async () => {
+    const sendTransaction = vi.fn();
+    const svc = makeService({
+      invoke: async (_pluginId, operation) =>
+        operation === 'getAccounts'
+          ? {
+              success: true,
+              data: { accounts: [{ ...VALID, capability: 'sign-and-send' }] },
+            }
+          : sendTransaction(),
+      txService: {
+        buildTransaction: async () => tx,
+        withAccountLock: async (_chainId, _address, fn) => fn(),
+      },
+    });
+
+    await expect(
+      svc.executeTx(
+        {
+          ...executeArgs,
+          onPhase: async () => Promise.reject(new Error('write failed')),
+        },
+        { log: () => {}, signal: new AbortController().signal }
+      )
+    ).rejects.toThrow('write failed');
+    expect(sendTransaction).not.toHaveBeenCalled();
   });
 });
 

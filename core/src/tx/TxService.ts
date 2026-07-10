@@ -5,6 +5,7 @@
 import {
   createPublicClient,
   http,
+  keccak256,
   parseTransaction,
   recoverTransactionAddress,
   toHex,
@@ -15,6 +16,22 @@ import { IgniteError, ErrorCodes } from '../types/errors.js';
 
 export interface TxServiceDeps {
   createClient: (rpcUrl: string) => PublicClient;
+}
+
+export interface TxOverrides {
+  nonce?: number;
+  gasLimit?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+}
+
+export interface TxReceiptData {
+  status: 'success' | 'reverted';
+  blockNumber: number;
+  contractAddress: Hex | null;
+  gasUsed: string;
+  effectiveGasPrice: string;
+  nonce?: number;
 }
 
 export function toUnsignedTx(args: {
@@ -43,6 +60,7 @@ const RECEIPT_TIMEOUT_MS = 120_000;
 
 export class TxService {
   private deps: TxServiceDeps;
+  private accountLocks = new Map<string, Promise<void>>();
 
   constructor(deps?: Partial<TxServiceDeps>) {
     this.deps = {
@@ -59,17 +77,23 @@ export class TxService {
     to: Hex | null;
     value: bigint;
     data: Hex;
+    overrides?: TxOverrides;
   }): Promise<UnsignedTx> {
     const client = this.deps.createClient(args.rpcUrl);
+    const needsFeeEstimate =
+      args.overrides?.maxFeePerGas === undefined ||
+      args.overrides?.maxPriorityFeePerGas === undefined;
     const [nonce, gas, fees] = await Promise.all([
-      client.getTransactionCount({ address: args.from, blockTag: 'pending' }),
-      client.estimateGas({
-        account: args.from,
-        to: args.to ?? undefined,
-        value: args.value,
-        data: args.data,
-      }),
-      client.estimateFeesPerGas(),
+      args.overrides?.nonce ??
+        client.getTransactionCount({ address: args.from, blockTag: 'pending' }),
+      args.overrides?.gasLimit ??
+        client.estimateGas({
+          account: args.from,
+          to: args.to ?? undefined,
+          value: args.value,
+          data: args.data,
+        }),
+      needsFeeEstimate ? client.estimateFeesPerGas() : undefined,
     ]);
 
     return toUnsignedTx({
@@ -79,9 +103,38 @@ export class TxService {
       value: args.value,
       nonce,
       gas,
-      maxFeePerGas: fees.maxFeePerGas,
-      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      maxFeePerGas: args.overrides?.maxFeePerGas ?? fees!.maxFeePerGas,
+      maxPriorityFeePerGas:
+        args.overrides?.maxPriorityFeePerGas ?? fees!.maxPriorityFeePerGas,
     });
+  }
+
+  computeTxHash(rawTransaction: Hex): Hex {
+    return keccak256(rawTransaction);
+  }
+
+  async withAccountLock<T>(
+    chainId: number,
+    address: Hex,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    const key = `${chainId}:${address.toLowerCase()}`;
+    const predecessor = this.accountLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.accountLocks.set(key, current);
+
+    await predecessor;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.accountLocks.get(key) === current) {
+        this.accountLocks.delete(key);
+      }
+    }
   }
 
   // Integrity gate for sign-only results: the returned raw tx must be exactly
@@ -146,7 +199,7 @@ export class TxService {
     rpcUrl: string,
     txHash: Hex,
     opts?: { timeoutMs?: number; signal?: AbortSignal }
-  ): Promise<{ status: 'success' | 'reverted'; blockNumber: number }> {
+  ): Promise<TxReceiptData> {
     if (opts?.signal?.aborted) {
       throw new IgniteError('Interrupted', ErrorCodes.INTERRUPTED);
     }
@@ -175,6 +228,9 @@ export class TxService {
     return {
       status: receipt.status,
       blockNumber: Number(receipt.blockNumber),
+      contractAddress: receipt.contractAddress ?? null,
+      gasUsed: receipt.gasUsed.toString(),
+      effectiveGasPrice: receipt.effectiveGasPrice.toString(),
     };
   }
 }
