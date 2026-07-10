@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  collapseSharedTransports,
   keyDiscoveredProviders,
   providerDetailForTest,
   type Eip1193Provider,
@@ -38,5 +39,33 @@ describe('keyDiscoveredProviders', () => {
     expect(reversed.get('io.metamask~metamask-flask')?.info.name).toBe(
       'MetaMask Flask'
     );
+  });
+});
+
+describe('collapseSharedTransports', () => {
+  it('keeps wallets with distinct providers separate', () => {
+    const a: Eip1193Provider = { request: async () => null };
+    const b: Eip1193Provider = { request: async () => null };
+    const collapsed = collapseSharedTransports(
+      keyDiscoveredProviders([
+        providerDetailForTest('io.metamask', 'MetaMask', a),
+        providerDetailForTest('io.metamask', 'MetaMask Flask', b),
+      ])
+    );
+    expect(collapsed.size).toBe(2);
+  });
+
+  it('collapses announcements sharing one provider object into a single honest entry', () => {
+    const shared: Eip1193Provider = { request: async () => null };
+    const collapsed = collapseSharedTransports(
+      keyDiscoveredProviders([
+        providerDetailForTest('io.metamask', 'MetaMask', shared),
+        providerDetailForTest('io.metamask', 'MetaMask Flask', shared),
+      ])
+    );
+    expect(collapsed.size).toBe(1);
+    const [key, detail] = [...collapsed.entries()][0];
+    expect(key).toBe('io.metamask~metamask');
+    expect(detail.info.name).toBe('MetaMask / MetaMask Flask');
   });
 });
