@@ -4,6 +4,7 @@ import type { SignerRef } from '@ignite/api';
 import Select from '../../../components/Select';
 import { useAppDispatch, useAppSelector } from '../../../store';
 import { signersApi } from '../../../store/features/signers/signersSlice';
+import { runtimeHost } from '../../../runtime/RuntimeHost';
 import {
   setChainSigner,
   setGlobalSigner,
@@ -96,23 +97,36 @@ export default function SignersStep() {
         })}
       </div>
       {signers.providers
-        .filter((provider) => provider.state === 'needs-browser')
+        // A browser wallet with a registered host reports 'ok' with zero
+        // accounts until the user authorizes the site — it must still offer
+        // Connect here, or the wallet is simply invisible in the wizard.
+        .filter(
+          (provider) =>
+            provider.accounts.length === 0 &&
+            runtimeHost.getLoadedPluginIds().includes(provider.pluginId) &&
+            (provider.state === 'needs-browser' || provider.state === 'ok')
+        )
         .map((provider) => (
           <div
             key={provider.pluginId}
             className="card-milky p-3 flex items-center gap-3"
           >
             <span className="text-sm">
-              {provider.name} needs a browser connection.
+              {provider.state === 'needs-browser'
+                ? `${provider.name} needs a browser connection.`
+                : `${provider.name} is available — connect it to list accounts.`}
             </span>
             <button
               type="button"
               className="btn btn-sm btn-primary ml-auto"
+              disabled={signers.connectingPluginId === provider.pluginId}
               onClick={() =>
                 dispatch(signersApi.connectWallet(provider.pluginId))
               }
             >
-              Connect wallet
+              {signers.connectingPluginId === provider.pluginId
+                ? 'Connecting…'
+                : 'Connect wallet'}
             </button>
           </div>
         ))}
