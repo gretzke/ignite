@@ -141,10 +141,10 @@ export default function ArtifactBrowser({
   const { directories, files } = directoryContents;
   const deploySelected = () => {
     if (!frameworkId || !repoPath) return;
-    const decodedRepoPath = decodeURIComponent(repoPath);
     const contracts = Object.values(selected).map((artifact) => ({
       id: `${frameworkId}:${artifact.artifactPath}:${artifact.contractName}`,
-      repoPathOrUrl: decodedRepoPath,
+      // react-router has already decoded the path parameter.
+      repoPathOrUrl: repoPath,
       frameworkId,
       artifactPath: artifact.artifactPath,
       contractName: artifact.contractName,

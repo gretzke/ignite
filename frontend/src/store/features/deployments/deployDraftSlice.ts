@@ -33,6 +33,17 @@ function removeEmptyRecord(
   }
 }
 
+function alignContractsWithSteps(state: DeployDraftState): void {
+  const position = new Map(
+    state.steps.map((step, index) => [step.contractId, index])
+  );
+  state.contracts.sort(
+    (a, b) =>
+      (position.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+      (position.get(b.id) ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
 const deployDraftSlice = createSlice({
   name: 'deployDraft',
   initialState,
@@ -57,6 +68,7 @@ const deployDraftSlice = createSlice({
             (positions.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
             (positions.get(b.id) ?? Number.MAX_SAFE_INTEGER)
         );
+        alignContractsWithSteps(state);
         return;
       }
       const { fromIndex, toIndex } = action.payload;
@@ -71,6 +83,7 @@ const deployDraftSlice = createSlice({
       }
       const [step] = state.steps.splice(fromIndex, 1);
       state.steps.splice(toIndex, 0, step);
+      alignContractsWithSteps(state);
     },
     toggleChain(state, action: PayloadAction<number>) {
       const chainId = action.payload;

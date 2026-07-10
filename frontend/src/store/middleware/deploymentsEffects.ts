@@ -4,6 +4,8 @@ import type { Lane, RunRecord } from '@ignite/api';
 import { apiClient } from '../api/client';
 import {
   runEventReceived,
+  backgroundRunFinished,
+  backgroundRunsReceived,
   runsListReceived,
   subscribeRunRequested,
   unsubscribeRunRequested,
@@ -30,6 +32,8 @@ function subscribeFrame(state: RootState, runId: string) {
 deploymentsEffects.startListening({
   actionCreator: subscribeRunRequested,
   effect: async (action, listenerApi) => {
+    const state = listenerApi.getState() as RootState;
+    if (state.deployments.backgroundSubscriptions[action.payload]) return;
     listenerApi.dispatch(
       subscribeFrame(listenerApi.getState() as RootState, action.payload)
     );
@@ -39,6 +43,8 @@ deploymentsEffects.startListening({
 deploymentsEffects.startListening({
   actionCreator: unsubscribeRunRequested,
   effect: async (action, listenerApi) => {
+    const state = listenerApi.getState() as RootState;
+    if (state.deployments.backgroundSubscriptions[action.payload]) return;
     listenerApi.dispatch(
       wsSend({ type: 'unsubscribe-run', runId: action.payload })
     );
@@ -58,13 +64,17 @@ deploymentsEffects.startListening({
         query: { active: 'true' },
         onSuccess: (data) => {
           const current = listenerApi.getState() as RootState;
-          const runIds = new Set([
-            ...Object.keys(current.deployments.activeSubscriptions),
-            ...data.runs.map(({ id }) => id),
-          ]);
-          const actions: UnknownAction[] = [runsListReceived(data)];
+          const viewRunIds = Object.keys(
+            current.deployments.activeSubscriptions
+          );
+          const backgroundRunIds = data.runs.map(({ id }) => id);
+          const runIds = new Set([...viewRunIds, ...backgroundRunIds]);
+          const actions: UnknownAction[] = [
+            runsListReceived(data),
+            backgroundRunsReceived(backgroundRunIds),
+          ];
           for (const runId of runIds) {
-            actions.push(subscribeRunRequested(runId));
+            actions.push(subscribeFrame(current, runId));
           }
           return actions;
         },
@@ -104,8 +114,10 @@ deploymentsEffects.startListening({
       return;
     }
 
-    if (event.kind === 'run' && event.runPatch?.status === 'completed') {
-      if (before.deployments.runsById[runId]?.status === 'completed') return;
+    if (
+      before.deployments.runsById[runId]?.status !== 'completed' &&
+      run.status === 'completed'
+    ) {
       listenerApi.dispatch(
         triggerToast({
           title: 'Run completed',
@@ -117,12 +129,11 @@ deploymentsEffects.startListening({
     }
 
     if (
-      event.kind === 'run' &&
-      event.runPatch &&
-      ['completed', 'failed', 'aborted'].includes(event.runPatch.status) &&
-      before.deployments.runsById[runId]?.status !== event.runPatch.status
+      ['completed', 'failed', 'aborted'].includes(run.status) &&
+      before.deployments.runsById[runId]?.status !== run.status
     ) {
-      listenerApi.dispatch(unsubscribeRunRequested(runId));
+      listenerApi.dispatch(backgroundRunFinished(runId));
+      listenerApi.dispatch(wsSend({ type: 'unsubscribe-run', runId }));
     }
   },
 });

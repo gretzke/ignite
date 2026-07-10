@@ -43,6 +43,16 @@ blocking current functionality.
   terminal-but-unhandled views.
 - **Immediacy test coverage.** No test uses a never-resolving runner to prove the handler replies
   `{jobId}` before the runner settles (currently guaranteed only by construction).
+- **Job subscribe snapshot/live drop race.** Deployment-run subscriptions install their
+  listener before the snapshot read and carry an epoch/high-water cursor. The older jobs
+  subscription still reads its snapshot before installing the listener, so an event in that
+  window can be lost. Port the D3 queue-and-flush ordering to jobs.
+
+## Deployment follow-ups (D3)
+
+- **Legacy-fee chain support.** D3 intentionally supports EIP-1559 only and blocks legacy
+  fee markets during validation with `LEGACY_FEES_UNSUPPORTED`. Add typed legacy gas-price
+  estimation/building before those chains can be selected for a run.
 
 ## State / infrastructure
 
@@ -194,11 +204,6 @@ smells, ranked:
 - **`--input-type=module` discovery.** Bare `node -e` only worked while
   builtin bundles happened to contain no residual ESM syntax; now it's
   explicit. If a builtin ever needs CJS interop, revisit per-plugin.
-- **Send accepts unverified RPC endpoints** (2026-07-09 review, accepted for
-  D2a). `POST /signers/send` takes any stored/provider endpoint id without
-  requiring a fresh `lastVerification.ok && chainIdMatch`; the dev panel
-  shows verification state but doesn't enforce it. Enforcement belongs to
-  the D3 wizard's pre-deployment validation (which owns RPC preflight).
 - **Full-run Docker integration flake widened** (2026-07-09, D2b). The
   documented contention mode (vitest.config.ts comment: Docker suites flake
   in full runs, never isolated) now hits `thirdparty-plugin` /

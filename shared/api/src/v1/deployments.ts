@@ -498,8 +498,19 @@ const SIGN_AND_SEND_TIMEOUT_ACTIONS: ResolveAction[] = [
   "keep-waiting",
   "abort-lane",
 ];
+const SIGN_AND_SEND_UNKNOWN_HASH_ACTIONS: ResolveAction[] = [
+  "confirm-hash",
+  "mark-not-sent",
+  "abort-lane",
+];
 const NEEDS_REVIEW_ACTIONS: ResolveAction[] = [
   "recheck",
+  "confirm-hash",
+  "mark-not-sent",
+  "skip",
+  "abort-lane",
+];
+const NEEDS_REVIEW_UNKNOWN_HASH_ACTIONS: ResolveAction[] = [
   "confirm-hash",
   "mark-not-sent",
   "skip",
@@ -509,11 +520,15 @@ const NEEDS_REVIEW_ACTIONS: ResolveAction[] = [
 export function allowedActions(ctx: PauseContext): ResolveAction[] {
   if (ctx.reason === "revert") return REVERT_ACTIONS;
   if (ctx.reason === "receipt-timeout") {
+    if (!ctx.submitted) return SIGN_AND_SEND_UNKNOWN_HASH_ACTIONS;
     return ctx.capability === "sign-only"
       ? SIGN_ONLY_TIMEOUT_ACTIONS
       : SIGN_AND_SEND_TIMEOUT_ACTIONS;
   }
-  if (ctx.reason === "needs-review") return NEEDS_REVIEW_ACTIONS;
+  if (ctx.reason === "needs-review")
+    return ctx.submitted
+      ? NEEDS_REVIEW_ACTIONS
+      : NEEDS_REVIEW_UNKNOWN_HASH_ACTIONS;
   // All remaining pause reasons are classified by the engine as failures
   // before submission. `submitted` is carried so callers cannot discard the
   // fact, but no additional submitted state is legal for these reasons.

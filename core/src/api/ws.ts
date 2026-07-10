@@ -35,8 +35,16 @@ interface UnsubscribeFrame {
   jobId: string;
 }
 
-interface SubscribeRunFrame { type: 'subscribe-run'; runId: string; epoch?: string; afterSeq?: number; }
-interface UnsubscribeRunFrame { type: 'unsubscribe-run'; runId: string; }
+interface SubscribeRunFrame {
+  type: 'subscribe-run';
+  runId: string;
+  epoch?: string;
+  afterSeq?: number;
+}
+interface UnsubscribeRunFrame {
+  type: 'unsubscribe-run';
+  runId: string;
+}
 
 interface RuntimeRegisterFrame {
   type: 'runtime-register';
@@ -76,12 +84,21 @@ function parseClientFrame(raw: unknown): ClientFrame | undefined {
   if (frame.type === 'unsubscribe' && typeof frame.jobId === 'string') {
     return { type: 'unsubscribe', jobId: frame.jobId };
   }
-  if (frame.type === 'subscribe-run' && typeof frame.runId === 'string' &&
+  if (
+    frame.type === 'subscribe-run' &&
+    typeof frame.runId === 'string' &&
     (frame.epoch === undefined || typeof frame.epoch === 'string') &&
-    (frame.afterSeq === undefined || typeof frame.afterSeq === 'number')) {
-    return { type: 'subscribe-run', runId: frame.runId, epoch: frame.epoch as string | undefined, afterSeq: frame.afterSeq as number | undefined };
+    (frame.afterSeq === undefined || typeof frame.afterSeq === 'number')
+  ) {
+    return {
+      type: 'subscribe-run',
+      runId: frame.runId,
+      epoch: frame.epoch as string | undefined,
+      afterSeq: frame.afterSeq as number | undefined,
+    };
   }
-  if (frame.type === 'unsubscribe-run' && typeof frame.runId === 'string') return { type: 'unsubscribe-run', runId: frame.runId };
+  if (frame.type === 'unsubscribe-run' && typeof frame.runId === 'string')
+    return { type: 'unsubscribe-run', runId: frame.runId };
   if (
     frame.type === 'runtime-register' &&
     Array.isArray(frame.pluginIds) &&
@@ -108,7 +125,10 @@ function parseClientFrame(raw: unknown): ClientFrame | undefined {
 export function createWsHandler(
   jobs: JobManager,
   bridge = FrontendRuntimeBridge.getInstance(),
-  runs?: Pick<DeployEngine, 'subscribe' | 'eventsSince' | 'get'>,
+  runs?: Pick<
+    DeployEngine,
+    'subscribe' | 'eventsSince' | 'eventCursor' | 'get'
+  >,
   getProfileId?: () => string
 ): (socket: WsSocket) => void {
   return (socket: WsSocket) => {
@@ -165,24 +185,49 @@ export function createWsHandler(
       subscriptions.set(jobId, unsubscribe);
     };
 
-    const handleSubscribeRun = async (runId: string, epoch?: string, afterSeq?: number): Promise<void> => {
-      if (!runs || !getProfileId) { safeSend({ type: 'error', message: `unknown deployment run ${runId}` }); return; }
-      const run = await runs.get(getProfileId(), runId);
-      if (!run) { safeSend({ type: 'error', message: `unknown deployment run ${runId}` }); return; }
+    const handleSubscribeRun = async (
+      runId: string,
+      epoch?: string,
+      afterSeq?: number
+    ): Promise<void> => {
+      if (!runs || !getProfileId) {
+        safeSend({ type: 'error', message: `unknown deployment run ${runId}` });
+        return;
+      }
       teardownRun(runId);
-      // Install the listener before emitting any snapshot/replay frames. Events
-      // arriving while those frames are sent are queued and flushed after them.
+      // Install the listener before reading the snapshot. Events arriving
+      // during the asynchronous store read, snapshot, or replay are queued and
+      // flushed after them, closing the read-before-listen drop window.
       const queued: RunEvent[] = [];
       let sending = true;
+      // Cursor read + listener installation are synchronous, so no engine
+      // event can interleave between them on the Node event loop.
+      const cursor = runs.eventCursor(runId);
       const unsubscribe = runs.subscribe((eventRunId, event) => {
         if (eventRunId !== runId) return;
         if (sending) queued.push(event);
         else safeSend({ type: 'run-event', runId, event });
       });
       runSubscriptions.set(runId, unsubscribe);
-      safeSend({ type: 'run-snapshot', run });
+      // Capture the high-water mark before reading the snapshot. Anything
+      // newer is already covered by the listener queue and must not be folded
+      // into the snapshot cursor, or the client would dedupe a queued update
+      // that the snapshot did not contain.
+      const run = await runs.get(getProfileId(), runId);
+      if (!run) {
+        teardownRun(runId);
+        safeSend({ type: 'error', message: `unknown deployment run ${runId}` });
+        return;
+      }
+      safeSend({
+        type: 'run-snapshot',
+        run,
+        epoch: cursor.epoch,
+        lastSeq: cursor.lastSeq,
+      });
       if (epoch !== undefined && afterSeq !== undefined) {
-        for (const event of runs.eventsSince(runId, epoch, afterSeq)) safeSend({ type: 'run-event', runId, event });
+        for (const event of runs.eventsSince(runId, epoch, afterSeq))
+          safeSend({ type: 'run-event', runId, event });
       }
       sending = false;
       for (const event of queued) safeSend({ type: 'run-event', runId, event });

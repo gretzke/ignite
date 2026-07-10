@@ -51,6 +51,7 @@ export interface DeploymentsState {
   runsById: Record<string, RunRecord>;
   summaries: RunSummary[];
   activeSubscriptions: Record<string, true>;
+  backgroundSubscriptions: Record<string, true>;
   epochByRun: Record<string, RunCursor>;
 }
 

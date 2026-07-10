@@ -37,7 +37,7 @@ interface LanePanelProps {
   chain?: ChainInfo;
   planSteps: Step[];
   contractNames: Record<string, string>;
-  capability: 'sign-only' | 'sign-and-send';
+  capability?: 'sign-only' | 'sign-and-send';
   onAction: (action: ResolveAction) => void;
 }
 

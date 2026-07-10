@@ -7,7 +7,6 @@ import type {
   FrozenInputs,
   Hex,
 } from '@ignite/api';
-import { PluginType } from '@ignite/plugin-types/types';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { RepoService } from '../repos/RepoService.js';

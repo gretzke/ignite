@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, History, Loader2, Play, Plus } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { RunSummary } from '@ignite/api';
 import { apiClient } from '../../store/api/client';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { runsListReceived } from '../../store/features/deployments/deploymentsSlice';
+import { runSnapshotReceived } from '../../store/features/deployments/deploymentsSlice';
 
 function StatusPill({ status }: { status: string }) {
   const cls =
@@ -29,6 +30,9 @@ export default function DeploymentsPage() {
   const summaries = useAppSelector((state) => state.deployments.summaries);
   const [unreadable, setUnreadable] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [resumable, setResumable] = useState<Record<string, boolean>>({});
+  const checkedPaused = useRef(new Map<string, string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +45,10 @@ export default function DeploymentsPage() {
           setUnreadable(response.data.unreadable ?? []);
         }
       })
+      .catch((cause) => {
+        if (!cancelled)
+          setError(cause instanceof Error ? cause.message : String(cause));
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -48,6 +56,39 @@ export default function DeploymentsPage() {
       cancelled = true;
     };
   }, [dispatch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    for (const run of summaries) {
+      if (
+        run.status !== 'paused' ||
+        checkedPaused.current.get(run.id) === run.updatedAt
+      )
+        continue;
+      checkedPaused.current.set(run.id, run.updatedAt);
+      void apiClient
+        .request('getDeploymentRun', { params: { runId: run.id } })
+        .then((response) => {
+          if (!('data' in response)) throw new Error(response.message);
+          if (cancelled) return;
+          dispatch(runSnapshotReceived(response.data.run));
+          setResumable((current) => ({
+            ...current,
+            [run.id]: Object.values(response.data.run.lanes).some(
+              (lane) =>
+                lane.status === 'paused' && lane.pause?.reason === 'interrupted'
+            ),
+          }));
+        })
+        .catch(() => {
+          if (!cancelled)
+            setResumable((current) => ({ ...current, [run.id]: false }));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatch, summaries]);
 
   const resume = async (run: RunSummary) => {
     const response = await apiClient.request('resumeDeploymentRun', {
@@ -75,6 +116,7 @@ export default function DeploymentsPage() {
           <Loader2 size={18} className="animate-spin" /> Loading runs…
         </div>
       )}
+      {error && <div className="card-milky p-4 text-err">{error}</div>}
       {!loading && summaries.length === 0 && unreadable.length === 0 && (
         <div className="card-milky p-8 text-center">
           <History size={24} className="mx-auto text-muted mb-2" />
@@ -92,7 +134,7 @@ export default function DeploymentsPage() {
               </div>
             </Link>
             <StatusPill status={run.status} />
-            {run.status === 'paused' && (
+            {run.status === 'paused' && resumable[run.id] && (
               <button
                 type="button"
                 className="btn btn-sm btn-primary"

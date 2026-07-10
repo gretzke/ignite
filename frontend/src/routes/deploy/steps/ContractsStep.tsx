@@ -1,15 +1,69 @@
-import { ArrowDown, ArrowUp, Box } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowDown, ArrowUp, Box, Loader2 } from 'lucide-react';
 import type { DraftContract } from '../../../store/features/deployments/types';
+import { apiClient } from '../../../store/api/client';
 
 interface ContractsStepProps {
   contracts: DraftContract[];
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onValidityChange: (valid: boolean) => void;
 }
 
 export default function ContractsStep({
   contracts,
   onReorder,
+  onValidityChange,
 }: ContractsStepProps) {
+  const [checks, setChecks] = useState<
+    Record<string, 'loading' | 'ok' | 'linked' | 'error'>
+  >({});
+
+  useEffect(() => {
+    let cancelled = false;
+    setChecks(
+      Object.fromEntries(contracts.map((contract) => [contract.id, 'loading']))
+    );
+    for (const contract of contracts) {
+      void apiClient
+        .request('getArtifactData', {
+          body: {
+            pathOrUrl: contract.repoPathOrUrl,
+            pluginId: contract.frameworkId,
+            artifactPath: contract.artifactPath,
+          },
+        })
+        .then((response) => {
+          if (!('data' in response)) throw new Error(response.message);
+          const linked = Boolean(
+            response.data.creationCodeLinkReferences &&
+            Object.keys(response.data.creationCodeLinkReferences).length > 0
+          );
+          if (!cancelled)
+            setChecks((current) => ({
+              ...current,
+              [contract.id]: linked ? 'linked' : 'ok',
+            }));
+        })
+        .catch(() => {
+          if (!cancelled)
+            setChecks((current) => ({
+              ...current,
+              [contract.id]: 'error',
+            }));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [contracts]);
+
+  useEffect(() => {
+    onValidityChange(
+      contracts.length > 0 &&
+        contracts.every((contract) => checks[contract.id] === 'ok')
+    );
+  }, [checks, contracts, onValidityChange]);
+
   return (
     <section className="grid gap-3">
       <div>
@@ -35,6 +89,22 @@ export default function ContractsStep({
                 <div className="mono-data text-muted truncate">
                   {contract.sourcePath} · {contract.frameworkId}
                 </div>
+                {checks[contract.id] === 'loading' && (
+                  <div className="text-xs text-muted flex items-center gap-1">
+                    <Loader2 size={12} className="animate-spin" /> Checking
+                    deployability…
+                  </div>
+                )}
+                {checks[contract.id] === 'linked' && (
+                  <div className="text-xs text-warn">
+                    Requires library linking (planned for D5).
+                  </div>
+                )}
+                {checks[contract.id] === 'error' && (
+                  <div className="text-xs text-err">
+                    Artifact details could not be loaded.
+                  </div>
+                )}
               </div>
               <button
                 type="button"

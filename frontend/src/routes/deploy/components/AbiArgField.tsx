@@ -21,6 +21,26 @@ function inputHint(type: string): string {
   return type;
 }
 
+function validationMessage(type: string, value: string): string | undefined {
+  if (!value) return undefined;
+  if (/^uint/.test(type) && !/^\d+$/.test(value))
+    return 'Enter a non-negative decimal integer.';
+  if (/^int/.test(type) && !/^-?\d+$/.test(value))
+    return 'Enter a decimal integer.';
+  if (type === 'address' && !/^0x[0-9a-fA-F]{40}$/.test(value))
+    return 'Enter a 20-byte 0x address.';
+  if (/^bytes/.test(type) && !/^0x(?:[0-9a-fA-F]{2})*$/.test(value))
+    return 'Enter even-length 0x-prefixed hex bytes.';
+  if (type.endsWith(']')) {
+    try {
+      if (!Array.isArray(JSON.parse(value))) return 'Enter a JSON array.';
+    } catch {
+      return 'Enter a valid JSON array.';
+    }
+  }
+  return undefined;
+}
+
 export default function AbiArgField({
   input,
   fieldKey,
@@ -73,6 +93,7 @@ export default function AbiArgField({
       : typeof value === 'string'
         ? value
         : JSON.stringify(value);
+  const invalid = validationMessage(input.type, stringValue);
   return (
     <label className="grid gap-1">
       <span className="text-sm font-medium">
@@ -83,6 +104,7 @@ export default function AbiArgField({
         value={stringValue}
         placeholder={inputHint(input.type)}
         inputMode={/^u?int/.test(input.type) ? 'numeric' : undefined}
+        aria-invalid={Boolean(invalid)}
         onChange={(event) => {
           const next = event.target.value;
           if (input.type.endsWith(']')) {
@@ -96,6 +118,7 @@ export default function AbiArgField({
           }
         }}
       />
+      {invalid && <span className="text-xs text-err">{invalid}</span>}
     </label>
   );
 }

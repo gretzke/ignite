@@ -5,6 +5,7 @@ import {
   deployDraftReducer,
   seedDraft,
   setChainArgOverride,
+  reorderSteps,
 } from '../deployDraftSlice';
 
 function contract(id: string, contractName: string): ContractSource {
@@ -61,5 +62,22 @@ describe('deployDraftSlice', () => {
       })
     );
     expect(state.steps[0].argsPerChain).toBeUndefined();
+  });
+
+  it('keeps the visible contract order aligned with execution steps', () => {
+    const contracts = [contract('token', 'Token'), contract('vault', 'Vault')];
+    const state = deployDraftReducer(
+      deployDraftReducer(undefined, seedDraft(contracts)),
+      reorderSteps({ fromIndex: 1, toIndex: 0 })
+    );
+
+    expect(state.steps.map((step) => step.contractId)).toEqual([
+      'vault',
+      'token',
+    ]);
+    expect(state.contracts.map((contract) => contract.id)).toEqual([
+      'vault',
+      'token',
+    ]);
   });
 });

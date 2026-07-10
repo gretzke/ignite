@@ -141,7 +141,10 @@ export default function RunPage() {
     }
     if (action === 'confirm-hash') {
       const txHash = window.prompt('Paste the mined transaction hash');
-      if (!txHash) return;
+      if (!txHash || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+        setError('Enter a 32-byte 0x transaction hash.');
+        return;
+      }
       void sendResolution(chainId, {
         ...base,
         action,
@@ -154,7 +157,15 @@ export default function RunPage() {
       const maxPriorityFeePerGas = window.prompt(
         'Replacement priority fee per gas (wei)'
       );
-      if (!maxFeePerGas || !maxPriorityFeePerGas) return;
+      if (
+        !maxFeePerGas ||
+        !maxPriorityFeePerGas ||
+        !/^\d+$/.test(maxFeePerGas) ||
+        !/^\d+$/.test(maxPriorityFeePerGas)
+      ) {
+        setError('Replacement fees must be decimal wei integers.');
+        return;
+      }
       void sendResolution(chainId, {
         ...base,
         action,
@@ -215,6 +226,14 @@ export default function RunPage() {
             run.plan.signers.perChain?.[String(chainId)] ??
             run.plan.signers.global;
           const account = signerFor(ref, providers);
+          const pausedAttempt = lane.pause
+            ? lane.steps[lane.pause.stepIndex]?.attempts.find(
+                (attempt) => attempt.id === lane.pause?.attemptId
+              )
+            : undefined;
+          const capability =
+            account?.capability ??
+            (pausedAttempt?.rawTx ? 'sign-only' : undefined);
           return (
             <LanePanel
               key={chainId}
@@ -222,7 +241,7 @@ export default function RunPage() {
               chain={chains.chains.find((item) => item.chainId === chainId)}
               planSteps={run.plan.steps}
               contractNames={contractNames}
-              capability={account?.capability ?? 'sign-and-send'}
+              capability={capability}
               onAction={(action) => act(chainId, action)}
             />
           );
@@ -234,7 +253,11 @@ export default function RunPage() {
           const endpoints = [
             ...(chains.rpcByChain[String(editChainId)] ?? []),
             ...(chains.providerRpcByChain[String(editChainId)] ?? []),
-          ];
+          ].filter((endpoint) => {
+            if (endpoint.lastVerification?.ok) return true;
+            const providerCheck = chains.providerChecks[endpoint.id];
+            return providerCheck !== 'checking' && providerCheck?.ok === true;
+          });
           return (
             <ResolveEditDialog
               open

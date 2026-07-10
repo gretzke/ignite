@@ -8,6 +8,7 @@ import type {
   ListRunsData,
   ListRunsQuery,
   ResolveLaneRequest,
+  RunRecord,
   ValidateDeploymentData,
   ValidateDeploymentRequest,
 } from '@ignite/api';
@@ -24,7 +25,7 @@ export interface DeploymentHandlerDeps {
   engine: Pick<DeployEngine, 'launch' | 'resolveLane' | 'resume' | 'abort'>;
   getProfileManager: () => Promise<ProfileSource>;
   validate: DeployEngine['launch'] extends never ? never : (plan: ValidateDeploymentRequest['plan'], rpc: ValidateDeploymentRequest['rpcSelection'], opts?: { profileId?: string }) => Promise<{ report: ValidateDeploymentData; frozen: unknown }>;
-  getRun: (profileId: string, runId: string) => Promise<any>;
+  getRun: (profileId: string, runId: string) => Promise<RunRecord | undefined>;
   listRuns: (profileId: string) => Promise<{ runs: ListRunsData['runs']; unreadable: string[] }>;
 }
 
@@ -73,7 +74,7 @@ export function createDeploymentHandlers(deps?: Partial<DeploymentHandlerDeps>) 
       try { const run = await engine().abort(await profileId(), request.params.runId); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
     },
     getDeploymentArtifact: async (request: FastifyRequest<{ Params: RunIdParams }>, reply: FastifyReply): Promise<IApiResponse<GetDeploymentArtifactData>> => {
-      try { const run = await d.getRun(await profileId(), request.params.runId); if (!run || !Object.values(run.lanes).some((lane: any) => lane.status === 'completed' || lane.status === 'aborted')) return notFound(reply, 'Deployment artifact is not available yet'); return reply.status(200).send({ data: { artifact: renderArtifact(run) } }); } catch (error) { return deploymentError(reply, error); }
+      try { const run = await d.getRun(await profileId(), request.params.runId); if (!run || !Object.values(run.lanes).some((lane) => lane.status === 'completed' || lane.status === 'aborted')) return notFound(reply, 'Deployment artifact is not available yet'); return reply.status(200).send({ data: { artifact: renderArtifact(run) } }); } catch (error) { return deploymentError(reply, error); }
     },
   };
 }

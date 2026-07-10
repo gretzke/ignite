@@ -25,6 +25,7 @@ export default function DeployWizardPage() {
   const draft = useAppSelector((state) => state.deployDraft);
   const chains = useAppSelector((state) => state.chains.chains);
   const [step, setStep] = useState(0);
+  const [contractsValid, setContractsValid] = useState(false);
   const plan = useMemo(() => {
     try {
       return planFromDraft(draft, chains);
@@ -37,7 +38,7 @@ export default function DeployWizardPage() {
       draft.signers.perChain?.[String(chainId)] || draft.signers.global
   );
   const valid = [
-    draft.contracts.length > 0,
+    contractsValid,
     draft.chains.length > 0 &&
       draft.chains.every((chainId) => draft.rpcSelection[String(chainId)]),
     resolvedSigners,
@@ -74,6 +75,7 @@ export default function DeployWizardPage() {
         {step === 0 && (
           <ContractsStep
             contracts={draft.contracts}
+            onValidityChange={setContractsValid}
             onReorder={(fromIndex, toIndex) =>
               dispatch(reorderSteps({ fromIndex, toIndex }))
             }

@@ -6,6 +6,7 @@ import {
   setArg,
   setChainArgOverride,
   setGasOverride,
+  setGasOverridePerChain,
   setValue,
   setValuePerChain,
 } from '../../../store/features/deployments/deployDraftSlice';
@@ -105,30 +106,49 @@ export default function ArgumentsStep() {
                       </summary>
                       <div className="grid gap-2 mt-2 pl-3">
                         {draft.chains.map((chainId) => (
-                          <label key={chainId} className="grid gap-1">
-                            <span>
+                          <div key={chainId} className="grid gap-1">
+                            <span className="font-medium">
                               {chainInfo.find(
                                 (item) => item.chainId === chainId
                               )?.name ?? chainId}
                             </span>
-                            <input
-                              className="input-glass"
-                              value={String(
-                                step.argsPerChain?.[String(chainId)]?.[key] ??
-                                  ''
-                              )}
-                              onChange={(event) =>
+                            <AbiArgField
+                              input={input}
+                              fieldKey={key}
+                              value={
+                                step.argsPerChain?.[String(chainId)]?.[key]
+                              }
+                              onChange={(value) =>
                                 dispatch(
                                   setChainArgOverride({
                                     stepId: step.id,
                                     chainId,
                                     key,
-                                    value: event.target.value || undefined,
+                                    value,
                                   })
                                 )
                               }
                             />
-                          </label>
+                            {step.argsPerChain?.[String(chainId)]?.[key] !==
+                              undefined && (
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-secondary-borderless justify-self-start"
+                                onClick={() =>
+                                  dispatch(
+                                    setChainArgOverride({
+                                      stepId: step.id,
+                                      chainId,
+                                      key,
+                                      value: undefined,
+                                    })
+                                  )
+                                }
+                              >
+                                Clear override
+                              </button>
+                            )}
+                          </div>
                         ))}
                       </div>
                     </details>
@@ -204,6 +224,55 @@ export default function ArgumentsStep() {
                   </label>
                 ))}
               </div>
+              {draft.chains.length > 1 && (
+                <details className="text-xs">
+                  <summary className="text-muted cursor-pointer">
+                    Per-chain gas overrides
+                  </summary>
+                  <div className="grid gap-3 mt-2">
+                    {draft.chains.map((chainId) => (
+                      <div key={chainId} className="card-milky p-3">
+                        <div className="font-medium mb-2">
+                          {chainInfo.find((item) => item.chainId === chainId)
+                            ?.name ?? chainId}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(
+                            [
+                              'gasLimit',
+                              'maxFeePerGas',
+                              'maxPriorityFeePerGas',
+                            ] as const
+                          ).map((key) => (
+                            <label key={key} className="grid gap-1">
+                              <span className="eyebrow">{key}</span>
+                              <input
+                                className="input-glass"
+                                value={
+                                  step.gasOverridesPerChain?.[
+                                    String(chainId)
+                                  ]?.[key] ?? ''
+                                }
+                                placeholder="Use global"
+                                onChange={(event) =>
+                                  dispatch(
+                                    setGasOverridePerChain({
+                                      stepId: step.id,
+                                      chainId,
+                                      key,
+                                      value: event.target.value || undefined,
+                                    })
+                                  )
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             </AdvancedStepSection>
           </article>
         );

@@ -16,7 +16,7 @@ const ACTION_LABELS: Record<ResolveAction, string> = {
 
 interface PauseBannerProps {
   lane: Lane;
-  capability: PauseContext['capability'];
+  capability?: PauseContext['capability'];
   onAction: (action: ResolveAction) => void;
 }
 
@@ -41,7 +41,22 @@ export default function PauseBanner({
   onAction,
 }: PauseBannerProps) {
   if (!lane.pause) return null;
-  const actions = actionsForPausedLane(lane, capability);
+  if (!capability && lane.pause.reason === 'receipt-timeout') {
+    return (
+      <div className="card-milky p-4 border border-warn/30 text-sm text-muted">
+        Loading signer capability before showing safe resolution actions…
+      </div>
+    );
+  }
+  const actions = actionsForPausedLane(lane, capability ?? 'sign-and-send');
+  const attempt = lane.steps[lane.pause.stepIndex]?.attempts.find(
+    (item) => item.id === lane.pause?.attemptId
+  );
+  const safeActions = attempt?.txHash
+    ? actions
+    : actions.filter(
+        (action) => action !== 'recheck' && action !== 'keep-waiting'
+      );
   return (
     <div className="card-milky p-4 border border-warn/30">
       <div className="flex items-start gap-3">
@@ -50,7 +65,7 @@ export default function PauseBanner({
           <div className="font-semibold">Lane paused: {lane.pause.reason}</div>
           <p className="text-sm text-muted mt-1">{lane.pause.error}</p>
           <div className="flex flex-wrap gap-2 mt-3">
-            {actions.map((action) => (
+            {safeActions.map((action) => (
               <button
                 key={action}
                 type="button"

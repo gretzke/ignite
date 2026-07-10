@@ -61,6 +61,11 @@ const chainsSlice = createSlice({
       state.fetchedAt = action.payload.fetchedAt;
       state.loading = false;
     },
+    mergeChainsSucceeded(state, action: PayloadAction<ChainInfo[]>) {
+      const byId = new Map(state.chains.map((chain) => [chain.chainId, chain]));
+      for (const chain of action.payload) byId.set(chain.chainId, chain);
+      state.chains = [...byId.values()];
+    },
     fetchChainsFailed(state) {
       state.loading = false;
     },
@@ -139,7 +144,12 @@ const chainsSlice = createSlice({
       state.rpcCheck.error = action.payload.error;
     },
     rpcCheckReset(state) {
-      state.rpcCheck = { url: null, checking: false, result: null, error: null };
+      state.rpcCheck = {
+        url: null,
+        checking: false,
+        result: null,
+        error: null,
+      };
     },
     providerCheckStarted(state, action: PayloadAction<string>) {
       state.providerChecks[action.payload] = 'checking';
@@ -170,6 +180,7 @@ export const {
   fetchChainsStarted,
   fetchChainsSucceeded,
   fetchChainsFailed,
+  mergeChainsSucceeded,
   fetchRpcsFailed,
   fetchRpcsSucceeded,
   rpcVerificationReceived,

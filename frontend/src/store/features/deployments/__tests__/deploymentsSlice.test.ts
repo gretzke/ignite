@@ -96,11 +96,14 @@ describe('deploymentsSlice', () => {
       })
     );
 
-    // A reconnect snapshot is authoritative even while the old cursor is
-    // retained for the subscribe request.
+    // A reconnect WS snapshot is authoritative and installs the new epoch.
     state = deploymentsReducer(
       state,
-      runSnapshotReceived(run(lane('completed', 3)))
+      runSnapshotReceived({
+        run: run(lane('completed', 3)),
+        epoch: 'epoch-b',
+        lastSeq: 0,
+      })
     );
     expect(state.runsById['run-1'].lanes['1'].status).toBe('completed');
 
@@ -117,5 +120,60 @@ describe('deploymentsSlice', () => {
       epoch: 'epoch-b',
       lastSeq: 1,
     });
+
+    state = deploymentsReducer(
+      state,
+      runEventReceived({
+        runId: 'run-1',
+        event: laneEvent('epoch-a', 10, lane('running', 0)),
+      })
+    );
+    expect(state.runsById['run-1'].lanes['1'].status).toBe('paused');
+  });
+
+  it('derives run and summary status from full-lane events', () => {
+    let state = deploymentsReducer(undefined, runSnapshotReceived(run()));
+    state = deploymentsReducer(
+      state,
+      runEventReceived({
+        runId: 'run-1',
+        event: laneEvent('epoch-a', 1, lane('paused', 1)),
+      })
+    );
+    expect(state.runsById['run-1'].status).toBe('paused');
+    expect(state.summaries[0].status).toBe('paused');
+
+    state = deploymentsReducer(
+      state,
+      runEventReceived({
+        runId: 'run-1',
+        event: laneEvent('epoch-a', 2, lane('completed', 2)),
+      })
+    );
+    expect(state.runsById['run-1'].status).toBe('completed');
+    expect(state.summaries[0].status).toBe('completed');
+  });
+
+  it('gives a run-wide abort precedence over aborted-after-failure', () => {
+    const snapshot = run();
+    snapshot.abortRequested = true;
+    let state = deploymentsReducer(undefined, runSnapshotReceived(snapshot));
+    const failedAbort = lane('aborted', 0);
+    failedAbort.steps[0].attempts = [
+      {
+        id: 'attempt-1',
+        startedAt: new Date(0).toISOString(),
+        error: 'failed',
+        resolution: 'abort-run',
+      },
+    ];
+    state = deploymentsReducer(
+      state,
+      runEventReceived({
+        runId: 'run-1',
+        event: laneEvent('epoch-a', 1, failedAbort),
+      })
+    );
+    expect(state.runsById['run-1'].status).toBe('aborted');
   });
 });

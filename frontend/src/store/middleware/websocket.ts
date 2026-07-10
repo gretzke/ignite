@@ -47,6 +47,8 @@ interface JobEventFrame {
 interface RunSnapshotFrame {
   type: 'run-snapshot';
   run: RunRecord;
+  epoch: string;
+  lastSeq: number;
 }
 
 interface RunEventFrame {
@@ -101,7 +103,9 @@ function isRunSnapshotFrame(
   return (
     frame.type === 'run-snapshot' &&
     isRecord(frame.run) &&
-    typeof frame.run.id === 'string'
+    typeof frame.run.id === 'string' &&
+    typeof frame.epoch === 'string' &&
+    typeof frame.lastSeq === 'number'
   );
 }
 
@@ -203,7 +207,13 @@ export const websocketMiddleware: Middleware = (store) => {
             jobEventReceived({ jobId: parsed.jobId, event: parsed.event })
           );
         } else if (isRunSnapshotFrame(parsed)) {
-          store.dispatch(runSnapshotReceived(parsed.run));
+          store.dispatch(
+            runSnapshotReceived({
+              run: parsed.run,
+              epoch: parsed.epoch,
+              lastSeq: parsed.lastSeq,
+            })
+          );
         } else if (isRunEventFrame(parsed)) {
           store.dispatch(
             runEventReceived({ runId: parsed.runId, event: parsed.event })

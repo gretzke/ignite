@@ -6,26 +6,59 @@ import ChainRpcManager from '../../../components/chains/ChainRpcManager';
 import ChainIcon from '../../settings/tabs/chains/ChainIcon';
 import { useAppDispatch, useAppSelector } from '../../../store';
 import { chainsApi } from '../../../store/features/chains/chainsSlice';
+import { mergeChainsSucceeded } from '../../../store/features/chains/chainsSlice';
 import {
   selectRpc,
   toggleChain,
 } from '../../../store/features/deployments/deployDraftSlice';
+import { apiClient } from '../../../store/api/client';
 
 export default function ChainsStep() {
   const dispatch = useAppDispatch();
   const draft = useAppSelector((state) => state.deployDraft);
   const chains = useAppSelector((state) => state.chains);
   const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<number[] | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
 
   useEffect(() => {
+    if (!search.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    let cancelled = false;
     const timer = window.setTimeout(() => {
-      chainsApi
-        .fetchChains(search || undefined, 500)
-        .forEach((action) => dispatch(action));
+      void apiClient
+        .request('listChains', { query: { q: search.trim(), limit: 500 } })
+        .then((response) => {
+          if (!('data' in response)) throw new Error(response.message);
+          if (cancelled) return;
+          dispatch(mergeChainsSucceeded(response.data.chains));
+          setSearchResults(response.data.chains.map((chain) => chain.chainId));
+        })
+        .catch(() => {
+          if (!cancelled) setSearchResults([]);
+        });
     }, 200);
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [dispatch, search]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiClient
+      .request('listChains', { query: { limit: 500 } })
+      .then((response) => {
+        if (!('data' in response)) throw new Error(response.message);
+        if (!cancelled) dispatch(mergeChainsSucceeded(response.data.chains));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatch]);
 
   useEffect(() => {
     draft.chains.forEach((chainId) =>
@@ -34,6 +67,11 @@ export default function ChainsStep() {
   }, [dispatch, draft.chains]);
 
   const selectedSet = useMemo(() => new Set(draft.chains), [draft.chains]);
+  const visibleChains = useMemo(() => {
+    if (searchResults === null) return chains.chains;
+    const visible = new Set([...draft.chains, ...searchResults]);
+    return chains.chains.filter((chain) => visible.has(chain.chainId));
+  }, [chains.chains, draft.chains, searchResults]);
   return (
     <section className="grid gap-4">
       <div>
@@ -52,7 +90,7 @@ export default function ChainsStep() {
         />
       </label>
       <div className="grid gap-3">
-        {chains.chains.map((chain) => {
+        {visibleChains.map((chain) => {
           const selected = selectedSet.has(chain.chainId);
           const key = String(chain.chainId);
           const endpoints: RpcEndpoint[] = [

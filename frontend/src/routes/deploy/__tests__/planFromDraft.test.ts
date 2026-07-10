@@ -75,4 +75,17 @@ describe('planFromDraft', () => {
     expect(parseUnitsDecimal('0.000001', 6)).toBe('1');
     expect(() => parseUnitsDecimal('0.0000001', 6)).toThrow();
   });
+
+  it('refuses to guess native currency decimals', () => {
+    const draft: DeployDraftState = {
+      contracts: [],
+      chains: [999],
+      rpcSelection: {},
+      signers: {},
+      steps: [],
+    };
+    expect(() => planFromDraft(draft, [])).toThrow(
+      'Missing currency metadata for chain 999'
+    );
+  });
 });

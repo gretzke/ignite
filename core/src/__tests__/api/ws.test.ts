@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createWsHandler } from '../../api/ws.js';
-import type { JobManager, JobContext, JobRunner } from '../../jobs/JobManager.js';
+import type {
+  JobManager,
+  JobContext,
+  JobRunner,
+} from '../../jobs/JobManager.js';
 import type { JobRecord, JobEvent } from '@ignite/api';
 import type { RunEvent, RunRecord } from '@ignite/api';
 
@@ -220,7 +224,9 @@ describe('createWsHandler', () => {
 
     // Exactly one forward from the still-live (second) subscription.
     expect(
-      sentFrames(socket.send).filter((f) => (f as { type: string }).type === 'job-event')
+      sentFrames(socket.send).filter(
+        (f) => (f as { type: string }).type === 'job-event'
+      )
     ).toHaveLength(1);
   });
 
@@ -290,36 +296,104 @@ describe('createWsHandler', () => {
 });
 
 describe('deployment run websocket subscriptions', () => {
-  const run = { id: 'run-1', profileId: 'p', status: 'running', lanes: {} } as unknown as RunRecord;
-  const event = (seq: number): RunEvent => ({ epoch: 'epoch', seq, ts: seq, kind: 'run', runPatch: { status: 'running' } });
+  const run = {
+    id: 'run-1',
+    profileId: 'p',
+    status: 'running',
+    lanes: {},
+  } as unknown as RunRecord;
+  const event = (seq: number): RunEvent => ({
+    epoch: 'epoch',
+    seq,
+    ts: seq,
+    kind: 'run',
+    runPatch: { status: 'running' },
+  });
 
-  function runEngine(opts?: { get?: () => Promise<RunRecord | undefined>; events?: () => RunEvent[]; onSubscribe?: (emit: (event: RunEvent) => void) => void }) {
+  function runEngine(opts?: {
+    get?: () => Promise<RunRecord | undefined>;
+    events?: () => RunEvent[];
+    onSubscribe?: (emit: (event: RunEvent) => void) => void;
+  }) {
     let listener: ((runId: string, event: RunEvent) => void) | undefined;
     return {
-      get: vi.fn(opts?.get ?? (async () => run)), eventsSince: vi.fn((_id, _epoch, _after) => opts?.events?.() ?? []),
-      subscribe: vi.fn((cb) => { listener = cb; opts?.onSubscribe?.((event) => listener?.('run-1', event)); return () => { listener = undefined; }; }),
+      get: vi.fn(opts?.get ?? (async () => run)),
+      eventsSince: vi.fn((_id, _epoch, _after) => opts?.events?.() ?? []),
+      eventCursor: vi.fn(() => ({ epoch: 'epoch', lastSeq: 0 })),
+      subscribe: vi.fn((cb) => {
+        listener = cb;
+        opts?.onSubscribe?.((event) => listener?.('run-1', event));
+        return () => {
+          listener = undefined;
+        };
+      }),
     };
   }
 
   it('orders snapshot, replay, then live events and queues the subscribe race', async () => {
     const jobs = makeJobManager().jobs;
-    const runs = runEngine({ events: () => [event(2)], onSubscribe: (emit) => emit(event(1)) });
-    const { socket, handlers } = makeSocket(); createWsHandler(jobs, undefined, runs as never, () => 'p')(socket as never);
-    handlers.message(JSON.stringify({ type: 'subscribe-run', runId: 'run-1', epoch: 'epoch', afterSeq: 1 }));
+    const runs = runEngine({
+      events: () => [event(2)],
+      onSubscribe: (emit) => emit(event(1)),
+    });
+    const { socket, handlers } = makeSocket();
+    createWsHandler(jobs, undefined, runs as never, () => 'p')(socket as never);
+    handlers.message(
+      JSON.stringify({
+        type: 'subscribe-run',
+        runId: 'run-1',
+        epoch: 'epoch',
+        afterSeq: 1,
+      })
+    );
     await Promise.resolve();
     expect(sentFrames(socket.send).slice(1)).toEqual([
-      { type: 'run-snapshot', run }, { type: 'run-event', runId: 'run-1', event: event(2) }, { type: 'run-event', runId: 'run-1', event: event(1) },
+      { type: 'run-snapshot', run, epoch: 'epoch', lastSeq: 0 },
+      { type: 'run-event', runId: 'run-1', event: event(2) },
+      { type: 'run-event', runId: 'run-1', event: event(1) },
     ]);
   });
 
   it('reports an unknown run and treats an epoch mismatch as snapshot-only', async () => {
     const jobs = makeJobManager().jobs;
-    const missing = runEngine({ get: async () => undefined }); const first = makeSocket(); createWsHandler(jobs, undefined, missing as never, () => 'p')(first.socket as never);
-    first.handlers.message(JSON.stringify({ type: 'subscribe-run', runId: 'missing' })); await Promise.resolve();
-    expect(sentFrames(first.socket.send)).toContainEqual({ type: 'error', message: 'unknown deployment run missing' });
-    const runs = runEngine(); const second = makeSocket(); createWsHandler(jobs, undefined, runs as never, () => 'p')(second.socket as never);
-    second.handlers.message(JSON.stringify({ type: 'subscribe-run', runId: 'run-1', epoch: 'old', afterSeq: 9 })); await Promise.resolve();
+    const missing = runEngine({ get: async () => undefined });
+    const first = makeSocket();
+    createWsHandler(
+      jobs,
+      undefined,
+      missing as never,
+      () => 'p'
+    )(first.socket as never);
+    first.handlers.message(
+      JSON.stringify({ type: 'subscribe-run', runId: 'missing' })
+    );
+    await Promise.resolve();
+    expect(sentFrames(first.socket.send)).toContainEqual({
+      type: 'error',
+      message: 'unknown deployment run missing',
+    });
+    const runs = runEngine();
+    const second = makeSocket();
+    createWsHandler(
+      jobs,
+      undefined,
+      runs as never,
+      () => 'p'
+    )(second.socket as never);
+    second.handlers.message(
+      JSON.stringify({
+        type: 'subscribe-run',
+        runId: 'run-1',
+        epoch: 'old',
+        afterSeq: 9,
+      })
+    );
+    await Promise.resolve();
     expect(runs.eventsSince).toHaveBeenCalledWith('run-1', 'old', 9);
-    expect(sentFrames(second.socket.send).filter((frame) => (frame as { type: string }).type === 'run-event')).toEqual([]);
+    expect(
+      sentFrames(second.socket.send).filter(
+        (frame) => (frame as { type: string }).type === 'run-event'
+      )
+    ).toEqual([]);
   });
 });

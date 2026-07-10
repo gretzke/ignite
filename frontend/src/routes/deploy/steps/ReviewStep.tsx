@@ -34,6 +34,9 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
   const [loading, setLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const defaultName = `Deploy ${draft.contracts
+    .map((item) => item.contractName)
+    .join(', ')}`;
   const rpcSelection = useMemo(
     () =>
       Object.fromEntries(
@@ -80,7 +83,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           plan,
           rpcSelection,
           idempotencyKey: draft.idempotencyKey,
-          ...(draft.name?.trim() ? { name: draft.name.trim() } : {}),
+          name: draft.name?.trim() || defaultName,
         },
       });
       if (!('data' in response)) throw new Error(response.message);
@@ -118,7 +121,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
         <input
           className="input-glass"
           value={draft.name ?? ''}
-          placeholder={`Deploy ${draft.contracts.map((item) => item.contractName).join(', ')}`}
+          placeholder={defaultName}
           onChange={(event) =>
             dispatch(setName(event.target.value || undefined))
           }

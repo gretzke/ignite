@@ -19,13 +19,26 @@ export class RunEvents {
 
   eventsSince(runId: string, epoch: string, afterSeq: number): RunEvent[] {
     if (epoch !== this.epoch) return [];
-    return (this.history.get(runId) ?? []).filter((event) => event.seq > afterSeq);
+    return (this.history.get(runId) ?? []).filter(
+      (event) => event.seq > afterSeq
+    );
+  }
+
+  cursor(runId: string): { epoch: string; lastSeq: number } {
+    return { epoch: this.epoch, lastSeq: this.sequence.get(runId) ?? 0 };
   }
 
   emitLane(run: RunRecord, chainId: number, now: number): void {
     const lane = run.lanes[String(chainId)];
     if (!lane) return;
-    this.emit(run.id, { epoch: this.epoch, seq: this.next(run.id), ts: now, kind: 'lane', chainId, lane: structuredClone(lane) });
+    this.emit(run.id, {
+      epoch: this.epoch,
+      seq: this.next(run.id),
+      ts: now,
+      kind: 'lane',
+      chainId,
+      lane: globalThis.structuredClone(lane),
+    });
   }
 
   emitRun(run: RunRecord, now: number): void {
@@ -34,7 +47,12 @@ export class RunEvents {
       seq: this.next(run.id),
       ts: now,
       kind: 'run',
-      runPatch: { status: run.status, ...(run.abortRequested === undefined ? {} : { abortRequested: run.abortRequested }) },
+      runPatch: {
+        status: run.status,
+        ...(run.abortRequested === undefined
+          ? {}
+          : { abortRequested: run.abortRequested }),
+      },
     });
   }
 

@@ -42,6 +42,10 @@ export function planFromDraft(
   const currencies = new Map(
     chainInfo.map((chain) => [chain.chainId, chain.nativeCurrency.decimals])
   );
+  for (const chainId of draft.chains) {
+    if (!currencies.has(chainId))
+      throw new Error(`Missing currency metadata for chain ${chainId}`);
+  }
   return {
     schemaVersion: 1,
     contracts: draft.contracts.map((contract) => ({ ...contract })),
@@ -53,9 +57,12 @@ export function planFromDraft(
         : {}),
     },
     steps: draft.steps.map((step) => {
-      const decimalsByChain = draft.chains.map(
-        (chainId) => currencies.get(chainId) ?? 18
-      );
+      const decimalsByChain = draft.chains.map((chainId) => {
+        const decimals = currencies.get(chainId);
+        if (decimals === undefined)
+          throw new Error(`Missing currency metadata for chain ${chainId}`);
+        return decimals;
+      });
       const sameDecimals = new Set(decimalsByChain).size <= 1;
       const valuePerChain: Record<string, string> = {};
       let value: string | undefined;
@@ -74,7 +81,9 @@ export function planFromDraft(
       for (const [chainId, humanValue] of Object.entries(
         step.valuePerChain ?? {}
       )) {
-        const decimals = currencies.get(Number(chainId)) ?? 18;
+        const decimals = currencies.get(Number(chainId));
+        if (decimals === undefined)
+          throw new Error(`Missing currency metadata for chain ${chainId}`);
         valuePerChain[chainId] = parseUnitsDecimal(humanValue, decimals);
       }
       const gasOverridesPerChain = Object.fromEntries(

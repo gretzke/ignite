@@ -136,6 +136,13 @@ export default function FilePage() {
     (state: RootState) => state.compiler.compilations[decodedRepoPath]
   );
   const frameworkData = frameworkId ? compilerData?.[frameworkId] : null;
+  const selectedArtifact = frameworkData?.artifacts?.find((artifact) =>
+    artifactPath
+      ? artifact.artifactPath === artifactPath &&
+        artifact.contractName === contractName
+      : artifact.sourcePath === decodedFilePath
+  );
+  const selectedArtifactPath = selectedArtifact?.artifactPath;
 
   // Load artifacts if they're missing (happens when accessing FilePage directly)
   useEffect(() => {
@@ -172,35 +179,23 @@ export default function FilePage() {
     if (
       frameworkId &&
       frameworkData?.artifacts &&
-      artifactPath &&
-      !fileData?.artifactData?.[`${frameworkId}:${artifactPath}`]
+      selectedArtifactPath &&
+      !fileData?.artifactData?.[`${frameworkId}:${selectedArtifactPath}`]
     ) {
-      const artifact = frameworkData.artifacts.find(
-        (art: {
-          sourcePath: string;
-          artifactPath: string;
-          contractName: string;
-        }) =>
-          art.artifactPath === artifactPath && art.contractName === contractName
+      const action = filesApi.fetchArtifactData(
+        decodedRepoPath,
+        selectedArtifactPath,
+        frameworkId,
+        decodedFilePath
       );
-
-      if (artifact) {
-        const action = filesApi.fetchArtifactData(
-          decodedRepoPath,
-          artifact.artifactPath,
-          frameworkId,
-          decodedFilePath
-        );
-        dispatch(action);
-      }
+      dispatch(action);
     }
   }, [
     dispatch,
     decodedRepoPath,
     decodedFilePath,
     frameworkId,
-    artifactPath,
-    contractName,
+    selectedArtifactPath,
     fileData?.artifactData,
     frameworkData?.artifacts,
   ]);
@@ -228,13 +223,8 @@ export default function FilePage() {
   const error = fileData?.error;
   const content = fileData?.content?.content;
   const artifactData = frameworkId
-    ? fileData?.artifactData?.[`${frameworkId}:${artifactPath}`]
+    ? fileData?.artifactData?.[`${frameworkId}:${selectedArtifactPath}`]
     : undefined;
-  const selectedArtifact = frameworkData?.artifacts?.find(
-    (artifact) =>
-      artifact.artifactPath === artifactPath &&
-      artifact.contractName === contractName
-  );
   const hasUnlinkedLibraries = Boolean(
     artifactData?.creationCodeLinkReferences &&
     Object.keys(artifactData.creationCodeLinkReferences).length > 0

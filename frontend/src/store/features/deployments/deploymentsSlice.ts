@@ -12,6 +12,7 @@ const initialState: DeploymentsState = {
   runsById: {},
   summaries: [],
   activeSubscriptions: {},
+  backgroundSubscriptions: {},
   epochByRun: {},
 };
 
@@ -34,13 +35,57 @@ function upsertSummary(state: DeploymentsState, summary: RunSummary): void {
   state.summaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function deriveRunStatus(run: RunRecord): RunRecord['status'] {
+  const lanes = Object.values(run.lanes);
+  const terminal = lanes.every(
+    (lane) => lane.status === 'completed' || lane.status === 'aborted'
+  );
+  const abortedAfterFailure = lanes.some(
+    (lane) =>
+      lane.status === 'aborted' &&
+      lane.steps.some((step) => {
+        const last = step.attempts.at(-1);
+        return Boolean(
+          last?.error &&
+          (last.resolution === 'abort-lane' || last.resolution === 'abort-run')
+        );
+      })
+  );
+  if (run.abortRequested && terminal) return 'aborted';
+  if (lanes.length > 0 && lanes.every((lane) => lane.status === 'completed'))
+    return 'completed';
+  if (terminal && abortedAfterFailure) return 'failed';
+  if (lanes.some((lane) => lane.status === 'paused')) return 'paused';
+  return 'running';
+}
+
 const deploymentsSlice = createSlice({
   name: 'deployments',
   initialState,
   reducers: {
-    runSnapshotReceived(state, action: PayloadAction<RunRecord>) {
-      const run = action.payload;
+    runSnapshotReceived(
+      state,
+      action: PayloadAction<
+        RunRecord | { run: RunRecord; epoch: string; lastSeq: number }
+      >
+    ) {
+      const framed = 'run' in action.payload ? action.payload : undefined;
+      const run = framed?.run ?? (action.payload as RunRecord);
+      const existing = state.runsById[run.id];
+      if (
+        !framed &&
+        existing &&
+        (run.updatedAt < existing.updatedAt ||
+          (state.epochByRun[run.id] && run.updatedAt === existing.updatedAt))
+      )
+        return;
       state.runsById[run.id] = run;
+      if (framed) {
+        state.epochByRun[run.id] = {
+          epoch: framed.epoch,
+          lastSeq: framed.lastSeq,
+        };
+      }
       upsertSummary(state, summaryFor(run));
     },
     runEventReceived(
@@ -52,12 +97,9 @@ const deploymentsSlice = createSlice({
       if (!run) return;
 
       const cursor = state.epochByRun[runId];
+      if (cursor && cursor.epoch !== event.epoch) return;
       if (cursor?.epoch === event.epoch && event.seq <= cursor.lastSeq) return;
 
-      // A new engine epoch restarts per-run sequencing. The snapshot sent
-      // before replay is authoritative; accepting the new epoch's first full
-      // lane/run event advances from that snapshot without comparing seqs
-      // from different epochs.
       state.epochByRun[runId] = {
         epoch: event.epoch,
         lastSeq: event.seq,
@@ -66,6 +108,10 @@ const deploymentsSlice = createSlice({
       if (event.kind === 'lane' && event.lane) {
         const chainId = event.chainId ?? event.lane.chainId;
         run.lanes[String(chainId)] = event.lane;
+        // Core persists run.status for every lane transition but lane events
+        // intentionally carry only the full lane. Mirror core's derivation so
+        // live views and summaries do not wait for a reconnect snapshot.
+        run.status = deriveRunStatus(run);
       } else if (event.kind === 'run' && event.runPatch) {
         run.status = event.runPatch.status;
         if (event.runPatch.abortRequested === undefined) {
@@ -93,6 +139,14 @@ const deploymentsSlice = createSlice({
     unsubscribeRunRequested(state, action: PayloadAction<string>) {
       delete state.activeSubscriptions[action.payload];
     },
+    backgroundRunsReceived(state, action: PayloadAction<string[]>) {
+      state.backgroundSubscriptions = Object.fromEntries(
+        action.payload.map((runId) => [runId, true as const])
+      );
+    },
+    backgroundRunFinished(state, action: PayloadAction<string>) {
+      delete state.backgroundSubscriptions[action.payload];
+    },
   },
 });
 
@@ -102,6 +156,8 @@ export const {
   runsListReceived,
   subscribeRunRequested,
   unsubscribeRunRequested,
+  backgroundRunsReceived,
+  backgroundRunFinished,
 } = deploymentsSlice.actions;
 
 // Route components use these names to describe their lifecycle intent. They
