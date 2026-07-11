@@ -25,6 +25,9 @@ import { repositoriesEffects } from './middleware/repositoriesEffects';
 import { compilerEffects } from './middleware/compilerEffects';
 import { jobsEffects } from './middleware/jobsEffects';
 import { deploymentsEffects } from './middleware/deploymentsEffects';
+import { explorersReducer } from './features/explorers/explorersSlice';
+import { verificationsReducer } from './features/verifications/verificationsSlice';
+import { verificationsEffects } from './middleware/verificationsEffects';
 
 export const store = configureStore({
   reducer: {
@@ -42,6 +45,8 @@ export const store = configureStore({
     signers: signersReducer,
     deployDraft: deployDraftReducer,
     deployments: deploymentsReducer,
+    explorers: explorersReducer,
+    verifications: verificationsReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({ serializableCheck: false })
@@ -52,7 +57,8 @@ export const store = configureStore({
         repositoriesEffects.middleware,
         compilerEffects.middleware,
         jobsEffects.middleware,
-        deploymentsEffects.middleware
+        deploymentsEffects.middleware,
+        verificationsEffects.middleware
       )
       .concat(websocketMiddleware),
 });

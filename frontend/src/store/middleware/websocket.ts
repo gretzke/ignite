@@ -1,6 +1,13 @@
 import type { Middleware } from '@reduxjs/toolkit';
 import { createAction } from '@reduxjs/toolkit';
-import type { JobRecord, JobEvent, RunEvent, RunRecord } from '@ignite/api';
+import type {
+  JobRecord,
+  JobEvent,
+  RunEvent,
+  RunRecord,
+  VerificationEvent,
+  VerificationTask,
+} from '@ignite/api';
 import {
   reconnectRequested,
   setStatus,
@@ -15,6 +22,10 @@ import {
   runEventReceived,
   runSnapshotReceived,
 } from '../features/deployments/deploymentsSlice';
+import {
+  verificationEventReceived,
+  verificationSnapshotReceived,
+} from '../features/verifications/verificationsSlice';
 import { runtimeHost } from '../../runtime/RuntimeHost';
 
 // Reconnection policy: fixed interval attempts for a bounded window
@@ -63,6 +74,18 @@ interface RuntimeRequestFrame {
   pluginId: string;
   operation: string;
   params: unknown;
+}
+
+interface VerificationSnapshotFrame {
+  type: 'verification-snapshot';
+  tasks: VerificationTask[];
+  epoch: string;
+  lastSeq: number;
+}
+
+interface VerificationEventFrame {
+  type: 'verification-event';
+  event: VerificationEvent;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -130,6 +153,30 @@ function isRuntimeRequestFrame(
     typeof frame.requestId === 'string' &&
     typeof frame.pluginId === 'string' &&
     typeof frame.operation === 'string'
+  );
+}
+
+function isVerificationSnapshotFrame(
+  frame: Record<string, unknown>
+): frame is Record<string, unknown> & VerificationSnapshotFrame {
+  return (
+    frame.type === 'verification-snapshot' &&
+    Array.isArray(frame.tasks) &&
+    typeof frame.epoch === 'string' &&
+    typeof frame.lastSeq === 'number'
+  );
+}
+
+function isVerificationEventFrame(
+  frame: Record<string, unknown>
+): frame is Record<string, unknown> & VerificationEventFrame {
+  return (
+    frame.type === 'verification-event' &&
+    isRecord(frame.event) &&
+    typeof frame.event.epoch === 'string' &&
+    typeof frame.event.seq === 'number' &&
+    isRecord(frame.event.task) &&
+    typeof frame.event.task.id === 'string'
   );
 }
 
@@ -218,6 +265,16 @@ export const websocketMiddleware: Middleware = (store) => {
           store.dispatch(
             runEventReceived({ runId: parsed.runId, event: parsed.event })
           );
+        } else if (isVerificationSnapshotFrame(parsed)) {
+          store.dispatch(
+            verificationSnapshotReceived({
+              tasks: parsed.tasks,
+              epoch: parsed.epoch,
+              lastSeq: parsed.lastSeq,
+            })
+          );
+        } else if (isVerificationEventFrame(parsed)) {
+          store.dispatch(verificationEventReceived(parsed.event));
         } else if (isRuntimeRequestFrame(parsed)) {
           runtimeHost
             .handleRequest(parsed)
