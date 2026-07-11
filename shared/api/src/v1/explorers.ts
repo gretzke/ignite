@@ -20,6 +20,7 @@ export interface ExplorerEntry {
   needsConfig?: boolean;
   apiUrl?: string;
   label?: string;
+  pageUrlTemplate?: string;
 }
 
 export interface ExplorerSelection {
@@ -97,6 +98,7 @@ export const ExplorerEntrySchema = z.object({
   needsConfig: z.boolean().optional(),
   apiUrl: ExplorerUrlSchema.optional(),
   label: z.string().min(1).optional(),
+  pageUrlTemplate: z.string().url().optional(),
 }) satisfies z.ZodType<ExplorerEntry>;
 
 export const ExplorerSelectionSchema = z.record(

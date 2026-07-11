@@ -76,6 +76,9 @@ export async function resolveMergedExplorers(
       url: explorer.url,
       source: 'plugin',
       verifierPluginId: explorer.pluginId,
+      ...(explorer.pageUrlTemplate
+        ? { pageUrlTemplate: explorer.pageUrlTemplate }
+        : {}),
       ...(explorer.label ? { label: explorer.label } : {}),
     });
   candidates.push(...manual);

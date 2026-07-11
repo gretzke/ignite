@@ -186,12 +186,10 @@ export class ArtifactFreezeService {
           ...data,
           schemaVersion: 1,
           artifactHash: input.artifactHash,
-          compilerSummary: {
-            pluginId: input.compiler.pluginId,
-            optimizer: false,
-            runs: 0,
-            viaIR: false,
-          },
+          compilerSummary: summaryFromStandardJson(
+            input.compiler.pluginId,
+            data.standardJsonInput
+          ),
         };
         const bundleHash = await this.deps.bundleStore.write(profileId, bundle);
         input.bundleHash = bundleHash;
@@ -224,4 +222,40 @@ function hasLinkReferences(value: unknown): boolean {
   return Boolean(
     value && typeof value === 'object' && Object.keys(value).length > 0
   );
+}
+
+// The bundle's own settings are the authoritative record of what solc saw —
+// never fabricate summary fields (a conforming verifier may submit them).
+export function summaryFromStandardJson(
+  pluginId: string,
+  standardJsonInput: unknown
+): {
+  pluginId: string;
+  evmVersion?: string;
+  optimizer: boolean;
+  runs: number;
+  viaIR: boolean;
+} {
+  const settings =
+    standardJsonInput && typeof standardJsonInput === 'object'
+      ? ((standardJsonInput as { settings?: unknown }).settings as
+          | {
+              optimizer?: { enabled?: boolean; runs?: number };
+              evmVersion?: string;
+              viaIR?: boolean;
+            }
+          | undefined)
+      : undefined;
+  return {
+    pluginId,
+    ...(typeof settings?.evmVersion === 'string'
+      ? { evmVersion: settings.evmVersion }
+      : {}),
+    optimizer: settings?.optimizer?.enabled === true,
+    runs:
+      typeof settings?.optimizer?.runs === 'number'
+        ? settings.optimizer.runs
+        : 0,
+    viaIR: settings?.viaIR === true,
+  };
 }

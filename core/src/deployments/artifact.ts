@@ -78,7 +78,11 @@ export function renderArtifact(
         chainId: task.chainId,
         address: task.address as `0x${string}`,
         explorerLabel: sanitizeText(task.explorer.label),
-        ...(task.explorerPageUrl ? { explorerPageUrl: sanitizeText(task.explorerPageUrl) } : {}),
+        // Core-constructed from a validated entry URL + address — the URL
+        // redaction in sanitizeText targets user/plugin strings, not this.
+        ...(task.explorerPageUrl
+          ? { explorerPageUrl: task.explorerPageUrl }
+          : {}),
         status: task.status,
         updatedAt: task.updatedAt,
       });

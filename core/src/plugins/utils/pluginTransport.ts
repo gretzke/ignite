@@ -221,8 +221,11 @@ export function parsePluginOutput(stdout: string, stderr: string): unknown {
       try {
         return JSON.parse(json);
       } catch (parseError) {
+        // Never embed the raw frame: a malformed RESULT payload can carry
+        // injected secrets/sources, and this message reaches logs and task
+        // details. Length + a short sanitized prefix is enough to debug.
         throw new Error(
-          `JSON parse error: ${parseError}. Framed output: "${json}"`
+          `JSON parse error: ${parseError}. Framed output length ${json.length}, starts with "${json.slice(0, 80).replace(/[\u0000-\u001f\u007f]/g, '')}"`
         );
       }
     }

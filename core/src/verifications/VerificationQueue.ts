@@ -197,11 +197,14 @@ export class VerificationQueue {
     // findLive + supersede + create must be one serialized store operation:
     // two concurrent enqueues for the same key would otherwise both observe
     // "no live task" and double-submit sources (TOCTOU).
+    const pageUrl = input.explorer.pageUrlTemplate
+      ? input.explorer.pageUrlTemplate.replace('{address}', input.address)
+      : `${input.explorer.url}/address/${input.address}`;
     const { task, superseded, existing } = await this.store.upsertLive(
       profileId,
       {
         ...input,
-        explorerPageUrl: `${input.explorer.url}/address/${input.address}`,
+        explorerPageUrl: pageUrl,
       }
     );
     if (existing) return task;
@@ -312,7 +315,9 @@ export class VerificationQueue {
       });
     } catch (error) {
       this.logger.warn(
-        `verification ${taskId} processing error: ${String(error)}`
+        `verification ${taskId} processing error: ${
+          sanitizePluginString(String(error), 300) ?? 'unknown'
+        }`
       );
     } finally {
       this.inFlight.delete(key);

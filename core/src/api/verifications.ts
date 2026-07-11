@@ -26,7 +26,7 @@ import { encodeAbiParameters, type AbiParameter } from 'viem';
 import { toConstructorArgs } from '../deployments/resolver.js';
 import { guessConstructorArgs as guess } from '../verifications/guessArgs.js';
 import { createPublicClient, http, type Hex } from 'viem';
-import { sendCaughtError } from './utils/errors.js';
+import { sendBadRequest, sendCaughtError } from './utils/errors.js';
 import type { ErrorCode } from '../types/errors.js';
 type ProfileSource = { getCurrentProfile(): string };
 export interface VerificationHandlerDeps {
@@ -102,6 +102,20 @@ export function createVerificationHandlers(
             profileId,
           }),
         ]);
+        // Same coherence gate as the launch freeze (spec dispositions 2/12):
+        // getArtifactData and getVerificationBundle are separate container
+        // invocations against a mutable workspace — the ABI used to encode
+        // args and the bundle we publish must come from the SAME build.
+        if (
+          bundleData.creationCode.toLowerCase() !==
+          artifact.creationCode.toLowerCase()
+        ) {
+          return sendBadRequest(
+            reply,
+            'BUNDLE_INCOHERENT' as ErrorCode,
+            'The workspace changed during capture — recompile and retry'
+          );
+        }
         const bundleHash = await d.bundleStore.write(profileId, {
           ...bundleData,
           schemaVersion: 1,
@@ -149,6 +163,9 @@ export function createVerificationHandlers(
             apiUrl: entry.apiUrl,
             verifierPluginId: entry.verifierPluginId!,
             label: entry.label ?? entry.url,
+            ...(entry.pageUrlTemplate
+              ? { pageUrlTemplate: entry.pageUrlTemplate }
+              : {}),
           }));
         if (explorers.length !== request.body.explorerEntryIds.length)
           throw Object.assign(
@@ -206,6 +223,9 @@ export function createVerificationHandlers(
             apiUrl: entry.apiUrl,
             verifierPluginId: entry.verifierPluginId!,
             label: entry.label ?? entry.url,
+            ...(entry.pageUrlTemplate
+              ? { pageUrlTemplate: entry.pageUrlTemplate }
+              : {}),
           }));
         const selected = await d.explorers.store.getSelection(
           request.body.chainId

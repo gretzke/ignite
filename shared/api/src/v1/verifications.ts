@@ -18,6 +18,10 @@ export interface ExplorerTargetSnapshot {
   apiUrl?: string;
   verifierPluginId: string;
   label: string;
+  // Optional explorer page template with an {address} placeholder, for
+  // explorers whose browse URL is not `${url}/address/${addr}` (e.g.
+  // Sourcify's repo.sourcify.dev/{chainId}/{address}).
+  pageUrlTemplate?: string;
 }
 
 export type VerificationStatus =
@@ -133,6 +137,7 @@ export const ExplorerTargetSnapshotSchema = z.object({
   apiUrl: z.string().url().optional(),
   verifierPluginId: z.string().min(1),
   label: z.string().min(1),
+  pageUrlTemplate: z.string().url().optional(),
 }) satisfies z.ZodType<ExplorerTargetSnapshot>;
 
 export const VerificationAttemptSchema = z.object({

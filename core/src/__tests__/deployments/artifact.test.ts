@@ -153,4 +153,38 @@ describe('deployment artifact renderer', () => {
     expect(unsafe).toContain('/Users/');
     expect(unsafe.toLowerCase()).toContain('http');
   });
+
+  it('keeps the core-constructed explorer link and passes its own schema with verification outcomes', async () => {
+    const { DeploymentArtifactSchema } = await import('@ignite/api');
+    const artifact = renderArtifact(run(), [
+      {
+        id: 't1',
+        chainId: 1,
+        address: '0x1111111111111111111111111111111111111111',
+        bundleHash: 'a'.repeat(64),
+        encodedConstructorArgs: '0x',
+        explorer: {
+          entryId: 'manual:e1',
+          url: 'https://scan.test',
+          verifierPluginId: 'etherscan',
+          label: 'Scan',
+        },
+        explorerPageUrl:
+          'https://scan.test/address/0x1111111111111111111111111111111111111111',
+        origin: { runId: 'run-1', stepId: 'deploy-token', contractId: 'token' },
+        status: 'verified',
+        attempts: [],
+        createdAt: '2026-07-11T00:00:00.000Z',
+        updatedAt: '2026-07-11T00:00:00.000Z',
+      } as never,
+    ]);
+    // A redacted link previously failed schema validation and silently broke
+    // every post-verification artifact write (final-review finding).
+    const parsed = DeploymentArtifactSchema.parse(artifact);
+    const outcome = Object.values(parsed.verifications ?? {})[0]?.[0];
+    expect(outcome?.explorerPageUrl).toBe(
+      'https://scan.test/address/0x1111111111111111111111111111111111111111'
+    );
+    expect(outcome?.status).toBe('verified');
+  });
 });

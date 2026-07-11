@@ -344,6 +344,9 @@ async function validateVerification(
     ...(entry!.apiUrl ? { apiUrl: entry!.apiUrl } : {}),
     verifierPluginId: entry!.verifierPluginId!,
     label: entry!.label ?? entry!.url,
+    ...(entry!.pageUrlTemplate
+      ? { pageUrlTemplate: entry!.pageUrlTemplate }
+      : {}),
   }));
   // captureBundles sets the hash on the frozen input only after a successful
   // durable write; assert it here so launch cannot snapshot half-capture data.
