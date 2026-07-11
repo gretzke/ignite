@@ -65,7 +65,9 @@ export async function resolveMergedExplorers(
         source: 'chain',
         label: explorer.name,
       });
-    } catch {}
+    } catch {
+      /* invalid chain-data explorer URL — skip the entry */
+    }
   }
   for (const explorer of detected.entries)
     candidates.push({

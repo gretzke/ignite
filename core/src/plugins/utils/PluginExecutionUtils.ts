@@ -10,7 +10,6 @@ import {
   createDockerStreamDemuxer,
   createSentinelLogFilter,
   parsePluginOutput,
-  stripSentinelBlocks,
 } from './pluginTransport.js';
 import { sanitizePluginString } from '../../verifications/sanitize.js';
 import { INSTALLED_PLUGIN_ENTRYPOINT } from '../install/types.js';

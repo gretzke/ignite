@@ -108,6 +108,7 @@ export class ExplorerStore {
       if (!isFile(value)) throw new Error('invalid explorer store schema');
       return value;
     } catch {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: quarantine sidecar within ~/.ignite
       await fs.rename(file, `${file}.bad`).catch(() => undefined);
       return EMPTY();
     }

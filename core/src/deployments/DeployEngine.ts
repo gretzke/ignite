@@ -885,7 +885,7 @@ export class DeployEngine {
       overrides.nonce = previousAttempt.nonce;
     }
     const attemptId = crypto.randomUUID();
-    const settled = await this.mutate(
+    await this.mutate(
       profileId,
       runId,
       (current) => {

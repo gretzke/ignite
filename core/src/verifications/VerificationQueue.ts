@@ -583,6 +583,7 @@ export class VerificationQueue {
     try {
       // Directories only: Finder drops .DS_Store into profiles/ (see the
       // RunStore.recoverStartup regression, commit 3b7e427).
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: profiles dir within ~/.ignite
       return (await fs.readdir(dir, { withFileTypes: true }))
         .filter((entry) => entry.isDirectory())
         .map((entry) => entry.name);

@@ -42,6 +42,7 @@ export default [
         fetch: 'readonly',
         performance: 'readonly',
         crypto: 'readonly',
+        structuredClone: 'readonly',
       },
     },
     plugins: {

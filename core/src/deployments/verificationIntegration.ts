@@ -13,6 +13,7 @@ export function wireVerificationReconciliation(queue: VerificationQueue): void {
   queue.reconcileRuns = async () => {
     const base = FileSystem.getInstance().getIgniteHome();
     let profiles: string[] = [];
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: profiles dir within ~/.ignite
     try { profiles = (await fs.readdir(path.join(base, 'profiles'), { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name); }
     catch { return; }
     const runs = new RunStore();

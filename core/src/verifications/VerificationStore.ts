@@ -171,6 +171,7 @@ export class VerificationStore {
         throw new Error('schema');
       return v as File;
     } catch {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: quarantine sidecar within ~/.ignite
       await fs.rename(p, `${p}.bad`).catch(() => {});
       return empty();
     }
