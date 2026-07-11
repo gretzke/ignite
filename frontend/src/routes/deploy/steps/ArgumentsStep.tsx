@@ -11,6 +11,7 @@ import {
 } from '../../../store/features/deployments/deployDraftSlice';
 import AbiArgField, { type AbiInput } from '../components/AbiArgField';
 import AdvancedStepSection from '../components/AdvancedStepSection';
+import ConstructorArgsForm from '../../../components/ConstructorArgsForm';
 
 export default function ArgumentsStep() {
   const dispatch = useAppDispatch();
@@ -92,19 +93,19 @@ export default function ArgumentsStep() {
             {!data && !errors[step.contractId] && (
               <p className="text-sm text-muted">Loading ABI…</p>
             )}
+            <ConstructorArgsForm
+              abi={data?.abi as Array<{ type?: string; inputs?: AbiInput[] }> | undefined}
+              value={step.args ?? {}}
+              onChange={(args) => {
+                Object.entries(args).forEach(([key, value]) =>
+                  dispatch(setArg({ stepId: step.id, key, value }))
+                );
+              }}
+            />
             {(constructor?.inputs ?? []).map((input, index) => {
               const key = input.name || `arg${index}`;
               return (
                 <div key={key} className="grid gap-2">
-                  <AbiArgField
-                    input={input}
-                    fieldKey={key}
-                    value={step.args?.[key]}
-                    autoDefault
-                    onChange={(value) =>
-                      dispatch(setArg({ stepId: step.id, key, value }))
-                    }
-                  />
                   {draft.chains.length > 1 && (
                     <details className="text-xs">
                       <summary className="text-muted cursor-pointer">

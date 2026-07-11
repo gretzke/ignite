@@ -16,6 +16,7 @@ import DevSendPage from './routes/dev/DevSendPage.tsx';
 import DeployWizardPage from './routes/deploy/DeployWizardPage.tsx';
 import DeploymentsPage from './routes/deployments/DeploymentsPage.tsx';
 import RunPage from './routes/deployments/RunPage.tsx';
+import VerifyContractPage from './routes/verify/VerifyContractPage.tsx';
 import './index.css';
 import { ToastProvider } from './ui/toast/ToastProvider';
 
@@ -32,6 +33,7 @@ const router = createBrowserRouter([
       { path: 'deploy', element: <DeployWizardPage /> },
       { path: 'deployments', element: <DeploymentsPage /> },
       { path: 'deployments/:runId', element: <RunPage /> },
+      { path: 'verify', element: <VerifyContractPage /> },
       { path: 'plugins', element: <Navigate to="/settings#plugins" replace /> },
       { path: 'settings', element: <SettingsPage /> },
     ],

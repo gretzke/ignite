@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, History, Loader2, Play, Plus } from 'lucide-react';
+import { AlertTriangle, BadgeCheck, History, Loader2, Play, Plus } from 'lucide-react';
+import type { VerificationTask } from '@ignite/api';
 import { Link, useNavigate } from 'react-router-dom';
 import type { RunSummary } from '@ignite/api';
 import { apiClient } from '../../store/api/client';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { runsListReceived } from '../../store/features/deployments/deploymentsSlice';
 import { runSnapshotReceived } from '../../store/features/deployments/deploymentsSlice';
+import { verificationsApi } from '../../store/api/verificationsApi';
 
 function StatusPill({ status }: { status: string }) {
   const cls =
@@ -32,6 +34,9 @@ export default function DeploymentsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resumable, setResumable] = useState<Record<string, boolean>>({});
+  const manualTasks = useAppSelector((state) =>
+    state.verifications.manualIds?.map((id) => state.verifications.tasks[id])
+  );
   const checkedPaused = useRef(new Map<string, string>());
 
   useEffect(() => {
@@ -55,6 +60,10 @@ export default function DeploymentsPage() {
     return () => {
       cancelled = true;
     };
+  }, [dispatch]);
+
+  useEffect(() => {
+    verificationsApi.fetch().forEach((action) => dispatch(action));
   }, [dispatch]);
 
   useEffect(() => {
@@ -110,6 +119,9 @@ export default function DeploymentsPage() {
         <Link to="/deploy" className="btn btn-primary">
           <Plus size={16} /> New deployment
         </Link>
+        <Link to="/verify" className="btn btn-secondary">
+          <BadgeCheck size={16} /> Verify a contract
+        </Link>
       </div>
       {loading && (
         <div className="card-milky p-8 flex justify-center gap-2 text-muted">
@@ -155,6 +167,22 @@ export default function DeploymentsPage() {
           </div>
         ))}
       </div>
+      {manualTasks && manualTasks.length > 0 && (
+        <section className="card-milky p-4 mt-4">
+          <h2 className="font-semibold mb-3">Manual verifications</h2>
+          <div className="glass-list">
+            {manualTasks.map((task: VerificationTask) => (
+              <div key={task.id} className="list-row flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">{task.explorer.label}</div>
+                  <div className="mono-data text-muted truncate">{task.address}</div>
+                </div>
+                <span className={`chip ${task.status === 'verified' || task.status === 'already-verified' ? 'chip-ok' : task.status === 'failed' ? 'chip-err' : ''}`}>{task.status}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
