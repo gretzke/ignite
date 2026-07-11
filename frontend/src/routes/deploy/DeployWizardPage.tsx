@@ -156,7 +156,6 @@ export default function DeployWizardPage() {
         {step === 3 && <ArgumentsStep />}
         {step === 4 && plan && <ReviewStep plan={plan} />}
       </div>
-      {nav && <div className="mt-4">{nav}</div>}
     </div>
   );
 }
