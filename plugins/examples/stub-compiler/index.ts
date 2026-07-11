@@ -17,6 +17,7 @@ import {
   type WatchPathsResult,
 } from '../../src/shared/index.ts';
 import { runPluginCLI } from '../../src/shared/plugin-runner.js';
+import type { CompilerOperation } from '../../src/shared/base/compiler/types.js';
 
 declare const PLUGIN_VERSION: string;
 
@@ -128,4 +129,4 @@ export class StubCompilerPlugin extends CompilerPlugin {
 const plugin = new StubCompilerPlugin();
 export default plugin;
 
-runPluginCLI(plugin);
+runPluginCLI<CompilerOperation>(plugin);

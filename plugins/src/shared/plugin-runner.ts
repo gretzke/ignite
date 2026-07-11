@@ -73,16 +73,8 @@ async function readStdin(): Promise<string> {
 }
 
 // CLI entry point for generic plugin execution
-export function runPluginCLI<T extends keyof AllOperations>(
-  plugin: IPluginExecutor<T>,
-): Promise<void>;
-export function runPluginCLI(
-  plugin: Partial<IPluginExecutor<keyof AllOperations>>,
-): Promise<void>;
 export async function runPluginCLI<T extends keyof AllOperations>(
-  plugin:
-    | IPluginExecutor<T>
-    | Partial<IPluginExecutor<keyof AllOperations>>,
+  plugin: IPluginExecutor<T>,
 ): Promise<void> {
   if (process.env.IGNITE_PLUGIN_BUILD) {
     return;
@@ -127,10 +119,7 @@ export async function runPluginCLI<T extends keyof AllOperations>(
       options: options,
     };
 
-    const result = await executePluginOperation(
-      plugin as IPluginExecutor<T>,
-      request,
-    );
+    const result = await executePluginOperation(plugin, request);
     console.log(frameResult(result));
   } catch (error) {
     console.log(
