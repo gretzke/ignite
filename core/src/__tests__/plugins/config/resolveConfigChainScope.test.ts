@@ -65,4 +65,29 @@ describe('resolveConfig chainScope', () => {
       },
     });
   });
+
+  it("injects defaults only with chainScope 'none' (discovery ops)", async () => {
+    const getSecret = vi.fn(async (_key: string, chainId?: number) =>
+      chainId === undefined ? 'default' : `key-${chainId}`
+    );
+    const result = await resolveConfig({
+      metadata,
+      grant,
+      configValues: {
+        apiUrl: {
+          global: 'https://default',
+          perChain: { '1': 'https://one', '10': 'https://ten' },
+        },
+      },
+      getSecret,
+      getSecretChainIds: async () => [1, 10],
+      opts: { chainScope: 'none' },
+    });
+    expect(result).toEqual({
+      apiKey: { default: 'default' },
+      apiUrl: { default: 'https://default' },
+    });
+    // per-chain secret reads must not even be attempted
+    expect(getSecret).toHaveBeenCalledTimes(1);
+  });
 });

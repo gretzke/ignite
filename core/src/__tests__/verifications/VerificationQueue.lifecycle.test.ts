@@ -602,3 +602,66 @@ describe('uninstall', () => {
     expect((await q.store.list('p'))[0].detail).toBe('plugin-removed');
   });
 });
+
+describe('in-flight fencing and TOCTOU (Sol batch-B findings)', () => {
+  it('a result returning after cancel does not resurrect the task', async () => {
+    const resolvers: Array<(v: unknown) => void> = [];
+    const executor = makeExecutor([
+      () => new Promise((resolve) => resolvers.push(resolve)),
+    ]);
+    const { queue: q, bundleHash } = await makeQueue(executor);
+    const [task] = await enqueueOne(q, bundleHash);
+    await tick(1); // invocation in flight
+    await q.cancel('p', task.id);
+    expect((await q.store.list('p'))[0].status).toBe('cancelled');
+    resolvers.shift()!(ok('pending', { pollTicket: 'late-guid' }));
+    await tick(5);
+    const after = (await q.store.list('p'))[0];
+    expect(after.status).toBe('cancelled'); // late result fenced out
+    expect(scheduler.pending.size).toBe(0); // and nothing rescheduled
+  });
+
+  it('concurrent identical enqueues create exactly one task', async () => {
+    const never = new Promise<never>(() => {});
+    const executor = makeExecutor([() => never]);
+    const { queue: q, bundleHash } = await makeQueue(executor);
+    const [a, b] = await Promise.all([
+      enqueueOne(q, bundleHash),
+      enqueueOne(q, bundleHash),
+    ]);
+    expect(a[0].id).toBe(b[0].id);
+    expect(await q.store.list('p')).toHaveLength(1);
+  });
+
+  it('concurrent differing enqueues leave exactly one live task', async () => {
+    const never = new Promise<never>(() => {});
+    const executor = makeExecutor([() => never]);
+    const { queue: q, bundleHash } = await makeQueue(executor);
+    const bundles = new BundleStore({ baseDir: dir });
+    const otherHash = await bundles.write('p', {
+      schemaVersion: 1,
+      standardJsonInput: {
+        language: 'Solidity',
+        sources: { 'C.sol': { content: 'contract C { uint x; }' } },
+        settings: {},
+      },
+      solcVersion: 'v0.8.26+commit.8a97fa7a',
+      contractIdentifier: 'C.sol:C',
+      creationCode: '0x6081',
+      artifactHash: 'e'.repeat(64),
+      compilerSummary: {
+        pluginId: 'foundry',
+        optimizer: true,
+        runs: 200,
+        viaIR: false,
+      },
+    });
+    await Promise.all([
+      enqueueOne(q, bundleHash),
+      enqueueOne(q, otherHash),
+    ]);
+    const tasks = await q.store.list('p');
+    const live = tasks.filter((t) => t.status !== 'superseded');
+    expect(live).toHaveLength(1);
+  });
+});

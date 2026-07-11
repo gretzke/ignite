@@ -12,6 +12,7 @@ import {
   parsePluginOutput,
   stripSentinelBlocks,
 } from './pluginTransport.js';
+import { sanitizePluginString } from '../../verifications/sanitize.js';
 import { INSTALLED_PLUGIN_ENTRYPOINT } from '../install/types.js';
 
 // Utility class for executing plugin operations in containers
@@ -153,15 +154,13 @@ export class PluginExecutionUtils {
               // first could cut the END sentinel and leak a partial block.
               // stderr gets the same treatment — a plugin (or its runtime)
               // can echo the framed block there too.
+              // Also strip terminal control characters: debug logs land in a
+              // TTY and untrusted plugin output must not carry escape codes.
               getLogger().debug(
-                `🔍 Plugin stdout (${pluginId}): "${stripSentinelBlocks(
-                  stdout
-                ).slice(0, 2000)}"`
+                `🔍 Plugin stdout (${pluginId}): "${sanitizePluginString(stdout, 2000) ?? ''}"`
               );
               getLogger().debug(
-                `🔍 Plugin stderr (${pluginId}): "${stripSentinelBlocks(
-                  stderr
-                ).slice(0, 2000)}"`
+                `🔍 Plugin stderr (${pluginId}): "${sanitizePluginString(stderr, 2000) ?? ''}"`
               );
               settle(
                 resolve,

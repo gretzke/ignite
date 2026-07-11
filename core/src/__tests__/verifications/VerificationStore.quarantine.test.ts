@@ -54,4 +54,14 @@ describe('VerificationStore quarantine', () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0].status).toBe('queued');
   });
+
+  it('quarantines a file with a malformed task entry (tasks: [null])', async () => {
+    const { store, file } = await makeStore();
+    await fs.writeFile(
+      file,
+      JSON.stringify({ schemaVersion: 1, tasks: [null] })
+    );
+    expect(await store.list('p')).toEqual([]);
+    await expect(fs.access(`${file}.bad`)).resolves.toBeUndefined();
+  });
 });

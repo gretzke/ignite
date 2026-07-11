@@ -120,7 +120,9 @@ export interface ExecuteOpts {
   onOutput?: (text: string) => void;
   workspacePath?: string;
   signal?: AbortSignal;
-  chainScope?: number;
+  // number = narrow per-chain config/secrets to that chain; 'none' = inject
+  // defaults only (discovery ops are cross-chain but never need chain keys).
+  chainScope?: number | 'none';
 }
 
 // Injectable dependencies (tests pass fakes; production uses real singletons).
@@ -383,7 +385,7 @@ export class PluginExecutor {
   private async resolvePluginConfig(
     pluginConfig: PluginConfig,
     grant: PermissionGrant,
-    chainScope?: number
+    chainScope?: number | 'none'
   ): Promise<Record<string, unknown> | undefined> {
     const configFields = pluginConfig.metadata.configFields;
     if (!configFields || configFields.length === 0) return undefined;

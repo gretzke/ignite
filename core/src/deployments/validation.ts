@@ -35,6 +35,9 @@ import { VerifierProviderService } from '../chains/VerifierProviderService.js';
 import { ChainRegistry } from '../chains/ChainRegistry.js';
 import { resolveMergedExplorers } from '../api/explorers.js';
 import type { ExplorerEntry } from '@ignite/api';
+import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
+import { TrustManager, type PermissionGrant } from '../plugins/trust/TrustManager.js';
+import type { PluginMetadata } from '@ignite/plugin-types/types';
 
 type Endpoint = { id: string; label?: string; url: string; stored?: boolean };
 type Client = {
@@ -84,6 +87,9 @@ export interface ValidationDeps {
   explorerSelection?: Record<string, string[]>;
   captureBundles: (frozen: FrozenInputs, contracts: ContractSource[], profileId: string) => Promise<Record<string, { bundleHash: string } | { error: string }>>;
   resolveExplorers: (chainId: number) => Promise<ExplorerEntry[]>;
+  resolveVerifierTrust: (
+    pluginId: string
+  ) => Promise<{ metadata: PluginMetadata; grant: PermissionGrant }>;
 }
 
 export async function validatePlan(
@@ -176,7 +182,8 @@ export async function validatePlan(
     );
     const verification = await validateVerification(
       plan, chainId, frozen, freezeError, bundleResults,
-      deps.explorerSelection?.[key] ?? [], deps.resolveExplorers, explorerTargets
+      deps.explorerSelection?.[key] ?? [], deps.resolveExplorers,
+      deps.resolveVerifierTrust, explorerTargets
     );
     chains[key] = {
       rpc,
@@ -200,6 +207,8 @@ function defaultDeps(): ValidationDeps {
     store: new ExplorerStore(),
     providers: VerifierProviderService.getInstance(),
   };
+  const registry = PluginRegistryLoader.getInstance();
+  const trust = TrustManager.getInstance();
   return {
     profileId: 'default',
     freezeInputs: freeze.freezeInputs.bind(freeze),
@@ -228,6 +237,10 @@ function defaultDeps(): ValidationDeps {
     bufferPct: 20,
     captureBundles: freezeDeps.captureBundles.bind(freezeDeps),
     resolveExplorers: (chainId) => resolveMergedExplorers(explorerDeps, chainId),
+    resolveVerifierTrust: async (pluginId) => ({
+      metadata: (await registry.getPluginConfig(pluginId)).metadata,
+      grant: await trust.getGrant(pluginId),
+    }),
   };
 }
 
@@ -239,6 +252,7 @@ async function validateVerification(
   bundles: Record<string, { bundleHash: string } | { error: string }>,
   selectedIds: string[],
   resolveExplorers: (chainId: number) => Promise<ExplorerEntry[]>,
+  resolveVerifierTrust: ValidationDeps['resolveVerifierTrust'],
   targets: Record<string, ExplorerTargetSnapshot[]>
 ): Promise<ValidationItem> {
   if (freezeError) return warning('ARTIFACT_DATA_ERROR', 'Verification bundle capture is unavailable until inputs are frozen');
@@ -254,6 +268,29 @@ async function validateVerification(
   if (selected.some((entry) => !entry)) return failure('EXPLORER_NOT_FOUND', 'A selected explorer is no longer available');
   if (selected.some((entry) => !entry!.verifierPluginId)) return failure('EXPLORER_MAPPING_UNCONFIRMED', 'A selected explorer needs a confirmed verifier mapping');
   if (selected.some((entry) => entry!.needsConfig)) return failure('VERIFIER_CONFIG_REQUIRED', 'A selected verifier needs configuration');
+  for (const pluginId of new Set(selected.map((entry) => entry!.verifierPluginId!))) {
+    const { metadata, grant } = await resolveVerifierTrust(pluginId);
+    if (!grant.net) {
+      return failure(
+        'VERIFIER_TRUST_REQUIRED',
+        `Verifier ${pluginId} is missing the net trust grant`,
+        { pluginId, missingGrant: 'net' }
+      );
+    }
+    if (grant.trust !== 'native') {
+      const missingSecrets = (metadata.configFields ?? [])
+        .filter((field) => field.secret)
+        .map((field) => field.key)
+        .filter((key) => !grant.secrets.includes(key));
+      if (missingSecrets.length > 0) {
+        return failure(
+          'VERIFIER_TRUST_REQUIRED',
+          `Verifier ${pluginId} is missing trust grants for secret config fields: ${missingSecrets.join(', ')}`,
+          { pluginId, missingGrant: missingSecrets }
+        );
+      }
+    }
+  }
   if (missing.length) return failure('VERIFICATION_BUNDLE_UNAVAILABLE', 'A verification bundle could not be captured');
   targets[key] = selected.map((entry) => ({
     entryId: entry!.id,

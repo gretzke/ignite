@@ -100,6 +100,19 @@ export class BundleStore {
         'Standard JSON settings must be an object'
       );
     }
+    // Guess-args prefix-strips against creationCode: an empty or odd-length
+    // value would turn the check into a no-op (fail open) or nibble-shift
+    // the tail. Enforce well-formed non-empty hex at the source.
+    const creationCode = (data as { creationCode?: unknown }).creationCode;
+    if (
+      typeof creationCode !== 'string' ||
+      !/^0x(?:[0-9a-fA-F]{2})+$/.test(creationCode)
+    ) {
+      throw bundleError(
+        'BUNDLE_INVALID',
+        'creationCode must be non-empty even-length 0x hex'
+      );
+    }
 
     let size: number;
     try {

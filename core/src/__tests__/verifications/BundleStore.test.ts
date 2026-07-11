@@ -118,3 +118,36 @@ describe('BundleStore', () => {
     expect(await store.read('other-profile', hash)).toBeNull();
   });
 });
+
+describe('creationCode validation (fail-closed for guess-args)', () => {
+  const base = {
+    schemaVersion: 1 as const,
+    standardJsonInput: {
+      language: 'Solidity',
+      sources: { 'C.sol': { content: 'contract C {}' } },
+      settings: {},
+    },
+    solcVersion: 'v0.8.26',
+    contractIdentifier: 'C.sol:C',
+    artifactHash: 'f'.repeat(64),
+    compilerSummary: {
+      pluginId: 'foundry',
+      optimizer: true,
+      runs: 200,
+      viaIR: false,
+    },
+  };
+  it.each(['', '0x', '0x123', 'deadbeef', '0xzz'])(
+    'rejects malformed creationCode %j',
+    (creationCode) => {
+      expect(() =>
+        BundleStore.validate({ ...base, creationCode } as never)
+      ).toThrowError(/creationCode/);
+    }
+  );
+  it('accepts well-formed creationCode', () => {
+    expect(() =>
+      BundleStore.validate({ ...base, creationCode: '0x6080' } as never)
+    ).not.toThrow();
+  });
+});

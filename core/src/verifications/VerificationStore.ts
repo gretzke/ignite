@@ -13,6 +13,13 @@ export type NewTask = Omit<
     >
   >;
 type File = { schemaVersion: 1; tasks: VerificationTask[] };
+const LIVE_TERMINAL = [
+  'verified',
+  'already-verified',
+  'failed',
+  'cancelled',
+  'superseded',
+];
 const empty = (): File => ({ schemaVersion: 1, tasks: [] });
 export class VerificationStore {
   private fsys = FileSystem.getInstance();
@@ -70,6 +77,52 @@ export class VerificationStore {
       )
       .map((task) => structuredClone(task));
   }
+  // Atomic dedupe/supersede/create for one enqueue key. Runs inside a single
+  // serialized store operation so concurrent enqueues cannot both observe
+  // "no live task" (TOCTOU) and double-submit.
+  async upsertLive(
+    profileId: string,
+    input: NewTask
+  ): Promise<{
+    task: VerificationTask;
+    superseded?: VerificationTask;
+    existing: boolean;
+  }> {
+    return this.serial(profileId, async (file) => {
+      const live = file.tasks.find(
+        (t) =>
+          t.chainId === input.chainId &&
+          t.address.toLowerCase() === input.address.toLowerCase() &&
+          t.explorer.entryId === input.explorer.entryId &&
+          !LIVE_TERMINAL.includes(t.status)
+      );
+      let superseded: VerificationTask | undefined;
+      if (live) {
+        const identical =
+          live.bundleHash === input.bundleHash &&
+          JSON.stringify(live.explorer) === JSON.stringify(input.explorer);
+        if (identical) {
+          return { task: structuredClone(live), existing: true };
+        }
+        live.status = 'superseded';
+        live.detail = 'superseded by newer verification';
+        live.updatedAt = new Date().toISOString();
+        superseded = structuredClone(live);
+      }
+      const now = new Date().toISOString();
+      const task: VerificationTask = {
+        ...input,
+        id: input.id ?? this.uuid(),
+        status: input.status ?? 'queued',
+        attempts: input.attempts ?? [],
+        createdAt: input.createdAt ?? now,
+        updatedAt: input.updatedAt ?? now,
+      } as VerificationTask;
+      file.tasks.push(task);
+      return { task: structuredClone(task), superseded, existing: false };
+    });
+  }
+
   async findLive(
     profileId: string,
     key: { chainId: number; address: string; explorerEntryId: string }
@@ -79,13 +132,7 @@ export class VerificationStore {
         t.chainId === key.chainId &&
         t.address.toLowerCase() === key.address.toLowerCase() &&
         t.explorer.entryId === key.explorerEntryId &&
-        ![
-          'verified',
-          'already-verified',
-          'failed',
-          'cancelled',
-          'superseded',
-        ].includes(t.status)
+        !LIVE_TERMINAL.includes(t.status)
     );
   }
   private file(profile: string) {
@@ -106,7 +153,20 @@ export class VerificationStore {
         !v ||
         typeof v !== 'object' ||
         (v as File).schemaVersion !== 1 ||
-        !Array.isArray((v as File).tasks)
+        !Array.isArray((v as File).tasks) ||
+        // Shallow per-task shape check: a single malformed entry (e.g. null)
+        // must quarantine the file, not crash every later list()/mutate().
+        !(v as File).tasks.every(
+          (t) =>
+            !!t &&
+            typeof t === 'object' &&
+            typeof t.id === 'string' &&
+            typeof t.status === 'string' &&
+            typeof t.address === 'string' &&
+            Array.isArray(t.attempts) &&
+            !!t.explorer &&
+            typeof t.explorer.entryId === 'string'
+        )
       )
         throw new Error('schema');
       return v as File;

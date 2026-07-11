@@ -138,5 +138,43 @@ export function normalizeExplorerUrl(value: string): string {
   return url.toString().replace(/\/$/, '');
 }
 export function explorerUrlHash(url: string): string { return createHash('sha256').update(normalizeExplorerUrl(url)).digest('hex'); }
-function isFile(value: unknown): value is ExplorerStoreFile { return !!value && typeof value === 'object' && (value as { schemaVersion?: unknown }).schemaVersion === 1 && Array.isArray((value as { entries?: unknown }).entries) && typeof (value as { overlays?: unknown }).overlays === 'object' && typeof (value as { selectedExplorerIds?: unknown }).selectedExplorerIds === 'object'; }
+function isFile(value: unknown): value is ExplorerStoreFile {
+  if (!value || typeof value !== 'object') return false;
+  const file = value as Partial<ExplorerStoreFile>;
+  if (file.schemaVersion !== 1) return false;
+  // Per-item shape checks: one malformed entry (or overlays: null, which is
+  // typeof 'object') must quarantine the file, not crash later list/merge.
+  if (
+    !Array.isArray(file.entries) ||
+    !file.entries.every(
+      (entry) =>
+        !!entry &&
+        typeof entry === 'object' &&
+        typeof entry.id === 'string' &&
+        typeof entry.chainId === 'number' &&
+        typeof entry.url === 'string'
+    )
+  )
+    return false;
+  if (
+    !file.overlays ||
+    typeof file.overlays !== 'object' ||
+    Array.isArray(file.overlays) ||
+    !Object.values(file.overlays).every(
+      (overlay) =>
+        !!overlay && typeof overlay === 'object' && !Array.isArray(overlay)
+    )
+  )
+    return false;
+  if (
+    !file.selectedExplorerIds ||
+    typeof file.selectedExplorerIds !== 'object' ||
+    Array.isArray(file.selectedExplorerIds) ||
+    !Object.values(file.selectedExplorerIds).every(
+      (ids) => Array.isArray(ids) && ids.every((id) => typeof id === 'string')
+    )
+  )
+    return false;
+  return true;
+}
 function coded(code: string, message: string): Error { return Object.assign(new Error(message), { code }); }

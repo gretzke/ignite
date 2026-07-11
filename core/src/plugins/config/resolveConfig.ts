@@ -39,7 +39,7 @@ export interface ResolveConfigArgs {
   // A verifier operation is always for one chain. Narrowing at this single
   // resolution boundary prevents a container from receiving other chains'
   // per-chain values or secrets.
-  opts?: { chainScope?: number };
+  opts?: { chainScope?: number | 'none' };
 }
 
 export async function resolveConfig(
@@ -139,11 +139,13 @@ export async function resolveConfig(
       const value: Record<string, ConfigPrimitive> =
         opts?.chainScope === undefined
           ? { ...(perChain ?? {}) }
-          : Object.fromEntries(
-              Object.entries(perChain ?? {}).filter(
-                ([chainId]) => chainId === String(opts.chainScope)
-              )
-            );
+          : opts.chainScope === 'none'
+            ? {}
+            : Object.fromEntries(
+                Object.entries(perChain ?? {}).filter(
+                  ([chainId]) => chainId === String(opts.chainScope)
+                )
+              );
       if (global !== undefined && !Array.isArray(global)) {
         value.default = global;
       }
@@ -160,14 +162,15 @@ async function resolvePerChainSecret(
   key: string,
   getSecret: ResolveConfigArgs['getSecret'],
   getSecretChainIds: ResolveConfigArgs['getSecretChainIds'],
-  chainScope?: number
+  chainScope?: number | 'none'
 ): Promise<Record<string, string> | undefined> {
   const value: Record<string, string> = {};
 
   const globalSecret = await getSecret(key);
   if (globalSecret !== undefined) value.default = globalSecret;
 
-  const chainIds = (await getSecretChainIds?.(key)) ?? [];
+  const chainIds =
+    chainScope === 'none' ? [] : ((await getSecretChainIds?.(key)) ?? []);
   for (const chainId of chainIds) {
     if (chainScope !== undefined && chainId !== chainScope) continue;
     const chainSecret = await getSecret(key, chainId);

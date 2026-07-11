@@ -90,6 +90,10 @@ function deps(overrides: Record<string, unknown> = {}): any {
       return { token: { bundleHash: HASH } };
     }),
     resolveExplorers: vi.fn(async () => []),
+    resolveVerifierTrust: vi.fn(async () => ({
+      metadata: { configFields: [] },
+      grant: { trust: 'native', net: true, repoWrite: true, secrets: [] },
+    })),
     ...overrides,
   };
 }
@@ -261,5 +265,73 @@ describe('validatePlan', () => {
     expect(result.report.chains['1'].verification).toMatchObject({
       ok: false, blocking: true, code: 'VERIFICATION_BUNDLE_UNAVAILABLE',
     });
+  });
+
+  it('accepts a configured verifier when its grants cover network and secrets', async () => {
+    const result = await validatePlan(plan(), { '1': 'rpc-1' }, deps({
+      explorerSelection: { '1': ['manual:one'] },
+      resolveExplorers: vi.fn(async () => [{
+        id: 'manual:one', chainId: 1, url: 'http://explorer.test', source: 'manual',
+        verifierPluginId: 'custom-verifier', label: 'Test explorer',
+      }]),
+      resolveVerifierTrust: vi.fn(async () => ({
+        metadata: { configFields: [{ key: 'apiKey', secret: true }] },
+        grant: { trust: 'trusted', net: true, repoWrite: false, secrets: ['apiKey'] },
+      })),
+    }));
+    expect(result.report.chains['1'].verification).toMatchObject({ ok: true });
+  });
+
+  it('blocks a configured verifier without a network grant', async () => {
+    const result = await validatePlan(plan(), { '1': 'rpc-1' }, deps({
+      explorerSelection: { '1': ['manual:one'] },
+      resolveExplorers: vi.fn(async () => [{
+        id: 'manual:one', chainId: 1, url: 'http://explorer.test', source: 'manual',
+        verifierPluginId: 'custom-verifier', label: 'Test explorer',
+      }]),
+      resolveVerifierTrust: vi.fn(async () => ({
+        metadata: { configFields: [] },
+        grant: { trust: 'trusted', net: false, repoWrite: false, secrets: [] },
+      })),
+    }));
+    expect(result.report.chains['1'].verification).toMatchObject({
+      ok: false, blocking: true, code: 'VERIFIER_TRUST_REQUIRED',
+      message: 'Verifier custom-verifier is missing the net trust grant',
+      details: { pluginId: 'custom-verifier', missingGrant: 'net' },
+    });
+  });
+
+  it('blocks a verifier without every declared secret-field grant', async () => {
+    const result = await validatePlan(plan(), { '1': 'rpc-1' }, deps({
+      explorerSelection: { '1': ['manual:one'] },
+      resolveExplorers: vi.fn(async () => [{
+        id: 'manual:one', chainId: 1, url: 'http://explorer.test', source: 'manual',
+        verifierPluginId: 'custom-verifier', label: 'Test explorer',
+      }]),
+      resolveVerifierTrust: vi.fn(async () => ({
+        metadata: { configFields: [{ key: 'apiKey', secret: true }] },
+        grant: { trust: 'trusted', net: true, repoWrite: false, secrets: [] },
+      })),
+    }));
+    expect(result.report.chains['1'].verification).toMatchObject({
+      ok: false, blocking: true, code: 'VERIFIER_TRUST_REQUIRED',
+      message: 'Verifier custom-verifier is missing trust grants for secret config fields: apiKey',
+      details: { pluginId: 'custom-verifier', missingGrant: ['apiKey'] },
+    });
+  });
+
+  it('accepts keyless sourcify with a network grant', async () => {
+    const result = await validatePlan(plan(), { '1': 'rpc-1' }, deps({
+      explorerSelection: { '1': ['manual:one'] },
+      resolveExplorers: vi.fn(async () => [{
+        id: 'manual:one', chainId: 1, url: 'http://explorer.test', source: 'manual',
+        verifierPluginId: 'sourcify', label: 'Sourcify',
+      }]),
+      resolveVerifierTrust: vi.fn(async () => ({
+        metadata: { configFields: [{ key: 'apiUrl', secret: false }] },
+        grant: { trust: 'trusted', net: true, repoWrite: false, secrets: [] },
+      })),
+    }));
+    expect(result.report.chains['1'].verification).toMatchObject({ ok: true });
   });
 });

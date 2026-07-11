@@ -194,25 +194,18 @@ export class VerificationQueue {
       | 'explorerPageUrl'
     >
   ): Promise<VerificationTask> {
-    const live = await this.store.findLive(profileId, {
-      chainId: input.chainId,
-      address: input.address,
-      explorerEntryId: input.explorer.entryId,
-    });
-    if (live) {
-      const identical =
-        live.bundleHash === input.bundleHash &&
-        JSON.stringify(live.explorer) === JSON.stringify(input.explorer);
-      if (identical) return live;
-      await this.change(profileId, live.id, (t) => {
-        t.status = 'superseded';
-        t.detail = 'superseded by newer verification';
-      });
-    }
-    const task = await this.store.create(profileId, {
-      ...input,
-      explorerPageUrl: `${input.explorer.url}/address/${input.address}`,
-    });
+    // findLive + supersede + create must be one serialized store operation:
+    // two concurrent enqueues for the same key would otherwise both observe
+    // "no live task" and double-submit sources (TOCTOU).
+    const { task, superseded, existing } = await this.store.upsertLive(
+      profileId,
+      {
+        ...input,
+        explorerPageUrl: `${input.explorer.url}/address/${input.address}`,
+      }
+    );
+    if (existing) return task;
+    if (superseded) this.events.emit(profileId, superseded);
     this.events.emit(profileId, task);
     this.schedule(profileId, task.id, 0);
     return task;
@@ -301,19 +294,22 @@ export class VerificationQueue {
     if (this.inFlight.has(key)) return;
     this.inFlight.add(key);
     try {
-      await this.acquireSlot();
-      try {
-        const task = (await this.store.list(profileId)).find(
-          (t) => t.id === taskId
-        );
-        if (!task || TERMINAL.includes(task.status)) return;
-        const host = this.hostOf(task);
-        await this.serializePerHost(host, () =>
-          this.process(profileId, task)
-        );
-      } finally {
-        this.releaseSlot();
-      }
+      const task = (await this.store.list(profileId)).find(
+        (t) => t.id === taskId
+      );
+      if (!task || TERMINAL.includes(task.status)) return;
+      const host = this.hostOf(task);
+      // The global slot is acquired INSIDE the host chain: a queue of tasks
+      // for one slow host must not hoard slots while merely waiting their
+      // turn, starving unrelated hosts.
+      await this.serializePerHost(host, async () => {
+        await this.acquireSlot();
+        try {
+          await this.process(profileId, task);
+        } finally {
+          this.releaseSlot();
+        }
+      });
     } catch (error) {
       this.logger.warn(
         `verification ${taskId} processing error: ${String(error)}`
@@ -336,7 +332,7 @@ export class VerificationQueue {
       return;
     }
     const isPoll = task.status === 'polling' && !!ticket;
-    await this.change(profileId, task.id, (t) => {
+    const started = await this.changeIfLive(profileId, task.id, (t) => {
       t.status = isPoll ? 'polling' : 'submitting';
       t.attempts.push({
         startedAt: new Date(this.now()).toISOString(),
@@ -344,6 +340,7 @@ export class VerificationQueue {
         ...(isPoll ? { pollTicket: ticket } : {}),
       });
     });
+    if (!started) return; // cancelled/superseded between read and start
 
     const result = isPoll
       ? await this.executor.execute(
@@ -369,7 +366,7 @@ export class VerificationQueue {
 
     if (data.status === 'verified' || data.status === 'already-verified') {
       const status = data.status;
-      await this.change(profileId, task.id, (t) => {
+      await this.changeIfLive(profileId, task.id, (t) => {
         t.status = status;
         t.detail = detail;
         t.attempts.at(-1)!.outcome = `${t.attempts.at(-1)!.outcome}:${status}`;
@@ -378,11 +375,12 @@ export class VerificationQueue {
     }
 
     if (data.status === 'pending' && (newTicket || ticket)) {
-      const updated = await this.change(profileId, task.id, (t) => {
+      const updated = await this.changeIfLive(profileId, task.id, (t) => {
         t.status = 'polling';
         if (detail !== undefined) t.detail = detail;
         if (newTicket) t.attempts.at(-1)!.pollTicket = newTicket;
       });
+      if (!updated) return; // terminal verdict landed while in flight
       this.schedule(profileId, task.id, this.nextPollDelay(updated));
       return;
     }
@@ -392,23 +390,24 @@ export class VerificationQueue {
       // Poll failures never consume the submit budget: keep polling until
       // the deadline unless the explorer says the failure is terminal.
       if (!retryable) {
-        await this.change(profileId, task.id, (t) => {
+        await this.changeIfLive(profileId, task.id, (t) => {
           t.status = 'failed';
           t.detail = detail;
         });
         return;
       }
-      const updated = await this.change(profileId, task.id, (t) => {
+      const updated = await this.changeIfLive(profileId, task.id, (t) => {
         t.status = 'polling';
         if (detail !== undefined) t.detail = detail;
       });
+      if (!updated) return;
       this.schedule(profileId, task.id, this.nextPollDelay(updated));
       return;
     }
 
     const submits = this.submitsSinceRetry(task) + 1;
     if (!retryable || submits >= MAX_SUBMIT_ATTEMPTS) {
-      await this.change(profileId, task.id, (t) => {
+      await this.changeIfLive(profileId, task.id, (t) => {
         t.status = 'failed';
         t.detail = detail;
       });
@@ -417,11 +416,12 @@ export class VerificationQueue {
     const backoff =
       SUBMIT_BACKOFF_MS[Math.min(submits - 1, SUBMIT_BACKOFF_MS.length - 1)];
     const wait = this.withJitter(backoff);
-    await this.change(profileId, task.id, (t) => {
+    const rescheduled = await this.changeIfLive(profileId, task.id, (t) => {
       t.status = 'queued';
       if (detail !== undefined) t.detail = detail;
       t.nextAttemptAt = new Date(this.now() + wait).toISOString();
     });
+    if (!rescheduled) return;
     this.schedule(profileId, task.id, wait);
   }
 
@@ -541,6 +541,33 @@ export class VerificationQueue {
     fn: (task: VerificationTask) => void
   ): Promise<VerificationTask> {
     const task = await this.store.mutate(profileId, id, fn);
+    this.events.emit(profileId, task);
+    if (TERMINAL.includes(task.status) && !('kind' in task.origin)) {
+      const origin = task.origin;
+      void this.store.list(profileId, { runId: origin.runId })
+        .then((tasks) => this.refreshArtifact(profileId, origin.runId, tasks))
+        .catch((error) => this.logger.warn(`verification artifact refresh failed: ${String(error)}`));
+    }
+    return task;
+  }
+
+  // Applies a mutation only while the task is still live. In-flight plugin
+  // results must never resurrect a task that was cancelled, superseded, or
+  // uninstalled while the invocation ran.
+  private async changeIfLive(
+    profileId: string,
+    id: string,
+    fn: (task: VerificationTask) => void
+  ): Promise<VerificationTask | null> {
+    let skipped = false;
+    const task = await this.store.mutate(profileId, id, (t) => {
+      if (TERMINAL.includes(t.status)) {
+        skipped = true;
+        return;
+      }
+      fn(t);
+    });
+    if (skipped) return null;
     this.events.emit(profileId, task);
     if (TERMINAL.includes(task.status) && !('kind' in task.origin)) {
       const origin = task.origin;
