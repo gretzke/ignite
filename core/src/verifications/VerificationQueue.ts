@@ -19,6 +19,8 @@ import { sanitizePluginString } from './sanitize.js';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { getLogger } from '../utils/logger.js';
+import { RunStore } from '../deployments/RunStore.js';
+import { writeArtifact } from '../deployments/artifact.js';
 
 export const SUBMIT_BACKOFF_MS = [
   5_000, 15_000, 45_000, 120_000, 300_000,
@@ -84,6 +86,7 @@ export class VerificationQueue {
     now?: () => number;
     random?: () => number;
     scheduler?: QueueScheduler;
+    refreshArtifact?: (profileId: string, runId: string, tasks: VerificationTask[]) => Promise<void>;
   }) {
     this.store = deps?.store ?? new VerificationStore();
     this.events = deps?.events ?? new VerificationEvents();
@@ -93,7 +96,12 @@ export class VerificationQueue {
     this.now = deps?.now ?? Date.now;
     this.random = deps?.random ?? Math.random;
     this.scheduler = deps?.scheduler ?? realScheduler;
+    this.refreshArtifact = deps?.refreshArtifact ?? (async (profileId, runId, tasks) => {
+      const run = await new RunStore().get(profileId, runId);
+      if (run) await writeArtifact(run, { verifications: tasks });
+    });
   }
+  private readonly refreshArtifact: (profileId: string, runId: string, tasks: VerificationTask[]) => Promise<void>;
 
   static getInstance(): VerificationQueue {
     return (this.instance ??= new VerificationQueue());
@@ -534,6 +542,12 @@ export class VerificationQueue {
   ): Promise<VerificationTask> {
     const task = await this.store.mutate(profileId, id, fn);
     this.events.emit(profileId, task);
+    if (TERMINAL.includes(task.status) && !('kind' in task.origin)) {
+      const origin = task.origin;
+      void this.store.list(profileId, { runId: origin.runId })
+        .then((tasks) => this.refreshArtifact(profileId, origin.runId, tasks))
+        .catch((error) => this.logger.warn(`verification artifact refresh failed: ${String(error)}`));
+    }
     return task;
   }
 

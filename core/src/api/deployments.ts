@@ -13,6 +13,7 @@ import type {
   ValidateDeploymentRequest,
 } from '@ignite/api';
 import { renderArtifact } from '../deployments/artifact.js';
+import { VerificationQueue } from '../verifications/VerificationQueue.js';
 import { DeployEngine } from '../deployments/DeployEngine.js';
 import { ErrorCodes, IgniteError } from '../types/errors.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
@@ -24,8 +25,9 @@ type ResolveLaneParams = { runId: string; chainId: string };
 export interface DeploymentHandlerDeps {
   engine: Pick<DeployEngine, 'launch' | 'resolveLane' | 'resume' | 'abort'>;
   getProfileManager: () => Promise<ProfileSource>;
-  validate: DeployEngine['launch'] extends never ? never : (plan: ValidateDeploymentRequest['plan'], rpc: ValidateDeploymentRequest['rpcSelection'], opts?: { profileId?: string }) => Promise<{ report: ValidateDeploymentData; frozen: unknown }>;
-  getRun: (profileId: string, runId: string) => Promise<RunRecord | undefined>;
+  validate: DeployEngine['launch'] extends never ? never : (plan: ValidateDeploymentRequest['plan'], rpc: ValidateDeploymentRequest['rpcSelection'], opts?: { profileId?: string; explorerSelection?: Record<string, string[]> }) => Promise<{ report: ValidateDeploymentData; frozen: unknown }>;
+    getRun: (profileId: string, runId: string) => Promise<RunRecord | undefined>;
+    listVerifications: (profileId: string, runId: string) => Promise<import('@ignite/api').VerificationTask[]>;
   listRuns: (profileId: string) => Promise<{ runs: ListRunsData['runs']; unreadable: string[] }>;
 }
 
@@ -41,6 +43,7 @@ export function createDeploymentHandlers(deps?: Partial<DeploymentHandlerDeps>) 
     validate: deps?.validate ?? ((plan, rpc, opts) => DeployEngine.getInstance().validatePlan(plan, rpc, opts)),
     getRun: deps?.getRun ?? ((profileId, runId) => DeployEngine.getInstance().get(profileId, runId)),
     listRuns: deps?.listRuns ?? ((profileId) => DeployEngine.getInstance().list(profileId)),
+    listVerifications: deps?.listVerifications ?? ((profileId, runId) => VerificationQueue.getInstance().store.list(profileId, { runId })),
   };
   const profileId = async () => (await d.getProfileManager()).getCurrentProfile();
   const notFound = (reply: FastifyReply, message: string) => reply.status(404).send({ statusCode: 404, error: 'Not Found', code: ErrorCodes.DEPLOYMENT_RUN_NOT_FOUND, message });
@@ -53,7 +56,7 @@ export function createDeploymentHandlers(deps?: Partial<DeploymentHandlerDeps>) 
   };
   return {
     validateDeployment: async (request: FastifyRequest<{ Body: ValidateDeploymentRequest }>, reply: FastifyReply): Promise<IApiResponse<ValidateDeploymentData>> => {
-      try { const result = await d.validate(request.body.plan, request.body.rpcSelection, { profileId: await profileId() }); return reply.status(200).send({ data: { chains: result.report.chains, frozenCandidates: result.frozen as ValidateDeploymentData['frozenCandidates'] } }); } catch (error) { return deploymentError(reply, error); }
+      try { const result = await d.validate(request.body.plan, request.body.rpcSelection, { profileId: await profileId(), explorerSelection: request.body.explorerSelection }); return reply.status(200).send({ data: { chains: result.report.chains, frozenCandidates: result.frozen as ValidateDeploymentData['frozenCandidates'] } }); } catch (error) { return deploymentError(reply, error); }
     },
     createDeploymentRun: async (request: FastifyRequest<{ Body: CreateRunRequest }>, reply: FastifyReply): Promise<IApiResponse<CreateRunData>> => {
       try { const run = await engine().launch({ profileId: await profileId(), ...request.body }); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
@@ -74,7 +77,7 @@ export function createDeploymentHandlers(deps?: Partial<DeploymentHandlerDeps>) 
       try { const run = await engine().abort(await profileId(), request.params.runId); return reply.status(200).send({ data: { run } }); } catch (error) { return deploymentError(reply, error); }
     },
     getDeploymentArtifact: async (request: FastifyRequest<{ Params: RunIdParams }>, reply: FastifyReply): Promise<IApiResponse<GetDeploymentArtifactData>> => {
-      try { const run = await d.getRun(await profileId(), request.params.runId); if (!run || !Object.values(run.lanes).some((lane) => lane.status === 'completed' || lane.status === 'aborted')) return notFound(reply, 'Deployment artifact is not available yet'); return reply.status(200).send({ data: { artifact: renderArtifact(run) } }); } catch (error) { return deploymentError(reply, error); }
+      try { const profile = await profileId(); const run = await d.getRun(profile, request.params.runId); if (!run || !Object.values(run.lanes).some((lane) => lane.status === 'completed' || lane.status === 'aborted')) return notFound(reply, 'Deployment artifact is not available yet'); return reply.status(200).send({ data: { artifact: renderArtifact(run, await d.listVerifications(profile, run.id)) } }); } catch (error) { return deploymentError(reply, error); }
     },
   };
 }

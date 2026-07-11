@@ -85,6 +85,11 @@ function deps(overrides: Record<string, unknown> = {}): any {
     estimateGas,
     getBalance,
     estimateFeesPerGas,
+    captureBundles: vi.fn(async (inputs: FrozenInputs) => {
+      for (const input of Object.values(inputs)) input.bundleHash = HASH;
+      return { token: { bundleHash: HASH } };
+    }),
+    resolveExplorers: vi.fn(async () => []),
     ...overrides,
   };
 }
@@ -231,6 +236,30 @@ describe('validatePlan', () => {
       ok: false,
       blocking: true,
       code: 'LIBRARY_LINKING_UNSUPPORTED',
+    });
+  });
+
+  it('keeps a bundle coherence failure as a non-blocking verification warning when nothing is selected', async () => {
+    const result = await validatePlan(plan(), { '1': 'rpc-1' }, deps({
+      captureBundles: vi.fn(async () => ({ token: { error: 'creation mismatch' } })),
+    }));
+    expect(result.report.chains['1'].verification).toMatchObject({
+      ok: false, blocking: false, code: 'VERIFICATION_BUNDLE_UNAVAILABLE',
+    });
+    expect(result.report.chains['1'].args.ok).toBe(true);
+  });
+
+  it('fails verification when selected explorers lack a captured bundle', async () => {
+    const result = await validatePlan(plan(), { '1': 'rpc-1' }, deps({
+      explorerSelection: { '1': ['manual:one'] },
+      captureBundles: vi.fn(async () => ({ token: { error: 'creation mismatch' } })),
+      resolveExplorers: vi.fn(async () => [{
+        id: 'manual:one', chainId: 1, url: 'http://explorer.test', source: 'manual',
+        verifierPluginId: 'etherscan', label: 'Test explorer',
+      }]),
+    }));
+    expect(result.report.chains['1'].verification).toMatchObject({
+      ok: false, blocking: true, code: 'VERIFICATION_BUNDLE_UNAVAILABLE',
     });
   });
 });

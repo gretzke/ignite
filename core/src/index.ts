@@ -27,6 +27,7 @@ import { JobManager } from './jobs/JobManager.js';
 import { FrontendRuntimeBridge } from './plugins/invoke/FrontendRuntimeBridge.js';
 import { DeployEngine } from './deployments/DeployEngine.js';
 import { VerificationQueue } from './verifications/VerificationQueue.js';
+import { wireVerificationReconciliation } from './deployments/verificationIntegration.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -57,7 +58,10 @@ async function ignite(workspacePath: string): Promise<{
   const pluginExecutor = PluginExecutor.getInstance();
   await JobManager.getInstance().recover();
   await DeployEngine.getInstance().recoverOnStartup();
-  await VerificationQueue.getInstance().recoverStartup();
+  const verificationQueue = VerificationQueue.getInstance();
+  wireVerificationReconciliation(verificationQueue);
+  await verificationQueue.recoverStartup();
+  await verificationQueue.reconcile();
 
   // Pre-startup checks
   app.log.info(`🔍 Workspace path: ${workspacePath}`);

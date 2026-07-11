@@ -13,6 +13,8 @@ import { RepoService } from '../repos/RepoService.js';
 import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { statFingerprint } from '../repos/fingerprint.js';
 import { getCompilerArtifactData } from '../api/plugins/compiler/index.js';
+import { getCompilerVerificationBundle } from '../api/plugins/compiler/index.js';
+import { BundleStore, type VerificationBundle } from '../verifications/BundleStore.js';
 
 export interface ArtifactFreezeDeps {
   getArtifactData: (input: {
@@ -23,6 +25,10 @@ export interface ArtifactFreezeDeps {
   }) => Promise<ArtifactData>;
   getPluginConfig: PluginRegistryLoader['getPluginConfig'];
   repoDirty: (profileId: string, contract: ContractSource) => Promise<boolean>;
+  getVerificationBundle: (input: {
+    pluginId: string; pathOrUrl: string; artifactPath: string; profileId: string;
+  }) => Promise<import('@ignite/plugin-types/base/compiler').VerificationBundleData>;
+  bundleStore: Pick<BundleStore, 'write'>;
 }
 
 export class ArtifactFreezeService {
@@ -80,6 +86,13 @@ export class ArtifactFreezeService {
             return false;
           }
         }),
+      getVerificationBundle: deps?.getVerificationBundle ??
+        (async ({ pluginId, pathOrUrl, artifactPath, profileId }) =>
+          getCompilerVerificationBundle(
+            { executor: PluginExecutor.getInstance(), registryLoader: registry, repos },
+            { pluginId, pathOrUrl, artifactPath, profileId }
+          )),
+      bundleStore: deps?.bundleStore ?? new BundleStore(),
     };
   }
 
@@ -145,6 +158,48 @@ export class ArtifactFreezeService {
         ] as const;
       })
     );
+    return Object.fromEntries(entries);
+  }
+
+  // Capture is deliberately separate from freezeInputs(): source verification
+  // availability is optional and must never turn into the global freeze error
+  // that blocks argument, estimate, and balance validation.
+  async captureBundles(
+    frozen: FrozenInputs,
+    contracts: ContractSource[],
+    profileId: string
+  ): Promise<Record<string, { bundleHash: string } | { error: string }>> {
+    const entries = await Promise.all(contracts.map(async (contract) => {
+      try {
+        const input = frozen[contract.id];
+        if (!input) throw new Error('Frozen input is missing');
+        const data = await this.deps.getVerificationBundle({
+          pluginId: contract.frameworkId,
+          pathOrUrl: contract.repoPathOrUrl,
+          artifactPath: contract.artifactPath,
+          profileId,
+        });
+        if (data.creationCode.toLowerCase() !== input.creationBytecode.toLowerCase()) {
+          throw Object.assign(new Error('Verification bundle creation bytecode does not match frozen artifact'), { code: 'BUNDLE_COHERENCE_MISMATCH' });
+        }
+        const bundle: VerificationBundle = {
+          ...data,
+          schemaVersion: 1,
+          artifactHash: input.artifactHash,
+          compilerSummary: {
+            pluginId: input.compiler.pluginId,
+            optimizer: false,
+            runs: 0,
+            viaIR: false,
+          },
+        };
+        const bundleHash = await this.deps.bundleStore.write(profileId, bundle);
+        input.bundleHash = bundleHash;
+        return [contract.id, { bundleHash }] as const;
+      } catch (error) {
+        return [contract.id, { error: error instanceof Error ? error.message : String(error) }] as const;
+      }
+    }));
     return Object.fromEntries(entries);
   }
 }

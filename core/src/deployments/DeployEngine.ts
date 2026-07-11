@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { encodeDeployData, type Abi, type Hex } from 'viem';
+import { encodeDeployData, parseTransaction, type Abi, type Hex } from 'viem';
 import type {
   DeploymentPlan,
   Lane,
@@ -34,6 +34,8 @@ import {
 import { RunStore } from './RunStore.js';
 import { runStatus } from './runStatus.js';
 import { validatePlan } from './validation.js';
+import { VerificationQueue } from '../verifications/VerificationQueue.js';
+import { getLogger } from '../utils/logger.js';
 
 type ResolvedRpc = { url: string; fingerprint: string; label?: string };
 type ExecuteResult = {
@@ -79,7 +81,7 @@ export interface DeployEngineDeps {
   validate: (
     plan: DeploymentPlan,
     rpc: RpcSelection,
-    deps?: { profileId?: string }
+    deps?: { profileId?: string; explorerSelection?: Record<string, string[]> }
   ) => ReturnType<typeof validatePlan>;
   writeArtifact: (run: RunRecord) => Promise<unknown>;
   getReceipt: (url: string, hash: Hex) => Promise<Receipt | undefined>;
@@ -87,6 +89,8 @@ export interface DeployEngineDeps {
     url: string,
     hash: Hex
   ) => Promise<{ from: Hex; to: Hex | null } | undefined>;
+  getTransactionData: (url: string, hash: Hex) => Promise<Hex | undefined>;
+  verificationQueue: Pick<VerificationQueue, 'enqueueForConfirmedStep'>;
   rebroadcast: (url: string, raw: Hex) => Promise<Hex>;
   chainMetadata: (chainId: number) => Promise<ChainMetadata>;
   now: () => number;
@@ -152,6 +156,13 @@ export class DeployEngine {
             .catch(() => undefined);
           return tx ? { from: tx.from, to: tx.to ?? null } : undefined;
         }),
+      getTransactionData: deps?.getTransactionData ??
+        (async (url, hash) => {
+          const { createPublicClient, http } = await import('viem');
+          const tx = await createPublicClient({ transport: http(url) }).getTransaction({ hash });
+          return tx.input as Hex;
+        }),
+      verificationQueue: deps?.verificationQueue ?? VerificationQueue.getInstance(),
       rebroadcast:
         deps?.rebroadcast ??
         (async (url, raw) =>
@@ -174,6 +185,7 @@ export class DeployEngine {
     profileId: string;
     plan: DeploymentPlan;
     rpcSelection: RpcSelection;
+    explorerSelection?: Record<string, string[]>;
     name?: string;
     idempotencyKey: string;
   }): Promise<RunRecord> {
@@ -185,6 +197,7 @@ export class DeployEngine {
       if (existing) return existing;
       const validated = await this.deps.validate(args.plan, args.rpcSelection, {
         profileId: args.profileId,
+        explorerSelection: args.explorerSelection,
       });
       if (
         Object.values(validated.report.chains).some((checklist) =>
@@ -208,6 +221,9 @@ export class DeployEngine {
         plan: globalThis.structuredClone(args.plan),
         inputs: validated.frozen,
         rpcSelection: validated.rpcBindings,
+        ...(Object.keys(validated.explorerTargets ?? {}).length
+          ? { explorerTargets: validated.explorerTargets }
+          : {}),
         validation: validated.report,
         status: 'running',
         lanes: Object.fromEntries(
@@ -869,7 +885,7 @@ export class DeployEngine {
       overrides.nonce = previousAttempt.nonce;
     }
     const attemptId = crypto.randomUUID();
-    await this.mutate(
+    const settled = await this.mutate(
       profileId,
       runId,
       (current) => {
@@ -948,7 +964,7 @@ export class DeployEngine {
     receipt: Receipt,
     attemptId?: string
   ): Promise<void> {
-    await this.mutate(
+    const settled = await this.mutate(
       profileId,
       runId,
       (run) => {
@@ -997,6 +1013,39 @@ export class DeployEngine {
         }
       },
       chainId
+    );
+    // This runs only after mutate has persisted the confirmed step. Queue
+    // failure never affects deployment lane progress; startup reconciliation
+    // heals this deliberately tolerated crash/failure window.
+    if (receipt.status === 'success')
+      void this.enqueueConfirmedVerification(settled, chainId, hash).catch((error) =>
+        getLogger().warn(`verification enqueue skipped for ${hash}: ${error instanceof Error ? error.message : String(error)}`)
+      );
+  }
+
+  private async enqueueConfirmedVerification(run: RunRecord, chainId: number, hash: Hex): Promise<void> {
+    const lane = run.lanes[String(chainId)];
+    const step = lane?.steps.find((candidate) =>
+      candidate.status === 'confirmed' && candidate.attempts.some((attempt) => attempt.txHash === hash)
+    );
+    if (!step?.address || !run.explorerTargets?.[String(chainId)]?.length) return;
+    const attempt = step.attempts.find((candidate) => candidate.txHash === hash);
+    const planStep = run.plan.steps.find((candidate) => candidate.id === step.stepId);
+    if (!attempt || !planStep) return;
+    const creation = run.inputs[planStep.contractId]?.creationBytecode;
+    if (!creation) return;
+    let data: Hex | undefined;
+    try { data = await this.deps.getTransactionData((await this.rpcFor(run, chainId)).url, hash); }
+    catch {
+      if (attempt.rawTx) data = parseTransaction(attempt.rawTx).data as Hex | undefined;
+    }
+    if (!data || !data.toLowerCase().startsWith(creation.toLowerCase())) {
+      getLogger().warn(`verification enqueue skipped for ${hash}: creation bytecode prefix mismatch`);
+      return;
+    }
+    await this.deps.verificationQueue.enqueueForConfirmedStep(
+      run.profileId, run, chainId, step.stepId, planStep.contractId,
+      step.address, hash, data.slice(creation.length) as string
     );
   }
 

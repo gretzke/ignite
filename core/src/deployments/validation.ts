@@ -15,6 +15,7 @@ import type {
   RpcSelection,
   ValidationItem,
   ValidationReport,
+  ExplorerTargetSnapshot,
 } from '@ignite/api';
 import { ArtifactFreezeService } from './ArtifactFreezeService.js';
 import {
@@ -29,6 +30,11 @@ import { verifyRpcEndpoint } from '../chains/rpcVerify.js';
 import { SignerProviderService } from '../signers/SignerProviderService.js';
 import { RpcStore } from '../chains/RpcStore.js';
 import { RpcProviderService } from '../chains/RpcProviderService.js';
+import { ExplorerStore } from '../chains/ExplorerStore.js';
+import { VerifierProviderService } from '../chains/VerifierProviderService.js';
+import { ChainRegistry } from '../chains/ChainRegistry.js';
+import { resolveMergedExplorers } from '../api/explorers.js';
+import type { ExplorerEntry } from '@ignite/api';
 
 type Endpoint = { id: string; label?: string; url: string; stored?: boolean };
 type Client = {
@@ -75,6 +81,9 @@ export interface ValidationDeps {
   >;
   createClient: (url: string) => Client;
   bufferPct: number;
+  explorerSelection?: Record<string, string[]>;
+  captureBundles: (frozen: FrozenInputs, contracts: ContractSource[], profileId: string) => Promise<Record<string, { bundleHash: string } | { error: string }>>;
+  resolveExplorers: (chainId: number) => Promise<ExplorerEntry[]>;
 }
 
 export async function validatePlan(
@@ -85,6 +94,7 @@ export async function validatePlan(
   report: ValidationReport;
   frozen: FrozenInputs;
   rpcBindings: Record<string, RpcBinding>;
+  explorerTargets?: Record<string, ExplorerTargetSnapshot[]>;
 }> {
   const defaults = defaultDeps();
   const deps: ValidationDeps = { ...defaults, ...overrides };
@@ -99,6 +109,17 @@ export async function validatePlan(
     freezeError = error;
   }
 
+  // Bundle capture intentionally happens after the all-or-nothing artifact
+  // freeze. A verification-only failure must not poison the freezeError path.
+  let bundleResults: Record<string, { bundleHash: string } | { error: string }> = {};
+  if (!freezeError) {
+    bundleResults = await deps.captureBundles(
+      frozen,
+      plan.contracts,
+      deps.profileId ?? 'default'
+    );
+  }
+
   let accountsSnapshot: Awaited<ReturnType<ValidationDeps['listAccounts']>> =
     [];
   let accountsError: unknown;
@@ -110,6 +131,7 @@ export async function validatePlan(
 
   const bindings: Record<string, RpcBinding> = {};
   const chains: Record<string, ChainChecklist> = {};
+  const explorerTargets: Record<string, ExplorerTargetSnapshot[]> = {};
   for (const chainId of plan.chains) {
     const key = String(chainId);
     const endpointId = rpcSelection[key];
@@ -152,6 +174,10 @@ export async function validatePlan(
       deps,
       freezeError
     );
+    const verification = await validateVerification(
+      plan, chainId, frozen, freezeError, bundleResults,
+      deps.explorerSelection?.[key] ?? [], deps.resolveExplorers, explorerTargets
+    );
     chains[key] = {
       rpc,
       signers: signerResults.item,
@@ -159,14 +185,21 @@ export async function validatePlan(
       estimation: estimation.item,
       balance,
       inputs,
+      verification,
     };
   }
-  return { report: { chains }, frozen, rpcBindings: bindings };
+  return { report: { chains }, frozen, rpcBindings: bindings, explorerTargets };
 }
 
 function defaultDeps(): ValidationDeps {
   const freeze = new ArtifactFreezeService();
   const rpcStore = new RpcStore();
+  const freezeDeps = freeze as ArtifactFreezeService;
+  const explorerDeps = {
+    registry: new ChainRegistry(),
+    store: new ExplorerStore(),
+    providers: VerifierProviderService.getInstance(),
+  };
   return {
     profileId: 'default',
     freezeInputs: freeze.freezeInputs.bind(freeze),
@@ -193,7 +226,47 @@ function defaultDeps(): ValidationDeps {
     createClient: (url) =>
       createPublicClient({ transport: http(url) }) as unknown as Client,
     bufferPct: 20,
+    captureBundles: freezeDeps.captureBundles.bind(freezeDeps),
+    resolveExplorers: (chainId) => resolveMergedExplorers(explorerDeps, chainId),
   };
+}
+
+async function validateVerification(
+  plan: DeploymentPlan,
+  chainId: number,
+  frozen: FrozenInputs,
+  freezeError: unknown,
+  bundles: Record<string, { bundleHash: string } | { error: string }>,
+  selectedIds: string[],
+  resolveExplorers: (chainId: number) => Promise<ExplorerEntry[]>,
+  targets: Record<string, ExplorerTargetSnapshot[]>
+): Promise<ValidationItem> {
+  if (freezeError) return warning('ARTIFACT_DATA_ERROR', 'Verification bundle capture is unavailable until inputs are frozen');
+  const key = String(chainId);
+  const missing = plan.contracts.filter((contract) => !('bundleHash' in (bundles[contract.id] ?? {})));
+  if (selectedIds.length === 0) {
+    return missing.length
+      ? warning('VERIFICATION_BUNDLE_UNAVAILABLE', 'Verification bundles are unavailable; no explorers are selected')
+      : success('No explorers selected for verification');
+  }
+  const entries = await resolveExplorers(chainId);
+  const selected = selectedIds.map((id) => entries.find((entry) => entry.id === id));
+  if (selected.some((entry) => !entry)) return failure('EXPLORER_NOT_FOUND', 'A selected explorer is no longer available');
+  if (selected.some((entry) => !entry!.verifierPluginId)) return failure('EXPLORER_MAPPING_UNCONFIRMED', 'A selected explorer needs a confirmed verifier mapping');
+  if (selected.some((entry) => entry!.needsConfig)) return failure('VERIFIER_CONFIG_REQUIRED', 'A selected verifier needs configuration');
+  if (missing.length) return failure('VERIFICATION_BUNDLE_UNAVAILABLE', 'A verification bundle could not be captured');
+  targets[key] = selected.map((entry) => ({
+    entryId: entry!.id,
+    url: entry!.url,
+    ...(entry!.apiUrl ? { apiUrl: entry!.apiUrl } : {}),
+    verifierPluginId: entry!.verifierPluginId!,
+    label: entry!.label ?? entry!.url,
+  }));
+  // captureBundles sets the hash on the frozen input only after a successful
+  // durable write; assert it here so launch cannot snapshot half-capture data.
+  if (plan.contracts.some((contract) => !frozen[contract.id]?.bundleHash))
+    return failure('VERIFICATION_BUNDLE_UNAVAILABLE', 'A verification bundle could not be stored');
+  return success('Verification bundles and explorer targets are ready');
 }
 
 async function validateRpc(
@@ -525,6 +598,13 @@ function failure(
     message,
     ...(details ? { details } : {}),
   };
+}
+export function warning(
+  code: string,
+  message: string,
+  details?: Record<string, unknown>
+): ValidationItem {
+  return { ok: false, blocking: false, code, message, ...(details ? { details } : {}) };
 }
 function codeOf(error: unknown, fallback: string): string {
   return typeof error === 'object' &&

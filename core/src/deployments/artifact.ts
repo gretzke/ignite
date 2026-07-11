@@ -5,12 +5,16 @@ import type {
   DeploymentArtifact,
   DeploymentArtifactAttempt,
   RunRecord,
+  VerificationTask,
 } from '@ignite/api';
 import { DeploymentArtifactSchema } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { effectiveValue, mergeArgs, mergeGas, resolveSigner } from './resolver.js';
 
-export function renderArtifact(run: RunRecord): DeploymentArtifact {
+export function renderArtifact(
+  run: RunRecord,
+  verifications: VerificationTask[] = []
+): DeploymentArtifact {
   const contracts = run.plan.contracts.map((contract) => {
     const input = run.inputs[contract.id];
     if (!input) {
@@ -65,6 +69,21 @@ export function renderArtifact(run: RunRecord): DeploymentArtifact {
     ])
   );
 
+  const outcomes = verifications
+    .filter((task): task is VerificationTask & { origin: { runId: string; stepId: string; contractId: string } } =>
+      !('kind' in task.origin) && task.origin.runId === run.id)
+    .reduce<Record<string, NonNullable<DeploymentArtifact['verifications']>[string]>>((all, task) => {
+      const origin = task.origin as Exclude<VerificationTask['origin'], { kind: 'manual' }>;
+      (all[origin.contractId] ??= []).push({
+        chainId: task.chainId,
+        address: task.address as `0x${string}`,
+        explorerLabel: sanitizeText(task.explorer.label),
+        ...(task.explorerPageUrl ? { explorerPageUrl: sanitizeText(task.explorerPageUrl) } : {}),
+        status: task.status,
+        updatedAt: task.updatedAt,
+      });
+      return all;
+    }, {});
   return DeploymentArtifactSchema.parse({
     schemaVersion: 1,
     runId: sanitizeText(run.id),
@@ -77,12 +96,13 @@ export function renderArtifact(run: RunRecord): DeploymentArtifact {
     contracts,
     validation: sanitizeValue(run.validation),
     lanes,
+    ...(Object.keys(outcomes).length ? { verifications: outcomes } : {}),
   });
 }
 
 export async function writeArtifact(
   run: RunRecord,
-  deps?: { baseDir?: string }
+  deps?: { baseDir?: string; verifications?: VerificationTask[] }
 ): Promise<string> {
   const baseDir = deps?.baseDir ?? FileSystem.getInstance().getIgniteHome();
   const file = path.join(
@@ -93,7 +113,7 @@ export async function writeArtifact(
     'artifacts',
     `${run.id}.json`
   );
-  await FileSystem.getInstance().writeJsonFile(file, renderArtifact(run));
+  await FileSystem.getInstance().writeJsonFile(file, renderArtifact(run, deps?.verifications));
   return file;
 }
 
