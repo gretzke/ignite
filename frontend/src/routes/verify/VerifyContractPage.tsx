@@ -8,7 +8,8 @@ import ExplorerMultiSelect from '../deploy/steps/ExplorerMultiSelect';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { chainsApi } from '../../store/features/chains/chainsSlice';
 import { apiClient } from '../../store/api/client';
-import { verificationsApi } from '../../store/api/verificationsApi';
+import { verificationTasksReceived } from '../../store/features/verifications/verificationsSlice';
+import { ApiError } from '@ignite/api/client';
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
@@ -37,6 +38,11 @@ export function verificationSubmitBody({
     ...(creationTxHash ? { creationTxHash } : {}),
     explorerEntryIds,
   };
+}
+
+function submissionErrorMessage(cause: unknown): string {
+  if (cause instanceof ApiError) return cause.body.message || cause.message;
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 export default function VerifyContractPage() {
@@ -96,13 +102,21 @@ export default function VerifyContractPage() {
       setGuessError(cause instanceof Error ? cause.message : String(cause));
     }
   };
-  const submit = () => {
+  const submit = async () => {
     if (!contract || !valid) return;
     setSubmitting(true);
     setError(null);
     const body = verificationSubmitBody({ contract, chainId: numericChainId, address, args, encodedConstructorArgs: encodedTail, creationTxHash: creationTxHash || undefined, explorerEntryIds: explorerIds });
-    dispatch(verificationsApi.create(body));
-    navigate('/deployments?manualVerification=1');
+    try {
+      const response = await apiClient.request('createVerification', { body });
+      if (!('data' in response)) throw new Error('Verification submission failed');
+      dispatch(verificationTasksReceived(response.data.tasks));
+      navigate('/deployments?manualVerification=1');
+    } catch (cause) {
+      setError(submissionErrorMessage(cause));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return <div className="text-[var(--text)] max-w-3xl mx-auto grid gap-4">
@@ -111,6 +125,6 @@ export default function VerifyContractPage() {
     <section className="card-milky p-4 grid gap-3"><h2 className="font-semibold">2. Chain + address</h2><Select options={chainOptions} value={chainId} placeholder="Select chain" onValueChange={setChainId} /><input className="input-glass" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="0x contract address" />{address && !ADDRESS.test(address) && <p className="text-sm text-err">Enter a valid EVM address.</p>}<input className="input-glass" value={creationTxHash} onChange={(event) => setCreationTxHash(event.target.value)} placeholder="Creation transaction hash (optional)" /></section>
     {chainId && <section className="card-milky p-4 grid gap-3"><h2 className="font-semibold">3. Explorers</h2><ExplorerMultiSelect chainIds={[numericChainId]} selection={selection} onSelectionChange={setSelection} /></section>}
     {hasConstructor && <section className="card-milky p-4 grid gap-3"><div className="flex justify-between gap-2"><h2 className="font-semibold">4. Constructor arguments</h2><button type="button" className="btn btn-sm btn-secondary" onClick={() => void guess()} disabled={!contract || !ADDRESS.test(address)}>Guess from creation tx</button></div>{guessError && <p className="text-sm text-err">{guessError}</p>}<ConstructorArgsForm abi={abi as never[]} value={args} onChange={(next) => { setArgs(next); setEncodedTail(undefined); }} /></section>}
-    {error && <p className="text-err">{error}</p>}<button type="button" className="btn btn-primary justify-self-end" disabled={!valid || submitting} onClick={submit}>Submit verification</button>
+    {error && <p className="text-err">{error}</p>}<button type="button" className="btn btn-primary justify-self-end" disabled={!valid || submitting} onClick={() => void submit()}>Submit verification</button>
   </div>;
 }

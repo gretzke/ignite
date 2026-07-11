@@ -8,6 +8,7 @@ import {
 } from '../../../store/features/deployments/deployDraftSlice';
 import {
   explorerReceived,
+  explorerSelectionReceived,
   explorersReducer,
 } from '../../../store/features/explorers/explorersSlice';
 
@@ -48,5 +49,20 @@ describe('explorer wizard behavior', () => {
       explorerReceived({ ...entry, verifierPluginId: 'etherscan' })
     );
     expect(explorers.byChain['1']?.[0].verifierPluginId).toBe('etherscan');
+  });
+
+  it('merges per-chain selection responses without clobbering another chain', () => {
+    let explorers = explorersReducer(
+      undefined,
+      explorerSelectionReceived({ '1': ['scan'] })
+    );
+    explorers = explorersReducer(
+      explorers,
+      explorerSelectionReceived({ '8453': ['base-scan'] })
+    );
+    expect(explorers.selection).toEqual({
+      '1': ['scan'],
+      '8453': ['base-scan'],
+    });
   });
 });

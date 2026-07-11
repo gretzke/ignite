@@ -8,6 +8,7 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { runsListReceived } from '../../store/features/deployments/deploymentsSlice';
 import { runSnapshotReceived } from '../../store/features/deployments/deploymentsSlice';
 import { verificationsApi } from '../../store/api/verificationsApi';
+import Tooltip from '../../components/Tooltip';
 
 function StatusPill({ status }: { status: string }) {
   const cls =
@@ -177,7 +178,13 @@ export default function DeploymentsPage() {
                   <div className="font-medium">{task.explorer.label}</div>
                   <div className="mono-data text-muted truncate">{task.address}</div>
                 </div>
-                <span className={`chip ${task.status === 'verified' || task.status === 'already-verified' ? 'chip-ok' : task.status === 'failed' ? 'chip-err' : ''}`}>{task.status}</span>
+                {task.status === 'already-verified' ? (
+                  <Tooltip label="Already verified on explorer (existing verification — possibly different sources)">
+                    <span className="chip chip-ok">Already verified</span>
+                  </Tooltip>
+                ) : (
+                  <span className={`chip ${task.status === 'verified' ? 'chip-ok' : task.status === 'failed' ? 'chip-err' : ''}`}>{task.status}</span>
+                )}
               </div>
             ))}
           </div>

@@ -62,7 +62,7 @@ const explorersSlice = createSlice({
       }
     },
     explorerSelectionReceived(state, action: PayloadAction<ExplorerSelection>) {
-      state.selection = action.payload;
+      Object.assign(state.selection, action.payload);
     },
     explorerSelectionSet(
       state,
