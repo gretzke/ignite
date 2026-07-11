@@ -6,6 +6,12 @@ import {
   createApiResponseSchema,
   createRequestSchema,
 } from "../utils/schema.js";
+import {
+  ExplorerTargetSnapshotSchema,
+  VerificationStatusSchema,
+  type ExplorerTargetSnapshot,
+  type VerificationStatus,
+} from "./verifications.js";
 
 const DECIMAL = /^\d+$/;
 const CHAIN_ID_KEY = /^[1-9]\d*$/;
@@ -191,6 +197,7 @@ export interface FrozenInput {
   compiler: { pluginId: string; version: string; settingsHash: string };
   artifactHash: string;
   repoDirty: boolean;
+  bundleHash?: string;
 }
 
 export type FrozenInputs = Record<string, FrozenInput>;
@@ -216,6 +223,7 @@ export interface ChainChecklist {
   estimation: ValidationItem;
   balance: ValidationItem;
   inputs: ValidationItem;
+  verification?: ValidationItem;
 }
 
 export interface ValidationReport {
@@ -287,6 +295,7 @@ export interface RunRecord {
   plan: DeploymentPlan;
   inputs: FrozenInputs;
   rpcSelection: Record<string, RpcBinding>;
+  explorerTargets?: Record<string, ExplorerTargetSnapshot[]>;
   validation: ValidationReport;
   lanes: Record<string, Lane>;
   abortRequested?: boolean;
@@ -343,6 +352,7 @@ export const FrozenInputSchema = z.object({
   }),
   artifactHash: z.string().regex(SHA256_HEX),
   repoDirty: z.boolean(),
+  bundleHash: z.string().regex(SHA256_HEX).optional(),
 }) satisfies z.ZodType<FrozenInput>;
 
 export const RpcBindingSchema = z.object({
@@ -366,6 +376,7 @@ export const ChainChecklistSchema = z.object({
   estimation: ValidationItemSchema,
   balance: ValidationItemSchema,
   inputs: ValidationItemSchema,
+  verification: ValidationItemSchema.optional(),
 }) satisfies z.ZodType<ChainChecklist>;
 
 export const ValidationReportSchema = z.object({
@@ -444,6 +455,9 @@ export const RunRecordSchema = z.object({
   plan: DeploymentPlanSchema,
   inputs: z.record(z.string(), FrozenInputSchema),
   rpcSelection: z.record(ChainIdKeySchema, RpcBindingSchema),
+  explorerTargets: z
+    .record(ChainIdKeySchema, z.array(ExplorerTargetSnapshotSchema))
+    .optional(),
   validation: ValidationReportSchema,
   lanes: z.record(ChainIdKeySchema, LaneSchema),
   abortRequested: z.boolean().optional(),
@@ -626,6 +640,7 @@ export interface RpcSelection {
 export interface ValidateDeploymentRequest {
   plan: DeploymentPlan;
   rpcSelection: RpcSelection;
+  explorerSelection?: Record<string, string[]>;
 }
 
 export interface ValidateDeploymentData {
@@ -725,14 +740,35 @@ export interface DeploymentArtifact {
       }>;
     }
   >;
+  verifications?: Record<
+    string,
+    Array<{
+      chainId: number;
+      address: Hex;
+      explorerLabel: string;
+      explorerPageUrl?: string;
+      status: VerificationStatus;
+      updatedAt: string;
+    }>
+  >;
 }
 
 export const RpcSelectionSchema = z.record(ChainIdKeySchema, z.string().min(1));
+export const DeploymentExplorerSelectionSchema = z.record(
+  ChainIdKeySchema,
+  z.array(z.string().min(1)),
+);
 
 export const ValidateDeploymentRequestSchema =
   createRequestSchema<ValidateDeploymentRequest>(
     "ValidateDeploymentRequestSchema",
-  )(z.object({ plan: DeploymentPlanSchema, rpcSelection: RpcSelectionSchema }));
+  )(
+    z.object({
+      plan: DeploymentPlanSchema,
+      rpcSelection: RpcSelectionSchema,
+      explorerSelection: DeploymentExplorerSelectionSchema.optional(),
+    }),
+  );
 
 export const ValidateDeploymentResponseSchema =
   createApiResponseSchema<ValidateDeploymentData>(
@@ -750,6 +786,7 @@ export const CreateRunRequestSchema = createRequestSchema<CreateRunRequest>(
   z.object({
     plan: DeploymentPlanSchema,
     rpcSelection: RpcSelectionSchema,
+    explorerSelection: DeploymentExplorerSelectionSchema.optional(),
     name: z.string().min(1).optional(),
     idempotencyKey: z.string().min(1),
   }),
@@ -865,6 +902,21 @@ export const DeploymentArtifactSchema = z.object({
       ),
     })
   ),
+  verifications: z
+    .record(
+      z.string(),
+      z.array(
+        z.object({
+          chainId: z.number().int().positive(),
+          address: z.string().regex(HEX_ADDRESS) as z.ZodType<Hex>,
+          explorerLabel: z.string().min(1),
+          explorerPageUrl: z.string().url().optional(),
+          status: VerificationStatusSchema,
+          updatedAt: z.string(),
+        }),
+      ),
+    )
+    .optional(),
 }) satisfies z.ZodType<DeploymentArtifact>;
 
 export const RunIdParamsSchema = z.object({ runId: z.string().min(1) });

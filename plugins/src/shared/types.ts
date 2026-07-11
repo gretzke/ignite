@@ -41,6 +41,7 @@ export enum PluginType {
   COMPILER = "compiler",
   RPC_PROVIDER = "rpc-provider",
   SIGNER_PROVIDER = "signer-provider",
+  VERIFIER = "verifier",
 }
 
 // Where a plugin's code executes. "container" (default when absent) runs in

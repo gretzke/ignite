@@ -18,6 +18,8 @@ export * from "./git.js";
 export * from "./chains.js";
 export * from "./signers.js";
 export * from "./deployments.js";
+export * from "./explorers.js";
+export * from "./verifications.js";
 
 import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
