@@ -20,6 +20,7 @@ import { signersApi } from '../../store/features/signers/signersSlice';
 import LanePanel from './components/LanePanel';
 import ResolveEditDialog from './components/ResolveEditDialog';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import VerificationPanel from './components/VerificationPanel';
 
 function signerFor(
   ref: SignerRef | undefined,
@@ -247,6 +248,7 @@ export default function RunPage() {
           );
         })}
       </div>
+      <VerificationPanel run={run} />
       {editChainId !== null &&
         (() => {
           const attempt = attemptFor(editChainId);
