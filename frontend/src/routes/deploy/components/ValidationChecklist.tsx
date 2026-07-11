@@ -8,6 +8,7 @@ const ITEM_KEYS = [
   'estimation',
   'balance',
   'inputs',
+  'verification',
 ] as const;
 
 interface ValidationChecklistProps {
@@ -33,11 +34,15 @@ export default function ValidationChecklist({
             <div className="glass-list">
               {ITEM_KEYS.map((key) => {
                 const item = checklist[key];
+                if (!item) return null;
                 const failed = item.blocking && !item.ok;
+                const warning = !item.blocking && !item.ok;
                 return (
                   <div key={key} className="list-row flex items-start gap-3">
                     {failed ? (
                       <CircleAlert size={17} className="text-err mt-0.5" />
+                    ) : warning ? (
+                      <CircleAlert size={17} className="text-warn mt-0.5" />
                     ) : (
                       <CheckCircle2
                         size={17}

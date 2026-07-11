@@ -12,6 +12,7 @@ const initialState: DeployDraftState = {
   contracts: [],
   chains: [],
   rpcSelection: {},
+  explorerSelection: {},
   signers: {},
   steps: [],
 };
@@ -95,6 +96,7 @@ const deployDraftSlice = createSlice({
       state.chains.splice(index, 1);
       const key = String(chainId);
       delete state.rpcSelection[key];
+      delete state.explorerSelection[key];
       delete state.signers.perChain?.[key];
       for (const step of state.steps) {
         delete step.argsPerChain?.[key];
@@ -112,6 +114,12 @@ const deployDraftSlice = createSlice({
     ) {
       const { chainId, endpointId, label } = action.payload;
       state.rpcSelection[String(chainId)] = { endpointId, label };
+    },
+    setExplorerSelection(
+      state,
+      action: PayloadAction<Record<string, string[]>>
+    ) {
+      state.explorerSelection = action.payload;
     },
     setGlobalSigner(state, action: PayloadAction<SignerRef | undefined>) {
       state.signers.global = action.payload;
@@ -229,6 +237,7 @@ export const {
   reorderSteps,
   toggleChain,
   selectRpc,
+  setExplorerSelection,
   setGlobalSigner,
   setChainSigner,
   setArg,

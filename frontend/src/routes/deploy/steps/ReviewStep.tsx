@@ -30,6 +30,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
   const navigate = useNavigate();
   const draft = useAppSelector((state) => state.deployDraft);
   const chains = useAppSelector((state) => state.chains.chains);
+  const explorers = useAppSelector((state) => state.explorers.byChain);
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
@@ -57,7 +58,11 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
     setError(null);
     try {
       const response = await apiClient.request('validateDeployment', {
-        body: { plan, rpcSelection },
+        body: {
+          plan,
+          rpcSelection,
+          explorerSelection: draft.explorerSelection,
+        },
       });
       if (!('data' in response)) throw new Error(response.message);
       setReport({ chains: response.data.chains });
@@ -67,7 +72,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
     } finally {
       setLoading(false);
     }
-  }, [plan, rpcSelection]);
+  }, [draft.explorerSelection, plan, rpcSelection]);
 
   useEffect(() => {
     void validate();
@@ -82,6 +87,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
         body: {
           plan,
           rpcSelection,
+          explorerSelection: draft.explorerSelection,
           idempotencyKey: draft.idempotencyKey,
           name: draft.name?.trim() || defaultName,
         },
@@ -127,6 +133,26 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           }
         />
       </label>
+      {Object.entries(draft.explorerSelection).some(([, ids]) => ids.length > 0) && (
+        <div className="card-milky p-4 grid gap-2">
+          <span className="eyebrow">Selected explorers</span>
+          {Object.entries(draft.explorerSelection).map(([chainId, ids]) => {
+            if (ids.length === 0) return null;
+            const labels = ids.map(
+              (id) =>
+                explorers[chainId]?.find((entry) => entry.id === id)?.label ??
+                id
+            );
+            return (
+              <div key={chainId} className="text-sm">
+                {chains.find((chain) => String(chain.chainId) === chainId)
+                  ?.name ?? `Chain ${chainId}`}
+                : {labels.join(', ')}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {loading && (
         <div className="card-milky p-6 flex justify-center items-center gap-2 text-muted">
           <Loader2 size={18} className="animate-spin" /> Validating the full

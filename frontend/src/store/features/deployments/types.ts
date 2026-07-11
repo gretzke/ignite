@@ -24,6 +24,7 @@ export interface DeployDraftState {
   contracts: DraftContract[];
   chains: number[];
   rpcSelection: Record<string, DraftRpcSelection>;
+  explorerSelection: Record<string, string[]>;
   signers: SignerCascade;
   steps: DraftStep[];
   name?: string;

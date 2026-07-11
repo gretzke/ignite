@@ -6,18 +6,44 @@ import { reorderSteps } from '../../store/features/deployments/deployDraftSlice'
 import WizardStepper from './components/WizardStepper';
 import ContractsStep from './steps/ContractsStep';
 import ChainsStep from './steps/ChainsStep';
+import ExplorersStep from './steps/ExplorersStep';
 import SignersStep from './steps/SignersStep';
 import ArgumentsStep from './steps/ArgumentsStep';
 import ReviewStep from './steps/ReviewStep';
 import { planFromDraft } from './planFromDraft';
+import type { ExplorerEntry } from '@ignite/api';
 
 const STEPS = [
   { id: 'contracts', label: 'Contracts' },
   { id: 'chains', label: 'Chains & RPCs' },
+  { id: 'explorers', label: 'Explorers' },
   { id: 'signers', label: 'Signers' },
   { id: 'arguments', label: 'Arguments' },
   { id: 'review', label: 'Review' },
 ];
+
+export function explorerBlocker(
+  chainIds: number[],
+  selection: Record<string, string[]>,
+  entriesByChain: Record<string, ExplorerEntry[] | undefined>,
+  chainName: (chainId: number) => string
+): string | undefined {
+  for (const chainId of chainIds) {
+    const selected = new Set(selection[String(chainId)] ?? []);
+    const entries = entriesByChain[String(chainId)] ?? [];
+    const unmapped = entries.find(
+      (entry) => selected.has(entry.id) && !entry.verifierPluginId
+    );
+    if (unmapped)
+      return `${chainName(chainId)}: ${unmapped.label ?? unmapped.url} needs a verifier type`;
+    const needsConfig = entries.find(
+      (entry) => selected.has(entry.id) && entry.needsConfig
+    );
+    if (needsConfig)
+      return `${chainName(chainId)}: ${needsConfig.label ?? needsConfig.url} needs configuration`;
+  }
+  return undefined;
+}
 
 function WizardNav({
   step,
@@ -62,6 +88,7 @@ export default function DeployWizardPage() {
   const navigate = useNavigate();
   const draft = useAppSelector((state) => state.deployDraft);
   const chains = useAppSelector((state) => state.chains.chains);
+  const stateExplorers = useAppSelector((state) => state.explorers.byChain);
   const [step, setStep] = useState(0);
   const [contractsValid, setContractsValid] = useState(false);
   const { plan, planProblem } = useMemo(() => {
@@ -93,6 +120,12 @@ export default function DeployWizardPage() {
         ? undefined
         : `${chainName(missing)} needs an RPC endpoint`;
     })(),
+    explorerBlocker(
+      draft.chains,
+      draft.explorerSelection,
+      stateExplorers,
+      chainName
+    ),
     (() => {
       const unresolved = draft.chains.find(
         (chainId) =>
@@ -152,9 +185,10 @@ export default function DeployWizardPage() {
           />
         )}
         {step === 1 && <ChainsStep />}
-        {step === 2 && <SignersStep />}
-        {step === 3 && <ArgumentsStep />}
-        {step === 4 && plan && <ReviewStep plan={plan} />}
+        {step === 2 && <ExplorersStep />}
+        {step === 3 && <SignersStep />}
+        {step === 4 && <ArgumentsStep />}
+        {step === 5 && plan && <ReviewStep plan={plan} />}
       </div>
     </div>
   );

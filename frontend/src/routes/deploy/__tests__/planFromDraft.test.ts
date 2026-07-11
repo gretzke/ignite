@@ -35,10 +35,11 @@ describe('planFromDraft', () => {
         },
       ],
       chains: [1, 999],
-      rpcSelection: {
+          rpcSelection: {
         '1': { endpointId: 'rpc-1', label: 'RPC 1' },
         '999': { endpointId: 'rpc-999', label: 'RPC 999' },
-      },
+          },
+          explorerSelection: {},
       signers: {},
       steps: [
         {
@@ -80,7 +81,8 @@ describe('planFromDraft', () => {
     const draft: DeployDraftState = {
       contracts: [],
       chains: [999],
-      rpcSelection: {},
+          rpcSelection: {},
+          explorerSelection: {},
       signers: {},
       steps: [],
     };
