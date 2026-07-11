@@ -12,6 +12,8 @@ import {
   type ArtifactListResult,
   type GetArtifactDataOptions,
   type ArtifactData,
+  type GetVerificationBundleOptions,
+  type VerificationBundleData,
   type WatchPathsResult,
 } from '../../src/shared/index.ts';
 import { runPluginCLI } from '../../src/shared/plugin-runner.js';
@@ -97,6 +99,18 @@ export class StubCompilerPlugin extends CompilerPlugin {
       error: {
         code: 'NOT_IMPLEMENTED',
         message: 'Stub compiler produces no artifacts',
+      },
+    };
+  }
+
+  async getVerificationBundle(
+    _options: GetVerificationBundleOptions
+  ): Promise<PluginResponse<VerificationBundleData>> {
+    return {
+      success: false,
+      error: {
+        code: 'BUNDLE_UNAVAILABLE',
+        message: 'Stub compiler produces no verification bundle',
       },
     };
   }

@@ -23,6 +23,10 @@ export type CompilerOperations = {
     params: GetArtifactDataOptions;
     result: ArtifactData;
   };
+  getVerificationBundle: {
+    params: GetVerificationBundleOptions;
+    result: VerificationBundleData;
+  };
   getWatchPaths: {
     params: NoParams;
     result: WatchPathsResult;
@@ -81,6 +85,10 @@ export interface GetArtifactDataOptions {
   artifactPath: string; // relative to workspace root
 }
 
+export interface GetVerificationBundleOptions {
+  artifactPath: string; // relative to workspace root
+}
+
 export interface ArtifactData {
   solidityVersion: string;
   optimizer: boolean;
@@ -93,4 +101,11 @@ export interface ArtifactData {
   deployedBytecode: string;
   creationCodeLinkReferences?: LinkReferences;
   deployedBytecodeLinkReferences?: LinkReferences;
+}
+
+export interface VerificationBundleData {
+  standardJsonInput: unknown;
+  solcVersion: string;
+  contractIdentifier: string;
+  creationCode: string;
 }

@@ -14,7 +14,9 @@ import {
   type ArtifactLocation,
   type GetArtifactDataOptions,
   type ArtifactData,
+  type GetVerificationBundleOptions,
   type LinkReferences,
+  type VerificationBundleData,
   type WatchPathsResult,
 } from "../../shared/index.ts";
 import { execCommand } from "../../shared/utils/exec.js";
@@ -88,6 +90,27 @@ interface FoundryArtifact {
   ir?: string;
   irOptimized?: string;
   ewasm?: any;
+}
+
+export function foundryContractIdentifier(
+  artifact: FoundryArtifact,
+): string | null {
+  const targets = artifact.metadata?.settings?.compilationTarget;
+  const [sourcePath, contractName] = Object.entries(targets ?? {})[0] ?? [];
+  if (!sourcePath || !contractName) return null;
+  return `${sourcePath}:${contractName}`;
+}
+
+export function parseFoundryStandardJsonInput(stdout: string): unknown | null {
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+}
+
+export function withVersionPrefix(version: string): string {
+  return version.startsWith("v") ? version : `v${version}`;
 }
 
 export class FoundryPlugin extends CompilerPlugin {
@@ -366,6 +389,65 @@ export class FoundryPlugin extends CompilerPlugin {
     }
   }
 
+  async getVerificationBundle(
+    options: GetVerificationBundleOptions,
+  ): Promise<PluginResponse<VerificationBundleData>> {
+    try {
+      const artifactPath = join("/workspace", options.artifactPath);
+      const artifact = await readJsonFile<FoundryArtifact>(artifactPath);
+      if (!artifact) return bundleUnavailable(`Failed to parse artifact: ${options.artifactPath}`);
+
+      const contractIdentifier = foundryContractIdentifier(artifact);
+      const solcVersion = artifact.metadata?.compiler?.version;
+      const creationCode = artifact.bytecode?.object;
+      if (!contractIdentifier || !solcVersion || !creationCode) {
+        return bundleUnavailable(
+          `Artifact does not contain verification bundle metadata: ${options.artifactPath}`,
+        );
+      }
+
+      const command = await execCommand(
+        "forge",
+        [
+          "verify-contract",
+          "0x0000000000000000000000000000000000000000",
+          contractIdentifier,
+          "--show-standard-json-input",
+        ],
+        "/workspace",
+      );
+      if (!command.success) {
+        return bundleUnavailable(
+          `Failed to obtain standard JSON input for ${contractIdentifier}`,
+          command.error?.details,
+        );
+      }
+
+      const standardJsonInput = parseFoundryStandardJsonInput(command.data.stdout);
+      if (!standardJsonInput) {
+        return bundleUnavailable(
+          `Forge returned invalid standard JSON input for ${contractIdentifier}`,
+        );
+      }
+
+      return {
+        success: true,
+        data: {
+          standardJsonInput,
+          solcVersion: withVersionPrefix(solcVersion),
+          contractIdentifier,
+          creationCode,
+        },
+      };
+    } catch (error) {
+      return bundleUnavailable(
+        `Failed to obtain verification bundle: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
   // Helper method to parse Foundry link references into our standard format
   private parseLinkReferences(linkRefs: any): LinkReferences | undefined {
     if (!linkRefs || typeof linkRefs !== "object") {
@@ -463,6 +545,16 @@ export class FoundryPlugin extends CompilerPlugin {
       };
     }
   }
+}
+
+function bundleUnavailable(
+  message: string,
+  details?: Record<string, unknown>,
+): PluginResponse<never> {
+  return {
+    success: false,
+    error: { code: "BUNDLE_UNAVAILABLE", message, details },
+  };
 }
 
 const plugin = new FoundryPlugin();

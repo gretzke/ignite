@@ -1,6 +1,6 @@
 // Hardhat Compiler Plugin
 import { promises as fs } from "fs";
-import { join } from "path";
+import { dirname, join, resolve } from "path";
 import {
   CompilerPlugin,
   PluginType,
@@ -13,7 +13,9 @@ import {
   type ArtifactLocation,
   type GetArtifactDataOptions,
   type ArtifactData,
+  type GetVerificationBundleOptions,
   type LinkReferences,
+  type VerificationBundleData,
   type WatchPathsResult,
 } from "../../shared/index.ts";
 import { execCommand } from "../../shared/utils/exec.js";
@@ -40,6 +42,40 @@ interface HardhatArtifact {
   deployedBytecode?: string;
   linkReferences?: any;
   deployedLinkReferences?: any;
+}
+
+interface HardhatDebugFile {
+  buildInfo: string;
+}
+
+interface HardhatBuildInfo {
+  input: unknown;
+  solcLongVersion?: string;
+}
+
+export function hardhatVerificationBundleData(
+  artifact: HardhatArtifact,
+  buildInfo: HardhatBuildInfo,
+): VerificationBundleData | null {
+  if (
+    !artifact.sourceName ||
+    !artifact.contractName ||
+    !artifact.bytecode ||
+    !buildInfo.input ||
+    !buildInfo.solcLongVersion
+  ) {
+    return null;
+  }
+  return {
+    standardJsonInput: buildInfo.input,
+    solcVersion: withVersionPrefix(buildInfo.solcLongVersion),
+    contractIdentifier: `${artifact.sourceName}:${artifact.contractName}`,
+    creationCode: artifact.bytecode,
+  };
+}
+
+export function withVersionPrefix(version: string): string {
+  return version.startsWith("v") ? version : `v${version}`;
 }
 
 export class HardhatPlugin extends CompilerPlugin {
@@ -319,6 +355,48 @@ export class HardhatPlugin extends CompilerPlugin {
     }
   }
 
+  async getVerificationBundle(
+    options: GetVerificationBundleOptions,
+  ): Promise<PluginResponse<VerificationBundleData>> {
+    try {
+      const artifactPath = join("/workspace", options.artifactPath);
+      const artifact = await readJsonFile<HardhatArtifact>(artifactPath);
+      if (!artifact) return bundleUnavailable(`Failed to parse artifact: ${options.artifactPath}`);
+
+      // The sibling .dbg.json is the authoritative build-info pointer for
+      // this artifact. Scanning build-info by source name can select a file
+      // that merely imported the source or used a different compiler profile.
+      const debugPath = join(
+        dirname(artifactPath),
+        `${artifact.contractName}.dbg.json`,
+      );
+      const debug = await readJsonFile<HardhatDebugFile>(debugPath);
+      if (!debug?.buildInfo) {
+        return bundleUnavailable(`Build info is unavailable for ${options.artifactPath}`);
+      }
+
+      const buildInfoPath = resolve(dirname(debugPath), debug.buildInfo);
+      const buildInfo = await readJsonFile<HardhatBuildInfo>(buildInfoPath);
+      if (!buildInfo) {
+        return bundleUnavailable(`Build info is unavailable for ${options.artifactPath}`);
+      }
+
+      const data = hardhatVerificationBundleData(artifact, buildInfo);
+      if (!data) {
+        return bundleUnavailable(
+          `Build info does not contain a verification bundle for ${options.artifactPath}`,
+        );
+      }
+      return { success: true, data };
+    } catch (error) {
+      return bundleUnavailable(
+        `Failed to obtain verification bundle: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
   // Helper method to parse Hardhat link references into our standard format
   private parseLinkReferences(linkRefs: any): LinkReferences | undefined {
     if (!linkRefs || typeof linkRefs !== "object") {
@@ -489,6 +567,13 @@ export class HardhatPlugin extends CompilerPlugin {
       };
     }
   }
+}
+
+function bundleUnavailable(message: string): PluginResponse<never> {
+  return {
+    success: false,
+    error: { code: "BUNDLE_UNAVAILABLE", message },
+  };
 }
 
 const plugin = new HardhatPlugin();

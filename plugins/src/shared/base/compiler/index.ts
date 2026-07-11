@@ -7,7 +7,9 @@ import type {
   ArtifactListResult,
   GetArtifactDataOptions,
   ArtifactData,
+  GetVerificationBundleOptions,
   LinkReferences,
+  VerificationBundleData,
   WatchPathsResult,
 } from "./types.js";
 import type { PluginResponse } from "../../types.js";
@@ -26,6 +28,9 @@ export abstract class CompilerPlugin
   abstract getArtifactData(
     options: GetArtifactDataOptions,
   ): Promise<PluginResponse<ArtifactData>>;
+  abstract getVerificationBundle(
+    options: GetVerificationBundleOptions,
+  ): Promise<PluginResponse<VerificationBundleData>>;
   abstract getWatchPaths(): Promise<PluginResponse<WatchPathsResult>>;
 }
 
@@ -39,6 +44,8 @@ export type {
   ICompilerPlugin,
   ArtifactData,
   GetArtifactDataOptions,
+  GetVerificationBundleOptions,
   LinkReferences,
+  VerificationBundleData,
   WatchPathsResult,
 } from "./types.js";
