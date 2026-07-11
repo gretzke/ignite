@@ -12,10 +12,13 @@ import { fileURLToPath } from 'node:url';
 import Docker from 'dockerode';
 import {
   createPublicClient,
+  createWalletClient,
+  defineChain,
   getAddress,
   http as viemHttp,
   type Hex,
 } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import type { DeploymentPlan, RunRecord, VerificationTask } from '@ignite/api';
 import { FileSystem } from '../../filesystem/FileSystem.js';
 
@@ -26,15 +29,15 @@ const ANVIL_PRIVATE_KEY =
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
 const ANVIL_ADDRESS = getAddress('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266');
 const CHAIN_ID = 31337;
-const PRIVATE_KEY_PLUGIN_ID = 'private-key';
-const KEY_ITEM_ID = 'verification-anvil-key';
 const FIXTURE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   'fixtures',
   'deploy-repo'
 );
 
-const IGNITE_HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-verification-e2e-'));
+const IGNITE_HOME = await fs.mkdtemp(
+  path.join(os.tmpdir(), 'ignite-verification-e2e-')
+);
 FileSystem.resetInstance();
 FileSystem.getInstance(IGNITE_HOME);
 
@@ -43,16 +46,18 @@ const { RpcStore } = await import('../../chains/RpcStore.js');
 const { ExplorerStore } = await import('../../chains/ExplorerStore.js');
 const { DeployEngine } = await import('../../deployments/DeployEngine.js');
 const { validatePlan } = await import('../../deployments/validation.js');
-const { VerificationQueue } = await import('../../verifications/VerificationQueue.js');
-const { wireVerificationReconciliation } = await import('../../deployments/verificationIntegration.js');
-const { PluginExecutor } = await import('../../plugins/containers/PluginExecutor.js');
-const { PluginInvoker } = await import('../../plugins/invoke/PluginInvoker.js');
+const { VerificationQueue } = await import(
+  '../../verifications/VerificationQueue.js'
+);
+const { wireVerificationReconciliation } = await import(
+  '../../deployments/verificationIntegration.js'
+);
 const { VaultStore } = await import('../../plugins/vault/VaultStore.js');
-const { PluginConfigStore } = await import('../../plugins/config/PluginConfigStore.js');
 const { TrustManager } = await import('../../plugins/trust/TrustManager.js');
-const { SignerProviderService } = await import('../../signers/SignerProviderService.js');
 const { ProfileManager } = await import('../../filesystem/ProfileManager.js');
-const { createVerificationHandlers } = await import('../../api/verifications.js');
+const { createVerificationHandlers } = await import(
+  '../../api/verifications.js'
+);
 
 let server: http.Server | undefined;
 let apiUrl = '';
@@ -66,8 +71,15 @@ let explorerState = {
 type Anvil = { container: Docker.Container; rpcUrl: string };
 
 async function dockerHostAddress(): Promise<string> {
-  if (process.platform === 'darwin' || process.platform === 'win32') return 'host.docker.internal';
-  const inspected = await execFileAsync('docker', ['network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}']);
+  if (process.platform === 'darwin' || process.platform === 'win32')
+    return 'host.docker.internal';
+  const inspected = await execFileAsync('docker', [
+    'network',
+    'inspect',
+    'bridge',
+    '--format',
+    '{{(index .IPAM.Config 0).Gateway}}',
+  ]);
   const gateway = inspected.stdout.trim();
   if (!gateway) throw new Error('Docker bridge has no gateway address');
   return gateway;
@@ -75,7 +87,16 @@ async function dockerHostAddress(): Promise<string> {
 
 async function probe(url: string): Promise<boolean> {
   try {
-    await execFileAsync('docker', ['run', '--rm', 'alpine:3.20', 'wget', '-qO-', '-T', '5', `${url}/health`]);
+    await execFileAsync('docker', [
+      'run',
+      '--rm',
+      'alpine:3.20',
+      'wget',
+      '-qO-',
+      '-T',
+      '5',
+      `${url}/health`,
+    ]);
     return true;
   } catch {
     return false;
@@ -98,26 +119,35 @@ beforeAll(async () => {
     if (action === 'verifysourcecode') {
       explorerState.submits.push(Object.fromEntries(form.entries()));
       const retry = explorerState.submits.length <= 2;
-      response.end(JSON.stringify(retry
-        ? { status: '0', result: 'temporary not indexed yet' }
-        : { status: '1', result: 'guid-verification-123' }));
+      response.end(
+        JSON.stringify(
+          retry
+            ? { status: '0', result: 'temporary not indexed yet' }
+            : { status: '1', result: 'guid-verification-123' }
+        )
+      );
       return;
     }
     if (action === 'checkverifystatus') {
       explorerState.polls.push(url.searchParams.get('guid') ?? '');
-      response.end(JSON.stringify({
-        status: '1',
-        result: explorerState.polls.length === 1
-          ? 'Pending in queue'
-          : 'Pass - Verified',
-      }));
+      response.end(
+        JSON.stringify({
+          status: '1',
+          result:
+            explorerState.polls.length === 1
+              ? 'Pending in queue'
+              : 'Pass - Verified',
+        })
+      );
       return;
     }
     if (action === 'getcontractcreation') {
-      response.end(JSON.stringify({
-        status: '1',
-        result: [{ txHash: explorerState.creationTxHash }],
-      }));
+      response.end(
+        JSON.stringify({
+          status: '1',
+          result: [{ txHash: explorerState.creationTxHash }],
+        })
+      );
       return;
     }
     response.writeHead(404);
@@ -131,7 +161,10 @@ beforeAll(async () => {
   } catch {
     reachable = false;
   }
-  if (!reachable) console.warn('SKIP verification integration: Docker container cannot reach host mock explorer');
+  if (!reachable)
+    console.warn(
+      'SKIP verification integration: Docker container cannot reach host mock explorer'
+    );
 }, 30_000);
 
 afterAll(async () => {
@@ -163,9 +196,16 @@ describe('verification lifecycle through a launched run', () => {
     await ProfileManager.getInstance();
     explorerState = { submits: [], polls: [], creationTxHash: '' };
     anvil = await startAnvil();
-    await ensureTrust('etherscan', { net: true, repoWrite: false, secrets: ['apiKey'] });
-    const signerService = await configurePrivateKeySigner();
-    await new VaultStore().setSecret('etherscan', 'apiKey', 'integration-api-key');
+    await ensureTrust('etherscan', {
+      net: true,
+      repoWrite: false,
+      secrets: ['apiKey'],
+    });
+    await new VaultStore().setSecret(
+      'etherscan',
+      'apiKey',
+      'integration-api-key'
+    );
 
     const rpc = await seedChainAndRpc(anvil);
     const explorer = await new ExplorerStore().add({
@@ -179,28 +219,52 @@ describe('verification lifecycle through a launched run', () => {
 
     let queue = VerificationQueue.getInstance();
     wireVerificationReconciliation(queue);
+    const signer = anvilSigner(anvil.rpcUrl);
     engine = new DeployEngine({
-      executeTx: signerService.executeTx.bind(signerService),
-      resolveAccount: signerService.resolveAccount.bind(signerService),
-      validate: (plan, selection, options) => validatePlan(plan, selection, {
-        profileId: options?.profileId,
-        explorerSelection: options?.explorerSelection,
-        listAccounts: async () => (await signerService.listAccounts(true)).providers,
-      }),
+      executeTx: signer.executeTx,
+      resolveAccount: signer.resolveAccount,
+      validate: (plan, selection, options) =>
+        validatePlan(plan, selection, {
+          profileId: options?.profileId,
+          explorerSelection: options?.explorerSelection,
+          listAccounts: async () => [
+            {
+              pluginId: 'anvil-key',
+              name: 'Anvil key',
+              state: 'ok',
+              accounts: [{ id: 'anvil-key', address: ANVIL_ADDRESS }],
+            },
+          ],
+        }),
       verificationQueue: queue,
       chainMetadata: async () => ({
         name: 'Anvil verification',
         nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
       }),
     });
-    const preflight = await validatePlan(makePlan(), { [CHAIN_ID]: rpc.id }, {
-      profileId: 'default',
-      explorerSelection: { [CHAIN_ID]: [explorer.id] },
-      listAccounts: async () => (await signerService.listAccounts(true)).providers,
-    });
-    const blocking = Object.values(preflight.report.chains[String(CHAIN_ID)])
-      .filter((item) => item.blocking && !item.ok);
-    expect(blocking, JSON.stringify(preflight.report.chains[String(CHAIN_ID)])).toEqual([]);
+    const preflight = await validatePlan(
+      makePlan(),
+      { [CHAIN_ID]: rpc.id },
+      {
+        profileId: 'default',
+        explorerSelection: { [CHAIN_ID]: [explorer.id] },
+        listAccounts: async () => [
+          {
+            pluginId: 'anvil-key',
+            name: 'Anvil key',
+            state: 'ok',
+            accounts: [{ id: 'anvil-key', address: ANVIL_ADDRESS }],
+          },
+        ],
+      }
+    );
+    const blocking = Object.values(
+      preflight.report.chains[String(CHAIN_ID)]
+    ).filter((item) => item.blocking && !item.ok);
+    expect(
+      blocking,
+      JSON.stringify(preflight.report.chains[String(CHAIN_ID)])
+    ).toEqual([]);
     const run = await engine.launch({
       profileId: 'default',
       plan: makePlan(),
@@ -209,7 +273,11 @@ describe('verification lifecycle through a launched run', () => {
       name: 'verification lifecycle',
       idempotencyKey: crypto.randomUUID(),
     });
-    const completed = await waitForRun(engine, run.id, (candidate) => candidate.status === 'completed');
+    const completed = await waitForRun(
+      engine,
+      run.id,
+      (candidate) => candidate.status === 'completed'
+    );
     const lane = completed.lanes[String(CHAIN_ID)];
     expect(lane.status).toBe('completed');
     expect(lane.pause).toBeUndefined();
@@ -218,23 +286,42 @@ describe('verification lifecycle through a launched run', () => {
     const creationTxHash = step.attempts[0].txHash!;
     explorerState.creationTxHash = creationTxHash;
 
-    let task = await waitForTask(queue, run.id, (candidate) =>
-      candidate.status === 'queued' && candidate.attempts.length === 1
+    let task = await waitForTask(
+      queue,
+      run.id,
+      (candidate) =>
+        candidate.status === 'queued' && candidate.attempts.length === 1
     );
     expect(task.detail).toBe('RETRYABLE');
     expect(task.nextAttemptAt).toBeDefined();
-    task = await waitForTask(queue, run.id, (candidate) =>
-      candidate.status === 'queued' && candidate.attempts.length === 2
+    task = await waitForTask(
+      queue,
+      run.id,
+      (candidate) =>
+        candidate.status === 'queued' && candidate.attempts.length === 2
     );
     expect(task.detail).toBe('RETRYABLE');
     expect(task.nextAttemptAt).toBeDefined();
-    task = await waitForTask(queue, run.id, (candidate) =>
-      candidate.status === 'polling' && candidate.attempts.some((attempt) => attempt.pollTicket === 'guid-verification-123')
+    task = await waitForTask(
+      queue,
+      run.id,
+      (candidate) =>
+        candidate.status === 'polling' &&
+        candidate.attempts.some(
+          (attempt) => attempt.pollTicket === 'guid-verification-123'
+        )
     );
     expect(explorerState.submits).toHaveLength(3);
 
     const bundleHash = completed.inputs.token.bundleHash!;
-    const bundlePath = path.join(IGNITE_HOME, 'profiles', 'default', 'deployments', 'bundles', `${bundleHash}.json`);
+    const bundlePath = path.join(
+      IGNITE_HOME,
+      'profiles',
+      'default',
+      'deployments',
+      'bundles',
+      `${bundleHash}.json`
+    );
     const bundle = JSON.parse(await fs.readFile(bundlePath, 'utf8')) as {
       standardJsonInput: { sources: unknown; settings: unknown };
     };
@@ -242,10 +329,15 @@ describe('verification lifecycle through a launched run', () => {
       sources: unknown;
       settings: unknown;
     };
-    expect(JSON.stringify(submittedInput.sources)).toBe(JSON.stringify(bundle.standardJsonInput.sources));
-    expect(JSON.stringify(submittedInput.settings)).toBe(JSON.stringify(bundle.standardJsonInput.settings));
-    const transaction = await createPublicClient({ transport: viemHttp(anvil.rpcUrl) })
-      .getTransaction({ hash: creationTxHash as Hex });
+    expect(JSON.stringify(submittedInput.sources)).toBe(
+      JSON.stringify(bundle.standardJsonInput.sources)
+    );
+    expect(JSON.stringify(submittedInput.settings)).toBe(
+      JSON.stringify(bundle.standardJsonInput.settings)
+    );
+    const transaction = await createPublicClient({
+      transport: viemHttp(anvil.rpcUrl),
+    }).getTransaction({ hash: creationTxHash as Hex });
     const creationCode = completed.inputs.token.creationBytecode;
     expect(explorerState.submits[2].constructorArguements).toBe(
       transaction.input.slice(creationCode.length).replace(/^0x/, '')
@@ -254,22 +346,50 @@ describe('verification lifecycle through a launched run', () => {
 
     // The first poll is pending. Drop the singleton while the persisted GUID
     // is live, then let startup recovery resume that exact ticket.
+    await waitForCondition(
+      () => explorerState.polls.length === 1,
+      'first verification poll'
+    );
     expect(explorerState.polls).toEqual(['guid-verification-123']);
     VerificationQueue.resetInstance();
     queue = VerificationQueue.getInstance();
     wireVerificationReconciliation(queue);
     await queue.recoverStartup();
-    task = await waitForTask(queue, run.id, (candidate) => candidate.status === 'verified');
-    expect(task.attempts.some((attempt) => attempt.pollTicket === 'guid-verification-123')).toBe(true);
-    expect(explorerState.polls).toEqual(['guid-verification-123', 'guid-verification-123']);
+    task = await waitForTask(
+      queue,
+      run.id,
+      (candidate) => candidate.status === 'verified'
+    );
+    expect(
+      task.attempts.some(
+        (attempt) => attempt.pollTicket === 'guid-verification-123'
+      )
+    ).toBe(true);
+    expect(explorerState.polls).toEqual([
+      'guid-verification-123',
+      'guid-verification-123',
+    ]);
     expect((await engine.get('default', run.id))?.status).toBe('completed');
 
-    await fs.rm(path.join(IGNITE_HOME, 'profiles', 'default', 'verifications', 'tasks.json'));
-    await queue.reconcile();
-    const reconciled = await waitForTask(queue, run.id, (candidate) =>
-      candidate.address.toLowerCase() === address.toLowerCase()
+    await fs.rm(
+      path.join(
+        IGNITE_HOME,
+        'profiles',
+        'default',
+        'verifications',
+        'tasks.json'
+      )
     );
-    expect(reconciled.origin).toMatchObject({ runId: run.id, stepId: 'deploy-token' });
+    await queue.reconcile();
+    const reconciled = await waitForTask(
+      queue,
+      run.id,
+      (candidate) => candidate.address.toLowerCase() === address.toLowerCase()
+    );
+    expect(reconciled.origin).toMatchObject({
+      runId: run.id,
+      stepId: 'deploy-token',
+    });
     queue.stop();
 
     const handlers = createVerificationHandlers();
@@ -303,30 +423,11 @@ async function assertImages(): Promise<void> {
     try {
       await docker.getImage(image).inspect();
     } catch {
-      throw new Error(`Built-in image ${image} is unavailable. Run \`cd plugins && npm run build\` before this integration suite.`);
+      throw new Error(
+        `Built-in image ${image} is unavailable. Run \`cd plugins && npm run build\` before this integration suite.`
+      );
     }
   }
-}
-
-async function configurePrivateKeySigner(): Promise<InstanceType<typeof SignerProviderService>> {
-  const vaultStore = new VaultStore({ getMasterKey: async () => Buffer.alloc(32, 9) });
-  await ensureTrust(PRIVATE_KEY_PLUGIN_ID, { net: false, repoWrite: false, secrets: ['keys'] });
-  const configStore = new PluginConfigStore();
-  await configStore.setValue(PRIVATE_KEY_PLUGIN_ID, 'keys', [
-    { id: KEY_ITEM_ID, values: { label: 'Verification anvil account' } },
-  ]);
-  await vaultStore.setSecret(PRIVATE_KEY_PLUGIN_ID, `keys.${KEY_ITEM_ID}.private-key`, ANVIL_PRIVATE_KEY);
-  const executor = new PluginExecutor({ vaultStore });
-  const configured = await executor.execute(PRIVATE_KEY_PLUGIN_ID, 'getAccounts', {});
-  if (!configured.success || !Array.isArray((configured.data as { accounts?: unknown })?.accounts)) {
-    throw new Error(`Private-key fixture failed to resolve: ${JSON.stringify({ configured, values: await configStore.getValues(PRIVATE_KEY_PLUGIN_ID) })}`);
-  }
-  const invoker = new PluginInvoker({
-    executeContainer: (pluginId, operation, options, opts) => executor.execute(pluginId, operation, options, opts),
-  });
-  return new SignerProviderService({
-    invoke: (pluginId, operation, params, opts) => invoker.invoke(pluginId, operation, params, opts),
-  });
 }
 
 async function ensureTrust(
@@ -343,46 +444,124 @@ function makePlan(): DeploymentPlan {
   return {
     schemaVersion: 1,
     chains: [CHAIN_ID],
-    contracts: [{
-      id: 'token', repoPathOrUrl: FIXTURE, frameworkId: 'foundry',
-      artifactPath: 'out/Token.sol/Token.json', contractName: 'Token', sourcePath: 'src/Token.sol',
-    }],
-    steps: [{
-      id: 'deploy-token', kind: 'deploy', contractId: 'token',
-      args: { name: 'Ignite Token', symbol: 'IGN', supply: '1000000' },
-    }],
-    signers: { global: { pluginId: PRIVATE_KEY_PLUGIN_ID, accountId: KEY_ITEM_ID, address: ANVIL_ADDRESS } },
+    contracts: [
+      {
+        id: 'token',
+        repoPathOrUrl: FIXTURE,
+        frameworkId: 'foundry',
+        artifactPath: 'out/Token.sol/Token.json',
+        contractName: 'Token',
+        sourcePath: 'src/Token.sol',
+      },
+    ],
+    steps: [
+      {
+        id: 'deploy-token',
+        kind: 'deploy',
+        contractId: 'token',
+        args: { name: 'Ignite Token', symbol: 'IGN', supply: '1000000' },
+      },
+    ],
+    signers: {
+      global: {
+        pluginId: 'anvil-key',
+        accountId: 'anvil-key',
+        address: ANVIL_ADDRESS,
+      },
+    },
+  };
+}
+
+function anvilSigner(rpcUrl: string) {
+  const chain = defineChain({
+    id: CHAIN_ID,
+    name: 'Verification Anvil',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: { default: { http: [rpcUrl] } },
+  });
+  const account = privateKeyToAccount(ANVIL_PRIVATE_KEY);
+  return {
+    resolveAccount: async () => ({
+      account: {
+        id: 'anvil-key',
+        address: ANVIL_ADDRESS,
+        capability: 'sign-and-send' as const,
+      },
+    }),
+    executeTx: async (args: { to: Hex | null; data: Hex; value: bigint }) => {
+      const wallet = createWalletClient({
+        account,
+        chain,
+        transport: viemHttp(rpcUrl),
+      });
+      const hash = await wallet.sendTransaction({
+        to: args.to ?? undefined,
+        data: args.data,
+        value: args.value,
+      });
+      const receipt = await createPublicClient({
+        transport: viemHttp(rpcUrl),
+      }).waitForTransactionReceipt({ hash });
+      return {
+        txHash: hash,
+        status: receipt.status,
+        blockNumber: Number(receipt.blockNumber),
+        contractAddress: receipt.contractAddress ?? null,
+        gasUsed: receipt.gasUsed.toString(),
+        effectiveGasPrice: receipt.effectiveGasPrice.toString(),
+      };
+    },
   };
 }
 
 async function seedChainAndRpc(anvil: Anvil): Promise<{ id: string }> {
   await new ChainRegistry().upsertCustomChain({
-    chainId: CHAIN_ID, name: 'Verification Anvil', shortName: 'verification-anvil',
-    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpc: [],
+    chainId: CHAIN_ID,
+    name: 'Verification Anvil',
+    shortName: 'verification-anvil',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpc: [],
   });
-  return new RpcStore().add(CHAIN_ID, { url: anvil.rpcUrl, label: 'Verification Anvil' });
+  return new RpcStore().add(CHAIN_ID, {
+    url: anvil.rpcUrl,
+    label: 'Verification Anvil',
+  });
 }
 
 async function startAnvil(): Promise<Anvil> {
   const name = `ignite-verification-anvil-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const container = await docker.createContainer({
-    Image: ANVIL_IMAGE, name, Entrypoint: ['anvil'],
+    Image: ANVIL_IMAGE,
+    name,
+    Entrypoint: ['anvil'],
     Cmd: ['--host', '0.0.0.0', '--chain-id', String(CHAIN_ID)],
     ExposedPorts: { '8545/tcp': {} },
-    HostConfig: { AutoRemove: true, PortBindings: { '8545/tcp': [{ HostIp: '127.0.0.1', HostPort: '0' }] } },
+    HostConfig: {
+      AutoRemove: true,
+      PortBindings: { '8545/tcp': [{ HostIp: '127.0.0.1', HostPort: '0' }] },
+    },
   });
   await container.start();
-  const port = (await container.inspect()).NetworkSettings.Ports?.['8545/tcp']?.[0]?.HostPort;
+  const port = (await container.inspect()).NetworkSettings.Ports?.[
+    '8545/tcp'
+  ]?.[0]?.HostPort;
   if (!port) throw new Error('Anvil did not publish port 8545/tcp');
   const rpcUrl = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(rpcUrl, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'eth_chainId',
+          params: [],
+        }),
       });
-      if ((await response.json() as { result?: string }).result === '0x7a69') return { container, rpcUrl };
+      if (((await response.json()) as { result?: string }).result === '0x7a69')
+        return { container, rpcUrl };
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -401,7 +580,9 @@ async function waitForRun(
     if (last && predicate(last)) return last;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Timed out waiting for deployment run: ${JSON.stringify(last)}`);
+  throw new Error(
+    `Timed out waiting for deployment run: ${JSON.stringify(last)}`
+  );
 }
 
 async function waitForTask(
@@ -417,7 +598,21 @@ async function waitForTask(
     if (task) return task;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Timed out waiting for verification task: ${JSON.stringify(last)}`);
+  throw new Error(
+    `Timed out waiting for verification task: ${JSON.stringify(last)}`
+  );
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  name: string
+): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for ${name}`);
 }
 
 async function invokeHandler(

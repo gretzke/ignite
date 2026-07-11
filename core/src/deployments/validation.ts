@@ -36,7 +36,10 @@ import { ChainRegistry } from '../chains/ChainRegistry.js';
 import { resolveMergedExplorers } from '../api/explorers.js';
 import type { ExplorerEntry } from '@ignite/api';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
-import { TrustManager, type PermissionGrant } from '../plugins/trust/TrustManager.js';
+import {
+  TrustManager,
+  type PermissionGrant,
+} from '../plugins/trust/TrustManager.js';
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 
 type Endpoint = { id: string; label?: string; url: string; stored?: boolean };
@@ -85,7 +88,11 @@ export interface ValidationDeps {
   createClient: (url: string) => Client;
   bufferPct: number;
   explorerSelection?: Record<string, string[]>;
-  captureBundles: (frozen: FrozenInputs, contracts: ContractSource[], profileId: string) => Promise<Record<string, { bundleHash: string } | { error: string }>>;
+  captureBundles: (
+    frozen: FrozenInputs,
+    contracts: ContractSource[],
+    profileId: string
+  ) => Promise<Record<string, { bundleHash: string } | { error: string }>>;
   resolveExplorers: (chainId: number) => Promise<ExplorerEntry[]>;
   resolveVerifierTrust: (
     pluginId: string
@@ -117,7 +124,10 @@ export async function validatePlan(
 
   // Bundle capture intentionally happens after the all-or-nothing artifact
   // freeze. A verification-only failure must not poison the freezeError path.
-  let bundleResults: Record<string, { bundleHash: string } | { error: string }> = {};
+  let bundleResults: Record<
+    string,
+    { bundleHash: string } | { error: string }
+  > = {};
   if (!freezeError) {
     bundleResults = await deps.captureBundles(
       frozen,
@@ -181,9 +191,15 @@ export async function validatePlan(
       freezeError
     );
     const verification = await validateVerification(
-      plan, chainId, frozen, freezeError, bundleResults,
-      deps.explorerSelection?.[key] ?? [], deps.resolveExplorers,
-      deps.resolveVerifierTrust, explorerTargets
+      plan,
+      chainId,
+      frozen,
+      freezeError,
+      bundleResults,
+      deps.explorerSelection?.[key] ?? [],
+      deps.resolveExplorers,
+      deps.resolveVerifierTrust,
+      explorerTargets
     );
     chains[key] = {
       rpc,
@@ -236,7 +252,8 @@ function defaultDeps(): ValidationDeps {
       createPublicClient({ transport: http(url) }) as unknown as Client,
     bufferPct: 20,
     captureBundles: freezeDeps.captureBundles.bind(freezeDeps),
-    resolveExplorers: (chainId) => resolveMergedExplorers(explorerDeps, chainId),
+    resolveExplorers: (chainId) =>
+      resolveMergedExplorers(explorerDeps, chainId),
     resolveVerifierTrust: async (pluginId) => ({
       metadata: (await registry.getPluginConfig(pluginId)).metadata,
       grant: await trust.getGrant(pluginId),
@@ -255,20 +272,45 @@ async function validateVerification(
   resolveVerifierTrust: ValidationDeps['resolveVerifierTrust'],
   targets: Record<string, ExplorerTargetSnapshot[]>
 ): Promise<ValidationItem> {
-  if (freezeError) return warning('ARTIFACT_DATA_ERROR', 'Verification bundle capture is unavailable until inputs are frozen');
+  if (freezeError)
+    return warning(
+      'ARTIFACT_DATA_ERROR',
+      'Verification bundle capture is unavailable until inputs are frozen'
+    );
   const key = String(chainId);
-  const missing = plan.contracts.filter((contract) => !('bundleHash' in (bundles[contract.id] ?? {})));
+  const missing = plan.contracts.filter(
+    (contract) => !('bundleHash' in (bundles[contract.id] ?? {}))
+  );
   if (selectedIds.length === 0) {
     return missing.length
-      ? warning('VERIFICATION_BUNDLE_UNAVAILABLE', 'Verification bundles are unavailable; no explorers are selected')
+      ? warning(
+          'VERIFICATION_BUNDLE_UNAVAILABLE',
+          'Verification bundles are unavailable; no explorers are selected'
+        )
       : success('No explorers selected for verification');
   }
   const entries = await resolveExplorers(chainId);
-  const selected = selectedIds.map((id) => entries.find((entry) => entry.id === id));
-  if (selected.some((entry) => !entry)) return failure('EXPLORER_NOT_FOUND', 'A selected explorer is no longer available');
-  if (selected.some((entry) => !entry!.verifierPluginId)) return failure('EXPLORER_MAPPING_UNCONFIRMED', 'A selected explorer needs a confirmed verifier mapping');
-  if (selected.some((entry) => entry!.needsConfig)) return failure('VERIFIER_CONFIG_REQUIRED', 'A selected verifier needs configuration');
-  for (const pluginId of new Set(selected.map((entry) => entry!.verifierPluginId!))) {
+  const selected = selectedIds.map((id) =>
+    entries.find((entry) => entry.id === id)
+  );
+  if (selected.some((entry) => !entry))
+    return failure(
+      'EXPLORER_NOT_FOUND',
+      'A selected explorer is no longer available'
+    );
+  if (selected.some((entry) => !entry!.verifierPluginId))
+    return failure(
+      'EXPLORER_MAPPING_UNCONFIRMED',
+      'A selected explorer needs a confirmed verifier mapping'
+    );
+  if (selected.some((entry) => entry!.needsConfig))
+    return failure(
+      'VERIFIER_CONFIG_REQUIRED',
+      'A selected verifier needs configuration'
+    );
+  for (const pluginId of new Set(
+    selected.map((entry) => entry!.verifierPluginId!)
+  )) {
     const { metadata, grant } = await resolveVerifierTrust(pluginId);
     if (!grant.net) {
       return failure(
@@ -291,7 +333,11 @@ async function validateVerification(
       }
     }
   }
-  if (missing.length) return failure('VERIFICATION_BUNDLE_UNAVAILABLE', 'A verification bundle could not be captured');
+  if (missing.length)
+    return failure(
+      'VERIFICATION_BUNDLE_UNAVAILABLE',
+      'A verification bundle could not be captured'
+    );
   targets[key] = selected.map((entry) => ({
     entryId: entry!.id,
     url: entry!.url,
@@ -302,7 +348,10 @@ async function validateVerification(
   // captureBundles sets the hash on the frozen input only after a successful
   // durable write; assert it here so launch cannot snapshot half-capture data.
   if (plan.contracts.some((contract) => !frozen[contract.id]?.bundleHash))
-    return failure('VERIFICATION_BUNDLE_UNAVAILABLE', 'A verification bundle could not be stored');
+    return failure(
+      'VERIFICATION_BUNDLE_UNAVAILABLE',
+      'A verification bundle could not be stored'
+    );
   return success('Verification bundles and explorer targets are ready');
 }
 
@@ -348,7 +397,10 @@ async function validateRpc(
   }
   bindings[String(chainId)] = {
     endpointId: endpoint.id,
-    label: safeMessage(new Error(endpoint.label ?? 'RPC endpoint'), 'RPC endpoint'),
+    label: safeMessage(
+      new Error(endpoint.label ?? 'RPC endpoint'),
+      'RPC endpoint'
+    ),
     urlFingerprint: crypto
       .createHash('sha256')
       .update(endpoint.url)
@@ -380,7 +432,10 @@ function validateSigners(
       plan.contracts.find((contract) => contract.id === step.contractId)
         ?.contractName ?? step.id;
     const signer = resolveSigner(plan, step, chainId);
-    if (!signer) { failures.push(`No signer is configured for ${stepName}`); continue; }
+    if (!signer) {
+      failures.push(`No signer is configured for ${stepName}`);
+      continue;
+    }
     if (snapshotError) {
       failures.push(
         `Signer accounts could not be listed for ${stepName} (${safeMessage(snapshotError, 'listing failed')})`
@@ -418,13 +473,20 @@ function validateSigners(
       continue;
     }
     if (account.address.toLowerCase() !== signer.address.toLowerCase()) {
-      failures.push(`Signer address for ${stepName} no longer matches the plan`);
+      failures.push(
+        `Signer address for ${stepName} no longer matches the plan`
+      );
       continue;
     }
     signers.set(step.id, signer.address as Hex);
   }
   return failures.length
-    ? { item: failure('SIGNER_ACCOUNT_NOT_FOUND', failures.join('; '), { failures }), signers }
+    ? {
+        item: failure('SIGNER_ACCOUNT_NOT_FOUND', failures.join('; '), {
+          failures,
+        }),
+        signers,
+      }
     : { item: success('All signer accounts are available'), signers };
 }
 
@@ -449,9 +511,18 @@ function validateArgs(
         );
       const ctor = constructorInputs(input.abi);
       const merged = mergeArgs(step, chainId);
-      const known = new Set(constructorInputs(input.abi).map((entry, index) => entry.name || `arg${index}`));
+      const known = new Set(
+        constructorInputs(input.abi).map(
+          (entry, index) => entry.name || `arg${index}`
+        )
+      );
       const unknown = Object.keys(merged).filter((key) => !known.has(key));
-      if (unknown.length) return failure('UNKNOWN_ARGUMENT', `Unknown constructor arguments for step ${step.id}`, { fields: unknown });
+      if (unknown.length)
+        return failure(
+          'UNKNOWN_ARGUMENT',
+          `Unknown constructor arguments for step ${step.id}`,
+          { fields: unknown }
+        );
       const missing = missingArgKeys(ctor, merged);
       if (missing.length)
         return failure(
@@ -567,7 +638,10 @@ async function validateBalance(
       const overrides = mergeGas(step, chainId);
       const gas = overrides.gasLimit;
       const gasLimit = gas === undefined ? estimate : BigInt(gas);
-      const maxFeePerGas = overrides.maxFeePerGas === undefined ? fees.maxFeePerGas : BigInt(overrides.maxFeePerGas);
+      const maxFeePerGas =
+        overrides.maxFeePerGas === undefined
+          ? fees.maxFeePerGas
+          : BigInt(overrides.maxFeePerGas);
       required.set(
         signer,
         (required.get(signer) ?? 0n) +
@@ -575,18 +649,30 @@ async function validateBalance(
           effectiveValue(step, chainId)
       );
     }
-    const balances: Record<string, { requiredWei: string; balanceWei: string }> = {};
+    const balances: Record<
+      string,
+      { requiredWei: string; balanceWei: string }
+    > = {};
     let insufficient = false;
     for (const [address, amount] of required) {
       const withBuffer = amount + (amount * BigInt(deps.bufferPct)) / 100n;
       const balance = await client.getBalance({ address });
-      balances[address] = { requiredWei: withBuffer.toString(), balanceWei: balance.toString() };
+      balances[address] = {
+        requiredWei: withBuffer.toString(),
+        balanceWei: balance.toString(),
+      };
       if (balance < withBuffer) insufficient = true;
     }
     const first = Object.values(balances)[0];
     const details = required.size === 1 ? { ...first, balances } : { balances };
-    if (insufficient) return failure('INSUFFICIENT_BALANCE', 'Signer balance is insufficient for the selected deployments', details);
-    if (required.size) return success('Signer balance covers all planned deployments', details);
+    if (insufficient)
+      return failure(
+        'INSUFFICIENT_BALANCE',
+        'Signer balance is insufficient for the selected deployments',
+        details
+      );
+    if (required.size)
+      return success('Signer balance covers all planned deployments', details);
     return success('No transaction value is required');
   } catch (error) {
     return failure(
@@ -641,7 +727,13 @@ export function warning(
   message: string,
   details?: Record<string, unknown>
 ): ValidationItem {
-  return { ok: false, blocking: false, code, message, ...(details ? { details } : {}) };
+  return {
+    ok: false,
+    blocking: false,
+    code,
+    message,
+    ...(details ? { details } : {}),
+  };
 }
 function codeOf(error: unknown, fallback: string): string {
   return typeof error === 'object' &&
