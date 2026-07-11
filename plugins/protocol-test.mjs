@@ -277,6 +277,15 @@ try {
       assert(empty.success && empty.data?.explorers === null, 'Etherscan: blank key needs config', empty);
     }
     if (id === 'sourcify') base.apiUrl = `http://127.0.0.1:${mock.port}`;
+    if (id === 'sourcify') {
+      const detected = runOp(entry, 'getSupportedExplorers', { apiUrl: base.apiUrl });
+      const explorer = detected.data?.explorers?.find((candidate) => candidate.chainId === 1);
+      assert(
+        explorer?.explorerUrl === base.apiUrl && explorer?.explorerPageUrlTemplate === 'https://repo.sourcify.dev/1/{address}',
+        'Sourcify: detection preserves explorerUrl and returns a concrete-chain page URL template',
+        detected
+      );
+    }
     const submit = runOp(entry, 'verify', base);
     assert(submit.success && submit.data?.status === 'pending', `${name}: submit returns pending`, submit);
     if (id !== 'sourcify') {
@@ -284,10 +293,17 @@ try {
       const complete = runOp(entry, 'checkVerification', { ...base, pollTicket: submit.data.pollTicket });
       assert(pending.data?.status === 'pending' && complete.data?.status === 'verified', `${name}: GUID poll transitions`, { pending, complete });
       const resubmit = runOp(entry, 'verify', base);
-      assert(resubmit.data?.status === 'already-verified', `${name}: re-submit is tolerated`, resubmit);
+      assert(resubmit.data?.status === 'failed' && resubmit.data?.retryable === true && resubmit.data?.detail === 'verification already in progress', `${name}: re-submit while verification is in progress is retryable`, resubmit);
+      const alreadyVerified = runOp(entry, 'verify', base);
+      assert(alreadyVerified.data?.status === 'already-verified', `${name}: an existing verified contract is terminal`, alreadyVerified);
     } else {
+      const pending = runOp(entry, 'checkVerification', { ...base, pollTicket: submit.data.pollTicket });
       const complete = runOp(entry, 'checkVerification', { ...base, pollTicket: submit.data.pollTicket });
-      assert(complete.data?.detail === 'match:full', 'Sourcify: match level is surfaced', complete);
+      assert(pending.data?.status === 'pending' && pending.data?.pollTicket === submit.data.pollTicket && complete.data?.status === 'verified' && complete.data?.detail === 'match:exact_match', 'Sourcify: v2 job poll transitions from pending to match detail', { pending, complete });
+      const inProgress = runOp(entry, 'verify', { ...base, address: '0x0000000000000000000000000000000000000004' });
+      assert(inProgress.data?.status === 'failed' && inProgress.data?.retryable === true && inProgress.data?.detail === 'verification already in progress', 'Sourcify: HTTP 429 is a retryable in-progress submission', inProgress);
+      const failed = runOp(entry, 'checkVerification', { ...base, pollTicket: 'sourcify-error' });
+      assert(failed.data?.status === 'failed' && failed.data?.retryable === false && failed.data?.detail === 'compiler rejected input at [URL]', 'Sourcify: completed v2 job errors are terminal and sanitized', failed);
     }
   }
 } finally { mock.child.kill(); }

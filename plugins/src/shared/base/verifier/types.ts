@@ -33,6 +33,7 @@ export interface SupportedExplorersResult {
 export interface DetectedExplorer {
   chainId: number;
   explorerUrl: string;
+  explorerPageUrlTemplate?: string;
   label?: string;
 }
 
