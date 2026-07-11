@@ -37,6 +37,7 @@ import { chainRoutes } from "./chains.js";
 import { signerRoutes } from "./signers.js";
 import { deploymentRoutes } from "./deployments.js";
 import { explorerRoutes } from "./explorers.js";
+import { verificationRoutes } from "./verifications.js";
 
 export interface IApiError {
   statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 499 | 500 | 503;
@@ -80,6 +81,7 @@ const allRoutes = {
   ...signerRoutes,
   ...deploymentRoutes,
   ...explorerRoutes,
+  ...verificationRoutes,
 } as const;
 
 export const v1Routes = allRoutes satisfies ValidateRoutes<typeof allRoutes>;

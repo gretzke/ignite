@@ -7,7 +7,7 @@
 //
 // No Fastify types here beyond the socket shape we actually use, so this is
 // unit-testable with a plain fake socket (see __tests__/api/ws.test.ts).
-import type { JobEvent, RunEvent } from '@ignite/api';
+import type { JobEvent, RunEvent, VerificationEvent } from '@ignite/api';
 import type { JobManager } from '../jobs/JobManager.js';
 import type { DeployEngine } from '../deployments/DeployEngine.js';
 import {
@@ -15,6 +15,7 @@ import {
   type RuntimeResponseFrame,
 } from '../plugins/invoke/FrontendRuntimeBridge.js';
 import { getLogger } from '../utils/logger.js';
+import type { VerificationQueue } from '../verifications/VerificationQueue.js';
 
 // Minimal structural shape of the socket @fastify/websocket hands the route
 // handler (a `ws` WebSocket) — just enough to send frames and listen for
@@ -45,6 +46,14 @@ interface UnsubscribeRunFrame {
   type: 'unsubscribe-run';
   runId: string;
 }
+interface SubscribeVerificationsFrame {
+  type: 'subscribe-verifications';
+  epoch?: string;
+  afterSeq?: number;
+}
+interface UnsubscribeVerificationsFrame {
+  type: 'unsubscribe-verifications';
+}
 
 interface RuntimeRegisterFrame {
   type: 'runtime-register';
@@ -56,6 +65,8 @@ type ClientFrame =
   | UnsubscribeFrame
   | SubscribeRunFrame
   | UnsubscribeRunFrame
+  | SubscribeVerificationsFrame
+  | UnsubscribeVerificationsFrame
   | RuntimeRegisterFrame
   | RuntimeResponseFrame;
 
@@ -100,6 +111,18 @@ function parseClientFrame(raw: unknown): ClientFrame | undefined {
   if (frame.type === 'unsubscribe-run' && typeof frame.runId === 'string')
     return { type: 'unsubscribe-run', runId: frame.runId };
   if (
+    frame.type === 'subscribe-verifications' &&
+    (frame.epoch === undefined || typeof frame.epoch === 'string') &&
+    (frame.afterSeq === undefined || typeof frame.afterSeq === 'number')
+  )
+    return {
+      type: 'subscribe-verifications',
+      epoch: frame.epoch as string | undefined,
+      afterSeq: frame.afterSeq as number | undefined,
+    };
+  if (frame.type === 'unsubscribe-verifications')
+    return { type: 'unsubscribe-verifications' };
+  if (
     frame.type === 'runtime-register' &&
     Array.isArray(frame.pluginIds) &&
     frame.pluginIds.length <= 32 &&
@@ -129,7 +152,11 @@ export function createWsHandler(
     DeployEngine,
     'subscribe' | 'eventsSince' | 'eventCursor' | 'get'
   >,
-  getProfileId?: () => string
+  getProfileId?: () => string,
+  verifications?: Pick<
+    VerificationQueue,
+    'subscribe' | 'eventsSince' | 'eventCursor' | 'store'
+  >
 ): (socket: WsSocket) => void {
   return (socket: WsSocket) => {
     // One live-event unsubscribe per jobId this socket currently cares
@@ -137,6 +164,7 @@ export function createWsHandler(
     // first so we never leak a JobManager subscription.
     const subscriptions = new Map<string, () => void>();
     const runSubscriptions = new Map<string, () => void>();
+    let verificationUnsubscribe: (() => void) | undefined;
 
     const safeSend = (payload: unknown): void => {
       try {
@@ -153,6 +181,10 @@ export function createWsHandler(
     const teardownRun = (runId: string): void => {
       runSubscriptions.get(runId)?.();
       runSubscriptions.delete(runId);
+    };
+    const teardownVerifications = () => {
+      verificationUnsubscribe?.();
+      verificationUnsubscribe = undefined;
     };
 
     const handleSubscribe = (jobId: string, afterSeq?: number): void => {
@@ -232,6 +264,44 @@ export function createWsHandler(
       sending = false;
       for (const event of queued) safeSend({ type: 'run-event', runId, event });
     };
+    const handleSubscribeVerifications = async (
+      epoch?: string,
+      afterSeq?: number
+    ): Promise<void> => {
+      if (!verifications || !getProfileId) {
+        safeSend({ type: 'error', message: 'verification stream unavailable' });
+        return;
+      }
+      teardownVerifications();
+      const profileId = getProfileId();
+      const queued: VerificationEvent[] = [];
+      let sending = true;
+      const cursor = verifications.eventCursor(profileId);
+      verificationUnsubscribe = verifications.subscribe(
+        (eventProfile, event) => {
+          if (eventProfile !== profileId) return;
+          if (sending) queued.push(event);
+          else safeSend({ type: 'verification-event', event });
+        }
+      );
+      const tasks = await verifications.store.list(profileId);
+      safeSend({
+        type: 'verification-snapshot',
+        tasks,
+        epoch: cursor.epoch,
+        lastSeq: cursor.lastSeq,
+      });
+      if (epoch !== undefined && afterSeq !== undefined)
+        for (const event of verifications.eventsSince(
+          profileId,
+          epoch,
+          afterSeq
+        ))
+          safeSend({ type: 'verification-event', event });
+      sending = false;
+      for (const event of queued)
+        safeSend({ type: 'verification-event', event });
+    };
 
     socket.on('message', (raw: unknown) => {
       const frame = parseClientFrame(raw);
@@ -247,6 +317,10 @@ export function createWsHandler(
         void handleSubscribeRun(frame.runId, frame.epoch, frame.afterSeq);
       } else if (frame.type === 'unsubscribe-run') {
         teardownRun(frame.runId);
+      } else if (frame.type === 'subscribe-verifications') {
+        void handleSubscribeVerifications(frame.epoch, frame.afterSeq);
+      } else if (frame.type === 'unsubscribe-verifications') {
+        teardownVerifications();
       } else if (frame.type === 'runtime-register') {
         bridge.registerHost(socket, frame.pluginIds);
       } else {
@@ -259,6 +333,7 @@ export function createWsHandler(
         teardown(jobId);
       }
       for (const runId of [...runSubscriptions.keys()]) teardownRun(runId);
+      teardownVerifications();
       bridge.unregisterHost(socket);
     });
 

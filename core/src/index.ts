@@ -26,6 +26,7 @@ import { RepoLifecycle } from './repos/RepoLifecycle.js';
 import { JobManager } from './jobs/JobManager.js';
 import { FrontendRuntimeBridge } from './plugins/invoke/FrontendRuntimeBridge.js';
 import { DeployEngine } from './deployments/DeployEngine.js';
+import { VerificationQueue } from './verifications/VerificationQueue.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -56,6 +57,7 @@ async function ignite(workspacePath: string): Promise<{
   const pluginExecutor = PluginExecutor.getInstance();
   await JobManager.getInstance().recover();
   await DeployEngine.getInstance().recoverOnStartup();
+  await VerificationQueue.getInstance().recoverStartup();
 
   // Pre-startup checks
   app.log.info(`🔍 Workspace path: ${workspacePath}`);
@@ -76,7 +78,8 @@ async function ignite(workspacePath: string): Promise<{
         JobManager.getInstance(),
         FrontendRuntimeBridge.getInstance(),
         DeployEngine.getInstance(),
-        () => profileManager.getCurrentProfile()
+        () => profileManager.getCurrentProfile(),
+        VerificationQueue.getInstance()
       )
     );
   });

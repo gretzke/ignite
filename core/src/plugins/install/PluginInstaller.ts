@@ -18,6 +18,7 @@ import { TrustManager } from '../trust/TrustManager.js';
 import type { PluginPermissions } from '../trust/TrustManager.js';
 import { VaultStore } from '../vault/VaultStore.js';
 import { PluginConfigStore } from '../config/PluginConfigStore.js';
+import { VerificationQueue } from '../../verifications/VerificationQueue.js';
 import { getLogger } from '../../utils/logger.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 import { pluginCacheVolumeName } from '../utils/pluginCache.js';
@@ -398,9 +399,8 @@ export class PluginInstaller {
     getLogger().info(
       `🔨 Rebuilding missing image ${recorded.baseImage} for plugin ${pluginId}`
     );
-    const { imageTag, metadata } = await this.backend.buildPluginImage(
-      buildSource
-    );
+    const { imageTag, metadata } =
+      await this.backend.buildPluginImage(buildSource);
     try {
       // The rebuilt image must be exactly what the registry already records —
       // a drifted local dir (or a commit that no longer builds the same
@@ -484,7 +484,9 @@ export class PluginInstaller {
 
   // Accept legacy manifests at install/update time so the persisted registry
   // entry (and everything downstream) carries canonical fields.
-  private normalizePermissionManifest(metadata: PluginMetadata): PluginMetadata {
+  private normalizePermissionManifest(
+    metadata: PluginMetadata
+  ): PluginMetadata {
     const typedMetadata = normalizeLegacyType(metadata);
     const { metadata: normalized, renamed } =
       normalizeLegacyPermissions(typedMetadata);
@@ -596,7 +598,8 @@ export class PluginInstaller {
         ErrorCodes.PLUGIN_INSTALL_INVALID
       );
     if (!Array.isArray(fields)) throw invalid('configFields must be an array');
-    if (fields.length > MAX_CONFIG_FIELDS) throw invalid('too many config fields');
+    if (fields.length > MAX_CONFIG_FIELDS)
+      throw invalid('too many config fields');
     const keyPattern = /^[a-z0-9][a-z0-9._-]*$/;
     // eslint-disable-next-line no-control-regex
     const controlChars = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
@@ -671,7 +674,11 @@ export class PluginInstaller {
 
       if (f.type === 'list') {
         const itemFields = f.itemFields ?? [];
-        if (!Array.isArray(itemFields) || itemFields.length === 0 || itemFields.length > 16) {
+        if (
+          !Array.isArray(itemFields) ||
+          itemFields.length === 0 ||
+          itemFields.length > 16
+        ) {
           throw invalid(
             `list config field '${f.key}' must declare 1-16 itemFields`
           );
@@ -680,13 +687,21 @@ export class PluginInstaller {
         const keys = new Set<string>();
         for (const itemField of itemFields) {
           const i = itemField as Record<string, unknown>;
-          if (typeof i.key !== 'string' || !itemKeyPattern.test(i.key) || keys.has(i.key)) {
+          if (
+            typeof i.key !== 'string' ||
+            !itemKeyPattern.test(i.key) ||
+            keys.has(i.key)
+          ) {
             throw invalid(
               `list config field '${f.key}' has an invalid or duplicate itemField key '${String(i.key)}'`
             );
           }
           keys.add(i.key);
-          if (typeof i.label !== 'string' || i.label.length === 0 || i.label.length > 280) {
+          if (
+            typeof i.label !== 'string' ||
+            i.label.length === 0 ||
+            i.label.length > 280
+          ) {
             throw invalid(
               `list config field '${f.key}' itemField '${i.key}' has an invalid label`
             );
@@ -702,7 +717,10 @@ export class PluginInstaller {
             );
           }
           for (const boolField of ['secret', 'required'] as const) {
-            if (i[boolField] !== undefined && typeof i[boolField] !== 'boolean') {
+            if (
+              i[boolField] !== undefined &&
+              typeof i[boolField] !== 'boolean'
+            ) {
               throw invalid(
                 `list config field '${f.key}' itemField '${i.key}' ${boolField} must be a boolean`
               );
@@ -726,8 +744,14 @@ export class PluginInstaller {
       // against the same short-plain-text discipline as label/description.
       if (f.type === 'file') {
         if (f.default !== undefined) {
-          if (typeof f.default !== 'string' || f.default.length === 0 || f.default.length > 256) {
-            throw invalid(`file field '${f.key}' default must be 1-256 characters`);
+          if (
+            typeof f.default !== 'string' ||
+            f.default.length === 0 ||
+            f.default.length > 256
+          ) {
+            throw invalid(
+              `file field '${f.key}' default must be 1-256 characters`
+            );
           }
           if (controlChars.test(f.default)) {
             throw invalid(
@@ -760,6 +784,10 @@ export class PluginInstaller {
     // merely unusable until re-approved. Vault secrets and non-secret config
     // values are scoped to this plugin id too, so they're wiped alongside —
     // a later reinstall of the same id must not inherit either.
+    // Cancel durable verifier work before credentials/trust are removed. This
+    // is fail-closed: an uninstall never leaves a task scheduled to invoke a
+    // now-removed plugin identity.
+    await VerificationQueue.getInstance().onPluginUninstalled(pluginId);
     await this.deps.trust.revoke(pluginId);
     await this.deps.vaultStore.deletePlugin(pluginId);
     await this.deps.configStore.deletePlugin(pluginId);
