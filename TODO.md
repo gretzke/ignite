@@ -6,7 +6,7 @@ blocking current functionality.
 
 ## Deferred features (no consumer yet)
 
-- **Secret-scope permission dimension.** The trust model is `{ repoWrite, net }` booleans.
+- **[RETIRED 2026-07-11: shipped as the D1b secrets dimension; D4 verifier plugins are the consumer.]** Secret-scope permission dimension. The trust model is `{ repoWrite, net }` booleans.
   When explorer/verifier plugins land (they receive a user's block-explorer API key), the
   grant needs a named-secret scope so the approval dialog can show "this plugin receives
   your Etherscan API key" and the runtime injects the secret only when granted. Touches
@@ -243,3 +243,21 @@ smells, ranked:
   instead of settling them immediately. (3) `GET /plugins/:id/bundle`
   resolves the asset via `types[0]` — fine while frontend builtins are
   single-type; revisit if a multi-type frontend plugin ever lands.
+
+## Verification follow-ups (D4)
+
+- **Reconciliation with provider-plugin RPC bindings.** `verificationIntegration.ts`
+  resolves the run's bound endpoint from the RpcStore only; runs whose binding was a
+  provider-plugin endpoint fall back to `rawTx` parsing (container signers) or skip
+  with a log line. Resolve provider endpoints the way validation does.
+- **Bundle-store GC.** Content-addressed bundles under
+  `profiles/<id>/deployments/bundles/` are never pruned (dedup keeps growth modest).
+- **Debug-level raw plugin output.** Plugin stdout/stderr reach debug logs
+  sentinel-stripped + control-stripped + capped (D1c posture); a plugin that prints
+  its injected config leaks it to debug logs. Consider an opt-in flag for these lines.
+- **ExplorerStore.overlays() id filter.** Uses a `:{chainId}:` substring match to
+  scope derived-id overlays — correct today (plugin ids are colon-free) but fragile;
+  overlays can also be created for unknown derived ids (inert garbage). Tighten to a
+  structured id parse.
+- **Etherscan zkSync-family exclusion list.** Static in the plugin; revisit when a
+  zksolc-aware bundle exists (needs `zksolcVersion` capture).
