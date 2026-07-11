@@ -107,9 +107,7 @@ describe('validatePlan', () => {
       code: 'SIGNER_ACCOUNT_NOT_FOUND',
     });
     expect(result.report.chains['2'].signers.ok).toBe(false);
-    // Runs two full per-chain validations against fake RPC timing; the
-    // default 5s budget is borderline on a loaded machine.
-  }, 15_000);
+  });
 
   it('names missing constructor args in details', async () => {
     const result = await validatePlan(

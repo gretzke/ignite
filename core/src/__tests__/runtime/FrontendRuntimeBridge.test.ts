@@ -266,6 +266,63 @@ describe('FrontendRuntimeBridge', () => {
     });
   });
 
+  it('falls back to an older tab for read-only ops when the newest times out', async () => {
+    const bridge = new FrontendRuntimeBridge();
+    const oldTab = makeSocket();
+    const newTab = makeSocket();
+    bridge.registerHost(oldTab, ['browser-wallet']);
+    bridge.registerHost(newTab, ['browser-wallet']);
+
+    const pending = bridge.request(
+      'browser-wallet',
+      'getAccounts',
+      {},
+      { timeoutMs: 25 }
+    );
+    // The newest registration gets the request first and never answers.
+    await flushMicrotasks();
+    expect(sentFrames(newTab)).toHaveLength(1);
+    expect(sentFrames(oldTab)).toHaveLength(0);
+
+    // After the newest tab's timeout, the older tab is tried — answer it
+    // promptly (before ITS timeout) with a success.
+    let frame: { requestId: string } | undefined;
+    for (let i = 0; i < 100 && !frame; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      frame = sentFrames(oldTab)[0] as { requestId: string } | undefined;
+    }
+    expect(frame).toBeDefined();
+    bridge.handleResponse(oldTab, {
+      type: 'runtime-response',
+      requestId: frame!.requestId,
+      result: { success: true, data: { accounts: [] } },
+    });
+    const result = (await pending) as PluginResponse<unknown>;
+    expect(result.success).toBe(true);
+  });
+
+  it('never re-dispatches a mutating operation to another tab', async () => {
+    const bridge = new FrontendRuntimeBridge();
+    const oldTab = makeSocket();
+    const newTab = makeSocket();
+    bridge.registerHost(oldTab, ['browser-wallet']);
+    bridge.registerHost(newTab, ['browser-wallet']);
+
+    const pending = bridge.request(
+      'browser-wallet',
+      'sendTransaction',
+      {},
+      { timeoutMs: 5 }
+    );
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    const result = (await pending) as PluginResponse<unknown>;
+    // A lost response does not prove the wallet didn't submit: the request
+    // must fail on THIS tab rather than double-send through another one.
+    expect(result.success).toBe(false);
+    expect(sentFrames(newTab)).toHaveLength(1);
+    expect(sentFrames(oldTab)).toHaveLength(0);
+  });
+
   it('re-registering a socket replaces the plugin set hosted by that socket', async () => {
     const bridge = new FrontendRuntimeBridge();
     const socket = makeSocket();

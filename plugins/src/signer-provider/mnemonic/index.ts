@@ -19,7 +19,7 @@ import { runPluginCLI } from "../../shared/plugin-runner.js";
 
 declare const PLUGIN_VERSION: string;
 
-export const MAX_INDICES = 64;
+const MAX_INDICES = 64;
 const ACCOUNT_ID_SEP = ".";
 
 // "0-4,7" -> [0,1,2,3,4,7]; invalid input -> [].

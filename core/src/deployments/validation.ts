@@ -28,6 +28,7 @@ import {
 import { verifyRpcEndpoint } from '../chains/rpcVerify.js';
 import { SignerProviderService } from '../signers/SignerProviderService.js';
 import { RpcStore } from '../chains/RpcStore.js';
+import { RpcProviderService } from '../chains/RpcProviderService.js';
 
 type Endpoint = { id: string; label?: string; url: string; stored?: boolean };
 type Client = {
@@ -178,9 +179,6 @@ function defaultDeps(): ValidationDeps {
       // never live in RpcStore — the wizard legitimately offers them, so
       // authoritative validation must resolve them the same way the engine
       // does (their verification results are transient, not persisted).
-      const { RpcProviderService } = await import(
-        '../chains/RpcProviderService.js'
-      );
       const provided = (
         await RpcProviderService.getInstance().getChainData(chainId)
       ).endpoints.find((item) => item.id === endpointId);

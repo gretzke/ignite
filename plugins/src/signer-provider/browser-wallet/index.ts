@@ -215,18 +215,18 @@ export async function sendTransactionWithProviders(
 
   const provider = providers.get(account.rdns)?.provider;
   if (!provider) {
-    // A pre-disambiguation account id (io.metamask:0x…) can never route
-    // safely while two extensions share that rdns — say so instead of a
-    // generic miss, or the user retries forever against a stale plan.
-    const ambiguous = [...providers.keys()].some((key) =>
+    // Account ids from an older bundle generation (bare rdns, no ~name
+    // suffix) can never route safely — say so instead of a generic miss, or
+    // the user retries forever against a stale plan.
+    const legacyId = [...providers.keys()].some((key) =>
       key.startsWith(`${account.rdns}~`),
     );
     return {
       success: false,
       error: {
         code: "WALLET_NOT_FOUND",
-        message: ambiguous
-          ? "Two wallet extensions share this account's identifier; wallets are now listed separately — re-select the account and relaunch"
+        message: legacyId
+          ? "This account was selected under an older wallet identifier — re-select the account and relaunch"
           : "Wallet account is no longer available",
       },
     };

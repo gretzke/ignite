@@ -11,6 +11,9 @@ interface AbiArgFieldProps {
   input: AbiInput;
   fieldKey: string;
   value: unknown;
+  // True only on the global argument form: bool fields self-initialize to
+  // an explicit false there, never inside sparse per-chain overrides.
+  autoDefault?: boolean;
   onChange: (value: unknown) => void;
 }
 
@@ -50,17 +53,21 @@ function validationMessage(type: string, value: string): string | undefined {
 function BoolArgField({
   label,
   value,
+  autoDefault,
   onChange,
 }: {
   label: string;
   value: unknown;
+  autoDefault: boolean;
   onChange: (value: unknown) => void;
 }) {
-  // An untouched switch must still contribute an explicit `false` to the
-  // draft — otherwise validation reports the field missing and the user has
-  // to toggle true-and-back just to deploy with false.
+  // An untouched GLOBAL switch must still contribute an explicit `false` —
+  // otherwise validation reports the field missing and the user has to
+  // toggle true-and-back just to deploy with false. Per-chain override
+  // fields must NOT auto-write: that would turn "no override" into an
+  // explicit false override on every chain whose expander was opened.
   useEffect(() => {
-    if (value === undefined) onChange(false);
+    if (autoDefault && value === undefined) onChange(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
@@ -79,11 +86,19 @@ export default function AbiArgField({
   input,
   fieldKey,
   value,
+  autoDefault = false,
   onChange,
 }: AbiArgFieldProps) {
   const label = input.name || fieldKey;
   if (input.type === 'bool') {
-    return <BoolArgField label={label} value={value} onChange={onChange} />;
+    return (
+      <BoolArgField
+        label={label}
+        value={value}
+        autoDefault={autoDefault}
+        onChange={onChange}
+      />
+    );
   }
 
   if (input.type.startsWith('tuple') && !input.type.endsWith(']')) {
@@ -104,6 +119,7 @@ export default function AbiArgField({
               input={component}
               fieldKey={key}
               value={tuple[key]}
+              autoDefault={autoDefault}
               onChange={(next) => onChange({ ...tuple, [key]: next })}
             />
           );

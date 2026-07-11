@@ -59,7 +59,7 @@ export default function ArgumentsStep() {
       <div>
         <h2 className="text-lg font-semibold">Arguments</h2>
         <p className="text-sm text-muted">
-          Constructor values apply globally unless a chain override is set.
+          Constructor arguments apply globally unless a chain override is set.
         </p>
       </div>
       {draft.steps.map((step) => {
@@ -100,6 +100,7 @@ export default function ArgumentsStep() {
                     input={input}
                     fieldKey={key}
                     value={step.args?.[key]}
+                    autoDefault
                     onChange={(value) =>
                       dispatch(setArg({ stepId: step.id, key, value }))
                     }

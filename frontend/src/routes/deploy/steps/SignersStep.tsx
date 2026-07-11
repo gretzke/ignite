@@ -91,6 +91,12 @@ export default function SignersStep() {
     })
   );
   const options = [{ value: '__none__', label: 'No default' }, ...refs];
+  // A chain without an override INHERITS the global signer — its unset
+  // option must say so, not repeat the global select's "No default".
+  const overrideOptions = [
+    { value: '__none__', label: 'Use global default' },
+    ...refs,
+  ];
   const resolve = (value: string) =>
     refs.find((item) => item.value === value)?.ref;
 
@@ -138,6 +144,11 @@ export default function SignersStep() {
                   : `${provider.name} is available — connect it to list accounts.`}
               </span>
               <div className="flex items-center gap-2 ml-auto">
+                {signers.connectError?.pluginId === provider.pluginId && (
+                  <span className="text-xs text-err">
+                    {signers.connectError.message}
+                  </span>
+                )}
                 {wallets.length > 1 ? (
                   wallets.map((wallet) => (
                     <button
@@ -205,7 +216,7 @@ export default function SignersStep() {
                 </span>
               </div>
               <Select
-                options={options}
+                options={overrideOptions}
                 value={refKey(override) ?? '__none__'}
                 placeholder="Use global default"
                 onValueChange={(value) =>

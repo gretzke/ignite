@@ -38,7 +38,7 @@ const chain = {
 };
 const address = '0x1234567890abcdef1234567890abcdef12345678' as const;
 const txParams: SendTransactionParams = {
-  accountId: makeAccountId('io.metamask', address),
+  accountId: makeAccountId('io.metamask~metamask', address),
   rpcUrl: 'http://127.0.0.1:8545',
   chain,
   tx: {
@@ -128,7 +128,7 @@ describe('browser-wallet sendTransaction', () => {
       txParams,
       new Map([
         [
-          'io.metamask',
+          'io.metamask~metamask',
           providerDetailForTest('io.metamask', 'MetaMask', provider),
         ],
       ])
@@ -159,7 +159,7 @@ describe('browser-wallet sendTransaction', () => {
       txParams,
       new Map([
         [
-          'io.metamask',
+          'io.metamask~metamask',
           providerDetailForTest('io.metamask', 'MetaMask', provider),
         ],
       ])
@@ -182,10 +182,31 @@ describe('browser-wallet sendTransaction', () => {
   });
 
   it('round-trips account ids by splitting on the first separator', () => {
-    const accountId = makeAccountId('io.metamask', address);
+    const accountId = makeAccountId('io.metamask~metamask', address);
     expect(splitAccountId(accountId)).toEqual({
-      rdns: 'io.metamask',
+      rdns: 'io.metamask~metamask',
       address,
     });
+  });
+
+  it('names the migration path for a pre-disambiguation account id', async () => {
+    const provider = new ScriptedProvider({});
+    const result = await sendTransactionWithProviders(
+      { ...txParams, accountId: `io.metamask:${address}` },
+      new Map([
+        [
+          'io.metamask~metamask',
+          providerDetailForTest('io.metamask', 'MetaMask', provider),
+        ],
+      ])
+    );
+    expect(result).toMatchObject({
+      success: false,
+      error: { code: 'WALLET_NOT_FOUND' },
+    });
+    expect(
+      !result.success &&
+        result.error.message.includes('older wallet identifier')
+    ).toBe(true);
   });
 });

@@ -162,27 +162,6 @@ const deployDraftSlice = createSlice({
       if (!step) return;
       step.value = action.payload.value;
     },
-    setValuePerChain(
-      state,
-      action: PayloadAction<{
-        stepId: string;
-        chainId: number;
-        value?: string;
-      }>
-    ) {
-      const step = state.steps.find(({ id }) => id === action.payload.stepId);
-      if (!step) return;
-      const chainKey = String(action.payload.chainId);
-      if (action.payload.value === undefined) {
-        delete step.valuePerChain?.[chainKey];
-        if (Object.keys(step.valuePerChain ?? {}).length === 0) {
-          delete step.valuePerChain;
-        }
-        return;
-      }
-      step.valuePerChain ??= {};
-      step.valuePerChain[chainKey] = action.payload.value;
-    },
     setGasOverride(
       state,
       action: PayloadAction<{
@@ -255,7 +234,6 @@ export const {
   setArg,
   setChainArgOverride,
   setValue,
-  setValuePerChain,
   setGasOverride,
   setGasOverridePerChain,
   setName,
