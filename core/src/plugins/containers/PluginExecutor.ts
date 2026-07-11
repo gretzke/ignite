@@ -9,10 +9,7 @@ import {
   ContainerOrchestrator,
   ContainerLifecycle,
 } from './ContainerOrchestrator.js';
-import {
-  PluginType,
-  type PluginResponse,
-} from '@ignite/plugin-types/types';
+import { PluginType, type PluginResponse } from '@ignite/plugin-types/types';
 import { PluginExecutionUtils } from '../utils/PluginExecutionUtils.js';
 import {
   TrustManager,
@@ -123,6 +120,7 @@ export interface ExecuteOpts {
   onOutput?: (text: string) => void;
   workspacePath?: string;
   signal?: AbortSignal;
+  chainScope?: number;
 }
 
 // Injectable dependencies (tests pass fakes; production uses real singletons).
@@ -147,7 +145,10 @@ export interface PluginExecutorDeps {
   // Reads a `file` config field's contents from its (already home-expanded)
   // host path — see resolveConfig.ts for the grant gate this sits behind.
   // undefined = unreadable/missing/oversized (never thrown).
-  getFileContents: (pluginId: string, path: string) => Promise<string | undefined>;
+  getFileContents: (
+    pluginId: string,
+    path: string
+  ) => Promise<string | undefined>;
   // Rebuild a deleted installed-plugin image from its recorded (pinned)
   // install source — PluginInstaller.rebuildImage in production.
   rebuildImage: (pluginId: string) => Promise<unknown>;
@@ -290,7 +291,11 @@ export class PluginExecutor {
     // (which may hold a workspace bind mount). Plugins without a configFields
     // schema skip this entirely: options pass through unchanged (no `config`
     // key added, zero extra store reads).
-    const resolvedConfig = await this.resolvePluginConfig(pluginConfig, grant);
+    const resolvedConfig = await this.resolvePluginConfig(
+      pluginConfig,
+      grant,
+      opts?.chainScope
+    );
     // 'config' is a reserved options key: core-resolved config overwrites any
     // caller-supplied value.
     const optionsWithConfig = resolvedConfig
@@ -377,7 +382,8 @@ export class PluginExecutor {
   // resolved value — it may contain decrypted secrets.
   private async resolvePluginConfig(
     pluginConfig: PluginConfig,
-    grant: PermissionGrant
+    grant: PermissionGrant,
+    chainScope?: number
   ): Promise<Record<string, unknown> | undefined> {
     const configFields = pluginConfig.metadata.configFields;
     if (!configFields || configFields.length === 0) return undefined;
@@ -408,6 +414,7 @@ export class PluginExecutor {
         this.deps.vaultStore.getSecret(pluginId, key, chainId),
       getSecretChainIds,
       getFileContents: (path) => this.deps.getFileContents(pluginId, path),
+      opts: chainScope === undefined ? undefined : { chainScope },
     });
   }
 

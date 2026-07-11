@@ -36,6 +36,10 @@ export interface ResolveConfigArgs {
   // Optional only so existing callers/tests without file fields don't need
   // to pass it; a schema with a file field but no getFileContents omits it.
   getFileContents?: (path: string) => Promise<string | undefined>;
+  // A verifier operation is always for one chain. Narrowing at this single
+  // resolution boundary prevents a container from receiving other chains'
+  // per-chain values or secrets.
+  opts?: { chainScope?: number };
 }
 
 export async function resolveConfig(
@@ -48,6 +52,7 @@ export async function resolveConfig(
     getSecret,
     getSecretChainIds,
     getFileContents,
+    opts,
   } = args;
   const result: Record<string, unknown> = {};
 
@@ -65,7 +70,8 @@ export async function resolveConfig(
         const value = await resolvePerChainSecret(
           field.key,
           getSecret,
-          getSecretChainIds
+          getSecretChainIds,
+          opts?.chainScope
         );
         if (value !== undefined) result[field.key] = value;
       } else {
@@ -80,8 +86,7 @@ export async function resolveConfig(
         grant.trust === 'native' || grant.secrets.includes(field.key);
       if (!granted) continue; // Never call getFileContents for an ungranted key.
 
-      const configuredPath =
-        typeof global === 'string' ? global : undefined;
+      const configuredPath = typeof global === 'string' ? global : undefined;
       const path = configuredPath ?? field.default;
       if (!path || !getFileContents) continue;
 
@@ -95,9 +100,7 @@ export async function resolveConfig(
 
     if (field.type === 'list') {
       const items = Array.isArray(global) ? (global as unknown[]) : [];
-      const secretItemFields = (field.itemFields ?? []).filter(
-        (f) => f.secret
-      );
+      const secretItemFields = (field.itemFields ?? []).filter((f) => f.secret);
       const hasSecrets = secretItemFields.length > 0;
       const granted =
         grant.trust === 'native' || grant.secrets.includes(field.key);
@@ -133,7 +136,14 @@ export async function resolveConfig(
     }
 
     if (field.perChain) {
-      const value: Record<string, ConfigPrimitive> = { ...(perChain ?? {}) };
+      const value: Record<string, ConfigPrimitive> =
+        opts?.chainScope === undefined
+          ? { ...(perChain ?? {}) }
+          : Object.fromEntries(
+              Object.entries(perChain ?? {}).filter(
+                ([chainId]) => chainId === String(opts.chainScope)
+              )
+            );
       if (global !== undefined && !Array.isArray(global)) {
         value.default = global;
       }
@@ -149,7 +159,8 @@ export async function resolveConfig(
 async function resolvePerChainSecret(
   key: string,
   getSecret: ResolveConfigArgs['getSecret'],
-  getSecretChainIds: ResolveConfigArgs['getSecretChainIds']
+  getSecretChainIds: ResolveConfigArgs['getSecretChainIds'],
+  chainScope?: number
 ): Promise<Record<string, string> | undefined> {
   const value: Record<string, string> = {};
 
@@ -158,6 +169,7 @@ async function resolvePerChainSecret(
 
   const chainIds = (await getSecretChainIds?.(key)) ?? [];
   for (const chainId of chainIds) {
+    if (chainScope !== undefined && chainId !== chainScope) continue;
     const chainSecret = await getSecret(key, chainId);
     if (chainSecret !== undefined) value[String(chainId)] = chainSecret;
   }
