@@ -5,3 +5,4 @@ export type NoResult = Record<string, never>;
 export * from "./compiler/index.js";
 export * from "./rpc-provider/index.js";
 export * from "./signer-provider/index.js";
+export * from "./verifier/index.js";

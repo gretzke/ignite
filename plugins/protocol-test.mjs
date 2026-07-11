@@ -10,7 +10,7 @@
 //   node plugins/protocol-test.mjs
 
 import { existsSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -139,7 +139,7 @@ for (const plugin of PLUGINS) {
     info
   );
   assert(
-    info.type === 'rpc-provider',
+    info.type === 'rpc-provider' || info.types?.includes('rpc-provider'),
     `${plugin.name}: getInfo type === 'rpc-provider'`,
     info
   );
@@ -248,7 +248,48 @@ for (const plugin of PLUGINS) {
 
 }
 
-console.log(`\n${passes} passed, ${failures} failed`);
-if (failures > 0) {
-  process.exit(1);
+async function startMock() {
+  const child = spawn(process.execPath, [path.join(__dirname, 'test-fixtures', 'mock-explorer.mjs')], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const port = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('mock explorer did not become ready')), 5000);
+    child.stdout.on('data', (chunk) => { const match = String(chunk).match(/READY (\d+)/); if (match) { clearTimeout(timer); resolve(Number(match[1])); } });
+    child.once('error', reject);
+  });
+  return { child, port };
 }
+
+const verifierEntries = [
+  ['Etherscan', 'etherscan', { config: { apiKey: 'TESTKEY' } }],
+  ['Blockscout', 'blockscout', {}],
+  ['Sourcify', 'sourcify', {}],
+];
+const mock = await startMock();
+try {
+  for (const [name, id, extra] of verifierEntries) {
+    const entry = path.join(BUILTIN_BUNDLE_DIR, `verifier_${id}.js`);
+    assert(existsSync(entry), `${name}: built verifier entry exists`, entry);
+    if (!existsSync(entry)) continue;
+    const base = { chainId: 1, address: `0x000000000000000000000000000000000000000${verifierEntries.indexOf(verifierEntries.find((entry) => entry[1] === id)) + 1}`, explorerUrl: `http://127.0.0.1:${mock.port}`, apiUrl: `http://127.0.0.1:${mock.port}/api`, standardJsonInput: { language: 'Solidity', sources: { 'A.sol': { content: 'contract A {}' } }, settings: {} }, solcVersion: 'v0.8.26+commit.8a97fa7a', contractIdentifier: 'A.sol:A', encodedConstructorArgs: '0x1234', compilerSummary: { pluginId: 'foundry', optimizer: false, runs: 0, viaIR: false }, ...extra };
+    const info = runOp(entry, 'getInfo', {});
+    assert(info.success && info.data?.id === id, `${name}: metadata is verifier-shaped`, info);
+    if (id === 'etherscan') {
+      const empty = runOp(entry, 'getSupportedExplorers', {});
+      assert(empty.success && empty.data?.explorers === null, 'Etherscan: blank key needs config', empty);
+    }
+    if (id === 'sourcify') base.apiUrl = `http://127.0.0.1:${mock.port}`;
+    const submit = runOp(entry, 'verify', base);
+    assert(submit.success && submit.data?.status === 'pending', `${name}: submit returns pending`, submit);
+    if (id !== 'sourcify') {
+      const pending = runOp(entry, 'checkVerification', { ...base, pollTicket: submit.data.pollTicket });
+      const complete = runOp(entry, 'checkVerification', { ...base, pollTicket: submit.data.pollTicket });
+      assert(pending.data?.status === 'pending' && complete.data?.status === 'verified', `${name}: GUID poll transitions`, { pending, complete });
+      const resubmit = runOp(entry, 'verify', base);
+      assert(resubmit.data?.status === 'already-verified', `${name}: re-submit is tolerated`, resubmit);
+    } else {
+      const complete = runOp(entry, 'checkVerification', { ...base, pollTicket: submit.data.pollTicket });
+      assert(complete.data?.detail === 'match:full', 'Sourcify: match level is surfaced', complete);
+    }
+  }
+} finally { mock.child.kill(); }
+console.log(`\n${passes} passed, ${failures} failed`);
+if (failures > 0) process.exit(1);
