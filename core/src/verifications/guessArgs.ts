@@ -67,7 +67,21 @@ export async function guessConstructorArgs(args: {
   const decoded = decodeAbiParameters(args.inputs, encodedTail);
   const values: ArgValues = {};
   args.inputs.forEach((input, index) => {
-    values[input.name || `arg${index}`] = decoded[index];
+    values[input.name || `arg${index}`] = toAbiJson(decoded[index]);
   });
   return { args: values, encodedTail, txHash };
+}
+
+// ArgValues convention (D3 resolver): uint/int as decimal strings, bool as
+// boolean, everything else as strings/nested arrays. decodeAbiParameters
+// returns bigint for integers, which JSON.stringify rejects outright.
+function toAbiJson(value: unknown): ArgValues[string] {
+  if (typeof value === 'bigint') return value.toString();
+  if (Array.isArray(value)) return value.map(toAbiJson) as ArgValues[string];
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, toAbiJson(entry)])
+    ) as ArgValues[string];
+  }
+  return value as ArgValues[string];
 }

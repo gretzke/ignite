@@ -397,3 +397,110 @@ describe('deployment run websocket subscriptions', () => {
     ).toEqual([]);
   });
 });
+
+describe('verification frames', () => {
+  const task = { id: 't1', status: 'queued' };
+  const vEvent = (seq: number) => ({
+    epoch: 'vepoch',
+    seq,
+    ts: seq,
+    task,
+  });
+
+  function verificationsFake(opts?: {
+    events?: () => unknown[];
+    onSubscribe?: (emit: (event: unknown) => void) => void;
+  }) {
+    let listener:
+      | ((profileId: string, event: unknown) => void)
+      | undefined;
+    return {
+      store: { list: vi.fn(async () => [task]) },
+      eventsSince: vi.fn(() => opts?.events?.() ?? []),
+      eventCursor: vi.fn(() => ({ epoch: 'vepoch', lastSeq: 0 })),
+      subscribe: vi.fn((cb) => {
+        listener = cb;
+        opts?.onSubscribe?.((event) => listener?.('p', event));
+        return () => {
+          listener = undefined;
+        };
+      }),
+    };
+  }
+
+  it('orders snapshot, replay, then queued live events', async () => {
+    const jobs = makeJobManager().jobs;
+    const verifications = verificationsFake({
+      events: () => [vEvent(2)],
+      onSubscribe: (emit) => emit(vEvent(1)), // arrives during snapshot read
+    });
+    const { socket, handlers } = makeSocket();
+    createWsHandler(
+      jobs,
+      undefined,
+      undefined,
+      () => 'p',
+      verifications as never
+    )(socket as never);
+    handlers.message(
+      JSON.stringify({
+        type: 'subscribe-verifications',
+        epoch: 'vepoch',
+        afterSeq: 1,
+      })
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sentFrames(socket.send).slice(1)).toEqual([
+      { type: 'verification-snapshot', tasks: [task], epoch: 'vepoch', lastSeq: 0 },
+      { type: 'verification-event', event: vEvent(2) },
+      { type: 'verification-event', event: vEvent(1) },
+    ]);
+  });
+
+  it('filters events from other profiles and tears down on unsubscribe', async () => {
+    const jobs = makeJobManager().jobs;
+    let emitTo: ((profileId: string, event: unknown) => void) | undefined;
+    const verifications = {
+      store: { list: vi.fn(async () => []) },
+      eventsSince: vi.fn(() => []),
+      eventCursor: vi.fn(() => ({ epoch: 'vepoch', lastSeq: 0 })),
+      subscribe: vi.fn((cb) => {
+        emitTo = cb;
+        return () => {
+          emitTo = undefined;
+        };
+      }),
+    };
+    const { socket, handlers } = makeSocket();
+    createWsHandler(
+      jobs,
+      undefined,
+      undefined,
+      () => 'p',
+      verifications as never
+    )(socket as never);
+    handlers.message(JSON.stringify({ type: 'subscribe-verifications' }));
+    await Promise.resolve();
+    await Promise.resolve();
+    const before = sentFrames(socket.send).length;
+    emitTo?.('other-profile', vEvent(3)); // wrong profile: dropped
+    expect(sentFrames(socket.send)).toHaveLength(before);
+    emitTo?.('p', vEvent(3));
+    expect(sentFrames(socket.send)).toHaveLength(before + 1);
+    handlers.message(JSON.stringify({ type: 'unsubscribe-verifications' }));
+    expect(emitTo).toBeUndefined(); // subscription released
+  });
+
+  it('reports unavailability without a verifications service', async () => {
+    const jobs = makeJobManager().jobs;
+    const { socket, handlers } = makeSocket();
+    createWsHandler(jobs)(socket as never);
+    handlers.message(JSON.stringify({ type: 'subscribe-verifications' }));
+    await Promise.resolve();
+    expect(sentFrames(socket.send)).toContainEqual({
+      type: 'error',
+      message: 'verification stream unavailable',
+    });
+  });
+});
