@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  collapseSharedTransports,
   keyDiscoveredProviders,
+  makeAccountId,
   providerDetailForTest,
   type Eip1193Provider,
 } from '../../../../plugins/src/signer-provider/browser-wallet/index.ts';
@@ -42,30 +42,29 @@ describe('keyDiscoveredProviders', () => {
   });
 });
 
-describe('collapseSharedTransports', () => {
-  it('keeps wallets with distinct providers separate', () => {
-    const a: Eip1193Provider = { request: async () => null };
-    const b: Eip1193Provider = { request: async () => null };
-    const collapsed = collapseSharedTransports(
-      keyDiscoveredProviders([
-        providerDetailForTest('io.metamask', 'MetaMask', a),
-        providerDetailForTest('io.metamask', 'MetaMask Flask', b),
-      ])
+describe('makeAccountId', () => {
+  it('lowercases the address so exact-match lookups survive casing drift', () => {
+    expect(
+      makeAccountId(
+        'io.metamask~metamask-flask',
+        '0xF39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
+      )
+    ).toBe(
+      'io.metamask~metamask-flask:0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266'
     );
-    expect(collapsed.size).toBe(2);
   });
+});
 
-  it('collapses announcements sharing one provider object into a single honest entry', () => {
+describe('shared-transport announcements', () => {
+  it('keeps every issued wallet key valid even when providers share one object', () => {
     const shared: Eip1193Provider = { request: async () => null };
-    const collapsed = collapseSharedTransports(
-      keyDiscoveredProviders([
-        providerDetailForTest('io.metamask', 'MetaMask', shared),
-        providerDetailForTest('io.metamask', 'MetaMask Flask', shared),
-      ])
-    );
-    expect(collapsed.size).toBe(1);
-    const [key, detail] = [...collapsed.entries()][0];
-    expect(key).toBe('io.metamask~metamask');
-    expect(detail.info.name).toBe('MetaMask / MetaMask Flask');
+    const keyed = keyDiscoveredProviders([
+      providerDetailForTest('io.metamask', 'MetaMask', shared),
+      providerDetailForTest('io.metamask', 'MetaMask Flask', shared),
+    ]);
+    // Both aliases resolve — an account id issued while only one wallet had
+    // announced must never stop resolving because the other showed up later.
+    expect(keyed.get('io.metamask~metamask')?.provider).toBe(shared);
+    expect(keyed.get('io.metamask~metamask-flask')?.provider).toBe(shared);
   });
 });

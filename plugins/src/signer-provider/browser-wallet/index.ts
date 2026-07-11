@@ -103,53 +103,21 @@ async function discoverProviders(): Promise<
   // MERGE rounds instead of replacing: a wallet that misses one 300ms
   // announcement window must not make its accounts "unavailable" for that
   // round. A lingering entry for a removed extension fails harmlessly at
-  // request time.
+  // request time. Reference-identical providers (cohabiting MetaMask/Flask
+  // sharing one pipe) are deliberately NOT collapsed: collapsing re-keyed
+  // entries and invalidated already-issued account ids, and a duplicate-
+  // looking choice is far less damaging than a signer reference that stops
+  // resolving mid-plan.
   for (const [key, detail] of keyDiscoveredProviders(announcements)) {
     discoveredProviders.set(key, detail);
   }
-  discoveredProviders = collapseSharedTransports(discoveredProviders);
   return discoveredProviders;
 }
 
-// Cohabiting extensions (MetaMask + Flask) can announce DIFFERENT infos
-// wrapping the SAME provider object — one pipe, whichever extension owns it
-// answers for both. Two entries would be a fake choice: same accounts, both
-// UIs prompting. Collapse reference-identical providers into one entry whose
-// name states the ambiguity; the surviving key is the name-sorted first, so
-// it is deterministic across rounds.
-export function collapseSharedTransports(
-  providers: Map<string, Eip6963ProviderDetail>,
-): Map<string, Eip6963ProviderDetail> {
-  const byProvider = new Map<
-    Eip1193Provider,
-    Array<[string, Eip6963ProviderDetail]>
-  >();
-  for (const entry of providers) {
-    const group = byProvider.get(entry[1].provider) ?? [];
-    group.push(entry);
-    byProvider.set(entry[1].provider, group);
-  }
-  const collapsed = new Map<string, Eip6963ProviderDetail>();
-  for (const group of byProvider.values()) {
-    if (group.length === 1) {
-      collapsed.set(group[0][0], group[0][1]);
-      continue;
-    }
-    const sorted = [...group].sort(([a], [b]) => a.localeCompare(b));
-    const [key, detail] = sorted[0];
-    collapsed.set(key, {
-      provider: detail.provider,
-      info: {
-        ...detail.info,
-        name: sorted.map(([, entry]) => entry.info.name).join(' / '),
-      },
-    });
-  }
-  return collapsed;
-}
-
 export function makeAccountId(rdns: string, address: string): string {
-  return `${rdns}${ACCOUNT_ID_SEP}${address}`;
+  // Lowercased: account ids are matched by exact string equality end to end,
+  // and wallets differ in address casing between calls.
+  return `${rdns}${ACCOUNT_ID_SEP}${address.toLowerCase()}`;
 }
 
 export function splitAccountId(accountId: string): {

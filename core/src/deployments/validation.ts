@@ -60,10 +60,18 @@ export interface ValidationDeps {
     endpointId: string,
     result: Awaited<ReturnType<typeof verifyRpcEndpoint>>
   ) => Promise<void>;
-  resolveAccount: SignerProviderService['resolveAccount'];
-  providerState?: (
-    pluginId: string
-  ) => Promise<{ name: string; state: string } | undefined>;
+  // ONE snapshot per validate call. Browser-wallet accounts are tab-local
+  // and every read can be answered by a different tab, so re-reading per
+  // step and chain both widens the race window and makes failures describe
+  // a different read than the one that missed.
+  listAccounts: () => Promise<
+    Array<{
+      pluginId: string;
+      name: string;
+      state: string;
+      accounts: Array<{ id: string; address: string }>;
+    }>
+  >;
   createClient: (url: string) => Client;
   bufferPct: number;
 }
@@ -90,6 +98,15 @@ export async function validatePlan(
     freezeError = error;
   }
 
+  let accountsSnapshot: Awaited<ReturnType<ValidationDeps['listAccounts']>> =
+    [];
+  let accountsError: unknown;
+  try {
+    accountsSnapshot = await deps.listAccounts();
+  } catch (error) {
+    accountsError = error;
+  }
+
   const bindings: Record<string, RpcBinding> = {};
   const chains: Record<string, ChainChecklist> = {};
   for (const chainId of plan.chains) {
@@ -109,7 +126,12 @@ export async function validatePlan(
             ? 'Inputs frozen; repository changes were detected'
             : 'Inputs frozen'
         );
-    const signerResults = await validateSigners(plan, chainId, deps);
+    const signerResults = validateSigners(
+      plan,
+      chainId,
+      accountsSnapshot,
+      accountsError
+    );
     const args = validateArgs(plan, chainId, frozen, freezeError);
     const estimation = await validateEstimations(
       plan,
@@ -168,20 +190,8 @@ function defaultDeps(): ValidationDeps {
     },
     verifyRpcEndpoint,
     updateVerification: rpcStore.updateVerification.bind(rpcStore),
-    resolveAccount: SignerProviderService.getInstance().resolveAccount.bind(
-      SignerProviderService.getInstance()
-    ),
-    providerState: async (pluginId) => {
-      const data = await SignerProviderService.getInstance().listAccounts(
-        false
-      );
-      const provider = data.providers.find(
-        (entry) => entry.pluginId === pluginId
-      );
-      return provider
-        ? { name: provider.name, state: provider.state }
-        : undefined;
-    },
+    listAccounts: async () =>
+      (await SignerProviderService.getInstance().listAccounts(true)).providers,
     createClient: (url) =>
       createPublicClient({ transport: http(url) }) as unknown as Client,
     bufferPct: 20,
@@ -247,10 +257,11 @@ async function validateRpc(
   );
 }
 
-async function validateSigners(
+function validateSigners(
   plan: DeploymentPlan,
   chainId: number,
-  deps: ValidationDeps
+  snapshot: Awaited<ReturnType<ValidationDeps['listAccounts']>>,
+  snapshotError: unknown
 ) {
   const signers = new Map<string, Hex>();
   const failures: string[] = [];
@@ -262,26 +273,43 @@ async function validateSigners(
         ?.contractName ?? step.id;
     const signer = resolveSigner(plan, step, chainId);
     if (!signer) { failures.push(`No signer is configured for ${stepName}`); continue; }
-    const resolved = await deps.resolveAccount(
-      signer.pluginId,
-      signer.accountId,
-      { refresh: true }
+    if (snapshotError) {
+      failures.push(
+        `Signer accounts could not be listed for ${stepName} (${safeMessage(snapshotError, 'listing failed')})`
+      );
+      continue;
+    }
+    const provider = snapshot.find(
+      (entry) => entry.pluginId === signer.pluginId
     );
-    if (!resolved) {
+    const account = provider?.accounts.find(
+      (entry) => entry.id === signer.accountId
+    );
+    if (!account) {
       // Say WHY the provider has no account — "not available" alone made a
-      // dead browser-tab bridge indistinguishable from a missing key.
-      const provider = await deps.providerState?.(signer.pluginId);
+      // dead browser-tab bridge indistinguishable from a missing key. The
+      // ids in THIS snapshot (the exact read that missed) discriminate the
+      // failure modes: an EMPTY list means the wallet answered with nothing
+      // (locked/deauthorized), a DIFFERENT id shape means a stale tab or
+      // bundle answered, a list without this wallet means its extension
+      // never announced to the answering tab.
+      const listed = provider
+        ? provider.accounts.length > 0
+          ? `; listed ids: ${provider.accounts
+              .slice(0, 8)
+              .map((entry) => entry.id)
+              .join(', ')}`
+          : '; listed no accounts (wallet locked or site deauthorized?)'
+        : '';
       const detail = provider
-        ? `${provider.name} reports '${provider.state}'`
-        : `provider ${signer.pluginId} returned no matching account`;
+        ? `${provider.name} reports '${provider.state}'${listed}`
+        : `provider ${signer.pluginId} is not installed or listed no accounts`;
       failures.push(
         `Signer account for ${stepName} is not available (${detail})`
       );
       continue;
     }
-    if (
-      resolved.account.address.toLowerCase() !== signer.address.toLowerCase()
-    ) {
+    if (account.address.toLowerCase() !== signer.address.toLowerCase()) {
       failures.push(`Signer address for ${stepName} no longer matches the plan`);
       continue;
     }

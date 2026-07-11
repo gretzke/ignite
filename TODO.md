@@ -58,6 +58,18 @@ blocking current functionality.
   restart, so a replay after restart gets a 409 instead of the idempotent answer. A
   durable per-run command log would close this; low urgency (the frontend mints a fresh
   commandId per click and surfaces the 409).
+- **Browser-wallet host affinity (Sol deep-dive, 2026-07-11).** Browser-wallet
+  accounts are tab-local, but SignerRef carries no host identity and the
+  bridge routes every request to the most recently registered tab — a stale
+  or differently-stated tab can answer reads the plan was not built against.
+  Design (sketched in the deep-dive): tabs register a runtimeInstanceId +
+  bundle SHA-256; core excludes hash-mismatched hosts ("tab needs reload"
+  state instead of wrong-format success), accounts carry an owner-host
+  lease, and validation + sendTransaction route to the owning host. Also:
+  per-wallet diagnostics from getAccounts (locked/deauthorized/threw ≠
+  aggregate 'ok'), accountsChanged listener → UI invalidation, request
+  generation ids in the signers slice, stale-selection marking in the
+  wizard.
 - **Artifact write failures are silent at lane-terminal time.** The on-disk artifact is
   best-effort at terminal transitions; a write failure (disk full) is not represented on
   the run. Mitigated: `GET /deployments/runs/:id/artifact` re-renders from the run record

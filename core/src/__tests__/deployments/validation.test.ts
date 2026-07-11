@@ -69,13 +69,14 @@ function deps(overrides: Record<string, unknown> = {}): any {
       checkedAt: '2026-07-10T00:00:00.000Z',
     })),
     updateVerification,
-    resolveAccount: vi.fn(async () => ({
-      account: {
-        id: 'account',
-        address: ADDRESS,
-        capability: 'sign-only' as const,
+    listAccounts: vi.fn(async () => [
+      {
+        pluginId: 'key',
+        name: 'Key',
+        state: 'ok',
+        accounts: [{ id: 'account', address: ADDRESS }],
       },
-    })),
+    ]),
     createClient: vi.fn(() => ({
       estimateGas: overrides.estimateGas ?? estimateGas,
       getBalance: overrides.getBalance ?? getBalance,
@@ -91,9 +92,9 @@ function deps(overrides: Record<string, unknown> = {}): any {
 describe('validatePlan', () => {
   it('reports an unresolved signer only on the affected chain', async () => {
     const d = deps({
-      resolveAccount: vi.fn(
-        async (_plugin: string, _account: string) => undefined
-      ),
+      listAccounts: vi.fn(async () => [
+        { pluginId: 'key', name: 'Key', state: 'ok', accounts: [] },
+      ]),
     });
     const result = await validatePlan(
       plan({ chains: [1, 2] }),
@@ -106,7 +107,9 @@ describe('validatePlan', () => {
       code: 'SIGNER_ACCOUNT_NOT_FOUND',
     });
     expect(result.report.chains['2'].signers.ok).toBe(false);
-  });
+    // Runs two full per-chain validations against fake RPC timing; the
+    // default 5s budget is borderline on a loaded machine.
+  }, 15_000);
 
   it('names missing constructor args in details', async () => {
     const result = await validatePlan(

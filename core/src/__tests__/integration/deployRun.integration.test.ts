@@ -118,7 +118,8 @@ describe.skipIf(!ready)('deployRun: two anvil containers (Docker)', () => {
         validate: (plan, selection, opts) =>
           validatePlan(plan, selection, {
             profileId: opts?.profileId,
-            resolveAccount: signerService.resolveAccount.bind(signerService),
+            listAccounts: async () =>
+              (await signerService.listAccounts(true)).providers,
           }),
         chainMetadata: async (chainId) => ({
           name: `Anvil ${chainId}`,
