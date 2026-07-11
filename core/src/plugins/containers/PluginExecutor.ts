@@ -81,6 +81,9 @@ export const OPERATION_PERMISSIONS: Record<string, BooleanPermission> = {
   install: 'repoWrite',
   compile: 'repoWrite',
   verify: 'net',
+  getSupportedExplorers: 'net',
+  checkVerification: 'net',
+  getCreationTx: 'net',
   // sendTransaction submits to a provider-defined target (API/RPC) and needs
   // network. getAccounts/signTransaction are pure over injected config.
   sendTransaction: 'net',

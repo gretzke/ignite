@@ -21,7 +21,7 @@ export interface IRequestOptions {
   signal?: AbortSignal;
 }
 
-export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export function joinUrl(baseUrl: string | undefined, path: string): string {
   const base = baseUrl ?? "";

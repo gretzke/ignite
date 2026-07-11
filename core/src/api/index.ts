@@ -25,6 +25,7 @@ import { gitHandlers } from './git.js';
 import { chainHandlers } from './chains.js';
 import { signerHandlers } from './signers.js';
 import { deploymentHandlers } from './deployments.js';
+import { explorerHandlers } from './explorers.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
@@ -58,6 +59,7 @@ export async function registerApi(app: FastifyInstance) {
         { name: 'filesystem', description: 'Host filesystem browsing' },
         { name: 'chains', description: 'Chain registry and RPC endpoints' },
         { name: 'signers', description: 'Signer providers and sending' },
+        { name: 'explorers', description: 'Explorer mappings and selections' },
       ],
     },
     transform: jsonSchemaTransform,
@@ -100,6 +102,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...chainHandlers,
     ...signerHandlers,
     ...deploymentHandlers,
+    ...explorerHandlers,
   };
 
   checkHandlers(allHandlers);
