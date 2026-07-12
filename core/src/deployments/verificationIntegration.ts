@@ -46,7 +46,7 @@ export function wireVerificationReconciliation(queue: VerificationQueue): void {
               getLogger().warn(`verification reconciliation skipped ${attempt.txHash}: transaction data unavailable or prefix mismatch`);
               continue;
             }
-            await queue.enqueueForConfirmedStep(profileId, run, Number(chainKey), step.stepId, planStep.contractId, step.address, attempt.txHash, data.slice(creation.length));
+            await queue.enqueueForConfirmedStep(profileId, run, Number(chainKey), step.stepId, planStep.contractId, step.address, attempt.txHash, `0x${data.slice(creation.length)}`);
           }
         }
       }

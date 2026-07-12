@@ -64,4 +64,30 @@ describe('VerificationStore quarantine', () => {
     expect(await store.list('p')).toEqual([]);
     await expect(fs.access(`${file}.bad`)).resolves.toBeUndefined();
   });
+
+  it('normalizes bare/empty constructor tails from early D4 records on read', async () => {
+    const { store, file } = await makeStore();
+    const base = {
+      chainId: 1,
+      bundleHash: 'a'.repeat(64),
+      explorer: { entryId: 'e', url: 'https://scan.test', verifierPluginId: 'v', label: 'S' },
+      origin: { kind: 'manual' },
+      status: 'failed',
+      attempts: [],
+      createdAt: '2026-07-11T00:00:00.000Z',
+      updatedAt: '2026-07-11T00:00:00.000Z',
+    };
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        schemaVersion: 1,
+        tasks: [
+          { ...base, id: 't1', address: '0x0000000000000000000000000000000000000001', encodedConstructorArgs: '' },
+          { ...base, id: 't2', address: '0x0000000000000000000000000000000000000002', encodedConstructorArgs: 'deadbeef' },
+        ],
+      })
+    );
+    const tasks = await store.list('p');
+    expect(tasks.map((t) => t.encodedConstructorArgs)).toEqual(['0x', '0xdeadbeef']);
+  });
 });

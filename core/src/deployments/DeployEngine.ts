@@ -1045,7 +1045,7 @@ export class DeployEngine {
     }
     await this.deps.verificationQueue.enqueueForConfirmedStep(
       run.profileId, run, chainId, step.stepId, planStep.contractId,
-      step.address, hash, data.slice(creation.length) as string
+      step.address, hash, `0x${data.slice(creation.length)}`
     );
   }
 

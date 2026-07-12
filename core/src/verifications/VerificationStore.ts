@@ -169,6 +169,15 @@ export class VerificationStore {
         )
       )
         throw new Error('schema');
+      // Read-migration: early D4 run-origin tasks stored the constructor
+      // tail bare (or '' for argless deploys), which fails the 0x-prefixed
+      // wire schema and 500s every response embedding the task.
+      for (const task of (v as File).tasks) {
+        const tail = task.encodedConstructorArgs;
+        if (typeof tail === 'string' && !tail.startsWith('0x')) {
+          task.encodedConstructorArgs = `0x${tail}`;
+        }
+      }
       return v as File;
     } catch {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- Safe: quarantine sidecar within ~/.ignite

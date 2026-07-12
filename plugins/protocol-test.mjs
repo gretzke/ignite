@@ -296,6 +296,12 @@ try {
       assert(resubmit.data?.status === 'failed' && resubmit.data?.retryable === true && resubmit.data?.detail === 'verification already in progress', `${name}: re-submit while verification is in progress is retryable`, resubmit);
       const alreadyVerified = runOp(entry, 'verify', base);
       assert(alreadyVerified.data?.status === 'already-verified', `${name}: an existing verified contract is terminal`, alreadyVerified);
+      const notIndexed = runOp(entry, 'verify', { ...base, address: '0x000000000000000000000000000000000000dead' });
+      assert(
+        notIndexed.data?.status === 'failed' && notIndexed.data?.retryable === true && /unable to locate contractcode/i.test(notIndexed.data?.detail ?? ''),
+        `${name}: not-yet-indexed bytecode is retryable and carries the explorer message`,
+        notIndexed
+      );
     } else {
       const pending = runOp(entry, 'checkVerification', { ...base, pollTicket: submit.data.pollTicket });
       const complete = runOp(entry, 'checkVerification', { ...base, pollTicket: submit.data.pollTicket });
