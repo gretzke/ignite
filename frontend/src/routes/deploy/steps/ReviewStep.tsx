@@ -111,7 +111,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
       if (!('data' in response)) throw new Error(response.message);
       dispatch(runSnapshotReceived(response.data.run));
       dispatch(clearDraft());
-      navigate(`/deployments/${response.data.run.id}`);
+      navigate(`/deployments/${response.data.run.id}`, { replace: true });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

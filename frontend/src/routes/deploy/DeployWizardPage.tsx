@@ -1,8 +1,14 @@
-import { useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { reorderSteps } from '../../store/features/deployments/deployDraftSlice';
+import {
+  reorderSteps,
+  markDraftSeen,
+  clearDraft,
+  removeContract,
+} from '../../store/features/deployments/deployDraftSlice';
+import ConfirmDialog from '../../components/ConfirmDialog';
 import WizardStepper from './components/WizardStepper';
 import ContractsStep from './steps/ContractsStep';
 import ChainsStep from './steps/ChainsStep';
@@ -91,6 +97,14 @@ export default function DeployWizardPage() {
   const stateExplorers = useAppSelector((state) => state.explorers.byChain);
   const [step, setStep] = useState(0);
   const [contractsValid, setContractsValid] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const draftActive = draft.contracts.length > 0;
+
+  // Visiting the wizard is what "sees" pending additions: clear the sidebar
+  // badge on mount.
+  useEffect(() => {
+    dispatch(markDraftSeen());
+  }, [dispatch]);
   const { plan, planProblem } = useMemo(() => {
     try {
       return { plan: planFromDraft(draft, chains), planProblem: undefined };
@@ -155,10 +169,21 @@ export default function DeployWizardPage() {
           type="button"
           className="btn btn-secondary btn-icon"
           aria-label="Back"
-          onClick={() => navigate(-1)}
+          onClick={() => navigate('/deployments')}
         >
           <ArrowLeft size={18} />
         </button>
+        {draftActive && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-icon"
+            aria-label="Discard deployment"
+            title="Discard deployment"
+            onClick={() => setConfirmDiscard(true)}
+          >
+            <Trash2 size={18} />
+          </button>
+        )}
         <div>
           <h1 className="page-title mb-0">Deploy contracts</h1>
           <p className="text-sm text-muted">
@@ -166,6 +191,17 @@ export default function DeployWizardPage() {
           </p>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmDiscard}
+        onOpenChange={setConfirmDiscard}
+        title="Discard deployment?"
+        description="Removes every added contract and all configuration in this deployment."
+        confirmText="Discard"
+        onConfirm={() => {
+          dispatch(clearDraft());
+          navigate('/deployments', { replace: true });
+        }}
+      />
       <WizardStepper
         steps={STEPS}
         currentIndex={step}
@@ -182,6 +218,7 @@ export default function DeployWizardPage() {
             onReorder={(fromIndex, toIndex) =>
               dispatch(reorderSteps({ fromIndex, toIndex }))
             }
+            onRemove={(contractId) => dispatch(removeContract(contractId))}
           />
         )}
         {step === 1 && <ChainsStep />}

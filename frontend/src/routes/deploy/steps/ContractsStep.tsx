@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, Box, Loader2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Box, Loader2, X } from 'lucide-react';
 import type { DraftContract } from '../../../store/features/deployments/types';
 import { apiClient } from '../../../store/api/client';
 
 interface ContractsStepProps {
   contracts: DraftContract[];
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onRemove: (contractId: string) => void;
   onValidityChange: (valid: boolean) => void;
 }
 
 export default function ContractsStep({
   contracts,
   onReorder,
+  onRemove,
   onValidityChange,
 }: ContractsStepProps) {
   const [checks, setChecks] = useState<
@@ -123,6 +125,15 @@ export default function ContractsStep({
                 onClick={() => onReorder(index, index + 1)}
               >
                 <ArrowDown size={14} />
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-secondary"
+                aria-label={`Remove ${contract.contractName} from deployment`}
+                title="Remove from deployment"
+                onClick={() => onRemove(contract.id)}
+              >
+                <X size={14} />
               </button>
             </div>
           ))}
