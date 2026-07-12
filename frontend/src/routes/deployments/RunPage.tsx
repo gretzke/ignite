@@ -35,14 +35,16 @@ export function runHeaderStatus(
   run: { id: string; status: string },
   tasks: VerificationTask[] | undefined
 ): string {
+  // Only a COMPLETED run is re-labelled: lanes still running/paused keep the
+  // lane-truth status (verification runs concurrently and never blocks them).
+  if (run.status !== 'completed') return run.status;
   const hasActiveVerification = tasks?.some(
     (task) =>
       'runId' in task.origin &&
       task.origin.runId === run.id &&
       !TERMINAL_VERIFICATION_STATUSES.has(task.status)
   );
-  if (hasActiveVerification) return 'verifying';
-  return run.status;
+  return hasActiveVerification ? 'verifying' : run.status;
 }
 
 function signerFor(

@@ -25,4 +25,13 @@ describe('runHeaderStatus', () => {
       runHeaderStatus({ ...run, status: 'paused' }, [task('failed')])
     ).toBe('paused');
   });
+
+  it('keeps lane-truth statuses while the run is not completed', () => {
+    expect(
+      runHeaderStatus({ id: 'run-1', status: 'paused' }, [task('polling')])
+    ).toBe('paused');
+    expect(
+      runHeaderStatus({ id: 'run-1', status: 'running' }, [task('queued')])
+    ).toBe('running');
+  });
 });

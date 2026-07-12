@@ -116,8 +116,8 @@ export default function PluginUpdateModal({
               className="size-10 rounded-full flex items-center justify-center shrink-0"
               style={{
                 background:
-                  'color-mix(in oklch, var(--profile-color) 12%, transparent)',
-                color: 'var(--profile-color)',
+                  'color-mix(in oklch, var(--profile-color) 22%, transparent)',
+                color: 'color-mix(in oklch, var(--profile-color) 55%, var(--text))',
               }}
             >
               <ArrowUpCircle size={20} />
