@@ -23,6 +23,7 @@ import { listArtifacts } from '../../../../store/features/compiler/compilerSlice
 import { SyntaxHighlighter } from '../../../../components/SyntaxHighlighter';
 import Select from '../../../../components/Select';
 import { seedDraft } from '../../../../store/features/deployments/deployDraftSlice';
+import { contractSourceId } from '../../../../utils/contractSourceId';
 
 interface CopyButtonProps {
   content: string;
@@ -286,7 +287,13 @@ export default function FilePage() {
     dispatch(
       seedDraft([
         {
-          id: `${frameworkId}:${selectedArtifact.artifactPath}:${selectedArtifact.contractName}`,
+          id: contractSourceId({
+            repoPathOrUrl: decodedRepoPath,
+            frameworkId,
+            artifactPath: selectedArtifact.artifactPath,
+            contractName: selectedArtifact.contractName,
+            sourcePath: selectedArtifact.sourcePath,
+          }),
           repoPathOrUrl: decodedRepoPath,
           frameworkId,
           artifactPath: selectedArtifact.artifactPath,
@@ -300,7 +307,13 @@ export default function FilePage() {
   const verify = () => {
     if (!frameworkId || !selectedArtifact) return;
     const params = new URLSearchParams({
-      contractId: `${frameworkId}:${selectedArtifact.artifactPath}:${selectedArtifact.contractName}`,
+      contractId: contractSourceId({
+        repoPathOrUrl: decodedRepoPath,
+        frameworkId,
+        artifactPath: selectedArtifact.artifactPath,
+        contractName: selectedArtifact.contractName,
+        sourcePath: selectedArtifact.sourcePath,
+      }),
       repoPathOrUrl: decodedRepoPath,
       frameworkId,
       artifactPath: selectedArtifact.artifactPath,

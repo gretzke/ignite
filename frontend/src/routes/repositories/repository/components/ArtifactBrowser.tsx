@@ -10,6 +10,7 @@ import {
 import type { ArtifactLocation } from '@ignite/api';
 import { useAppDispatch } from '../../../../store';
 import { seedDraft } from '../../../../store/features/deployments/deployDraftSlice';
+import { contractSourceId } from '../../../../utils/contractSourceId';
 
 interface ArtifactBrowserProps {
   artifacts: ArtifactLocation[];
@@ -140,15 +141,17 @@ export default function ArtifactBrowser({
   const { directories, files } = directoryContents;
   const deploySelected = () => {
     if (!frameworkId || !repoPath) return;
-    const contracts = Object.values(selected).map((artifact) => ({
-      id: `${frameworkId}:${artifact.artifactPath}:${artifact.contractName}`,
-      // react-router has already decoded the path parameter.
-      repoPathOrUrl: repoPath,
-      frameworkId,
-      artifactPath: artifact.artifactPath,
-      contractName: artifact.contractName,
-      sourcePath: artifact.sourcePath,
-    }));
+    const contracts = Object.values(selected).map((artifact) => {
+      const source = {
+        // react-router has already decoded the path parameter.
+        repoPathOrUrl: repoPath,
+        frameworkId,
+        artifactPath: artifact.artifactPath,
+        contractName: artifact.contractName,
+        sourcePath: artifact.sourcePath,
+      };
+      return { id: contractSourceId(source), ...source };
+    });
     dispatch(seedDraft(contracts));
     navigate('/deploy');
   };

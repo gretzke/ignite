@@ -4,6 +4,7 @@ import Select from './Select';
 import { useAppDispatch, useAppSelector } from '../store';
 import { listArtifacts } from '../store/features/compiler/compilerSlice';
 import { apiClient } from '../store/api/client';
+import { contractSourceId } from '../utils/contractSourceId';
 
 export interface PickedArtifact {
   contract: ContractSource;
@@ -56,7 +57,13 @@ export default function ArtifactPicker({
     if (!('data' in response)) return;
     onSelect(
       {
-        id: `${effectiveFramework}:${artifact.artifactPath}:${artifact.contractName}`,
+        id: contractSourceId({
+          repoPathOrUrl: repoPath,
+          frameworkId: effectiveFramework,
+          artifactPath: artifact.artifactPath,
+          contractName: artifact.contractName,
+          sourcePath: artifact.sourcePath,
+        }),
         repoPathOrUrl: repoPath,
         frameworkId: effectiveFramework,
         artifactPath: artifact.artifactPath,
