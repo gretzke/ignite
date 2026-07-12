@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BadgeCheck, History, Loader2, Play, Plus } from 'lucide-react';
+import { AlertTriangle, History, Loader2, Play, Plus } from 'lucide-react';
 import type { VerificationTask } from '@ignite/api';
 import { Link, useNavigate } from 'react-router-dom';
 import type { RunSummary } from '@ignite/api';
@@ -120,9 +120,6 @@ export default function DeploymentsPage() {
         <Link to="/deploy" className="btn btn-primary">
           <Plus size={16} /> New deployment
         </Link>
-        <Link to="/verify" className="btn btn-secondary">
-          <BadgeCheck size={16} /> Verify a contract
-        </Link>
       </div>
       {loading && (
         <div className="card-milky p-8 flex justify-center gap-2 text-muted">
@@ -176,14 +173,20 @@ export default function DeploymentsPage() {
               <div key={task.id} className="list-row flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{task.explorer.label}</div>
-                  <div className="mono-data text-muted truncate">{task.address}</div>
+                  <div className="mono-data text-muted truncate">
+                    {task.address}
+                  </div>
                 </div>
                 {task.status === 'already-verified' ? (
                   <Tooltip label="Already verified on explorer (existing verification — possibly different sources)">
                     <span className="chip chip-ok">Already verified</span>
                   </Tooltip>
                 ) : (
-                  <span className={`chip ${task.status === 'verified' ? 'chip-ok' : task.status === 'failed' ? 'chip-err' : ''}`}>{task.status}</span>
+                  <span
+                    className={`chip ${task.status === 'verified' ? 'chip-ok' : task.status === 'failed' ? 'chip-err' : ''}`}
+                  >
+                    {task.status}
+                  </span>
                 )}
               </div>
             ))}

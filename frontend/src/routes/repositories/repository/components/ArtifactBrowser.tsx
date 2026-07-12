@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Loader2, Folder, FileCode, ChevronRight, Rocket, BadgeCheck } from 'lucide-react';
+import { Loader2, Folder, FileCode, ChevronRight, Rocket } from 'lucide-react';
 import {
   buildPathTree,
   getDirectoryContents,
@@ -93,19 +93,6 @@ export default function ArtifactBrowser({
       `/repositories/${encodedRepoPath}/file/${encodedFilePath}${queryParams}`
     );
   };
-  const verifyArtifact = (artifact: ArtifactLocation) => {
-    if (!frameworkId || !repoPath) return;
-    const params = new URLSearchParams({
-      contractId: `${frameworkId}:${artifact.artifactPath}:${artifact.contractName}`,
-      repoPathOrUrl: repoPath,
-      frameworkId,
-      artifactPath: artifact.artifactPath,
-      contractName: artifact.contractName,
-      sourcePath: artifact.sourcePath,
-    });
-    navigate(`/verify?${params}`);
-  };
-
   const handleBackClick = () => {
     if (currentPath === '') return;
     const pathParts = currentPath.split('/');
@@ -250,13 +237,6 @@ export default function ArtifactBrowser({
                 {file.artifact.contractName}
               </div>
               <div className="mono-data text-muted truncate">{file.name}</div>
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm btn-secondary"
-              onClick={() => verifyArtifact(file.artifact)}
-            >
-              <BadgeCheck size={14} /> Verify
             </button>
           </div>
         ))}

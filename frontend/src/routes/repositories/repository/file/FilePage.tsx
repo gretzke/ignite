@@ -13,6 +13,7 @@ import {
   Check,
   Loader2,
   Rocket,
+  BadgeCheck,
 } from 'lucide-react';
 import { getRepoName } from '../../../../utils/repo';
 import type { RootState, AppDispatch } from '../../../../store/store';
@@ -296,6 +297,18 @@ export default function FilePage() {
     );
     navigate('/deploy');
   };
+  const verify = () => {
+    if (!frameworkId || !selectedArtifact) return;
+    const params = new URLSearchParams({
+      contractId: `${frameworkId}:${selectedArtifact.artifactPath}:${selectedArtifact.contractName}`,
+      repoPathOrUrl: decodedRepoPath,
+      frameworkId,
+      artifactPath: selectedArtifact.artifactPath,
+      contractName: selectedArtifact.contractName,
+      sourcePath: selectedArtifact.sourcePath,
+    });
+    navigate(`/verify?${params}`);
+  };
 
   // Only show main loading for file content - artifact data loads separately in the Contract Details card
   const isLoading = fileLoading || !contentLoaded;
@@ -362,6 +375,14 @@ export default function FilePage() {
                 onClick={deploy}
               >
                 <Rocket size={15} /> Deploy
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={!artifactData}
+                onClick={verify}
+              >
+                <BadgeCheck size={15} /> Verify
               </button>
             </div>
           </div>

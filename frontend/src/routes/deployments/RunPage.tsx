@@ -6,6 +6,7 @@ import type {
   ResolveLaneRequest,
   SignerProviderAccounts,
   SignerRef,
+  VerificationTask,
 } from '@ignite/api';
 import { apiClient } from '../../store/api/client';
 import { useAppDispatch, useAppSelector } from '../../store';
@@ -21,6 +22,28 @@ import LanePanel from './components/LanePanel';
 import ResolveEditDialog from './components/ResolveEditDialog';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import VerificationPanel from './components/VerificationPanel';
+
+const TERMINAL_VERIFICATION_STATUSES = new Set([
+  'verified',
+  'already-verified',
+  'failed',
+  'cancelled',
+  'superseded',
+]);
+
+export function runHeaderStatus(
+  run: { id: string; status: string },
+  tasks: VerificationTask[] | undefined
+): string {
+  const hasActiveVerification = tasks?.some(
+    (task) =>
+      'runId' in task.origin &&
+      task.origin.runId === run.id &&
+      !TERMINAL_VERIFICATION_STATUSES.has(task.status)
+  );
+  if (hasActiveVerification) return 'verifying';
+  return run.status;
+}
 
 function signerFor(
   ref: SignerRef | undefined,
@@ -44,6 +67,9 @@ export default function RunPage() {
   const run = useAppSelector((state) => selectDeploymentRun(state, runId));
   const chains = useAppSelector((state) => state.chains);
   const providers = useAppSelector((state) => state.signers.providers);
+  const verificationTasks = useAppSelector((state) =>
+    state.verifications.byRun[runId]?.map((id) => state.verifications.tasks[id])
+  );
   const [loading, setLoading] = useState(!run);
   const [error, setError] = useState<string | null>(null);
   const [editChainId, setEditChainId] = useState<number | null>(null);
@@ -91,6 +117,9 @@ export default function RunPage() {
       ),
     [run?.plan.contracts]
   );
+  const headerStatus = run
+    ? runHeaderStatus(run, verificationTasks)
+    : undefined;
 
   if (loading && !run)
     return (
@@ -199,10 +228,10 @@ export default function RunPage() {
           <span className="mono-data text-muted">{run.id}</span>
         </div>
         <span
-          className={`chip ml-auto ${run.status === 'completed' ? 'chip-ok' : run.status === 'paused' ? 'chip-warn' : ''}`}
+          className={`chip ml-auto ${headerStatus === 'verifying' ? 'chip-info' : headerStatus === 'completed' ? 'chip-ok' : headerStatus === 'paused' ? 'chip-warn' : ''}`}
         >
           <span className="chip-dot" />
-          {run.status}
+          {headerStatus}
         </span>
         {!['completed', 'failed', 'aborted'].includes(run.status) && (
           <button
