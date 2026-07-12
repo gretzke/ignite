@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, History, Loader2, Play, Plus } from 'lucide-react';
+import {
+  AlertTriangle,
+  History,
+  Loader2,
+  Play,
+  Plus,
+  Rocket,
+} from 'lucide-react';
 import type { VerificationTask } from '@ignite/api';
 import { Link, useNavigate } from 'react-router-dom';
 import type { RunSummary } from '@ignite/api';
@@ -31,6 +38,9 @@ export default function DeploymentsPage() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const summaries = useAppSelector((state) => state.deployments.summaries);
+  const draftActive = useAppSelector(
+    (s) => s.deployDraft.contracts.length > 0
+  );
   const [unreadable, setUnreadable] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,7 +128,15 @@ export default function DeploymentsPage() {
           </p>
         </div>
         <Link to="/deploy" className="btn btn-primary">
-          <Plus size={16} /> New deployment
+          {draftActive ? (
+            <>
+              <Rocket size={16} /> Manage deployment
+            </>
+          ) : (
+            <>
+              <Plus size={16} /> New deployment
+            </>
+          )}
         </Link>
       </div>
       {loading && (

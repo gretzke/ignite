@@ -6,14 +6,9 @@ import {
   ChevronsRight,
   Rocket,
 } from 'lucide-react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../store';
 import { setSidebarCollapsed } from '../store/features/app/appSlice';
-
-const NAV_ITEMS = [
-  { to: '/repositories', label: 'Repositories', Icon: Folder },
-  { to: '/deployments', label: 'Deployments', Icon: Rocket },
-] as const;
 
 function navClass({ isActive }: { isActive: boolean }) {
   return `btn btn-secondary btn-secondary-borderless nav-item${
@@ -24,17 +19,49 @@ function navClass({ isActive }: { isActive: boolean }) {
 export default function Sidebar() {
   const dispatch = useAppDispatch();
   const collapsed = useAppSelector((s) => s.app.sidebarCollapsed);
+  const draftActive = useAppSelector(
+    (s) => s.deployDraft.contracts.length > 0
+  );
+  const unseenCount = useAppSelector((s) => s.deployDraft.unseenIds.length);
+  const location = useLocation();
+  // '/deploy' is a prefix of '/deployments', so one check covers the wizard,
+  // the runs list, and individual runs.
+  const deploymentsActive = location.pathname.startsWith('/deploy');
+  const navItems = [
+    {
+      to: '/repositories',
+      label: 'Repositories',
+      Icon: Folder,
+      badge: 0,
+      forceActive: undefined as boolean | undefined,
+    },
+    {
+      // An active deployment makes the tab jump straight into the wizard.
+      to: draftActive ? '/deploy' : '/deployments',
+      label: 'Deployments',
+      Icon: Rocket,
+      badge: unseenCount,
+      forceActive: deploymentsActive,
+    },
+  ];
   const onToggle = () => dispatch(setSidebarCollapsed(!collapsed));
   return (
     <aside
       className={`glass-surface glass-sidebar ${collapsed ? 'collapsed' : ''}`}
     >
       <div className="nav-list">
-        {NAV_ITEMS.map(({ to, label, Icon }) => {
+        {navItems.map(({ to, label, Icon, badge, forceActive }) => {
           const link = (
-            <NavLink key={to} to={to} className={navClass}>
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) =>
+                navClass({ isActive: forceActive ?? isActive })
+              }
+            >
               <Icon size={18} />
               <span className="nav-label">{label}</span>
+              {badge > 0 && <span className="nav-badge">{badge}</span>}
             </NavLink>
           );
           return collapsed ? (
