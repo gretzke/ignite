@@ -4,7 +4,6 @@ import {
   Settings as IconSettings,
   ChevronsLeft,
   ChevronsRight,
-  Send,
   Rocket,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
@@ -13,7 +12,6 @@ import { setSidebarCollapsed } from '../store/features/app/appSlice';
 
 const NAV_ITEMS = [
   { to: '/repositories', label: 'Repositories', Icon: Folder },
-  { to: '/dev/send', label: 'Dev Send', Icon: Send },
   { to: '/deployments', label: 'Deployments', Icon: Rocket },
 ] as const;
 
