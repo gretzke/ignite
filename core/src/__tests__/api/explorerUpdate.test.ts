@@ -97,8 +97,11 @@ describe('updateExplorer retargeting', () => {
       reply as never
     );
     expect(reply.statusCode).toBe(200);
-    const entry = (reply.body as { data: { entry: { id: string; verifierPluginId?: string } } })
-      .data.entry;
+    const entry = (
+      reply.body as {
+        data: { entry: { id: string; verifierPluginId?: string } };
+      }
+    ).data.entry;
     expect(entry.id).toBe(manual.id); // patch landed on the survivor
     expect(entry.verifierPluginId).toBe('blockscout');
   });
@@ -126,8 +129,9 @@ describe('updateExplorer retargeting', () => {
       reply as never
     );
     expect(reply.statusCode).toBe(200);
-    const entry = (reply.body as { data: { entry: { verifierPluginId?: string } } })
-      .data.entry;
+    const entry = (
+      reply.body as { data: { entry: { verifierPluginId?: string } } }
+    ).data.entry;
     expect(entry.verifierPluginId).toBe('blockscout');
   });
 });
@@ -140,9 +144,13 @@ describe('resolveMergedExplorers verifier mappings', () => {
       { query: { chainId: 11155111 } } as never,
       reply as never
     );
-    const entry = (reply.body as {
-      data: { entries: { verifierPluginId?: string; mappingSuggestion?: string }[] };
-    }).data.entries[0];
+    const entry = (
+      reply.body as {
+        data: {
+          entries: { verifierPluginId?: string; mappingSuggestion?: string }[];
+        };
+      }
+    ).data.entries[0];
     expect(entry.verifierPluginId).toBe('blockscout');
     expect(entry.mappingSuggestion).toBeUndefined();
   });
@@ -183,9 +191,11 @@ describe('resolveMergedExplorers verifier mappings', () => {
       { query: { chainId: 11155111 } } as never,
       reply as never
     );
-    const entry = (reply.body as {
-      data: { entries: { verifierPluginId?: string }[] };
-    }).data.entries[0];
+    const entry = (
+      reply.body as {
+        data: { entries: { verifierPluginId?: string }[] };
+      }
+    ).data.entries[0];
     expect(entry.verifierPluginId).toBe('alternate-blockscout');
   });
 });

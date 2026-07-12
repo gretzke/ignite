@@ -117,7 +117,8 @@ export async function resolveMergedExplorers(
       // A single URL-pattern owner is unambiguous enough to use immediately.
       // An overlay remains the source of truth whenever a user chooses a
       // different verifier; multiple owners intentionally stay a suggestion.
-      const confirmed = explicit ??
+      const confirmed =
+        explicit ??
         (matchingPluginIds.length === 1 ? matchingPluginIds[0] : undefined);
       const suggestion =
         !confirmed && matchingPluginIds.length > 1
@@ -155,14 +156,12 @@ export function createExplorerHandlers(deps?: Partial<ExplorerHandlerDeps>) {
     ): Promise<IApiResponse<ListExplorersData>> => {
       try {
         const chainId = Number(request.query.chainId);
-        return reply
-          .status(200)
-          .send({
-            data: {
-              entries: await merged(chainId),
-              selection: await d.store.getSelection(chainId),
-            },
-          });
+        return reply.status(200).send({
+          data: {
+            entries: await merged(chainId),
+            selection: await d.store.getSelection(chainId),
+          },
+        });
       } catch (error) {
         return sendCaughtError(
           reply,
@@ -213,10 +212,9 @@ export function createExplorerHandlers(deps?: Partial<ExplorerHandlerDeps>) {
               (candidate) => explorerUrlHash(candidate.url) === hash
             );
             if (!survivor)
-              throw Object.assign(
-                new Error(`Explorer ${targetId} not found`),
-                { code: 'EXPLORER_NOT_FOUND' }
-              );
+              throw Object.assign(new Error(`Explorer ${targetId} not found`), {
+                code: 'EXPLORER_NOT_FOUND',
+              });
             targetId = survivor.id;
           }
         }
@@ -224,18 +222,16 @@ export function createExplorerHandlers(deps?: Partial<ExplorerHandlerDeps>) {
         if ('chainId' in updated)
           return reply.status(200).send({ data: { entry: updated } });
         if (!chainId)
-          throw Object.assign(
-            new Error(`Explorer ${targetId} not found`),
-            { code: 'EXPLORER_NOT_FOUND' }
-          );
+          throw Object.assign(new Error(`Explorer ${targetId} not found`), {
+            code: 'EXPLORER_NOT_FOUND',
+          });
         const entry = (await merged(chainId)).find(
           (candidate) => candidate.id === targetId
         );
         if (!entry)
-          throw Object.assign(
-            new Error(`Explorer ${targetId} not found`),
-            { code: 'EXPLORER_NOT_FOUND' }
-          );
+          throw Object.assign(new Error(`Explorer ${targetId} not found`), {
+            code: 'EXPLORER_NOT_FOUND',
+          });
         return reply.status(200).send({ data: { entry } });
       } catch (error) {
         return sendCoded(
@@ -268,17 +264,15 @@ export function createExplorerHandlers(deps?: Partial<ExplorerHandlerDeps>) {
     ): Promise<IApiResponse<SetExplorerSelectionData>> => {
       try {
         await d.store.setSelection(request.body.chainId, request.body.entryIds);
-        return reply
-          .status(200)
-          .send({
-            data: {
-              selection: {
-                [String(request.body.chainId)]: await d.store.getSelection(
-                  request.body.chainId
-                ),
-              },
+        return reply.status(200).send({
+          data: {
+            selection: {
+              [String(request.body.chainId)]: await d.store.getSelection(
+                request.body.chainId
+              ),
             },
-          });
+          },
+        });
       } catch (error) {
         return sendCaughtError(
           reply,
