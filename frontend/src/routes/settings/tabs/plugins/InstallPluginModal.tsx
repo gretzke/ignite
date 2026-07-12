@@ -249,7 +249,6 @@ export function InstallFromGitModal({
                 value={version}
                 onValueChange={setVersion}
                 anchor="left"
-                portal={false}
               />
             </div>
           )}
@@ -291,7 +290,6 @@ export function InstallFromGitModal({
                       value={branch}
                       onValueChange={setBranch}
                       anchor="left"
-                      portal={false}
                     />
                   </div>
                   <div>

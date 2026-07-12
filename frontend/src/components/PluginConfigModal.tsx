@@ -75,7 +75,6 @@ function GlobalValueControl({
   if (field.type === 'select') {
     return (
       <Select
-        portal={false}
         options={field.options ?? []}
         value={value !== undefined ? String(value) : undefined}
         placeholder="Select…"
@@ -705,7 +704,6 @@ function ConfigFieldCard({
           <div className="flex items-center gap-2">
             <div style={{ width: 160 }} className="shrink-0">
               <Select
-                portal={false}
                 options={chainOptions}
                 value={newChainId || undefined}
                 placeholder="Add chain…"

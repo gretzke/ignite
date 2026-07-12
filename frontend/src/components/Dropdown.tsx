@@ -68,7 +68,7 @@ export default function Dropdown({
         apply({ availableHeight, rects, elements }) {
           // Constrain height to available space
           Object.assign(elements.floating.style, {
-            maxHeight: `${Math.max(200, availableHeight - 20)}px`,
+            maxHeight: `${Math.max(0, availableHeight - 12)}px`,
             // A menu narrower than its trigger reads as detached
             ...(matchTriggerWidth
               ? { minWidth: `${rects.reference.width}px` }
@@ -107,6 +107,18 @@ export default function Dropdown({
     </div>
   );
 
+  // A Radix dialog disables pointer events outside its content. Rooting a
+  // portal in the closest dialog keeps its menu interactive while still
+  // lifting it above scrollable dialog bodies, where an in-place menu would
+  // otherwise be clipped.
+  const reference = refs.reference.current;
+  const closestDialog =
+    reference instanceof Element
+      ? reference.closest('[role="dialog"]')
+      : undefined;
+  const portalRoot =
+    closestDialog instanceof HTMLElement ? closestDialog : undefined;
+
   return (
     <>
       {renderTrigger({
@@ -116,7 +128,12 @@ export default function Dropdown({
         setOpen,
         getReferenceProps,
       })}
-      {open && (portal ? <FloatingPortal>{content}</FloatingPortal> : content)}
+      {open &&
+        (portal ? (
+          <FloatingPortal root={portalRoot}>{content}</FloatingPortal>
+        ) : (
+          content
+        ))}
     </>
   );
 }

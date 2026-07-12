@@ -21,9 +21,8 @@ export interface SelectProps {
   // option that was never committed to state — the caller's model and the
   // screen disagree, which reads as "selected but the form won't accept it".
   requireSelection?: boolean;
-  // Render the menu in place instead of a portal. Required inside modal Radix
-  // dialogs: the portal'd menu lands outside the dialog, where Radix blocks
-  // pointer events, so option clicks would dismiss instead of selecting.
+  // Render the menu in place instead of a portal. Portalled menus inside a
+  // dialog automatically mount in that dialog, above any scrollable body.
   portal?: boolean;
   renderTrigger?: (props: {
     ref: (node: HTMLElement | null) => void;
@@ -115,10 +114,10 @@ export default function Select({
               backdropFilter: 'none',
               WebkitBackdropFilter: 'none',
             }),
-        maxHeight: 320,
         zIndex: 9999,
         display: 'flex',
         flexDirection: 'column',
+        overflow: 'hidden',
       }}
       renderTrigger={({ ref, open, toggle, getReferenceProps }) => {
         if (renderTrigger) {
@@ -501,7 +500,10 @@ function SelectContent({
     // bubble to whatever hosts the Select — e.g. a repo card whose onClick
     // navigates. React synthetic events bubble through the component tree
     // even when the dropdown is rendered in a portal.
-    <div onClick={(e) => e.stopPropagation()}>
+    <div
+      className="flex flex-1 flex-col min-h-0"
+      onClick={(e) => e.stopPropagation()}
+    >
       {/* Search field for large lists */}
       {showSearch && (
         <div className="p-3 border-b border-[var(--hairline)]">

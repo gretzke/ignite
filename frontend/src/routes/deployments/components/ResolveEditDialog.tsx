@@ -81,7 +81,6 @@ export default function ResolveEditDialog({
             <label className="grid gap-1">
               <span className="eyebrow">RPC endpoint</span>
               <Select
-                portal={false}
                 requireSelection
                 options={endpoints.map((endpoint) => ({
                   value: endpoint.id,
