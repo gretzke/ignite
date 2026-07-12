@@ -65,7 +65,10 @@ function GlobalValueControl({
 
   if (field.type === 'boolean') {
     return (
-      <Switch checked={Boolean(value)} onCheckedChange={(checked) => save(checked)} />
+      <Switch
+        checked={Boolean(value)}
+        onCheckedChange={(checked) => save(checked)}
+      />
     );
   }
 
@@ -313,8 +316,7 @@ function ExistingListItemRow({
     secretsPresent.includes(`${field.key}.${item.id}.${itemFieldKey}`);
   const dirtyValues = nonSecretFields.some(
     (itemField) =>
-      (draftValues[itemField.key] ?? '') !==
-      (item.values[itemField.key] ?? '')
+      (draftValues[itemField.key] ?? '') !== (item.values[itemField.key] ?? '')
   );
   const dirtySecrets = secretFields.some(
     (itemField) => (draftSecrets[itemField.key] ?? '') !== ''
@@ -434,7 +436,9 @@ function ExistingListItemRow({
         description={`Remove item ${item.id} from ${field.label}. Stored secret values for this item will also be removed.`}
         confirmText="Remove"
         onConfirm={() =>
-          dispatch(pluginsApi.deleteConfigListItem(pluginId, field.key, item.id))
+          dispatch(
+            pluginsApi.deleteConfigListItem(pluginId, field.key, item.id)
+          )
         }
       />
     </>
@@ -656,7 +660,10 @@ function ConfigFieldCard({
           )}
           {overrideChainIds.map((id) => (
             <div key={id} className="flex items-center gap-2">
-              <span className="text-xs mono-data shrink-0" style={{ width: 96 }}>
+              <span
+                className="text-xs mono-data shrink-0"
+                style={{ width: 96 }}
+              >
                 {chainName(id)}
               </span>
               {field.secret ? (
@@ -772,9 +779,16 @@ export default function PluginConfigModal() {
         />
         <Dialog.Content
           className="dialog-content glass-overlay"
-          style={{ maxWidth: 560, width: '90vw', padding: 24 }}
+          style={{
+            maxWidth: 560,
+            width: '90vw',
+            padding: 24,
+            maxHeight: '85vh',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
         >
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-2 shrink-0">
             <div
               className="size-10 rounded-full flex items-center justify-center shrink-0"
               style={{
@@ -789,28 +803,28 @@ export default function PluginConfigModal() {
               {name} Plugin Configuration
             </Dialog.Title>
           </div>
-          <Dialog.Description className="text-sm opacity-80 mb-4">
-            Configure this plugin&apos;s settings.
-            {fields.some((f) => f.secret === true) &&
-              ' Secret values are write-only — once saved, they are never displayed again.'}
-            {fields.some((f) => f.type === 'file') &&
-              " File paths are stored in plain text; the file's contents are provided to the plugin only with your permission grant."}
-          </Dialog.Description>
+          <div
+            className="flex flex-col gap-3"
+            style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}
+          >
+            <Dialog.Description className="text-sm opacity-80 mb-1">
+              Configure this plugin&apos;s settings.
+              {fields.some((f) => f.secret === true) &&
+                ' Secret values are write-only — once saved, they are never displayed again.'}
+              {fields.some((f) => f.type === 'file') &&
+                " File paths are stored in plain text; the file's contents are provided to the plugin only with your permission grant."}
+            </Dialog.Description>
 
-          {!config ? (
-            <div className="text-sm opacity-70 py-6 text-center">
-              Loading configuration…
-            </div>
-          ) : fields.length === 0 ? (
-            <div className="text-sm opacity-70 py-6 text-center">
-              This plugin has no configurable settings.
-            </div>
-          ) : (
-            <div
-              className="flex flex-col gap-3 mb-5"
-              style={{ maxHeight: '60vh', overflowY: 'auto' }}
-            >
-              {fields.map((field) => (
+            {!config ? (
+              <div className="text-sm opacity-70 py-6 text-center">
+                Loading configuration…
+              </div>
+            ) : fields.length === 0 ? (
+              <div className="text-sm opacity-70 py-6 text-center">
+                This plugin has no configurable settings.
+              </div>
+            ) : (
+              fields.map((field) => (
                 <ConfigFieldCard
                   key={field.key}
                   pluginId={modal.pluginId}
@@ -818,11 +832,11 @@ export default function PluginConfigModal() {
                   config={config}
                   chains={chains}
                 />
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
 
-          <div className="flex items-center justify-end gap-2 mt-2">
+          <div className="flex items-center justify-end gap-2 mt-3 shrink-0">
             <Dialog.Close asChild>
               <button type="button" className="btn btn-secondary">
                 Close
