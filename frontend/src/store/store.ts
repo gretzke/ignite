@@ -28,6 +28,12 @@ import { deploymentsEffects } from './middleware/deploymentsEffects';
 import { explorersReducer } from './features/explorers/explorersSlice';
 import { verificationsReducer } from './features/verifications/verificationsSlice';
 import { verificationsEffects } from './middleware/verificationsEffects';
+import {
+  loadDraft,
+  saveDraft,
+} from './features/deployments/deployDraftPersistence';
+
+const persistedDraft = loadDraft();
 
 export const store = configureStore({
   reducer: {
@@ -48,6 +54,7 @@ export const store = configureStore({
     explorers: explorersReducer,
     verifications: verificationsReducer,
   },
+  preloadedState: persistedDraft ? { deployDraft: persistedDraft } : undefined,
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({ serializableCheck: false })
       .prepend(
@@ -66,6 +73,16 @@ export const store = configureStore({
 // Helpful types for typed hooks
 export type AppDispatch = typeof store.dispatch;
 export type RootState = ReturnType<typeof store.getState>;
+
+// Persist the deploy draft synchronously on every change so an accidental
+// refresh cannot lose a half-built cross-repo deployment.
+let lastPersistedDraft = store.getState().deployDraft;
+store.subscribe(() => {
+  const draft = store.getState().deployDraft;
+  if (draft === lastPersistedDraft) return;
+  lastPersistedDraft = draft;
+  saveDraft(draft);
+});
 
 // Bootstrap: kick off connection and initial profile fetch
 store.dispatch({ type: 'connection/startConnect' });
