@@ -15,6 +15,7 @@ const initialState: DeployDraftState = {
   explorerSelection: {},
   signers: {},
   steps: [],
+  unseenIds: [],
 };
 
 function stepFor(contract: DraftContract) {
@@ -55,6 +56,38 @@ const deployDraftSlice = createSlice({
         contracts: [...action.payload],
         steps: action.payload.map(stepFor),
       };
+    },
+    addContracts(state, action: PayloadAction<DraftContract[]>) {
+      // The first add into an empty draft navigates the user straight into
+      // the wizard, so those contracts are seen by definition. Only additions
+      // to an already-active draft feed the sidebar badge.
+      const wasEmpty = state.contracts.length === 0;
+      const existing = new Set(state.contracts.map((contract) => contract.id));
+      for (const contract of action.payload) {
+        if (existing.has(contract.id)) continue;
+        existing.add(contract.id);
+        state.contracts.push(contract);
+        state.steps.push(stepFor(contract));
+        if (!wasEmpty) state.unseenIds.push(contract.id);
+      }
+    },
+    removeContract(state, action: PayloadAction<string>) {
+      const id = action.payload;
+      if (!state.contracts.some((contract) => contract.id === id)) return;
+      if (state.contracts.length === 1) {
+        // Removing the last contract ends the session. Chains, signers, name
+        // and idempotency key must not silently survive into the next
+        // deployment's "first" add.
+        return initialState;
+      }
+      state.contracts = state.contracts.filter(
+        (contract) => contract.id !== id
+      );
+      state.steps = state.steps.filter((step) => step.contractId !== id);
+      state.unseenIds = state.unseenIds.filter((unseen) => unseen !== id);
+    },
+    markDraftSeen(state) {
+      state.unseenIds = [];
     },
     reorderSteps(
       state,
@@ -234,6 +267,9 @@ const deployDraftSlice = createSlice({
 
 export const {
   seedDraft,
+  addContracts,
+  removeContract,
+  markDraftSeen,
   reorderSteps,
   toggleChain,
   selectRpc,

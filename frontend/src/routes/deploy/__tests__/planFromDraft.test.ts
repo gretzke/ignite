@@ -52,6 +52,7 @@ describe('planFromDraft', () => {
           gasOverrides: { gasLimit: '500000', maxFeePerGas: '2.5' },
         },
       ],
+      unseenIds: [],
     };
 
     const plan = planFromDraft(draft, chains);
@@ -85,6 +86,7 @@ describe('planFromDraft', () => {
           explorerSelection: {},
       signers: {},
       steps: [],
+      unseenIds: [],
     };
     expect(() => planFromDraft(draft, [])).toThrow(
       'Missing currency metadata for chain 999'

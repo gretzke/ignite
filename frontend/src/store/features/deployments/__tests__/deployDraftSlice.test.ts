@@ -6,6 +6,12 @@ import {
   seedDraft,
   setChainArgOverride,
   reorderSteps,
+  addContracts,
+  removeContract,
+  markDraftSeen,
+  toggleChain,
+  setName,
+  deployDraftInitialState,
 } from '../deployDraftSlice';
 
 function contract(id: string, contractName: string): ContractSource {
@@ -79,5 +85,100 @@ describe('deployDraftSlice', () => {
       'vault',
       'token',
     ]);
+  });
+
+  it('addContracts appends and dedupes by id', () => {
+    let state = deployDraftReducer(
+      undefined,
+      addContracts([contract('token', 'Token')])
+    );
+    state = deployDraftReducer(
+      state,
+      addContracts([contract('token', 'Token'), contract('vault', 'Vault')])
+    );
+
+    expect(state.contracts.map((c) => c.id)).toEqual(['token', 'vault']);
+    expect(state.steps.map((s) => s.id)).toEqual([
+      'deploy-token',
+      'deploy-vault',
+    ]);
+  });
+
+  it('first add into an empty draft records no unseen ids; later adds do', () => {
+    // The first add navigates the user into the wizard, so those contracts
+    // are seen by definition; only additions to an already-active draft
+    // surface via the badge.
+    let state = deployDraftReducer(
+      undefined,
+      addContracts([contract('token', 'Token')])
+    );
+    expect(state.unseenIds).toEqual([]);
+
+    state = deployDraftReducer(
+      state,
+      addContracts([contract('token', 'Token'), contract('vault', 'Vault')])
+    );
+    expect(state.unseenIds).toEqual(['vault']);
+  });
+
+  it('addContracts preserves existing configuration', () => {
+    let state = deployDraftReducer(
+      undefined,
+      addContracts([contract('token', 'Token')])
+    );
+    state = deployDraftReducer(state, toggleChain(1));
+    state = deployDraftReducer(state, addContracts([contract('vault', 'Vault')]));
+
+    expect(state.chains).toEqual([1]);
+    expect(state.contracts).toHaveLength(2);
+  });
+
+  it('markDraftSeen clears unseen ids without touching contracts', () => {
+    let state = deployDraftReducer(
+      undefined,
+      addContracts([contract('token', 'Token')])
+    );
+    state = deployDraftReducer(state, addContracts([contract('vault', 'Vault')]));
+    expect(state.unseenIds).toEqual(['vault']);
+
+    state = deployDraftReducer(state, markDraftSeen());
+
+    expect(state.unseenIds).toEqual([]);
+    expect(state.contracts).toHaveLength(2);
+  });
+
+  it('removeContract drops the contract, its step, and its unseen entry', () => {
+    let state = deployDraftReducer(
+      undefined,
+      addContracts([contract('token', 'Token')])
+    );
+    state = deployDraftReducer(state, addContracts([contract('vault', 'Vault')]));
+    state = deployDraftReducer(state, removeContract('vault'));
+
+    expect(state.contracts.map((c) => c.id)).toEqual(['token']);
+    expect(state.steps.map((s) => s.contractId)).toEqual(['token']);
+    expect(state.unseenIds).toEqual([]);
+  });
+
+  it('removing the last contract resets the entire draft', () => {
+    let state = deployDraftReducer(
+      undefined,
+      addContracts([contract('token', 'Token')])
+    );
+    state = deployDraftReducer(state, toggleChain(1));
+    state = deployDraftReducer(state, setName('leftovers'));
+    state = deployDraftReducer(state, removeContract('token'));
+
+    expect(state).toEqual(deployDraftInitialState);
+  });
+
+  it('removeContract ignores unknown ids', () => {
+    const seeded = deployDraftReducer(
+      undefined,
+      addContracts([contract('token', 'Token')])
+    );
+    const state = deployDraftReducer(seeded, removeContract('ghost'));
+
+    expect(state).toEqual(seeded);
   });
 });

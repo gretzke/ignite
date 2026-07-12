@@ -27,6 +27,10 @@ export interface DeployDraftState {
   explorerSelection: Record<string, string[]>;
   signers: SignerCascade;
   steps: DraftStep[];
+  // Ids of contracts added since the wizard was last visited; drives the
+  // sidebar badge. A plain count would drift when an unseen contract is
+  // removed again before the wizard is opened.
+  unseenIds: string[];
   name?: string;
   idempotencyKey?: string;
 }
