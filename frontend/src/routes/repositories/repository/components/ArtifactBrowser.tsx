@@ -8,8 +8,11 @@ import {
   type FileNode,
 } from '../../../../utils/pathTree';
 import type { ArtifactLocation } from '@ignite/api';
-import { useAppDispatch } from '../../../../store';
-import { seedDraft } from '../../../../store/features/deployments/deployDraftSlice';
+import { useAppDispatch, useAppSelector } from '../../../../store';
+import {
+  addContracts,
+  removeContract,
+} from '../../../../store/features/deployments/deployDraftSlice';
 import { contractSourceId } from '../../../../utils/contractSourceId';
 
 interface ArtifactBrowserProps {
@@ -26,7 +29,23 @@ export default function ArtifactBrowser({
 }: ArtifactBrowserProps) {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
+  const draftContracts = useAppSelector((state) => state.deployDraft.contracts);
+  const draftActive = draftContracts.length > 0;
+  const addedIds = useMemo(
+    () => new Set(draftContracts.map((contract) => contract.id)),
+    [draftContracts]
+  );
   const { repoPath } = useParams<{ repoPath: string }>();
+  const rowId = (file: FileNode): string | undefined =>
+    frameworkId && repoPath
+      ? contractSourceId({
+          repoPathOrUrl: repoPath,
+          frameworkId,
+          artifactPath: file.artifact.artifactPath,
+          contractName: file.artifact.contractName,
+          sourcePath: file.artifact.sourcePath,
+        })
+      : undefined;
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Get current directory path from URL params, default to empty (root)
@@ -139,8 +158,9 @@ export default function ArtifactBrowser({
 
   const currentPathDisplay = currentPath || 'root';
   const { directories, files } = directoryContents;
-  const deploySelected = () => {
+  const addSelected = () => {
     if (!frameworkId || !repoPath) return;
+    const wasEmpty = !draftActive;
     const contracts = Object.values(selected).map((artifact) => {
       const source = {
         // react-router has already decoded the path parameter.
@@ -152,8 +172,9 @@ export default function ArtifactBrowser({
       };
       return { id: contractSourceId(source), ...source };
     });
-    dispatch(seedDraft(contracts));
-    navigate('/deploy');
+    dispatch(addContracts(contracts));
+    setSelected({});
+    if (wasEmpty) navigate('/deploy');
   };
 
   return (
@@ -185,10 +206,12 @@ export default function ArtifactBrowser({
               <button
                 type="button"
                 className="btn btn-sm btn-primary"
-                onClick={deploySelected}
+                onClick={addSelected}
               >
-                <Rocket size={14} /> Deploy selected (
-                {Object.keys(selected).length})
+                <Rocket size={14} />{' '}
+                {draftActive
+                  ? `Add ${Object.keys(selected).length} to deployment`
+                  : `Deploy selected (${Object.keys(selected).length})`}
               </button>
             )}
           </div>
@@ -212,37 +235,54 @@ export default function ArtifactBrowser({
           </button>
         ))}
 
-        {files.map((file) => (
-          <div
-            key={file.identity}
-            className="list-row clickable flex items-center gap-3"
-          >
-            <input
-              type="checkbox"
-              checked={Boolean(selected[file.identity])}
-              aria-label={`Select ${file.artifact.contractName}`}
-              onChange={(event) =>
-                setSelected((current) => {
-                  const next = { ...current };
-                  if (event.target.checked) next[file.identity] = file.artifact;
-                  else delete next[file.identity];
-                  return next;
-                })
-              }
-            />
-            <FileCode size={16} className="text-ok flex-shrink-0" />
-            <button
-              type="button"
-              onClick={() => handleFileClick(file)}
-              className="flex-1 min-w-0 text-left"
+        {files.map((file) => {
+          const id = rowId(file);
+          const added = Boolean(id && addedIds.has(id));
+          return (
+            <div
+              key={file.identity}
+              className="list-row clickable flex items-center gap-3"
             >
-              <div className="text-sm text-[var(--text)] truncate">
-                {file.artifact.contractName}
-              </div>
-              <div className="mono-data text-muted truncate">{file.name}</div>
-            </button>
-          </div>
-        ))}
+              {added && id ? (
+                <button
+                  type="button"
+                  className="chip chip-ok"
+                  title="Remove from deployment"
+                  aria-label={`Remove ${file.artifact.contractName} from deployment`}
+                  onClick={() => dispatch(removeContract(id))}
+                >
+                  Added ✓
+                </button>
+              ) : (
+                <input
+                  type="checkbox"
+                  checked={Boolean(selected[file.identity])}
+                  aria-label={`Select ${file.artifact.contractName}`}
+                  onChange={(event) =>
+                    setSelected((current) => {
+                      const next = { ...current };
+                      if (event.target.checked)
+                        next[file.identity] = file.artifact;
+                      else delete next[file.identity];
+                      return next;
+                    })
+                  }
+                />
+              )}
+              <FileCode size={16} className="text-ok flex-shrink-0" />
+              <button
+                type="button"
+                onClick={() => handleFileClick(file)}
+                className="flex-1 min-w-0 text-left"
+              >
+                <div className="text-sm text-[var(--text)] truncate">
+                  {file.artifact.contractName}
+                </div>
+                <div className="mono-data text-muted truncate">{file.name}</div>
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
