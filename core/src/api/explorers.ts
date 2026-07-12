@@ -181,21 +181,44 @@ export function createExplorerHandlers(deps?: Partial<ExplorerHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<ExplorerData>> => {
       try {
-        const updated = await d.store.update(request.params.id, request.body);
+        // Resolve the patch TARGET before persisting anything. A derived id
+        // can be evicted from the merged list by URL dedupe (a manual entry
+        // for the same URL wins), leaving clients holding a stale id —
+        // persisting an overlay for it first would strand dead data and
+        // then 404 anyway (D4 feedback: confirm-mapping 404).
+        let targetId = request.params.id;
+        const chainId = chainIdFromDerivedExplorerId(targetId);
+        if (chainId) {
+          const rows = await merged(chainId);
+          if (!rows.some((candidate) => candidate.id === targetId)) {
+            // Retarget by URL-hash: the id's last segment is the normalized
+            // URL hash; apply the patch to the surviving same-URL entry.
+            const hash = targetId.split(':').at(-1);
+            const survivor = rows.find(
+              (candidate) => explorerUrlHash(candidate.url) === hash
+            );
+            if (!survivor)
+              throw Object.assign(
+                new Error(`Explorer ${targetId} not found`),
+                { code: 'EXPLORER_NOT_FOUND' }
+              );
+            targetId = survivor.id;
+          }
+        }
+        const updated = await d.store.update(targetId, request.body);
         if ('chainId' in updated)
           return reply.status(200).send({ data: { entry: updated } });
-        const chainId = chainIdFromDerivedExplorerId(request.params.id);
         if (!chainId)
           throw Object.assign(
-            new Error(`Explorer ${request.params.id} not found`),
+            new Error(`Explorer ${targetId} not found`),
             { code: 'EXPLORER_NOT_FOUND' }
           );
         const entry = (await merged(chainId)).find(
-          (candidate) => candidate.id === request.params.id
+          (candidate) => candidate.id === targetId
         );
         if (!entry)
           throw Object.assign(
-            new Error(`Explorer ${request.params.id} not found`),
+            new Error(`Explorer ${targetId} not found`),
             { code: 'EXPLORER_NOT_FOUND' }
           );
         return reply.status(200).send({ data: { entry } });
