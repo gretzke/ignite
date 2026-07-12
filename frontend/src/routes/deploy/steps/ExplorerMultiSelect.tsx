@@ -163,24 +163,30 @@ export default function ExplorerMultiSelect({
                           aria-label={`Verify with ${entry.label ?? entry.url}`}
                         />
                         <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-medium truncate">
-                            {entry.label ?? entry.url}
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="min-w-0 flex-1 text-sm font-medium truncate">
+                              {entry.label ?? entry.url}
+                            </span>
+                            {entry.verifierPluginId && (
+                              <span
+                                className={`text-xs rounded-full pill px-2 py-0.5 shrink-0${
+                                  isSelected ? ' pill-primary' : ''
+                                }`}
+                              >
+                                {isSelected
+                                  ? `Handled by ${pluginName}`
+                                  : entry.verifierPluginId}
+                              </span>
+                            )}
                           </span>
                           <span className="mono-data text-muted truncate block">
                             {entry.url} · {entry.source}
                           </span>
                         </span>
-                        {entry.verifierPluginId && !isSelected && (
-                          <span className="chip">{entry.verifierPluginId}</span>
-                        )}
                       </label>
                       {isSelected && entry.verifierPluginId && (
-                        <div className="px-3 pb-3 grid gap-2 text-sm">
-                          <span>
-                            Handled by{' '}
-                            <span className="font-medium">{pluginName}</span>
-                          </span>
-                          <AdvancedStepSection label="Override mapping">
+                        <div className="px-4 pb-2 text-sm">
+                          <AdvancedStepSection compact label="Override mapping">
                             <Select
                               options={pluginOptions}
                               value={entry.verifierPluginId}
@@ -197,7 +203,7 @@ export default function ExplorerMultiSelect({
                         </div>
                       )}
                       {isSelected && attention === 'configuration' && (
-                        <div className="px-3 pb-3 text-sm text-warn flex items-center gap-2">
+                        <div className="px-4 pb-3 text-sm text-warn flex items-center gap-2">
                           This verifier needs configuration.
                           <button
                             type="button"
@@ -215,7 +221,7 @@ export default function ExplorerMultiSelect({
                         </div>
                       )}
                       {isSelected && attention === 'mapping' && (
-                        <div className="px-3 pb-3 grid gap-2">
+                        <div className="px-4 pb-3 grid gap-2">
                           <span className="text-sm text-warn">
                             Choose verifier type
                             {entry.mappingSuggestion

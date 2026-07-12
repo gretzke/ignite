@@ -11,6 +11,7 @@ import {
 } from '../../../store/features/deployments/deployDraftSlice';
 import { runSnapshotReceived } from '../../../store/features/deployments/deploymentsSlice';
 import ValidationChecklist from '../components/ValidationChecklist';
+import { explorersApi } from '../../../store/api/explorersApi';
 
 function validationGreen(report: ValidationReport | null): boolean {
   return Boolean(
@@ -52,6 +53,19 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
   useEffect(() => {
     if (!draft.idempotencyKey) dispatch(mintIdempotencyKey());
   }, [dispatch, draft.idempotencyKey]);
+
+  // Explorer entries are normally loaded in the preceding step. Fetch any
+  // missing chain here too, so the review always has each selected URL rather
+  // than falling back to an opaque entry id.
+  useEffect(() => {
+    Object.entries(draft.explorerSelection).forEach(([chainId, entryIds]) => {
+      if (entryIds.length > 0 && explorers[chainId] === undefined) {
+        explorersApi
+          .fetchExplorers(Number(chainId))
+          .forEach((action) => dispatch(action));
+      }
+    });
+  }, [dispatch, draft.explorerSelection, explorers]);
 
   const validate = useCallback(async () => {
     setLoading(true);
@@ -141,18 +155,31 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           {Object.entries(draft.explorerSelection).map(([chainId, ids]) => {
             if (ids.length === 0) return null;
             const entries = explorers[chainId];
-            const labels = entries
-              ?.filter((entry) => ids.includes(entry.id))
-              .map((entry) => entry.label ?? entry.url);
-            const explorerText =
-              !labels || labels.length !== ids.length
-                ? `${ids.length} explorer${ids.length === 1 ? '' : 's'}`
-                : labels.join(', ');
             return (
-              <div key={chainId} className="text-sm">
-                {chains.find((chain) => String(chain.chainId) === chainId)
-                  ?.name ?? `Chain ${chainId}`}
-                : {explorerText}
+              <div key={chainId} className="grid gap-1">
+                <h3 className="eyebrow">
+                  {chains.find((chain) => String(chain.chainId) === chainId)
+                    ?.name ?? `Chain ${chainId}`}
+                </h3>
+                <div className="glass-list">
+                  {ids.map((entryId) => {
+                    const entry = entries?.find(
+                      (candidate) => candidate.id === entryId
+                    );
+                    return (
+                      <div key={entryId} className="list-row min-w-0">
+                        <div className="mono-data truncate">
+                          {entry?.url ?? 'Loading explorer URL…'}
+                        </div>
+                        <div className="text-xs text-muted truncate">
+                          {entry
+                            ? `${entry.label ?? entry.url} (${entry.source})`
+                            : 'Loading explorer details…'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             );
           })}
