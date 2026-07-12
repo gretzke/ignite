@@ -10,6 +10,7 @@ import type {
 import Tooltip from '../../../components/Tooltip';
 import { useAppDispatch, useAppSelector } from '../../../store';
 import { verificationsApi } from '../../../store/api/verificationsApi';
+import { verifierPluginLabel } from '../../../store/features/plugins/pluginsSlice';
 
 const PENDING = new Set<VerificationStatus>([
   'queued',
@@ -100,6 +101,7 @@ function StatusChip({ task }: { task: VerificationTask }) {
 
 export default function VerificationPanel({ run }: { run: RunRecord }) {
   const dispatch = useAppDispatch();
+  const pluginRows = useAppSelector((state) => state.plugins.rows);
   const tasks = useAppSelector((state) =>
     state.verifications.byRun[run.id]?.map(
       (id) => state.verifications.tasks[id]
@@ -149,10 +151,13 @@ export default function VerificationPanel({ run }: { run: RunRecord }) {
               >
                 <div className="min-w-0 flex-1">
                   <div className="font-medium truncate">
-                    {task.explorer.label}
+                    {verifierPluginLabel(
+                      pluginRows,
+                      task.explorer.verifierPluginId
+                    )}
                   </div>
                   <div className="mono-data text-muted truncate">
-                    {task.address}
+                    {task.explorer.url}
                   </div>
                 </div>
                 {task.explorerPageUrl && (
@@ -192,7 +197,9 @@ export default function VerificationPanel({ run }: { run: RunRecord }) {
               className="list-row flex flex-wrap gap-3 items-center"
             >
               <div className="min-w-0 flex-1">
-                <div className="font-medium truncate">{target.label}</div>
+                <div className="font-medium truncate">
+                  {verifierPluginLabel(pluginRows, target.verifierPluginId)}
+                </div>
                 <div className="mono-data text-muted truncate">
                   {target.url}
                 </div>

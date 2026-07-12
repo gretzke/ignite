@@ -586,3 +586,13 @@ export const pluginsApi = {
     });
   },
 };
+
+// Display name for a verifier plugin id, for UI rows that identify the
+// handling plugin (explorer step pill, verification panel, review overview).
+export function verifierPluginLabel(
+  rows: Record<string, { name?: string }>,
+  pluginId: string | undefined
+): string {
+  if (!pluginId) return 'Unknown verifier';
+  return rows[pluginId]?.name ?? pluginId;
+}

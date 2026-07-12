@@ -173,9 +173,7 @@ export default function ExplorerMultiSelect({
                                   isSelected ? ' pill-primary' : ''
                                 }`}
                               >
-                                {isSelected
-                                  ? `Handled by ${pluginName}`
-                                  : entry.verifierPluginId}
+                                {pluginName}
                               </span>
                             )}
                           </span>

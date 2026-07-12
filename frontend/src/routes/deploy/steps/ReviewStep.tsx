@@ -4,6 +4,7 @@ import { Loader2, RefreshCw, Rocket } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../../../store/api/client';
 import { useAppDispatch, useAppSelector } from '../../../store';
+import { verifierPluginLabel } from '../../../store/features/plugins/pluginsSlice';
 import {
   clearDraft,
   mintIdempotencyKey,
@@ -32,6 +33,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
   const draft = useAppSelector((state) => state.deployDraft);
   const chains = useAppSelector((state) => state.chains.chains);
   const explorers = useAppSelector((state) => state.explorers.byChain);
+  const pluginRows = useAppSelector((state) => state.plugins.rows);
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
@@ -168,13 +170,16 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
                     );
                     return (
                       <div key={entryId} className="list-row min-w-0">
-                        <div className="mono-data truncate">
-                          {entry?.url ?? 'Loading explorer URL…'}
-                        </div>
-                        <div className="text-xs text-muted truncate">
+                        <div className="font-medium truncate">
                           {entry
-                            ? `${entry.label ?? entry.url} (${entry.source})`
+                            ? verifierPluginLabel(
+                                pluginRows,
+                                entry.verifierPluginId
+                              )
                             : 'Loading explorer details…'}
+                        </div>
+                        <div className="mono-data text-muted truncate">
+                          {entry?.url ?? 'Loading explorer URL…'}
                         </div>
                       </div>
                     );
