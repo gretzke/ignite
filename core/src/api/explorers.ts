@@ -96,18 +96,33 @@ export async function resolveMergedExplorers(
   return [...winners.values()]
     .map((entry) => {
       const overlay = overlays[entry.id];
-      const confirmed = overlay?.verifierPluginId ?? entry.verifierPluginId;
-      const suggestion = !confirmed
-        ? claims.find((claim) =>
-            claim.patterns.some(
-              (pattern) =>
-                pattern &&
-                new URL(entry.url).host
-                  .toLowerCase()
-                  .includes(pattern.toLowerCase())
-            )
-          )?.pluginId
-        : undefined;
+      const explicit = overlay?.verifierPluginId ?? entry.verifierPluginId;
+      const matchingPluginIds = !explicit
+        ? [
+            ...new Set(
+              claims
+                .filter((claim) =>
+                  claim.patterns.some(
+                    (pattern) =>
+                      pattern &&
+                      new URL(entry.url).host
+                        .toLowerCase()
+                        .includes(pattern.toLowerCase())
+                  )
+                )
+                .map((claim) => claim.pluginId)
+            ),
+          ]
+        : [];
+      // A single URL-pattern owner is unambiguous enough to use immediately.
+      // An overlay remains the source of truth whenever a user chooses a
+      // different verifier; multiple owners intentionally stay a suggestion.
+      const confirmed = explicit ??
+        (matchingPluginIds.length === 1 ? matchingPluginIds[0] : undefined);
+      const suggestion =
+        !confirmed && matchingPluginIds.length > 1
+          ? matchingPluginIds[0]
+          : undefined;
       return {
         ...entry,
         ...(overlay?.apiUrl ? { apiUrl: overlay.apiUrl } : {}),

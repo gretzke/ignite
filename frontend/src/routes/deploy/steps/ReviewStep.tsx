@@ -133,21 +133,26 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           }
         />
       </label>
-      {Object.entries(draft.explorerSelection).some(([, ids]) => ids.length > 0) && (
+      {Object.entries(draft.explorerSelection).some(
+        ([, ids]) => ids.length > 0
+      ) && (
         <div className="card-milky p-4 grid gap-2">
           <span className="eyebrow">Selected explorers</span>
           {Object.entries(draft.explorerSelection).map(([chainId, ids]) => {
             if (ids.length === 0) return null;
-            const labels = ids.map(
-              (id) =>
-                explorers[chainId]?.find((entry) => entry.id === id)?.label ??
-                id
-            );
+            const entries = explorers[chainId];
+            const labels = entries
+              ?.filter((entry) => ids.includes(entry.id))
+              .map((entry) => entry.label ?? entry.url);
+            const explorerText =
+              !labels || labels.length !== ids.length
+                ? `${ids.length} explorer${ids.length === 1 ? '' : 's'}`
+                : labels.join(', ');
             return (
               <div key={chainId} className="text-sm">
                 {chains.find((chain) => String(chain.chainId) === chainId)
                   ?.name ?? `Chain ${chainId}`}
-                : {labels.join(', ')}
+                : {explorerText}
               </div>
             );
           })}

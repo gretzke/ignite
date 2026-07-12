@@ -3,8 +3,10 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function AdvancedStepSection({
   children,
+  label = 'Advanced transaction settings',
 }: {
   children: ReactNode;
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -16,7 +18,7 @@ export default function AdvancedStepSection({
         aria-expanded={open}
       >
         {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        Advanced transaction settings
+        {label}
       </button>
       {open && <div className="grid gap-3 mt-3">{children}</div>}
     </section>

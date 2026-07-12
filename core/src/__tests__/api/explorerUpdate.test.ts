@@ -6,7 +6,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createExplorerHandlers } from '../../api/explorers.js';
+import {
+  createExplorerHandlers,
+  resolveMergedExplorers,
+} from '../../api/explorers.js';
 import { ExplorerStore } from '../../chains/ExplorerStore.js';
 
 const SEPOLIA_BLOCKSCOUT = 'https://eth-sepolia.blockscout.com';
@@ -126,5 +129,63 @@ describe('updateExplorer retargeting', () => {
     const entry = (reply.body as { data: { entry: { verifierPluginId?: string } } })
       .data.entry;
     expect(entry.verifierPluginId).toBe('blockscout');
+  });
+});
+
+describe('resolveMergedExplorers verifier mappings', () => {
+  it('auto-confirms an unambiguous URL-pattern match', async () => {
+    const { handlers } = await makeHandlers();
+    const reply = makeReply();
+    await handlers.listExplorers(
+      { query: { chainId: 11155111 } } as never,
+      reply as never
+    );
+    const entry = (reply.body as {
+      data: { entries: { verifierPluginId?: string; mappingSuggestion?: string }[] };
+    }).data.entries[0];
+    expect(entry.verifierPluginId).toBe('blockscout');
+    expect(entry.mappingSuggestion).toBeUndefined();
+  });
+
+  it('keeps ambiguous URL-pattern matches as a suggestion', async () => {
+    const { store } = await makeHandlers();
+    const entries = await resolveMergedExplorers(
+      {
+        registry: {
+          getChain: vi.fn(async () => ({
+            chainId: 11155111,
+            explorers: [{ name: 'Blockscout', url: SEPOLIA_BLOCKSCOUT }],
+          })),
+        } as never,
+        store,
+        providers: {
+          getDetected: vi.fn(async () => ({ entries: [], statuses: [] })),
+          getUrlPatternClaims: vi.fn(async () => [
+            { pluginId: 'blockscout', patterns: ['blockscout'] },
+            { pluginId: 'alternate-blockscout', patterns: ['blockscout'] },
+          ]),
+        } as never,
+      },
+      11155111
+    );
+    expect(entries[0]).toMatchObject({
+      mappingSuggestion: 'blockscout',
+    });
+    expect(entries[0].verifierPluginId).toBeUndefined();
+  });
+
+  it('lets an overlay override an auto-confirmed mapping', async () => {
+    const { handlers, store } = await makeHandlers();
+    const id = await chainDerivedId(handlers);
+    await store.update(id, { verifierPluginId: 'alternate-blockscout' });
+    const reply = makeReply();
+    await handlers.listExplorers(
+      { query: { chainId: 11155111 } } as never,
+      reply as never
+    );
+    const entry = (reply.body as {
+      data: { entries: { verifierPluginId?: string }[] };
+    }).data.entries[0];
+    expect(entry.verifierPluginId).toBe('alternate-blockscout');
   });
 });
