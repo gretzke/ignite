@@ -13,6 +13,7 @@ import {
   Check,
   Loader2,
   Rocket,
+  Plus,
   BadgeCheck,
 } from 'lucide-react';
 import { getRepoName } from '../../../../utils/repo';
@@ -22,7 +23,10 @@ import { useSelector as useCompilerSelector } from 'react-redux';
 import { listArtifacts } from '../../../../store/features/compiler/compilerSlice';
 import { SyntaxHighlighter } from '../../../../components/SyntaxHighlighter';
 import Select from '../../../../components/Select';
-import { seedDraft } from '../../../../store/features/deployments/deployDraftSlice';
+import {
+  addContracts,
+  removeContract,
+} from '../../../../store/features/deployments/deployDraftSlice';
 import { contractSourceId } from '../../../../utils/contractSourceId';
 
 interface CopyButtonProps {
@@ -282,18 +286,34 @@ export default function FilePage() {
     artifactData?.creationCodeLinkReferences &&
     Object.keys(artifactData.creationCodeLinkReferences).length > 0
   );
+  const draftContracts = useSelector(
+    (state: RootState) => state.deployDraft.contracts
+  );
+  const draftActive = draftContracts.length > 0;
+  const selectedContractId =
+    frameworkId && selectedArtifact
+      ? contractSourceId({
+          repoPathOrUrl: decodedRepoPath,
+          frameworkId,
+          artifactPath: selectedArtifact.artifactPath,
+          contractName: selectedArtifact.contractName,
+          sourcePath: selectedArtifact.sourcePath,
+        })
+      : undefined;
+  const inDraft = Boolean(
+    selectedContractId && draftContracts.some((c) => c.id === selectedContractId)
+  );
   const deploy = () => {
-    if (!frameworkId || !selectedArtifact) return;
+    if (!frameworkId || !selectedArtifact || !selectedContractId) return;
+    if (inDraft) {
+      dispatch(removeContract(selectedContractId));
+      return;
+    }
+    const wasEmpty = !draftActive;
     dispatch(
-      seedDraft([
+      addContracts([
         {
-          id: contractSourceId({
-            repoPathOrUrl: decodedRepoPath,
-            frameworkId,
-            artifactPath: selectedArtifact.artifactPath,
-            contractName: selectedArtifact.contractName,
-            sourcePath: selectedArtifact.sourcePath,
-          }),
+          id: selectedContractId,
           repoPathOrUrl: decodedRepoPath,
           frameworkId,
           artifactPath: selectedArtifact.artifactPath,
@@ -302,7 +322,7 @@ export default function FilePage() {
         },
       ])
     );
-    navigate('/deploy');
+    if (wasEmpty) navigate('/deploy');
   };
   const verify = () => {
     if (!frameworkId || !selectedArtifact) return;
@@ -378,16 +398,30 @@ export default function FilePage() {
               )}
               <button
                 type="button"
-                className="btn btn-primary"
+                className={inDraft ? 'btn btn-secondary' : 'btn btn-primary'}
                 disabled={!artifactData || hasUnlinkedLibraries}
                 title={
                   hasUnlinkedLibraries
                     ? 'Requires library linking (planned for D5)'
-                    : undefined
+                    : inDraft
+                      ? 'Remove from deployment'
+                      : undefined
                 }
                 onClick={deploy}
               >
-                <Rocket size={15} /> Deploy
+                {inDraft ? (
+                  <>
+                    <Check size={15} /> Added
+                  </>
+                ) : draftActive ? (
+                  <>
+                    <Plus size={15} /> Add to deployment
+                  </>
+                ) : (
+                  <>
+                    <Rocket size={15} /> Deploy
+                  </>
+                )}
               </button>
               <button
                 type="button"
