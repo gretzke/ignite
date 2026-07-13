@@ -31,6 +31,12 @@ import {
   validateDependencies,
 } from './resolver.js';
 import { ackIsFresh, buildInitcode, predictPlanAddresses } from './schedule.js';
+import {
+  simulateChain,
+  type SimulationOutcome,
+  type SimClient,
+} from './simulation.js';
+import { makeForkRunner, type ForkRunner } from './forkContainer.js';
 import { DeploymentTypeService } from './DeploymentTypeService.js';
 import { verifyRpcEndpoint } from '../chains/rpcVerify.js';
 import { SignerProviderService } from '../signers/SignerProviderService.js';
@@ -62,7 +68,18 @@ type Client = {
     maxPriorityFeePerGas?: bigint;
   }>;
   getCode?(args: { address: Hex }): Promise<Hex>;
+  getTransactionCount?(args: {
+    address: Hex;
+    blockTag?: 'latest';
+  }): Promise<number | bigint>;
+  getBlockNumber?(): Promise<number | bigint>;
+  simulateBlocks?(args: unknown): Promise<unknown>;
 };
+
+const validationFlights = new Map<
+  string,
+  Promise<Awaited<ReturnType<typeof validatePlanOnce>>>
+>();
 
 export interface ValidationDeps {
   profileId?: string;
@@ -105,6 +122,10 @@ export interface ValidationDeps {
     pluginId: string
   ) => Promise<{ metadata: PluginMetadata; grant: PermissionGrant }>;
   deploymentTypes: Pick<DeploymentTypeService, 'list' | 'validate'>;
+  makeForkRunner: (opts: {
+    rpcUrl: string;
+    chainId: number;
+  }) => Promise<ForkRunner | undefined>;
 }
 
 export async function validatePlan(
@@ -116,7 +137,49 @@ export async function validatePlan(
   frozen: FrozenInputs;
   rpcBindings: Record<string, RpcBinding>;
   explorerTargets?: Record<string, ExplorerTargetSnapshot[]>;
-  predicted?: Record<string, Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>>;
+  predicted?: Record<
+    string,
+    Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>
+  >;
+}> {
+  // Only byte-identical validation requests may share work: sharing a
+  // profile alone can otherwise return a Review result for a different draft.
+  const profileId = overrides?.profileId ?? 'default';
+  const fingerprint = crypto
+    .createHash('sha256')
+    .update(
+      canonicalJson({
+        profileId,
+        plan,
+        rpcSelection,
+        explorerSelection: overrides?.explorerSelection ?? {},
+      })
+    )
+    .digest('hex');
+  const active = validationFlights.get(fingerprint);
+  if (active) return active;
+  const task = validatePlanOnce(plan, rpcSelection, overrides);
+  validationFlights.set(fingerprint, task);
+  try {
+    return await task;
+  } finally {
+    validationFlights.delete(fingerprint);
+  }
+}
+
+async function validatePlanOnce(
+  plan: DeploymentPlan,
+  rpcSelection: RpcSelection,
+  overrides?: Partial<ValidationDeps>
+): Promise<{
+  report: ValidationReport;
+  frozen: FrozenInputs;
+  rpcBindings: Record<string, RpcBinding>;
+  explorerTargets?: Record<string, ExplorerTargetSnapshot[]>;
+  predicted?: Record<
+    string,
+    Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>
+  >;
 }> {
   const defaults = defaultDeps();
   const deps: ValidationDeps = { ...defaults, ...overrides };
@@ -157,7 +220,10 @@ export async function validatePlan(
   const bindings: Record<string, RpcBinding> = {};
   const chains: Record<string, ChainChecklist> = {};
   const explorerTargets: Record<string, ExplorerTargetSnapshot[]> = {};
-  const predicted: Record<string, Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>> = {};
+  const predicted: Record<
+    string,
+    Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>
+  > = {};
   for (const chainId of plan.chains) {
     const key = String(chainId);
     const endpointId = rpcSelection[key];
@@ -182,9 +248,16 @@ export async function validatePlan(
       accountsError
     );
     const args = validateArgs(plan, chainId, frozen, freezeError);
-    const create2 = await validateCreate2(plan, chainId, frozen, endpoint?.url, deps, freezeError);
+    const create2 = await validateCreate2(
+      plan,
+      chainId,
+      frozen,
+      endpoint?.url,
+      deps,
+      freezeError
+    );
     if (create2.predicted) predicted[key] = create2.predicted;
-    const estimation = await validateEstimations(
+    const simulation = await validateSimulation(
       plan,
       chainId,
       frozen,
@@ -198,7 +271,7 @@ export async function validatePlan(
       chainId,
       endpoint?.url,
       signerResults.signers,
-      estimation.estimates,
+      simulation.outcome,
       deps,
       freezeError
     );
@@ -217,14 +290,21 @@ export async function validatePlan(
       rpc,
       signers: signerResults.item,
       args,
-      estimation: estimation.item,
+      estimation: simulation.estimation,
+      simulation: simulation.item,
       balance,
       inputs,
       verification,
       create2: create2.item,
     };
   }
-  return { report: { chains }, frozen, rpcBindings: bindings, explorerTargets, predicted };
+  return {
+    report: { chains },
+    frozen,
+    rpcBindings: bindings,
+    explorerTargets,
+    predicted,
+  };
 }
 
 function defaultDeps(): ValidationDeps {
@@ -272,6 +352,7 @@ function defaultDeps(): ValidationDeps {
       grant: await trust.getGrant(pluginId),
     }),
     deploymentTypes: DeploymentTypeService.getInstance(),
+    makeForkRunner,
   };
 }
 
@@ -446,8 +527,10 @@ function validateSigners(
     // Checklist copy uses the contract name — step ids embed artifact paths
     // and read as noise in the UI.
     const stepName =
-      plan.contracts.find((contract) => contract.id === (step.kind === 'deploy' ? step.contractId : undefined))
-        ?.contractName ?? step.id;
+      plan.contracts.find(
+        (contract) =>
+          contract.id === (step.kind === 'deploy' ? step.contractId : undefined)
+      )?.contractName ?? step.id;
     const signer = resolveSigner(plan, step, chainId);
     if (!signer) {
       failures.push(`No signer is configured for ${stepName}`);
@@ -570,45 +653,152 @@ async function validateCreate2(
   frozen: FrozenInputs,
   rpcUrl: string | undefined,
   deps: ValidationDeps,
-  freezeError: unknown,
-): Promise<{ item: ValidationItem; predicted?: Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }> }> {
-  const deterministic = plan.steps.filter((step): step is import('@ignite/api').DeployStep => step.kind === 'deploy' && (step.strategy?.kind === 'create2' || step.strategy?.kind === 'plugin'));
+  freezeError: unknown
+): Promise<{
+  item: ValidationItem;
+  predicted?: Record<
+    string,
+    { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }
+  >;
+}> {
+  const deterministic = plan.steps.filter(
+    (step): step is import('@ignite/api').DeployStep =>
+      step.kind === 'deploy' &&
+      (step.strategy?.kind === 'create2' || step.strategy?.kind === 'plugin')
+  );
   if (!deterministic.length) return { item: success('No create2 steps') };
-  if (freezeError || !rpcUrl) return { item: failure('CREATE2_PROXY_MISSING', 'Create2 validation requires frozen inputs and a valid RPC') };
+  if (freezeError || !rpcUrl)
+    return {
+      item: failure(
+        'CREATE2_PROXY_MISSING',
+        'Create2 validation requires frozen inputs and a valid RPC'
+      ),
+    };
   try {
     const client = deps.createClient(rpcUrl);
-    if (!client.getCode) return { item: failure('CREATE2_PROXY_MISSING', 'RPC client cannot read the deterministic deployment proxy') };
+    if (!client.getCode)
+      return {
+        item: failure(
+          'CREATE2_PROXY_MISSING',
+          'RPC client cannot read the deterministic deployment proxy'
+        ),
+      };
     const runtime = await client.getCode({ address: CREATE2_PROXY_ADDRESS });
-    if (runtime === '0x') return { item: failure('CREATE2_PROXY_MISSING', 'The canonical CREATE2 proxy is not deployed') };
-    if (keccak256(runtime).toLowerCase() !== CREATE2_PROXY_RUNTIME_HASH.toLowerCase()) return { item: failure('CREATE2_PROXY_MISMATCH', 'The canonical CREATE2 proxy has unexpected runtime code') };
+    if (runtime === '0x')
+      return {
+        item: failure(
+          'CREATE2_PROXY_MISSING',
+          'The canonical CREATE2 proxy is not deployed'
+        ),
+      };
+    if (
+      keccak256(runtime).toLowerCase() !==
+      CREATE2_PROXY_RUNTIME_HASH.toLowerCase()
+    )
+      return {
+        item: failure(
+          'CREATE2_PROXY_MISMATCH',
+          'The canonical CREATE2 proxy has unexpected runtime code'
+        ),
+      };
     const predictions = predictPlanAddresses(plan, frozen, chainId);
-    const installed = deterministic.some((step) => step.strategy?.kind === 'plugin')
+    const installed = deterministic.some(
+      (step) => step.strategy?.kind === 'plugin'
+    )
       ? await deps.deploymentTypes.list()
       : [];
     for (const step of deterministic) {
       const current = predictions[step.id]!;
-      const strategy = step.strategy! as Exclude<NonNullable<typeof step.strategy>, { kind: 'create' }>;
+      const strategy = step.strategy! as Exclude<
+        NonNullable<typeof step.strategy>,
+        { kind: 'create' }
+      >;
       if (strategy.kind === 'plugin') {
-        const info = installed.find((entry) => entry.pluginId === strategy.pluginId);
-        if (!info) return { item: failure('DEPLOYMENT_TYPE_PLUGIN_MISSING', `Deployment-type plugin ${strategy.pluginId} is not installed`) };
+        const info = installed.find(
+          (entry) => entry.pluginId === strategy.pluginId
+        );
+        if (!info)
+          return {
+            item: failure(
+              'DEPLOYMENT_TYPE_PLUGIN_MISSING',
+              `Deployment-type plugin ${strategy.pluginId} is not installed`
+            ),
+          };
         const prepared = strategy.prepared?.[String(chainId)];
-        if (!prepared || prepared.initcodeHash.toLowerCase() !== current.initcodeHash.toLowerCase() || prepared.predictedAddress.toLowerCase() !== current.predictedAddress.toLowerCase()) return { item: failure('DEPLOYMENT_TYPE_COMMITMENT_STALE', `Deployment-type commitment for ${step.id} is stale`) };
+        if (
+          !prepared ||
+          prepared.initcodeHash.toLowerCase() !==
+            current.initcodeHash.toLowerCase() ||
+          prepared.predictedAddress.toLowerCase() !==
+            current.predictedAddress.toLowerCase()
+        )
+          return {
+            item: failure(
+              'DEPLOYMENT_TYPE_COMMITMENT_STALE',
+              `Deployment-type commitment for ${step.id} is stale`
+            ),
+          };
         if (info.validateSupported) {
-          const initcode = buildInitcode(step, frozen[step.contractId]!, chainId, (id) => predictions[id]?.predictedAddress ?? (() => { throw new Error(`Missing predicted pointer ${id}`); })());
-          const verdict = await deps.deploymentTypes.validate(strategy.pluginId, { chainId, initcode, salt: current.salt, predictedAddress: current.predictedAddress, params: strategy.params });
-          if (!verdict.ok) return { item: failure('DEPLOYMENT_TYPE_VALIDATION_FAILED', verdict.reason ?? `Deployment type rejected ${step.id}`) };
+          const initcode = buildInitcode(
+            step,
+            frozen[step.contractId]!,
+            chainId,
+            (id) =>
+              predictions[id]?.predictedAddress ??
+              (() => {
+                throw new Error(`Missing predicted pointer ${id}`);
+              })()
+          );
+          const verdict = await deps.deploymentTypes.validate(
+            strategy.pluginId,
+            {
+              chainId,
+              initcode,
+              salt: current.salt,
+              predictedAddress: current.predictedAddress,
+              params: strategy.params,
+            }
+          );
+          if (!verdict.ok)
+            return {
+              item: failure(
+                'DEPLOYMENT_TYPE_VALIDATION_FAILED',
+                verdict.reason ?? `Deployment type rejected ${step.id}`
+              ),
+            };
         }
       }
       const code = await client.getCode({ address: current.predictedAddress });
-      if (code !== '0x' && !ackIsFresh(strategy, chainId, current)) return { item: failure('CREATE2_ALREADY_DEPLOYED', `Code already exists at ${current.predictedAddress}`, { stepId: step.id, predictedAddress: current.predictedAddress, initcodeHash: current.initcodeHash }) };
+      if (code !== '0x' && !ackIsFresh(strategy, chainId, current))
+        return {
+          item: failure(
+            'CREATE2_ALREADY_DEPLOYED',
+            `Code already exists at ${current.predictedAddress}`,
+            {
+              stepId: step.id,
+              predictedAddress: current.predictedAddress,
+              initcodeHash: current.initcodeHash,
+            }
+          ),
+        };
     }
-    return { item: success('CREATE2 proxy and predicted addresses are ready', { predicted: predictions }), predicted: predictions };
+    return {
+      item: success('CREATE2 proxy and predicted addresses are ready', {
+        predicted: predictions,
+      }),
+      predicted: predictions,
+    };
   } catch (error) {
-    return { item: failure(codeOf(error, 'CREATE2_PROXY_MISSING'), safeMessage(error, 'Create2 validation failed')) };
+    return {
+      item: failure(
+        codeOf(error, 'CREATE2_PROXY_MISSING'),
+        safeMessage(error, 'Create2 validation failed')
+      ),
+    };
   }
 }
 
-async function validateEstimations(
+async function validateSimulation(
   plan: DeploymentPlan,
   chainId: number,
   frozen: FrozenInputs,
@@ -617,56 +807,95 @@ async function validateEstimations(
   deps: ValidationDeps,
   freezeError: unknown
 ) {
-  const estimates = new Map<string, bigint>();
   if (freezeError || !rpcUrl)
     return {
       item: failure(
+        'SIMULATION_UNAVAILABLE',
+        'Transactions cannot be simulated until inputs and RPC are valid'
+      ),
+      estimation: failure(
         'ESTIMATION_FAILED',
         'Transactions cannot be estimated until inputs and RPC are valid'
       ),
-      estimates,
+      outcome: undefined,
     };
   try {
     const client = deps.createClient(rpcUrl);
-    for (const step of plan.steps) {
-      if (step.kind === 'call') continue;
-      const input = frozen[step.contractId];
-      const signer = signers.get(step.id);
-      if (!input || !signer)
-        throw Object.assign(
-          new Error(`Step ${step.id} is not ready for estimation`),
-          { code: 'ESTIMATION_FAILED' }
-        );
-      const args = toConstructorArgs(
-        constructorInputs(input.abi),
-        mergeArgs(step, chainId)
-      );
-      const data = encodeDeployData({
-        abi: input.abi as Abi,
-        bytecode: input.creationBytecode as Hex,
-        args,
+    if (signers.size !== plan.steps.length)
+      throw Object.assign(new Error('A step has no resolved signer'), {
+        code: 'ESTIMATION_FAILED',
       });
-      // Always estimate, even if an execution gasLimit override was supplied.
-      estimates.set(
-        step.id,
-        await client.estimateGas({
-          account: signer,
-          value: effectiveValue(step, chainId),
-          data,
-        })
-      );
-    }
+    const simClient: SimClient = {
+      estimateGas: client.estimateGas,
+      // Older focused fakes only model D3 estimation. Keep them useful while
+      // production viem clients provide both chain reads.
+      getTransactionCount: client.getTransactionCount ?? (async () => 0),
+      getBlockNumber: client.getBlockNumber ?? (async () => 0),
+      ...(client.simulateBlocks
+        ? { simulateBlocks: client.simulateBlocks }
+        : {}),
+    };
+    // A real viem public client always has these reads. Their absence marks a
+    // legacy test/dry client that can only do estimateGas; do not start anvil
+    // against an endpoint it cannot otherwise query.
+    const fork =
+      client.getTransactionCount && client.getBlockNumber
+        ? await deps.makeForkRunner({ rpcUrl, chainId })
+        : undefined;
+    const outcome = await simulateChain({
+      chainId,
+      plan,
+      frozen,
+      signers,
+      client: simClient,
+      fork,
+    });
+    const reverted = Object.entries(outcome.perStep).find(
+      ([, value]) => value.status === 'reverted'
+    );
+    const details = {
+      tier: outcome.tier,
+      ...(outcome.baseBlock === undefined
+        ? {}
+        : { baseBlock: outcome.baseBlock }),
+      perStep: outcome.perStep,
+      warnings: outcome.warnings,
+      fallthrough: outcome.fallthrough,
+    };
     return {
-      item: success('All deployment transactions estimate successfully'),
-      estimates,
+      item: reverted
+        ? failure(
+            'SIMULATION_REVERTED',
+            `Simulation reverted at ${reverted[0]}${reverted[1].reason ? `: ${reverted[1].reason}` : ''}`,
+            details
+          )
+        : success(`Simulation completed using ${outcome.tier}`, details),
+      estimation:
+        outcome.tier === 'estimate'
+          ? reverted
+            ? failure(
+                'ESTIMATION_FAILED',
+                `Estimation failed at ${reverted[0]}${reverted[1].reason ? `: ${reverted[1].reason}` : ''}`,
+                details
+              )
+            : success('All transaction estimates completed', details)
+          : success(
+              `Mirrors simulation results (tier ${outcome.tier})`,
+              details
+            ),
+      outcome,
     };
   } catch (error) {
     return {
       item: failure(
+        codeOf(error, 'SIMULATION_UNAVAILABLE'),
+        safeMessage(error, 'Simulation failed')
+      ),
+      estimation: failure(
         'ESTIMATION_FAILED',
         safeMessage(error, 'Deployment estimation failed')
       ),
-      estimates,
+      outcome: undefined,
     };
   }
 }
@@ -676,7 +905,7 @@ async function validateBalance(
   chainId: number,
   rpcUrl: string | undefined,
   signers: Map<string, Hex>,
-  estimates: Map<string, bigint>,
+  outcome: SimulationOutcome | undefined,
   deps: ValidationDeps,
   freezeError: unknown
 ): Promise<ValidationItem> {
@@ -694,15 +923,21 @@ async function validateBalance(
         'This chain does not provide EIP-1559 fee data'
       );
     const required = new Map<Hex, bigint>();
+    const unestimated: string[] = [];
     for (const step of plan.steps) {
-      if (step.kind === 'call') continue;
       const signer = signers.get(step.id);
-      const estimate = estimates.get(step.id);
-      if (!signer || estimate === undefined)
-        throw new Error('A deployment transaction could not be estimated');
+      const result = outcome?.perStep[step.id];
+      if (result?.status === 'skipped-existing') continue;
+      if (!signer)
+        throw new Error('A transaction signer could not be resolved');
       const overrides = mergeGas(step, chainId);
       const gas = overrides.gasLimit;
-      const gasLimit = gas === undefined ? estimate : BigInt(gas);
+      if (result?.status === 'unestimable' && gas === undefined) {
+        unestimated.push(step.id);
+        continue;
+      }
+      const gasLimit =
+        gas === undefined ? BigInt(result?.gasUsed ?? '0') : BigInt(gas);
       const maxFeePerGas =
         overrides.maxFeePerGas === undefined
           ? fees.maxFeePerGas
@@ -736,8 +971,14 @@ async function validateBalance(
         'Signer balance is insufficient for the selected deployments',
         details
       );
+    if (unestimated.length)
+      return warning(
+        'BALANCE_UNESTIMATED',
+        'Some dependent transactions could not be estimated',
+        { ...details, unestimated }
+      );
     if (required.size)
-      return success('Signer balance covers all planned deployments', details);
+      return success('Signer balance covers all planned transactions', details);
     return success('No transaction value is required');
   } catch (error) {
     return failure(
@@ -838,4 +1079,14 @@ function safeMessage(error: unknown, fallback: string): string {
       (blob) => `${blob.slice(0, 22)}… (${(blob.length - 2) / 2} bytes)`
     )
     .slice(0, 400);
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(',')}}`;
 }

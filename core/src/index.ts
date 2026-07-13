@@ -28,6 +28,7 @@ import { FrontendRuntimeBridge } from './plugins/invoke/FrontendRuntimeBridge.js
 import { DeployEngine } from './deployments/DeployEngine.js';
 import { VerificationQueue } from './verifications/VerificationQueue.js';
 import { wireVerificationReconciliation } from './deployments/verificationIntegration.js';
+import { sweepForkContainers } from './deployments/forkContainer.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -57,6 +58,7 @@ async function ignite(workspacePath: string): Promise<{
   const pluginManager = PluginManager.getInstance();
   const pluginExecutor = PluginExecutor.getInstance();
   await JobManager.getInstance().recover();
+  await sweepForkContainers();
   await DeployEngine.getInstance().recoverOnStartup();
   const verificationQueue = VerificationQueue.getInstance();
   wireVerificationReconciliation(verificationQueue);

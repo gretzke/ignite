@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CREATE2_PROXY_ADDRESS, CREATE2_PROXY_RUNTIME_CODE, type DeploymentPlan, type FrozenInputs } from '@ignite/api';
+import {
+  CREATE2_PROXY_ADDRESS,
+  CREATE2_PROXY_RUNTIME_CODE,
+  type DeploymentPlan,
+  type FrozenInputs,
+} from '@ignite/api';
 import { validatePlan } from '../../deployments/validation.js';
 
 const ADDRESS = '0x0000000000000000000000000000000000000001';
@@ -99,15 +104,61 @@ function deps(overrides: Record<string, unknown> = {}): any {
 }
 
 describe('validatePlan', () => {
+  it('single-flights only byte-identical validation requests', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const freezeInputs = vi.fn(async () => {
+      await blocked;
+      return frozen;
+    });
+    const d = deps({
+      freezeInputs,
+      makeForkRunner: vi.fn(async () => undefined),
+    });
+    const first = validatePlan(plan(), { '1': 'rpc-1' }, d);
+    const second = validatePlan(plan(), { '1': 'rpc-1' }, d);
+    release();
+    await Promise.all([first, second]);
+    expect(freezeInputs).toHaveBeenCalledOnce();
+  });
+
   it('validates the canonical proxy and returns create2 predictions without broadcasting', async () => {
-    const getCode = vi.fn(async ({ address }: { address: string }) => address.toLowerCase() === CREATE2_PROXY_ADDRESS.toLowerCase() ? CREATE2_PROXY_RUNTIME_CODE : '0x');
+    const getCode = vi.fn(async ({ address }: { address: string }) =>
+      address.toLowerCase() === CREATE2_PROXY_ADDRESS.toLowerCase()
+        ? CREATE2_PROXY_RUNTIME_CODE
+        : '0x'
+    );
     const result = await validatePlan(
-      plan({ steps: [{ id: 'deploy-token', kind: 'deploy', contractId: 'token', args: { supply: '1' }, strategy: { kind: 'create2', salt: `0x${'11'.repeat(32)}` } }] }),
+      plan({
+        steps: [
+          {
+            id: 'deploy-token',
+            kind: 'deploy',
+            contractId: 'token',
+            args: { supply: '1' },
+            strategy: { kind: 'create2', salt: `0x${'11'.repeat(32)}` },
+          },
+        ],
+      }),
       { '1': 'rpc-1' },
-      deps({ createClient: vi.fn(() => ({ estimateGas: vi.fn(async () => 100n), getBalance: vi.fn(async () => 10_000n), estimateFeesPerGas: vi.fn(async () => ({ maxFeePerGas: 10n, maxPriorityFeePerGas: 1n })), getCode })) })
+      deps({
+        createClient: vi.fn(() => ({
+          estimateGas: vi.fn(async () => 100n),
+          getBalance: vi.fn(async () => 10_000n),
+          estimateFeesPerGas: vi.fn(async () => ({
+            maxFeePerGas: 10n,
+            maxPriorityFeePerGas: 1n,
+          })),
+          getCode,
+        })),
+      })
     );
     expect(result.report.chains['1'].create2).toMatchObject({ ok: true });
-    expect(result.predicted?.['1']?.['deploy-token']?.predictedAddress).toMatch(/^0x[0-9a-f]{40}$/i);
+    expect(result.predicted?.['1']?.['deploy-token']?.predictedAddress).toMatch(
+      /^0x[0-9a-f]{40}$/i
+    );
     expect(getCode).toHaveBeenCalledWith({ address: CREATE2_PROXY_ADDRESS });
   });
   it('reports an unresolved signer only on the affected chain', async () => {

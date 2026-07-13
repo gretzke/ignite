@@ -38,7 +38,7 @@ import { jobsRoutes } from "./jobs.js";
 import { gitRoutes } from "./git.js";
 import { chainRoutes } from "./chains.js";
 import { signerRoutes } from "./signers.js";
-import { deploymentRoutes } from "./deployments.js";
+import { deploymentRoutes, prepareDeploymentStepRoute } from "./deployments.js";
 import { deploymentTypeRoutes } from "./deploymentTypes.js";
 import { explorerRoutes } from "./explorers.js";
 import { verificationRoutes } from "./verifications.js";
@@ -85,6 +85,7 @@ const allRoutes = {
   ...chainRoutes,
   ...signerRoutes,
   ...deploymentRoutes,
+  prepareDeploymentStep: prepareDeploymentStepRoute,
   ...deploymentTypeRoutes,
   ...explorerRoutes,
   ...verificationRoutes,

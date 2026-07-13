@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createDeploymentHandlers } from '../../api/deployments.js';
 import { IgniteError, ErrorCodes } from '../../types/errors.js';
+import {
+  initcodeHashOf,
+  predictCreate2Address,
+} from '../../deployments/create2.js';
+import type { Hex } from '@ignite/api';
 
 function reply() {
   const value = {
@@ -53,6 +58,150 @@ const run = {
 };
 
 describe('deployment route handlers', () => {
+  const frozen = {
+    c: {
+      abi: [{ type: 'constructor', inputs: [] }],
+      creationBytecode: '0x6000',
+      compiler: { pluginId: 'f', version: '1', settingsHash: 'a'.repeat(64) },
+      artifactHash: 'a'.repeat(64),
+      repoDirty: false,
+    },
+  };
+  const prepareBody = (strategy: unknown) => ({
+    contracts: plan.contracts,
+    steps: [{ id: 's', kind: 'deploy', contractId: 'c', strategy }],
+    stepId: 's',
+    chainIds: [1],
+  });
+
+  it('prepares a server-built create2 preview', async () => {
+    const handlers = createDeploymentHandlers({
+      engine: {
+        launch: vi.fn(),
+        resolveLane: vi.fn(),
+        resume: vi.fn(),
+        abort: vi.fn(),
+      } as never,
+      getProfileManager: async () => ({ getCurrentProfile: () => 'one' }),
+      freezeInputs: vi.fn(async () => frozen as never),
+    });
+    const res = reply();
+    const salt = `0x${'11'.repeat(32)}` as Hex;
+    await handlers.prepareDeploymentStep(
+      request(prepareBody({ kind: 'create2', salt })) as never,
+      res
+    );
+    const hash = initcodeHashOf('0x6000' as Hex);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({
+      data: {
+        chains: {
+          '1': {
+            salt,
+            initcodeHash: hash,
+            predictedAddress: predictCreate2Address(salt, hash),
+            notes: [],
+          },
+        },
+      },
+    });
+  });
+
+  it('uses plugin preparation but rejects plugin-controlled address math', async () => {
+    const salt = `0x${'22'.repeat(32)}` as Hex;
+    const prepare = vi.fn(async () => ({
+      salt,
+      predictedAddress: '0x0000000000000000000000000000000000000002' as Hex,
+      notes: ['mined'],
+    }));
+    const handlers = createDeploymentHandlers({
+      engine: {
+        launch: vi.fn(),
+        resolveLane: vi.fn(),
+        resume: vi.fn(),
+        abort: vi.fn(),
+      } as never,
+      getProfileManager: async () => ({ getCurrentProfile: () => 'one' }),
+      freezeInputs: vi.fn(async () => frozen as never),
+      deploymentTypes: { prepare },
+    });
+    const res = reply();
+    await handlers.prepareDeploymentStep(
+      request(prepareBody({ kind: 'plugin', pluginId: 'hook' })) as never,
+      res
+    );
+    expect(res.statusCode).toBe(500);
+    expect((res.body as { code: string }).code).toBe(
+      ErrorCodes.PLUGIN_PREPARE_MISMATCH
+    );
+  });
+
+  it('returns a plugin prepare result when the core address computation agrees', async () => {
+    const salt = `0x${'33'.repeat(32)}` as Hex;
+    const hash = initcodeHashOf('0x6000' as Hex);
+    const handlers = createDeploymentHandlers({
+      engine: {
+        launch: vi.fn(),
+        resolveLane: vi.fn(),
+        resume: vi.fn(),
+        abort: vi.fn(),
+      } as never,
+      getProfileManager: async () => ({ getCurrentProfile: () => 'one' }),
+      freezeInputs: vi.fn(async () => frozen as never),
+      deploymentTypes: {
+        prepare: vi.fn(async () => ({
+          salt,
+          predictedAddress: predictCreate2Address(salt, hash),
+          notes: ['mined'],
+        })),
+      },
+    });
+    const res = reply();
+    await handlers.prepareDeploymentStep(
+      request(prepareBody({ kind: 'plugin', pluginId: 'hook' })) as never,
+      res
+    );
+    expect(res.statusCode).toBe(200);
+    expect(
+      (res.body as { data: { chains: { '1': { notes: string[] } } } }).data
+        .chains['1'].notes
+    ).toEqual(['mined']);
+  });
+
+  it('rejects a prepare input that depends on a plain-create address', async () => {
+    const handlers = createDeploymentHandlers({
+      engine: {
+        launch: vi.fn(),
+        resolveLane: vi.fn(),
+        resume: vi.fn(),
+        abort: vi.fn(),
+      } as never,
+      getProfileManager: async () => ({ getCurrentProfile: () => 'one' }),
+      freezeInputs: vi.fn(async () => frozen as never),
+    });
+    const res = reply();
+    await handlers.prepareDeploymentStep(
+      request({
+        contracts: plan.contracts,
+        steps: [
+          { id: 'plain', kind: 'deploy', contractId: 'c' },
+          {
+            id: 's',
+            kind: 'deploy',
+            contractId: 'c',
+            args: { peer: { $ref: { kind: 'step', stepId: 'plain' } } },
+            strategy: { kind: 'create2', salt: `0x${'44'.repeat(32)}` },
+          },
+        ],
+        stepId: 's',
+        chainIds: [1],
+      }) as never,
+      res
+    );
+    expect(res.statusCode).toBe(400);
+    expect((res.body as { code: string }).code).toBe('POINTER_NOT_CONCRETE');
+  });
+
   it('validates without launching or writing a run', async () => {
     const launch = vi.fn();
     const validate = vi.fn(async () => ({
