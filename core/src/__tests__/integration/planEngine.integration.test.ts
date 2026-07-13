@@ -29,7 +29,7 @@ import { FileSystem } from '../../filesystem/FileSystem.js';
 const docker = new Docker();
 const ANVIL_IMAGE = 'ghcr.io/foundry-rs/foundry:latest';
 const PRIVATE_KEY_IMAGE = 'ignite/signer-provider_private-key:latest';
-const HOOK_IMAGE = 'ignite/deployment-type_hook-deployer:latest';
+const SHARED_IMAGE = 'ignite/shared:latest';
 const KEY_A = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
 const KEY_B = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const;
 const SIGNER_A = getAddress('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266');
@@ -41,6 +41,7 @@ const KEY_A_ID = 'planenga';
 const KEY_B_ID = 'planengb';
 const ZERO = '0x0000000000000000000000000000000000000000' as Hex;
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plan-engine-repo');
+const PLUGINS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../plugins');
 const HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-plan-engine-'));
 FileSystem.getInstance(HOME);
 
@@ -49,7 +50,6 @@ const { RpcStore } = await import('../../chains/RpcStore.js');
 const { DeployEngine } = await import('../../deployments/DeployEngine.js');
 const { validatePlan } = await import('../../deployments/validation.js');
 const { renderArtifact } = await import('../../deployments/artifact.js');
-const { initcodeHashOf } = await import('../../deployments/create2.js');
 const { createDeploymentHandlers } = await import('../../api/deployments.js');
 const { SignerProviderService } = await import('../../signers/SignerProviderService.js');
 const { VaultStore } = await import('../../plugins/vault/VaultStore.js');
@@ -57,6 +57,10 @@ const { PluginConfigStore } = await import('../../plugins/config/PluginConfigSto
 const { PluginExecutor } = await import('../../plugins/containers/PluginExecutor.js');
 const { PluginInvoker } = await import('../../plugins/invoke/PluginInvoker.js');
 const { ProfileManager } = await import('../../filesystem/ProfileManager.js');
+const { PluginInstaller } = await import('../../plugins/install/PluginInstaller.js');
+const { LocalFolderBuildBackend } = await import('../../plugins/install/LocalFolderBuildBackend.js');
+const { TrustManager } = await import('../../plugins/trust/TrustManager.js');
+const { DeploymentTypeService } = await import('../../deployments/DeploymentTypeService.js');
 
 type Engine = InstanceType<typeof DeployEngine>;
 type Anvil = { container: Docker.Container; rpcUrl: string; chainId: number };
@@ -89,20 +93,35 @@ describe.skipIf(!ready)('plan engine: CREATE2, pointers, calls, plugins', () => 
   let signerService: InstanceType<typeof SignerProviderService>;
   let engine: Engine;
   let endpoints: Record<number, { id: string }>;
+  let deploymentTypeInstaller: InstanceType<typeof PluginInstaller>;
 
   beforeAll(async () => {
-    for (const image of [ANVIL_IMAGE, PRIVATE_KEY_IMAGE, HOOK_IMAGE]) await docker.getImage(image).inspect();
+    for (const image of [ANVIL_IMAGE, PRIVATE_KEY_IMAGE, SHARED_IMAGE]) await docker.getImage(image).inspect();
+    deploymentTypeInstaller = new PluginInstaller(new LocalFolderBuildBackend());
+    await deploymentTypeInstaller.install({
+      kind: 'local',
+      contextDir: PLUGINS_DIR,
+      dockerfile: 'examples/stub-deployment-type/Dockerfile',
+    });
+    await TrustManager.getInstance().setTrust('stub-deployment-type', 'trusted', {
+      repoWrite: false,
+      net: false,
+      secrets: [],
+    });
+    DeploymentTypeService.getInstance().invalidate();
     signerService = activeSigner = await configureSigner();
     anvilA = await startAnvil(CHAIN_A);
     anvilB = await startAnvil(CHAIN_B);
     await Promise.all([ensureCreate2Proxy(anvilA.rpcUrl), ensureCreate2Proxy(anvilB.rpcUrl)]);
     endpoints = activeEndpoints = await seed(anvilA, anvilB);
     engine = activeEngine = makeEngine(signerService);
-  }, 90_000);
+  }, 180_000);
 
   afterAll(async () => {
     await engine?.shutdown().catch(() => {});
     for (const anvil of [anvilA, anvilB]) await anvil?.container.stop({ t: 2 }).catch(() => {});
+    DeploymentTypeService.getInstance().invalidate();
+    await deploymentTypeInstaller?.uninstall('stub-deployment-type').catch(() => {});
     await fs.rm(HOME, { recursive: true, force: true }).catch(() => {});
   });
 
@@ -191,7 +210,7 @@ describe.skipIf(!ready)('plan engine: CREATE2, pointers, calls, plugins', () => 
     expect(result.report.chains[String(CHAIN_A)].args).toMatchObject({ ok: false, blocking: true, code: 'CREATE2_PREDICTION_CYCLE' });
   }, 180_000);
 
-  it('prepares, validates, and deploys a hook through the REST preparation route', async () => {
+  it('prepares, validates, and deploys through an installed deployment-type plugin', async () => {
     const step = hookPlan().steps[0];
     const app = fastify({ logger: false });
     const profile = await ProfileManager.getInstance();
@@ -216,9 +235,11 @@ describe.skipIf(!ready)('plan engine: CREATE2, pointers, calls, plugins', () => 
     const run = await launch(plan, [CHAIN_A], 'hook');
     const complete = await waitForRun(run.id, (value) => value.status === 'completed');
     const address = complete.lanes[String(CHAIN_A)].steps[0].address!;
-    expect(Number(BigInt(address) & 0x3fffn)).toBe(0x00c0);
+    expect(Number(BigInt(address) & 0xffn)).toBe(0xc0);
     const stale = structuredClone(plan);
-    if (stale.steps[0].kind === 'deploy') stale.steps[0].args = { owner_: SIGNER_B };
+    if (stale.steps[0].kind === 'deploy') {
+      stale.steps[0].args = { owner_: SIGNER_B, peer_: ZERO };
+    }
     expect((await validate(stale, [CHAIN_A])).report.chains[String(CHAIN_A)].create2).toMatchObject({ ok: false, blocking: true, code: 'DEPLOYMENT_TYPE_COMMITMENT_STALE' });
   }, 420_000);
 });
@@ -248,7 +269,12 @@ function mainPlan(chains: number[], saltOffset = 0): DeploymentPlan {
 function simpleBoxPlan(name: string, boxes: Array<{ id: string; peer: unknown }>): DeploymentPlan {
   return { ...base([CHAIN_A]), steps: boxes.map((box, index) => ({ id: `${name}-${box.id}`, kind: 'deploy' as const, contractId: 'box', args: { owner_: SIGNER_A, peer_: box.peer }, strategy: { kind: 'create2' as const, salt: salt(30 + index) } })).map((step, _, all) => ({ ...step, args: { ...step.args, peer_: typeof step.args.peer_ === 'object' && step.args.peer_ ? { $ref: { kind: 'step', stepId: `${name}-${(step.args.peer_ as { $ref: { stepId: string } }).$ref.stepId}` } } : step.args.peer_ } })) };
 }
-function hookPlan(): DeploymentPlan { return { ...base([CHAIN_A]), steps: [{ id: 'hook', kind: 'deploy', contractId: 'hook', args: { owner_: SIGNER_A }, strategy: { kind: 'plugin', pluginId: 'hook-deployer' } }] }; }
+// peer_: SIGNER_B keeps this step's initcode unique within the suite: the
+// stub mines deterministic counter salts from 0 over the SAME encoding the
+// salt() helper uses, so sharing initcode with a create2 test (e.g. the
+// forward plan's box at salt 31) parks real code on the mined address and
+// full-file runs fail CREATE2_ALREADY_DEPLOYED while isolated runs pass.
+function hookPlan(): DeploymentPlan { return { ...base([CHAIN_A]), steps: [{ id: 'hook', kind: 'deploy', contractId: 'box', args: { owner_: SIGNER_A, peer_: SIGNER_B }, strategy: { kind: 'plugin', pluginId: 'stub-deployment-type' } }] }; }
 
 function validationOverrides(profileId = 'default') {
   return { profileId, listAccounts: async () => (await activeSigner.listAccounts(true)).providers };

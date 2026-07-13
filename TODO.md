@@ -248,10 +248,10 @@ dispatch, `operationPermissions` hints unioned with host minimums, and the
 - **Job-mode generic plugin dispatch** (async + progress). prepareDeployment
   is synchronous with caps; a heavier deployment type (large search spaces)
   needs job semantics like compile.
-- **Builtin argv ceiling RESOLVED via bundledInImage** for the hook deployer
-  (480KB bundle vs 128KiB/arg MAX_ARG_STRLEN): bundle baked into the plugin
-  image, staged bundle hashed into the image label. Remaining: consider
-  migrating the other builtins off argv injection for uniformity.
+- **Builtin argv ceiling:** `bundledInImage` machinery remains available for
+  future builtins whose bundles exceed `MAX_ARG_STRLEN`; the hook deployer is
+  now an external third-party plugin. Remaining: consider migrating future
+  eligible builtins off argv injection for uniformity.
 - **Anvil cannot simulate creation calls via eth_simulateV1** — tier 1 falls
   through to the fork tier on anvil by design; revisit if anvil gains create
   support (would speed up validation against local chains).

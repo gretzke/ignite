@@ -1,0 +1,7 @@
+{
+  "name": "@ignite/stub-deployment-type-plugin",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "description": "Throwaway deployment-type plugin used only by core integration tests."
+}
