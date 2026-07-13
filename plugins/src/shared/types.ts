@@ -42,6 +42,7 @@ export enum PluginType {
   RPC_PROVIDER = "rpc-provider",
   SIGNER_PROVIDER = "signer-provider",
   VERIFIER = "verifier",
+  DEPLOYMENT_TYPE = "deployment-type",
 }
 
 // Where a plugin's code executes. "container" (default when absent) runs in
@@ -149,6 +150,14 @@ export interface PluginMetadata {
   // Config fields this plugin exposes in the settings UI (see
   // PluginConfigField above).
   configFields?: PluginConfigField[];
+  // Operations exposed through the generic dispatch surface. Omitted legacy
+  // manifests are normalized by core to frozen per-type baselines.
+  operations?: string[];
+  // Optional pre-flight permission hints for individual operations.
+  operationPermissions?: Record<string, PluginPermissionId>;
+  // Whether this plugin needs a read-only (unless repoWrite is granted)
+  // workspace bind mount. Core normalizes omitted legacy manifests.
+  repoRead?: boolean;
   // Hash of the Dockerfiles the baseImage was built from (set at registry
   // generation); compared against the image's ignite.dockerfileHash label
   // to detect stale images

@@ -27,6 +27,8 @@ import { signerHandlers } from './signers.js';
 import { deploymentHandlers } from './deployments.js';
 import { explorerHandlers } from './explorers.js';
 import { verificationHandlers } from './verifications.js';
+import { pluginOperationHandlers } from './plugins/operations.js';
+import { deploymentTypeHandlers } from './deploymentTypes.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
@@ -106,6 +108,8 @@ async function registerRoutes(app: FastifyInstance) {
     ...deploymentHandlers,
     ...explorerHandlers,
     ...verificationHandlers,
+    ...pluginOperationHandlers,
+    ...deploymentTypeHandlers,
   };
 
   checkHandlers(allHandlers);

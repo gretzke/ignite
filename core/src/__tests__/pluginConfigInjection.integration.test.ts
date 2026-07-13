@@ -103,7 +103,7 @@ describe.skipIf(!ready)('plugin config/vault/secrets injection (Docker)', () => 
     ]);
 
     // echoConfig has no permission requirement, but the fixture is a
-    // 'compiler' type plugin, which always requiresRepo — bind-mount a
+    // 'compiler' type plugin, which defaults to repoRead — bind-mount a
     // throwaway host workspace so execute() doesn't reject for a missing one.
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'config-fixture-ws-'));
 

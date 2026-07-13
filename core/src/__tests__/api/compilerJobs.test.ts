@@ -51,7 +51,7 @@ function makeConfig(id: string, name: string, type: PluginType): PluginConfig {
       version: '1.0.0',
       baseImage: `ignite/installed_${id}:1.0.0`,
     },
-    requiresRepo: false,
+    repoRead: false,
     origin: 'builtin',
   };
 }

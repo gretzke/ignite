@@ -300,3 +300,44 @@ describe('validateConfigSchema (via install)', () => {
     });
   }
 });
+
+describe('validateOperationManifest (via install)', () => {
+  it('accepts declared operations, hints, and repoRead', async () => {
+    const deps = makeDeps();
+    const installer = new PluginInstaller(
+      backendReturning({
+        imageTag: baseMeta.baseImage,
+        metadata: {
+          ...baseMeta,
+          operations: ['customOperation'],
+          operationPermissions: { customOperation: 'net' },
+          repoRead: false,
+        },
+      }),
+      deps,
+    );
+    await expect(installer.install(gitSource)).resolves.toMatchObject({
+      operations: ['customOperation'],
+      repoRead: false,
+    });
+  });
+
+  it.each([
+    ['operations', ['bad-operation']],
+    ['operations', []],
+    ['operations', ['duplicate', 'duplicate']],
+    ['operationPermissions', { unknown: 'net' }],
+    ['operationPermissions', { detect: 'nope' }],
+    ['repoRead', 'yes'],
+  ])('rejects invalid %s', async (field, value) => {
+    const deps = makeDeps();
+    const installer = new PluginInstaller(
+      backendReturning({
+        imageTag: baseMeta.baseImage,
+        metadata: { ...baseMeta, [field]: value } as PluginMetadata,
+      }),
+      deps,
+    );
+    await expect(installer.install(gitSource)).rejects.toThrow(field);
+  });
+});

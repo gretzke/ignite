@@ -6,6 +6,10 @@ import {
   normalizeLegacyType,
 } from '../plugins/utils/permissionCompat.js';
 import { getLogger } from '../utils/logger.js';
+import {
+  effectiveOperations,
+  effectiveRepoRead,
+} from '../plugins/operationBaselines.js';
 
 export type PluginOrigin = 'builtin' | 'installed';
 
@@ -13,7 +17,7 @@ export type PluginOrigin = 'builtin' | 'installed';
 // tier), so PluginConfig no longer carries a lifecycle field.
 export interface PluginConfig {
   metadata: PluginMetadata;
-  requiresRepo: boolean;
+  repoRead: boolean;
   origin: PluginOrigin;
 }
 
@@ -145,17 +149,10 @@ export class PluginRegistryLoader {
     // written before the rename must never leak the legacy id downstream.
     const typedMetadata = normalizeLegacyType(metadata);
     const { metadata: normalized } = normalizeLegacyPermissions(typedMetadata);
-    return {
-      metadata: normalized,
-      requiresRepo: this.determineRepoRequirement(pluginId, normalized),
-      origin,
-    };
-  }
-
-  private determineRepoRequirement(
-    _pluginId: string,
-    metadata: PluginMetadata
-  ): boolean {
-    return metadata.types.includes(PluginType.COMPILER);
+    // Normalize compatibility defaults onto metadata itself. Consumers of the
+    // catalog (including API clients) consequently all see one shape.
+    normalized.operations = effectiveOperations(normalized);
+    normalized.repoRead = effectiveRepoRead(normalized);
+    return { metadata: normalized, repoRead: normalized.repoRead, origin };
   }
 }

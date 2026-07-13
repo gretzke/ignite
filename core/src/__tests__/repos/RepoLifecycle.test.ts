@@ -102,7 +102,7 @@ function makeCompilerConfigs(ids: string[]) {
       version: '1.0.0',
       baseImage: `ignite/compiler_${id}:latest`,
     },
-    requiresRepo: true,
+    repoRead: true,
     origin: 'builtin' as const,
   }));
 }

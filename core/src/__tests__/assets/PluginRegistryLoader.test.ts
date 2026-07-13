@@ -50,6 +50,14 @@ describe('PluginRegistryLoader', () => {
     const loader = freshLoader();
     const plugins = await loader.getAllPlugins();
     expect(Object.keys(plugins)).toContain('foundry');
+    expect(plugins.foundry).toMatchObject({
+      repoRead: true,
+      metadata: {
+        repoRead: true,
+        operations: expect.arrayContaining(['compile', 'getWatchPaths']),
+      },
+    });
+    expect(plugins.foundry).not.toHaveProperty('requiresRepo');
   });
 
   it('retries the built-in catalog after a transient load failure', async () => {

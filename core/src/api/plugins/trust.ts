@@ -16,6 +16,7 @@ import { PluginManager } from '../../filesystem/PluginManager.js';
 import { RpcProviderService } from '../../chains/RpcProviderService.js';
 import { ErrorCodes } from '../../types/errors.js';
 import { sendCaughtError } from '../utils/errors.js';
+import { DeploymentTypeService } from '../../deployments/DeploymentTypeService.js';
 
 type SetTrustBody = {
   trust: 'trusted' | 'untrusted';
@@ -41,7 +42,8 @@ export function createTrustHandlers(
   providers: Pick<RpcProviderService, 'invalidate'> = RpcProviderService.getInstance(),
   // Trust/secret-scope changes alter what a signer plugin can decrypt, so its
   // cached account list must not outlive the grant that produced it.
-  signers: Pick<SignerProviderService, 'invalidate'> = SignerProviderService.getInstance()
+  signers: Pick<SignerProviderService, 'invalidate'> = SignerProviderService.getInstance(),
+  deploymentTypes: Pick<DeploymentTypeService, 'invalidate'> = DeploymentTypeService.getInstance()
 ) {
   return {
     listPluginTrust: async (
@@ -149,6 +151,7 @@ export function createTrustHandlers(
         });
         providers.invalidate(pluginId);
         signers.invalidate(pluginId);
+        deploymentTypes.invalidate();
         const body: IApiResponse<SetPluginTrustData> = {
           data: {
             plugin: {

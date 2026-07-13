@@ -38,7 +38,7 @@ const req = (pluginId: string): any => ({ params: { pluginId } });
 
 const browserWallet: PluginConfig = {
   origin: 'builtin',
-  requiresRepo: false,
+  repoRead: false,
   metadata: {
     id: 'browser-wallet',
     types: [PluginType.SIGNER_PROVIDER],

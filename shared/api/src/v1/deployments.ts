@@ -22,6 +22,18 @@ const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
 export type Hex = `0x${string}`;
 export type ArgValues = Record<string, unknown>;
 
+// Arachnid deterministic-deployment-proxy (EIP-2470 style). The runtime and
+// presigned transaction are immutable protocol constants consumed by D5 setup.
+export const CREATE2_PROXY_ADDRESS = '0x4e59b44847b379578588920cA78FbF26c0B4956C' as const;
+export const CREATE2_PROXY_RUNTIME_CODE =
+  '0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3' as const;
+export const CREATE2_PROXY_RUNTIME_HASH =
+  '0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989' as const;
+export const CREATE2_PROXY_DEPLOYER_ADDRESS =
+  '0x3fab184622dc19b6109349b94811493bf2a45362' as const;
+export const CREATE2_PROXY_PRESIGNED_DEPLOYMENT_TX =
+  '0xf8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf31ba02222222222222222222222222222222222222222222222222222222222222222a02222222222222222222222222222222222222222222222222222222222222222' as const;
+
 export interface SignerRef {
   pluginId: string;
   accountId: string;

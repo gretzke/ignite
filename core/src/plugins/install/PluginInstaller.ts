@@ -27,6 +27,7 @@ import {
   normalizeLegacyType,
 } from '../utils/permissionCompat.js';
 import { deriveTrack, inspectGitRemote } from './gitRemote.js';
+import { effectiveOperations } from '../operationBaselines.js';
 import type { InspectGitRemoteData } from '@ignite/api';
 import type { PluginBuildBackend, PluginInstallSource } from './types.js';
 
@@ -535,6 +536,52 @@ export class PluginInstaller {
     }
     this.validatePermissionRequests(metadata);
     this.validateConfigSchema(metadata);
+    this.validateOperationManifest(metadata);
+  }
+
+  private validateOperationManifest(metadata: PluginMetadata): void {
+    const invalid = (reason: string): PluginError =>
+      new PluginError(
+        `Invalid operation manifest for '${metadata.id}': ${reason}`,
+        ErrorCodes.PLUGIN_INSTALL_INVALID
+      );
+    const operations = metadata.operations;
+    if (operations !== undefined) {
+      if (!Array.isArray(operations)) throw invalid('operations must be an array');
+      if (operations.length === 0) throw invalid('operations must not be empty');
+      if (operations.length > 32) throw invalid('operations has too many entries');
+      const seen = new Set<string>();
+      for (const operation of operations) {
+        if (
+          typeof operation !== 'string' ||
+          !/^[a-zA-Z][a-zA-Z0-9]{0,63}$/.test(operation)
+        ) {
+          throw invalid('operations contains an invalid operation');
+        }
+        if (seen.has(operation)) throw invalid(`operations contains duplicate '${operation}'`);
+        seen.add(operation);
+      }
+    }
+    const hints = metadata.operationPermissions;
+    if (hints !== undefined) {
+      if (typeof hints !== 'object' || hints === null || Array.isArray(hints)) {
+        throw invalid('operationPermissions must be an object');
+      }
+      const entries = Object.entries(hints);
+      if (entries.length > 32) throw invalid('operationPermissions has too many entries');
+      const declared = new Set(effectiveOperations(metadata));
+      for (const [operation, permission] of entries) {
+        if (!declared.has(operation)) {
+          throw invalid(`operationPermissions key '${operation}' is not an effective operation`);
+        }
+        if (!(PLUGIN_PERMISSION_IDS as readonly string[]).includes(permission)) {
+          throw invalid(`operationPermissions '${operation}' has an unknown permission`);
+        }
+      }
+    }
+    if (metadata.repoRead !== undefined && typeof metadata.repoRead !== 'boolean') {
+      throw invalid('repoRead must be a boolean');
+    }
   }
 
   // The permission manifest is attacker-controlled input rendered in the

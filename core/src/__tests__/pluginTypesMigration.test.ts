@@ -43,7 +43,7 @@ describe('normalizeLegacyType', () => {
 describe('PluginExecutor signer-provider network clamp', () => {
   const signerConfig: PluginConfig = {
     origin: 'builtin',
-    requiresRepo: false,
+    repoRead: false,
     metadata: {
       id: 'native-signer',
       types: [PluginType.SIGNER_PROVIDER],

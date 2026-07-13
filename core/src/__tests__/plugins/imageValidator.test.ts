@@ -14,7 +14,7 @@ const builtinConfig: PluginConfig = {
     baseImage: 'ignite/foundry:latest',
     imageHash: 'hash-abc',
   } as PluginConfig['metadata'],
-  requiresRepo: true,
+  repoRead: true,
   origin: 'builtin',
 };
 
@@ -26,7 +26,7 @@ const installedConfig: PluginConfig = {
     version: '0.5.1',
     baseImage: 'ignite/installed_waffle:0.5.1',
   } as PluginConfig['metadata'],
-  requiresRepo: true,
+  repoRead: true,
   origin: 'installed',
 };
 

@@ -12,12 +12,14 @@ export * from "./plugins/install.js";
 export * from "./plugins/compiler/index.js";
 export * from "./plugins/repo-manager/index.js";
 export * from "./plugins/versions.js";
+export * from "./plugins/operations.js";
 export * from "./filesystem.js";
 export * from "./jobs.js";
 export * from "./git.js";
 export * from "./chains.js";
 export * from "./signers.js";
 export * from "./deployments.js";
+export * from "./deploymentTypes.js";
 export * from "./explorers.js";
 export * from "./verifications.js";
 
@@ -30,12 +32,14 @@ import { installRoutes } from "./plugins/install.js";
 import { compilerRoutes } from "./plugins/compiler/index.js";
 import { repoManagerRoutes } from "./plugins/repo-manager/index.js";
 import { versionsRoutes } from "./plugins/versions.js";
+import { pluginOperationRoutes } from "./plugins/operations.js";
 import { filesystemRoutes } from "./filesystem.js";
 import { jobsRoutes } from "./jobs.js";
 import { gitRoutes } from "./git.js";
 import { chainRoutes } from "./chains.js";
 import { signerRoutes } from "./signers.js";
 import { deploymentRoutes } from "./deployments.js";
+import { deploymentTypeRoutes } from "./deploymentTypes.js";
 import { explorerRoutes } from "./explorers.js";
 import { verificationRoutes } from "./verifications.js";
 
@@ -74,12 +78,14 @@ const allRoutes = {
   ...compilerRoutes,
   ...repoManagerRoutes,
   ...versionsRoutes,
+  ...pluginOperationRoutes,
   ...filesystemRoutes,
   ...jobsRoutes,
   ...gitRoutes,
   ...chainRoutes,
   ...signerRoutes,
   ...deploymentRoutes,
+  ...deploymentTypeRoutes,
   ...explorerRoutes,
   ...verificationRoutes,
 } as const;

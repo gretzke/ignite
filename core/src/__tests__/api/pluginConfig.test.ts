@@ -433,7 +433,7 @@ describe('plugin config handlers', () => {
           }
           return {
             metadata: BUILTIN_METADATA,
-            requiresRepo: true,
+            repoRead: true,
             origin: 'builtin',
           };
         },

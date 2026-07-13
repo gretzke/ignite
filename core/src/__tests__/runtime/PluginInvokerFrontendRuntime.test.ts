@@ -24,7 +24,7 @@ function makeConfig(overrides?: {
   };
   return {
     metadata,
-    requiresRepo: false,
+    repoRead: false,
     origin: overrides?.origin ?? 'builtin',
   };
 }

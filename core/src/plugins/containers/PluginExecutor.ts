@@ -9,7 +9,11 @@ import {
   ContainerOrchestrator,
   ContainerLifecycle,
 } from './ContainerOrchestrator.js';
-import { PluginType, type PluginResponse } from '@ignite/plugin-types/types';
+import {
+  PluginType,
+  type PluginMetadata,
+  type PluginResponse,
+} from '@ignite/plugin-types/types';
 import { PluginExecutionUtils } from '../utils/PluginExecutionUtils.js';
 import {
   TrustManager,
@@ -26,6 +30,7 @@ import { createDefaultPluginInstaller } from '../install/defaultInstaller.js';
 import { PluginConfigStore } from '../config/PluginConfigStore.js';
 import { VaultStore } from '../vault/VaultStore.js';
 import { resolveConfig } from '../config/resolveConfig.js';
+import { requiredPermissions } from '../operationBaselines.js';
 
 // Upper bound on a `file` config field's contents: stat'd before reading so
 // an oversized host file is never even opened for read. Never logs contents
@@ -74,25 +79,16 @@ type BooleanPermission = Exclude<keyof PluginPermissions, 'secrets'>;
 
 // SPEC.md §3.1 operations matrix: install and compile mutate the shared
 // volume, verify talks to block explorers. detect/mount/etc. need no grant.
-export const OPERATION_PERMISSIONS: Record<string, BooleanPermission> = {
-  install: 'repoWrite',
-  compile: 'repoWrite',
-  verify: 'net',
-  getSupportedExplorers: 'net',
-  checkVerification: 'net',
-  getCreationTx: 'net',
-  // sendTransaction submits to a provider-defined target (API/RPC) and needs
-  // network. getAccounts/signTransaction are pure over injected config.
-  sendTransaction: 'net',
-};
-
-// Returns the permission the operation needs but the grant lacks, or null.
+// Returns the first required permission the grant lacks, or null. Hints and
+// host floors are independent dimensions, so an operation can require both.
 export function missingPermission(
+  metadata: PluginMetadata,
   operation: string,
   grant: PermissionGrant
 ): BooleanPermission | null {
-  const required = OPERATION_PERMISSIONS[operation];
-  if (required && !grant[required]) return required;
+  for (const required of requiredPermissions(metadata, operation)) {
+    if (!grant[required]) return required;
+  }
   return null;
 }
 
@@ -107,12 +103,12 @@ function isImageMissingError(error: unknown): boolean {
 
 // Every plugin is EPHEMERAL (Phase 3 deleted the persistent/repo-container
 // tier): short-lived containers (AutoRemove=true), bind-mounting the host
-// workspace directly at /workspace when requiresRepo=true (grant enforcement
+// workspace directly at /workspace when repoRead=true (grant enforcement
 // downgrades the bind to :ro), automatically removed after the operation
 // completes.
 
 // Threaded through execute() -> executeEphemeralPlugin. Plugins that
-// requiresRepo use workspacePath to bind-mount the host workspace directly.
+// repoRead plugins use workspacePath to bind-mount the host workspace directly.
 // signal aborts the in-flight exec (job cancellation): the exec stream is
 // destroyed and the ephemeral container is stopped, killing the plugin
 // process instead of letting it keep writing to the mounted workspace.
@@ -209,7 +205,7 @@ export class PluginExecutor {
     // Resolve the trust grant once; everything downstream enforces it.
     const grant = await this.deps.trust.getGrant(pluginId);
 
-    const denied = missingPermission(operation, grant);
+    const denied = missingPermission(pluginConfig.metadata, operation, grant);
     if (denied) {
       // Installed plugins can only be granted permissions their manifest
       // requests. A denied permission that was never requested is a hard
@@ -305,7 +301,7 @@ export class PluginExecutor {
       : options;
 
     // Create ephemeral container, binding the host workspace directly when
-    // the plugin requiresRepo (Phase 3: no more repo-container VolumesFrom).
+    // the plugin repoRead capability (Phase 3: no more repo-container VolumesFrom).
     // An installed plugin whose image was deleted (docker prune, manual rmi)
     // gets ONE rebuild from its recorded pinned install source + retry;
     // built-in images keep the existing docker:build error path.
@@ -421,7 +417,7 @@ export class PluginExecutor {
   }
 
   // Create ephemeral container with AutoRemove=true, bind-mounting the host
-  // workspace directly when the plugin requiresRepo (grant enforcement — the
+  // workspace directly when the plugin has repoRead (grant enforcement — the
   // orchestrator downgrades to :ro without repoWrite — mirrors the old
   // VolumesFrom rule this replaces).
   private async createEphemeralContainer(
@@ -455,8 +451,8 @@ export class PluginExecutor {
 
     let workspaceBind: { hostPath: string } | undefined;
 
-    // requiresRepo now means "needs the host workspace bind-mounted".
-    if (pluginConfig.requiresRepo) {
+    // repoRead means "needs the host workspace bind-mounted".
+    if (pluginConfig.repoRead) {
       if (!workspacePath) {
         throw new Error(
           `Workspace path required for ephemeral plugin: ${pluginId}`

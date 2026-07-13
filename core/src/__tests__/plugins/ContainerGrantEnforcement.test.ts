@@ -107,10 +107,11 @@ describe('missingPermission', () => {
     const { missingPermission } = await import(
       '../../plugins/containers/PluginExecutor.js'
     );
-    expect(missingPermission('compile', UNTRUSTED_GRANT)).toBe('repoWrite');
-    expect(missingPermission('verify', UNTRUSTED_GRANT)).toBe('net');
-    expect(missingPermission('compile', NATIVE_GRANT)).toBeNull();
-    expect(missingPermission('detect', UNTRUSTED_GRANT)).toBeNull();
+    const metadata = { types: [], operationPermissions: {} } as never;
+    expect(missingPermission(metadata, 'compile', UNTRUSTED_GRANT)).toBe('repoWrite');
+    expect(missingPermission(metadata, 'verify', UNTRUSTED_GRANT)).toBe('net');
+    expect(missingPermission(metadata, 'compile', NATIVE_GRANT)).toBeNull();
+    expect(missingPermission(metadata, 'detect', UNTRUSTED_GRANT)).toBeNull();
   });
 
   it('maps install to repoWrite, matching the runtime write it performs', async () => {
@@ -121,7 +122,8 @@ describe('missingPermission', () => {
     const { missingPermission } = await import(
       '../../plugins/containers/PluginExecutor.js'
     );
-    expect(missingPermission('install', UNTRUSTED_GRANT)).toBe('repoWrite');
-    expect(missingPermission('install', NATIVE_GRANT)).toBeNull();
+    const metadata = { types: [], operationPermissions: {} } as never;
+    expect(missingPermission(metadata, 'install', UNTRUSTED_GRANT)).toBe('repoWrite');
+    expect(missingPermission(metadata, 'install', NATIVE_GRANT)).toBeNull();
   });
 });

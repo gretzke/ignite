@@ -4,14 +4,16 @@ import type { CompilerOperations } from "./base/compiler/types.js";
 import type { RpcProviderOperations } from "./base/rpc-provider/types.js";
 import type { SignerProviderOperations } from "./base/signer-provider/types.js";
 import type { VerifierOperations } from "./base/verifier/types.js";
+import type { DeploymentTypeOperations } from "./base/deployment-type/types.js";
 import { frameResult } from "./utils/protocol.js";
 
 // Built-in plugins are compiler or rpc-provider plugins (the repo-manager
 // tier was deleted — repos are host data managed by core's RepoService).
-type AllOperations = CompilerOperations &
+export type AllOperations = CompilerOperations &
   RpcProviderOperations &
   SignerProviderOperations &
-  VerifierOperations;
+  VerifierOperations &
+  DeploymentTypeOperations;
 
 // Generic plugin execution interface
 export type IPluginExecutor<T extends keyof AllOperations> = {
@@ -65,11 +67,18 @@ export async function executePluginOperation<T extends keyof AllOperations>(
 
 // Read the full stdin stream until EOF
 async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
+  const chunks: Uint8Array[] = [];
   for await (const chunk of process.stdin) {
-    chunks.push(chunk as Buffer);
+    chunks.push(new Uint8Array(chunk as Uint8Array));
   }
-  return Buffer.concat(chunks).toString("utf8");
+  const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
+  const input = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    input.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new TextDecoder().decode(input);
 }
 
 // CLI entry point for generic plugin execution

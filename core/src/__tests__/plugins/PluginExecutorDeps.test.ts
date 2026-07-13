@@ -16,7 +16,7 @@ function makeExecutor(overrides: Record<string, unknown> = {}) {
           types: [PluginType.COMPILER],
           baseImage: 'img:latest',
         },
-        requiresRepo: false,
+        repoRead: false,
         origin: 'builtin',
       }),
     },
@@ -155,7 +155,7 @@ describe('PluginExecutor with injected deps', () => {
                 },
               ],
             },
-            requiresRepo: false,
+            repoRead: false,
             origin: 'builtin',
           }),
         },
@@ -216,7 +216,7 @@ describe('PluginExecutor with injected deps', () => {
                 },
               ],
             },
-            requiresRepo: false,
+            repoRead: false,
             origin: 'builtin',
           }),
         },
@@ -268,7 +268,7 @@ describe('PluginExecutor with injected deps', () => {
                 },
               ],
             },
-            requiresRepo: false,
+            repoRead: false,
             origin: 'builtin',
           }),
         },
@@ -319,7 +319,7 @@ describe('PluginExecutor with injected deps', () => {
                 },
               ],
             },
-            requiresRepo: false,
+            repoRead: false,
             origin: 'builtin',
           }),
         },
@@ -357,7 +357,7 @@ describe('PluginExecutor with injected deps', () => {
               types: [PluginType.COMPILER],
               baseImage: 'img:latest',
             },
-            requiresRepo: true,
+            repoRead: true,
             origin: 'builtin',
           }),
         },
@@ -383,7 +383,7 @@ describe('PluginExecutor with injected deps', () => {
       expect(call.volumesFrom).toBeUndefined();
     });
 
-    it('rejects execute() when requiresRepo is true but no workspacePath is provided', async () => {
+    it('rejects execute() when repoRead is true but no workspacePath is provided', async () => {
       const { executor } = makeRequiresRepoExecutor();
 
       await expect(
@@ -450,7 +450,7 @@ describe('PluginExecutor with injected deps', () => {
           types: [PluginType.COMPILER],
           baseImage: 'img:latest',
         },
-        requiresRepo: false,
+        repoRead: false,
         origin: 'installed',
       }),
     };

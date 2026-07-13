@@ -11,6 +11,7 @@ import { ProfileManager } from '../../filesystem/ProfileManager.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 import { getLogger } from '../../utils/logger.js';
 import { sendBadRequest, sendCaughtError } from '../utils/errors.js';
+import { DeploymentTypeService } from '../../deployments/DeploymentTypeService.js';
 
 interface InstallerLike {
   install(source: PluginInstallSource): Promise<PluginMetadata>;
@@ -37,6 +38,7 @@ export interface InstallHandlerDeps {
   // Re-detect all repos after the plugin catalog changes so a freshly
   // installed compiler is picked up without a CLI restart.
   resweepRepos: () => Promise<void>;
+  invalidateDeploymentTypes: () => void;
 }
 
 async function resweepCurrentProfile(): Promise<void> {
@@ -61,6 +63,9 @@ export function createInstallHandlers(
   const d: InstallHandlerDeps = {
     jobs: deps?.jobs ?? JobManager.getInstance(),
     resweepRepos: deps?.resweepRepos ?? resweepCurrentProfile,
+    invalidateDeploymentTypes:
+      deps?.invalidateDeploymentTypes ??
+      (() => DeploymentTypeService.getInstance().invalidate()),
   };
 
   return {
@@ -82,6 +87,7 @@ export function createInstallHandlers(
       const job = d.jobs.start('plugin.install', { source }, async () => {
         const plugin = await installer.install(source);
         await d.resweepRepos();
+        d.invalidateDeploymentTypes();
         return { plugin };
       });
 
@@ -114,6 +120,7 @@ export function createInstallHandlers(
         async () => {
           const result = await installer.update(pluginId, source);
           await d.resweepRepos();
+          d.invalidateDeploymentTypes();
           return result;
         }
       );
@@ -128,6 +135,7 @@ export function createInstallHandlers(
       try {
         await installer.uninstall(request.params.pluginId);
         await d.resweepRepos();
+        d.invalidateDeploymentTypes();
         return reply.status(204).send();
       } catch (error) {
         if (

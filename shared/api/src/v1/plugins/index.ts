@@ -81,6 +81,16 @@ export const PluginMetadataSchema = z.object({
   baseImage: z.string(),
   permissions: z.array(PluginPermissionRequestSchema).optional(),
   configFields: z.array(PluginConfigFieldSchema).optional(),
+  operations: z
+    .array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/))
+    .min(1)
+    .max(32)
+    .optional(),
+  operationPermissions: z
+    .record(z.string(), z.enum(["repoWrite", "net"]))
+    .refine((value) => Object.keys(value).length <= 32)
+    .optional(),
+  repoRead: z.boolean().optional(),
 }) satisfies z.ZodType<PluginMetadata>;
 
 // Type-safe IApiResponse schemas that enforce interface compliance
