@@ -1,0 +1,72 @@
+import { useEffect, useState } from 'react';
+import { keccak256, stringToHex } from 'viem';
+import type { DeploymentTypeInfo } from '@ignite/api';
+import Select from '../../../components/Select';
+import { apiClient } from '../../../store/api/client';
+import { useAppDispatch, useAppSelector } from '../../../store';
+import {
+  setPluginParams,
+  setSalt,
+  setStrategy,
+  storePrepared,
+} from '../../../store/features/deployments/deployDraftSlice';
+import { draftToPlanFragment } from '../planFromDraft';
+
+export default function StrategySection({ stepId }: { stepId: string }) {
+  const dispatch = useAppDispatch();
+  const draft = useAppSelector((state) => state.deployDraft);
+  const chains = useAppSelector((state) => state.chains.chains);
+  const extras = draft.deployExtras[stepId];
+  const strategy = extras?.strategy ?? { kind: 'create' as const };
+  const [types, setTypes] = useState<DeploymentTypeInfo[]>([]);
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    void apiClient.request('listDeploymentTypes', {}).then((response) => {
+      if ('data' in response) setTypes(response.data.deploymentTypes);
+    }).catch(() => undefined);
+  }, []);
+  const selected = strategy.kind === 'plugin' ? `plugin:${strategy.pluginId}` : strategy.kind;
+  const selectStrategy = (value: string) => {
+    if (value === 'create') dispatch(setStrategy({ stepId, strategy: { kind: 'create' } }));
+    else if (value === 'create2') dispatch(setStrategy({ stepId, strategy: { kind: 'create2' } }));
+    else dispatch(setStrategy({ stepId, strategy: { kind: 'plugin', pluginId: value.slice('plugin:'.length) } }));
+  };
+  const prepare = async () => {
+    setError(undefined);
+    setLoading(true);
+    try {
+      const fragment = draftToPlanFragment(draft, chains);
+      const response = await apiClient.request('prepareDeploymentStep', {
+        body: { contracts: fragment.contracts, steps: fragment.steps, stepId, chainIds: draft.chains },
+      });
+      if (!('data' in response)) throw new Error(response.message);
+      dispatch(storePrepared({ stepId, chains: response.data.chains }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLoading(false);
+    }
+  };
+  const plugin = strategy.kind === 'plugin' ? types.find((item) => item.pluginId === strategy.pluginId) : undefined;
+  return (
+    <section className="grid gap-3">
+      <label className="grid gap-1"><span className="eyebrow">Deployment strategy</span>
+        <Select value={selected} requireSelection options={[
+          { value: 'create', label: 'Create' },
+          { value: 'create2', label: 'Create2' },
+          ...types.map((item) => ({ value: `plugin:${item.pluginId}`, label: item.label })),
+        ]} onValueChange={selectStrategy} />
+      </label>
+      {strategy.kind === 'create2' && <label className="grid gap-1"><span className="eyebrow">Salt</span><div className="flex gap-2"><input className="input-glass" value={strategy.salt ?? ''} placeholder="0x… (32 bytes)" onChange={(event) => dispatch(setSalt({ stepId, salt: (event.target.value || undefined) as `0x${string}` | undefined }))} /><button type="button" className="btn btn-secondary" onClick={() => dispatch(setSalt({ stepId, salt: keccak256(stringToHex(strategy.salt ?? '')) }))}>Text → keccak</button></div></label>}
+      {plugin?.params.map((field) => {
+        const value = strategy.kind === 'plugin' ? strategy.params?.[field.key] : undefined;
+        const change = (next: unknown) => dispatch(setPluginParams({ stepId, params: { ...(strategy.kind === 'plugin' ? strategy.params : {}), [field.key]: next } }));
+        return <label key={field.key} className="grid gap-1"><span className="eyebrow">{field.label}</span>{field.type === 'boolean' ? <input type="checkbox" checked={value === true} onChange={(event) => change(event.target.checked)} /> : field.type === 'select' ? <Select value={typeof value === 'string' ? value : undefined} options={field.options ?? []} onValueChange={change} /> : <input className="input-glass" value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''} onChange={(event) => change(field.type === 'number' ? Number(event.target.value) : event.target.value)} />}</label>;
+      })}
+      {strategy.kind !== 'create' && <div className="flex gap-2 items-center"><button type="button" className="btn btn-secondary" disabled={loading} onClick={() => void prepare()}>{loading ? 'Preparing…' : extras?.prepared ? 'Re-mine' : strategy.kind === 'create2' ? 'Predict addresses' : 'Mine'}</button>{extras?.needsPrepare && <span className="chip chip-warn">needs re-mine</span>}</div>}
+      {error && <p className="text-sm text-err">{error}</p>}
+      {Object.entries(extras?.prepared ?? {}).map(([chainId, result]) => <p key={chainId} className="text-xs mono-data">{chainId}: {result.predictedAddress}</p>)}
+    </section>
+  );
+}

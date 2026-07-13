@@ -11,6 +11,7 @@ const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const KEY = /^[a-zA-Z][a-zA-Z0-9._-]*$/;
+// eslint-disable-next-line no-control-regex -- boundary sanitization needs the literal control range
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 
 type Provider = PluginConfig;

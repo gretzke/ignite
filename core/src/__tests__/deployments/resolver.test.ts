@@ -79,3 +79,30 @@ describe('deployment resolver', () => {
     catch (error) { expect(error).toMatchObject({ code: 'CREATE2_PREDICTION_CYCLE' }); }
   });
 });
+
+describe('call-arg and per-chain dependency validation', () => {
+  const contract = { id: 'c', repoPathOrUrl: '/r', frameworkId: 'f', artifactPath: 'a', contractName: 'C', sourcePath: 'C.sol' };
+  const base = { schemaVersion: 1 as const, contracts: [contract], chains: [1, 2], signers: {} };
+
+  it('rejects call args referencing a later plain-create step', () => {
+    const plan = {
+      ...base,
+      steps: [
+        { id: 'ping', kind: 'call' as const, target: { kind: 'address' as const, address: `0x${'11'.repeat(20)}` as `0x${string}` }, signature: 'poke(address)', payable: false, args: { who: { $ref: { kind: 'step', stepId: 'late' } } } },
+        { id: 'late', kind: 'deploy' as const, contractId: 'c' },
+      ],
+    };
+    expect(() => validateDependencies(plan)).toThrowError(/references later create step/);
+  });
+
+  it('catches refs that only exist in a non-first chain override', () => {
+    const plan = {
+      ...base,
+      steps: [
+        { id: 'a', kind: 'deploy' as const, contractId: 'c', strategy: { kind: 'create2' as const, salt: `0x${'22'.repeat(32)}` as `0x${string}` }, argsPerChain: { '2': { owner: { $ref: { kind: 'step', stepId: 'b' } } } } },
+        { id: 'b', kind: 'deploy' as const, contractId: 'c' },
+      ],
+    };
+    expect(() => validateDependencies(plan)).toThrowError(/non-concrete create step/);
+  });
+});

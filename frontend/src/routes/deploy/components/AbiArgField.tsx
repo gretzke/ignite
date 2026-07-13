@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import Switch from '../../../components/Switch';
+import PointerValue, { type PointerOption } from './PointerValue';
 
 export interface AbiInput {
   name?: string;
@@ -14,6 +15,7 @@ interface AbiArgFieldProps {
   // True only on the global argument form: bool fields self-initialize to
   // an explicit false there, never inside sparse per-chain overrides.
   autoDefault?: boolean;
+  eligibleSteps?: PointerOption[];
   onChange: (value: unknown) => void;
 }
 
@@ -87,6 +89,7 @@ export default function AbiArgField({
   fieldKey,
   value,
   autoDefault = false,
+  eligibleSteps,
   onChange,
 }: AbiArgFieldProps) {
   const label = input.name || fieldKey;
@@ -120,6 +123,7 @@ export default function AbiArgField({
               fieldKey={key}
               value={tuple[key]}
               autoDefault={autoDefault}
+              eligibleSteps={eligibleSteps}
               onChange={(next) => onChange({ ...tuple, [key]: next })}
             />
           );
@@ -135,6 +139,31 @@ export default function AbiArgField({
         ? value
         : JSON.stringify(value);
   const invalid = validationMessage(input.type, stringValue);
+  if (input.type === 'address' && eligibleSteps) {
+    const literal = typeof value === 'string' ? value : '';
+    const ref =
+      value && typeof value === 'object' && '$ref' in value
+        ? (value as { $ref: { kind: 'step'; stepId: string } })
+        : undefined;
+    return (
+      <div className="grid gap-2">
+        <span className="text-sm font-medium">
+          {label} <span className="mono-data text-muted">{input.type}</span>
+        </span>
+        <PointerValue value={ref ?? literal} onChange={onChange} eligibleSteps={eligibleSteps} />
+        {!ref && (
+          <input
+            className="input-glass"
+            value={literal}
+            placeholder={inputHint(input.type)}
+            aria-invalid={Boolean(invalid)}
+            onChange={(event) => onChange(event.target.value)}
+          />
+        )}
+        {invalid && !ref && <span className="text-xs text-err">{invalid}</span>}
+      </div>
+    );
+  }
   return (
     <label className="grid gap-1">
       <span className="text-sm font-medium">

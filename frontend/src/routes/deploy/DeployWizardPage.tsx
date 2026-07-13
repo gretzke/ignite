@@ -3,7 +3,6 @@ import { ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store';
 import {
-  reorderSteps,
   markDraftSeen,
   clearDraft,
   removeContract,
@@ -14,7 +13,7 @@ import ContractsStep from './steps/ContractsStep';
 import ChainsStep from './steps/ChainsStep';
 import ExplorersStep from './steps/ExplorersStep';
 import SignersStep from './steps/SignersStep';
-import ArgumentsStep from './steps/ArgumentsStep';
+import StepsStep from './steps/StepsStep';
 import ReviewStep from './steps/ReviewStep';
 import { planFromDraft } from './planFromDraft';
 import type { ExplorerEntry } from '@ignite/api';
@@ -24,7 +23,7 @@ const STEPS = [
   { id: 'chains', label: 'Chains & RPCs' },
   { id: 'explorers', label: 'Explorers' },
   { id: 'signers', label: 'Signers' },
-  { id: 'arguments', label: 'Arguments' },
+  { id: 'steps', label: 'Steps' },
   { id: 'review', label: 'Review' },
 ];
 
@@ -215,16 +214,13 @@ export default function DeployWizardPage() {
           <ContractsStep
             contracts={draft.contracts}
             onValidityChange={setContractsValid}
-            onReorder={(fromIndex, toIndex) =>
-              dispatch(reorderSteps({ fromIndex, toIndex }))
-            }
             onRemove={(contractId) => dispatch(removeContract(contractId))}
           />
         )}
         {step === 1 && <ChainsStep />}
         {step === 2 && <ExplorersStep />}
         {step === 3 && <SignersStep />}
-        {step === 4 && <ArgumentsStep />}
+        {step === 4 && <StepsStep />}
         {step === 5 && plan && <ReviewStep plan={plan} />}
       </div>
     </div>

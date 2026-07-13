@@ -30,6 +30,7 @@ function fakeStorage(initial: Record<string, string> = {}) {
     setItem: (key: string, value: string) => {
       map.set(key, value);
     },
+    removeItem: (key: string) => map.delete(key),
   };
 }
 
@@ -59,6 +60,12 @@ describe('deployDraftPersistence', () => {
   it('returns undefined for corrupt JSON', () => {
     const storage = fakeStorage({ [DEPLOY_DRAFT_STORAGE_KEY]: '{not json' });
     expect(loadDraft(storage)).toBeUndefined();
+  });
+
+  it('discards the incompatible v1 session key', () => {
+    const storage = fakeStorage({ 'ignite.deployDraft.v1': JSON.stringify(draftWithContracts()) });
+    expect(loadDraft(storage)).toBeUndefined();
+    expect(storage.getItem('ignite.deployDraft.v1')).toBeNull();
   });
 
   it('rejects parseable payloads with orphaned steps', () => {

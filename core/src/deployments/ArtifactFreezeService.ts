@@ -5,7 +5,6 @@ import type {
   ArtifactData,
   ContractSource,
   FrozenInputs,
-  Hex,
 } from '@ignite/api';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';

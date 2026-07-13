@@ -1,10 +1,8 @@
 import crypto from 'node:crypto';
 import {
   createPublicClient,
-  encodeDeployData,
   http,
   keccak256,
-  type Abi,
   type Hex,
 } from 'viem';
 import type {

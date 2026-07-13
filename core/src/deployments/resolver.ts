@@ -140,27 +140,40 @@ export function callAbiItem(step: CallStep, chainId: number, frozenAbi?: unknown
 
 export function validateDependencies(plan: DeploymentPlan): void {
   const byId = new Map(plan.steps.map((step, index) => [step.id, { step, index }]));
-  const graph = new Map<string, string[]>();
-  for (const [id, current] of byId) {
-    if (current.step.kind === 'call') {
-      const target = current.step.target;
-      if (target.kind === 'step' && (byId.get(target.stepId)?.index ?? Infinity) >= current.index) throw new IgniteError(`Call target ${target.stepId} is not deployed yet`, 'CALL_TARGET_NOT_DEPLOYED', { stepId: target.stepId });
-      continue;
+  // Per-chain: per-chain overrides can introduce refs/targets that the first
+  // chain's merge never sees, and libraries may differ per chain.
+  for (const chainId of plan.chains.length ? plan.chains : [1]) {
+    const graph = new Map<string, string[]>();
+    for (const [id, current] of byId) {
+      if (current.step.kind === 'call') {
+        const target = mergeCallTarget(current.step, chainId);
+        if (target.kind === 'step' && (byId.get(target.stepId)?.index ?? Infinity) >= current.index) throw new IgniteError(`Call target ${target.stepId} is not deployed yet`, 'CALL_TARGET_NOT_DEPLOYED', { stepId: target.stepId });
+        // Call ARGS resolve at execution time: any earlier step works, and a
+        // later create2/plugin step resolves via its predicted address — but
+        // a later plain-create step can never resolve.
+        for (const ref of collectRefs(current.step, chainId).filter((entry) => entry.path !== 'target')) {
+          const refTarget = byId.get(ref.stepId);
+          if (!refTarget || refTarget.step.kind !== 'deploy') throw new IgniteError(`Pointer target ${ref.stepId} is not a deploy step`, 'POINTER_TARGET_NOT_DEPLOY', { stepId: ref.stepId });
+          const refStrategy = refTarget.step.strategy ?? { kind: 'create' as const };
+          if (refStrategy.kind === 'create' && refTarget.index >= current.index) throw new IgniteError(`Call argument ${ref.path} references later create step ${ref.stepId}`, 'POINTER_FORWARD_CREATE', { stepId: ref.stepId, path: ref.path });
+        }
+        continue;
+      }
+      const strategy = current.step.strategy ?? { kind: 'create' as const };
+      const refs = collectRefs(current.step, chainId).filter((ref) => ref.path !== 'target');
+      for (const ref of refs) {
+        const target = byId.get(ref.stepId);
+        if (!target || target.step.kind !== 'deploy') throw new IgniteError(`Pointer target ${ref.stepId} is not a deploy step`, 'POINTER_TARGET_NOT_DEPLOY', { stepId: ref.stepId });
+        const targetStrategy = target.step.strategy ?? { kind: 'create' as const };
+        if (strategy.kind !== 'create' && targetStrategy.kind === 'create') throw new IgniteError(`Create2 input ${ref.path} references non-concrete create step ${ref.stepId}`, 'CREATE2_POINTER_NOT_CONCRETE', { stepId: ref.stepId, path: ref.path });
+        if (strategy.kind === 'create' && targetStrategy.kind === 'create' && target.index >= current.index) throw new IgniteError(`Create step references later create step ${ref.stepId}`, 'POINTER_FORWARD_CREATE', { stepId: ref.stepId, path: ref.path });
+        if (strategy.kind !== 'create' && targetStrategy.kind !== 'create') graph.set(id, [...(graph.get(id) ?? []), ref.stepId]);
+      }
     }
-    const strategy = current.step.strategy ?? { kind: 'create' as const };
-    const refs = collectRefs(current.step, plan.chains[0] ?? 1).filter((ref) => ref.path !== 'target');
-    for (const ref of refs) {
-      const target = byId.get(ref.stepId);
-      if (!target || target.step.kind !== 'deploy') throw new IgniteError(`Pointer target ${ref.stepId} is not a deploy step`, 'POINTER_TARGET_NOT_DEPLOY', { stepId: ref.stepId });
-      const targetStrategy = target.step.strategy ?? { kind: 'create' as const };
-      if (strategy.kind !== 'create' && targetStrategy.kind === 'create') throw new IgniteError(`Create2 input ${ref.path} references non-concrete create step ${ref.stepId}`, 'CREATE2_POINTER_NOT_CONCRETE', { stepId: ref.stepId, path: ref.path });
-      if (strategy.kind === 'create' && targetStrategy.kind === 'create' && target.index >= current.index) throw new IgniteError(`Create step references later create step ${ref.stepId}`, 'POINTER_FORWARD_CREATE', { stepId: ref.stepId, path: ref.path });
-      if (strategy.kind !== 'create' && targetStrategy.kind !== 'create') graph.set(id, [...(graph.get(id) ?? []), ref.stepId]);
-    }
+    const visiting = new Set<string>(); const visited = new Set<string>(); const stack: string[] = [];
+    const visit = (id: string) => { if (visiting.has(id)) { const cycle = [...stack.slice(stack.indexOf(id)), id]; throw new IgniteError(`Create2 prediction cycle: ${cycle.join(' -> ')}`, 'CREATE2_PREDICTION_CYCLE', { cycle }); } if (visited.has(id)) return; visiting.add(id); stack.push(id); for (const next of graph.get(id) ?? []) visit(next); stack.pop(); visiting.delete(id); visited.add(id); };
+    for (const id of graph.keys()) visit(id);
   }
-  const visiting = new Set<string>(); const visited = new Set<string>(); const stack: string[] = [];
-  const visit = (id: string) => { if (visiting.has(id)) { const cycle = [...stack.slice(stack.indexOf(id)), id]; throw new IgniteError(`Create2 prediction cycle: ${cycle.join(' -> ')}`, 'CREATE2_PREDICTION_CYCLE', { cycle }); } if (visited.has(id)) return; visiting.add(id); stack.push(id); for (const next of graph.get(id) ?? []) visit(next); stack.pop(); visiting.delete(id); visited.add(id); };
-  for (const id of graph.keys()) visit(id);
 }
 
 export function resolveSigner(

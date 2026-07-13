@@ -5,7 +5,7 @@ import {
   deployDraftReducer,
   seedDraft,
   setChainArgOverride,
-  reorderSteps,
+  moveStep,
   addContracts,
   removeContract,
   markDraftSeen,
@@ -14,6 +14,15 @@ import {
   toggleChain,
   setName,
   deployDraftInitialState,
+  addCallStep,
+  acknowledgeDeployed,
+  ackStale,
+  removeCallStep,
+  setArg,
+  setLibraries,
+  setPluginParams,
+  setStrategy,
+  storePrepared,
 } from '../deployDraftSlice';
 
 function contract(id: string, contractName: string): ContractSource {
@@ -28,6 +37,56 @@ function contract(id: string, contractName: string): ContractSource {
 }
 
 describe('deployDraftSlice', () => {
+  const hex = (character: string) => (`0x${character.repeat(64)}` as `0x${string}`);
+  function preparedState() {
+    let state = deployDraftReducer(undefined, seedDraft([contract('token', 'Token'), contract('vault', 'Vault')]));
+    state = deployDraftReducer(state, setStrategy({ stepId: 'deploy-token', strategy: { kind: 'plugin', pluginId: 'deterministic' } }));
+    state = deployDraftReducer(state, setLibraries({ stepId: 'deploy-vault', libraries: { token: { kind: 'step', stepId: 'deploy-token' } } }));
+    state = deployDraftReducer(state, storePrepared({ stepId: 'deploy-token', chains: { '1': { salt: hex('1'), predictedAddress: '0x1111111111111111111111111111111111111111', initcodeHash: hex('2'), notes: [] } } }));
+    state = deployDraftReducer(state, storePrepared({ stepId: 'deploy-vault', chains: { '1': { salt: hex('3'), predictedAddress: '0x2222222222222222222222222222222222222222', initcodeHash: hex('4'), notes: [] } } }));
+    state = deployDraftReducer(state, acknowledgeDeployed({ stepId: 'deploy-token', chainId: 1, predictedAddress: '0x1111111111111111111111111111111111111111', initcodeHash: hex('2') }));
+    state = deployDraftReducer(state, acknowledgeDeployed({ stepId: 'deploy-vault', chainId: 1, predictedAddress: '0x2222222222222222222222222222222222222222', initcodeHash: hex('4') }));
+    return state;
+  }
+
+  it('invalidates transitive prepared predictions and prunes acknowledgements', () => {
+    const state = deployDraftReducer(preparedState(), setArg({ stepId: 'deploy-token', key: 'owner', value: '0x1111111111111111111111111111111111111111' }));
+    expect(state.deployExtras['deploy-token']).toMatchObject({ needsPrepare: true });
+    expect(state.deployExtras['deploy-token'].prepared).toBeUndefined();
+    expect(state.deployExtras['vault']).toBeUndefined();
+    expect(state.deployExtras['deploy-vault'].prepared).toBeUndefined();
+    expect(state.deployExtras['deploy-vault'].acknowledged).toBeUndefined();
+  });
+
+  it('invalidates strategy, salt, library, and plugin parameter edits', () => {
+    for (const action of [
+      setStrategy({ stepId: 'deploy-token', strategy: { kind: 'create2' } }),
+      setLibraries({ stepId: 'deploy-token', libraries: { x: { kind: 'address', address: '0x1111111111111111111111111111111111111111' } } }),
+      setPluginParams({ stepId: 'deploy-token', params: { network: 'test' } }),
+    ]) {
+      const state = deployDraftReducer(preparedState(), action);
+      expect(state.deployExtras['deploy-token'].prepared).toBeUndefined();
+      expect(state.deployExtras['deploy-token'].acknowledged).toBeUndefined();
+    }
+  });
+
+  it('removing a referenced call nulls dangling refs and invalidates dependents', () => {
+    let state = deployDraftReducer(undefined, seedDraft([contract('token', 'Token')]));
+    state = deployDraftReducer(state, addCallStep(0));
+    const call = state.steps[1];
+    state = deployDraftReducer(state, setArg({ stepId: 'deploy-token', key: 'recipient', value: { $ref: { kind: 'step', stepId: call.id } } }));
+    state = deployDraftReducer(state, storePrepared({ stepId: 'deploy-token', chains: { '1': { salt: hex('1'), predictedAddress: '0x1111111111111111111111111111111111111111', initcodeHash: hex('2'), notes: [] } } }));
+    state = deployDraftReducer(state, removeCallStep(call.id));
+    expect(state.steps[0].args?.recipient).toBeUndefined();
+    expect(state.deployExtras['deploy-token']?.prepared).toBeUndefined();
+  });
+
+  it('reports acknowledgement staleness from the current prepared commitment', () => {
+    const state = preparedState();
+    expect(ackStale(state, 'deploy-token', 1)).toBe(false);
+    const changed = deployDraftReducer(state, storePrepared({ stepId: 'deploy-token', chains: { '1': { salt: hex('1'), predictedAddress: '0x3333333333333333333333333333333333333333', initcodeHash: hex('2'), notes: [] } } }));
+    expect(ackStale(changed, 'deploy-token', 1)).toBe(true);
+  });
   it('seeds two contracts and their deployment steps in source order', () => {
     const contracts = [contract('token', 'Token'), contract('vault', 'Vault')];
 
@@ -72,21 +131,18 @@ describe('deployDraftSlice', () => {
     expect(state.steps[0].argsPerChain).toBeUndefined();
   });
 
-  it('keeps the visible contract order aligned with execution steps', () => {
+  it('moves execution steps without changing the contract inventory', () => {
     const contracts = [contract('token', 'Token'), contract('vault', 'Vault')];
     const state = deployDraftReducer(
       deployDraftReducer(undefined, seedDraft(contracts)),
-      reorderSteps({ fromIndex: 1, toIndex: 0 })
+      moveStep({ fromIndex: 1, toIndex: 0 })
     );
 
     expect(state.steps.map((step) => step.contractId)).toEqual([
       'vault',
       'token',
     ]);
-    expect(state.contracts.map((contract) => contract.id)).toEqual([
-      'vault',
-      'token',
-    ]);
+    expect(state.contracts.map((contract) => contract.id)).toEqual(['token', 'vault']);
   });
 
   it('addContracts appends and dedupes by id', () => {

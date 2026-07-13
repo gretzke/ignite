@@ -1,8 +1,13 @@
 import type {
+  AckMap,
   ArgValues,
+  CallTarget,
   ContractSource,
   DeployStep,
   GasOverrides,
+  Hex,
+  Hex32,
+  LibraryBinding,
   RunRecord,
   RunSummary,
   SignerCascade,
@@ -13,7 +18,54 @@ export type DraftContract = ContractSource;
 // The wizard keeps the deployment shape close to the shared API contract.
 // Later wizard steps can enrich these sparse fields without translating the
 // draft on every edit.
-export type DraftStep = DeployStep;
+// Deploy fields stay on the draft step because the argument and advanced
+// editors update them independently. Strategy-specific state lives alongside
+// the step in deployExtras so switching a strategy can discard it atomically.
+export type DraftDeployStep = Omit<
+  DeployStep,
+  'strategy' | 'libraries' | 'librariesPerChain'
+>;
+
+export interface DraftCallStep {
+  id: string;
+  kind: 'call';
+  contractId?: never;
+  // A blank target is valid while the wizard is being composed. The API plan
+  // assembler omits no such value: Review remains the authoritative guard.
+  target: CallTarget | null;
+  targetPerChain?: Record<string, CallTarget>;
+  signature?: string;
+  payable?: boolean;
+  args?: ArgValues;
+  argsPerChain?: Record<string, Partial<ArgValues>>;
+  value?: string;
+  valuePerChain?: Record<string, string>;
+  gasOverrides?: GasOverrides;
+  gasOverridesPerChain?: Record<string, Partial<GasOverrides>>;
+  signerOverride?: SignerCascade;
+}
+
+export type DraftStep = DraftDeployStep | DraftCallStep;
+
+export interface DraftDeployExtras {
+  strategy:
+    | { kind: 'create' }
+    | { kind: 'create2'; salt?: Hex32; saltPerChain?: Record<string, Hex32> }
+    | { kind: 'plugin'; pluginId: string; params?: Record<string, unknown> };
+  libraries?: Record<string, LibraryBinding>;
+  librariesPerChain?: Record<string, Record<string, LibraryBinding>>;
+  prepared?: Record<
+    string,
+    {
+      salt: Hex32;
+      predictedAddress: Hex;
+      initcodeHash: Hex32;
+      notes: string[];
+    }
+  >;
+  acknowledged?: AckMap;
+  needsPrepare?: boolean;
+}
 
 export interface DraftRpcSelection {
   endpointId: string;
@@ -27,6 +79,7 @@ export interface DeployDraftState {
   explorerSelection: Record<string, string[]>;
   signers: SignerCascade;
   steps: DraftStep[];
+  deployExtras: Record<string, DraftDeployExtras>;
   // Ids of contracts added since the wizard was last visited; drives the
   // sidebar badge. A plain count would drift when an unseen contract is
   // removed again before the wizard is opened.

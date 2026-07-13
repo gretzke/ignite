@@ -52,6 +52,7 @@ describe('planFromDraft', () => {
           gasOverrides: { gasLimit: '500000', maxFeePerGas: '2.5' },
         },
       ],
+      deployExtras: {},
       unseenIds: [],
     };
 
@@ -86,6 +87,7 @@ describe('planFromDraft', () => {
           explorerSelection: {},
       signers: {},
       steps: [],
+      deployExtras: {},
       unseenIds: [],
     };
     expect(() => planFromDraft(draft, [])).toThrow(
