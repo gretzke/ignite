@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { spawnSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { keccak256 } from 'viem';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -74,11 +75,12 @@ function assert(condition, message, details) {
 // sentinel-framed PluginResponse from stdout. `entry` is either an
 // ecosystem plugin's index.cjs or a built builtin bundle — both read the
 // operation from the last argv element and options from stdin.
-function runOp(entry, op, options) {
+function runOp(entry, op, options, env) {
   const input = JSON.stringify(options ?? {});
   const result = spawnSync(process.execPath, [entry, op], {
     input,
     encoding: 'utf8',
+    env: env ? { ...process.env, ...env } : process.env,
   });
 
   if (result.error) {
@@ -111,6 +113,38 @@ function runOp(entry, op, options) {
         `(${error instanceof Error ? error.message : String(error)})`
     );
   }
+}
+
+// Hand-written fixture: init returns runtime `PUSH1 1; PUSH1 0; MSTORE;
+// PUSH2 0x01c0; PUSH1 0; RETURN`, so getHookPermissions() returns fourteen
+// ABI words with only beforeInitialize set (bit 13). No forge or network.
+const HOOK_FIXTURE_INITCODE = '0x600b600c600039600b6000f360016000526101c06000f3';
+const HOOK_PROXY = '0x4e59b44847b379578588920ca78fbf26c0b4956c';
+const HOOK_ENTRY = path.join(BUILTIN_BUNDLE_DIR, 'deployment-type_hook-deployer.js');
+assert(existsSync(HOOK_ENTRY), 'Hook deployer: built entry exists', HOOK_ENTRY);
+if (existsSync(HOOK_ENTRY)) {
+  const info = runOp(HOOK_ENTRY, 'getInfo', {});
+  assert(info.success && info.data?.id === 'hook-deployer' && info.data?.operations?.length === 3, 'Hook deployer: metadata declares all operations', info);
+  const describe = runOp(HOOK_ENTRY, 'describeDeploymentType', {});
+  const field = describe.data?.params?.[0];
+  assert(describe.success && describe.data?.label?.length <= 64 && describe.data?.description?.length <= 512 && field?.key === 'flagsOverride' && field?.type === 'string', 'Hook deployer: describe shape and caps', describe);
+  const prepared = runOp(HOOK_ENTRY, 'prepareDeployment', { chainId: 1, initcode: HOOK_FIXTURE_INITCODE, proxyAddress: HOOK_PROXY });
+  const initHash = keccak256(HOOK_FIXTURE_INITCODE);
+  const independent = keccak256(`0xff${HOOK_PROXY.slice(2)}${prepared.data?.salt?.slice(2)}${initHash.slice(2)}`);
+  const predicted = `0x${independent.slice(-40)}`;
+  assert(prepared.success && prepared.data?.salt?.match(/^0x[0-9a-f]{64}$/i) && predicted.toLowerCase() === prepared.data?.predictedAddress?.toLowerCase() && (BigInt(predicted) & 0x3fffn) === 0x2000n, 'Hook deployer: bytecode-derived prepare mines correct CREATE2 address', prepared);
+  const overridden = runOp(HOOK_ENTRY, 'prepareDeployment', { chainId: 1, initcode: HOOK_FIXTURE_INITCODE, proxyAddress: HOOK_PROXY, params: { flagsOverride: '0' } });
+  assert(overridden.success && overridden.data?.notes?.includes('flags overridden') && (BigInt(overridden.data.predictedAddress) & 0x3fffn) === 0n, 'Hook deployer: flagsOverride path', overridden);
+  const valid = runOp(HOOK_ENTRY, 'validateDeployment', { chainId: 1, initcode: HOOK_FIXTURE_INITCODE, salt: prepared.data?.salt, predictedAddress: prepared.data?.predictedAddress });
+  const brokenAddress = `${prepared.data?.predictedAddress?.slice(0, -1)}1`;
+  const broken = runOp(HOOK_ENTRY, 'validateDeployment', { chainId: 1, initcode: `${HOOK_FIXTURE_INITCODE}00`, salt: prepared.data?.salt, predictedAddress: brokenAddress });
+  assert(valid.success && valid.data?.ok === true && broken.success && broken.data?.ok === false, 'Hook deployer: validate succeeds then rejects perturbed initcode/address', { valid, broken });
+  const zeroSaltAddress = keccak256(`0xff${HOOK_PROXY.slice(2)}${'00'.repeat(32)}${initHash.slice(2)}`);
+  const impossibleOne = (Number(BigInt(`0x${zeroSaltAddress.slice(-40)}`) & 0x3fffn) + 1) & 0x3fff;
+  const capped = runOp(HOOK_ENTRY, 'prepareDeployment', { chainId: 1, initcode: HOOK_FIXTURE_INITCODE, proxyAddress: HOOK_PROXY, params: { flagsOverride: String(impossibleOne) } }, { HOOK_MINER_CAP: '1' });
+  assert(!capped.success && capped.error?.code === 'MINING_CAP_EXCEEDED', 'Hook deployer: iteration cap returns typed error', capped);
+  const unknown = runOp(HOOK_ENTRY, 'notAnOperation', {});
+  assert(!unknown.success && typeof unknown.error?.code === 'string', 'Hook deployer: unknown op uses error envelope', unknown);
 }
 
 for (const plugin of PLUGINS) {
