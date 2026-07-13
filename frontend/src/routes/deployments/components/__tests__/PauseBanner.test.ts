@@ -1,7 +1,7 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
 import { allowedActions, type Lane, type PauseContext } from '@ignite/api';
-import { actionsForPausedLane } from '../PauseBanner';
+import { ACTION_LABELS, actionsForPausedLane } from '../PauseBanner';
 
 function laneFor(ctx: PauseContext): Lane {
   return {
@@ -51,4 +51,10 @@ describe('PauseBanner actions', () => {
       ).toEqual(allowedActions(context));
     }
   });
+});
+
+it('labels every ResolveAction', () => {
+  const actions = ['retry', 'edit', 'skip', 'abort-lane', 'recheck', 'confirm-hash', 'mark-not-sent', 'replace', 'keep-waiting', 'accept-deployed'] as const;
+  expect(Object.keys(ACTION_LABELS).sort()).toEqual([...actions].sort());
+  expect(Object.values(ACTION_LABELS).every(Boolean)).toBe(true);
 });

@@ -9,6 +9,7 @@ import {
   draftLaunched,
   mintIdempotencyKey,
   setName,
+  acknowledgeDeployed,
 } from '../../../store/features/deployments/deployDraftSlice';
 import { runSnapshotReceived } from '../../../store/features/deployments/deploymentsSlice';
 import ValidationChecklist from '../components/ValidationChecklist';
@@ -120,6 +121,20 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
     }
   };
 
+  const acknowledge = (chainId: number, item: { details?: Record<string, unknown> }) => {
+    const details = item.details ?? {};
+    const stepId = typeof details.stepId === 'string' ? details.stepId : undefined;
+    const predictedAddress = typeof details.predictedAddress === 'string' ? details.predictedAddress : undefined;
+    const initcodeHash = typeof details.initcodeHash === 'string' ? details.initcodeHash : undefined;
+    if (!stepId || !predictedAddress || !initcodeHash) {
+      setError('The validation result did not include the deployment acknowledgement details.');
+      return;
+    }
+    dispatch(acknowledgeDeployed({ stepId, chainId, predictedAddress: predictedAddress as `0x${string}`, initcodeHash: initcodeHash as `0x${string}` }));
+    // `plan` is rebuilt from the draft by the parent. Its change triggers the
+    // validation effect with the acknowledgement included in the payload.
+  };
+
   return (
     <section className="grid gap-4">
       <div className="flex items-start justify-between gap-3">
@@ -199,7 +214,32 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
       )}
       {error && <div className="card-milky p-4 text-err">{error}</div>}
       {report && (
-        <ValidationChecklist chains={report.chains} chainInfo={chains} />
+        <ValidationChecklist chains={report.chains} chainInfo={chains} onAcknowledge={acknowledge} />
+      )}
+      {Object.entries(report?.chains ?? {}).flatMap(([chainId, checklist]) => {
+        const predicted = checklist.create2?.details?.predicted;
+        if (!predicted || typeof predicted !== 'object') return [];
+        return Object.entries(predicted as Record<string, unknown>).flatMap(([stepId, value]) => {
+          const address = value && typeof value === 'object' && typeof (value as { predictedAddress?: unknown }).predictedAddress === 'string'
+            ? (value as { predictedAddress: string }).predictedAddress : undefined;
+          return address ? [[chainId, stepId, address] as const] : [];
+        });
+      }).length > 0 && (
+        <section className="card-milky p-4 grid gap-2">
+          <h3 className="font-semibold">Predicted addresses</h3>
+          {Object.entries(report?.chains ?? {}).flatMap(([chainId, checklist]) => {
+            const predicted = checklist.create2?.details?.predicted;
+            if (!predicted || typeof predicted !== 'object') return [];
+            return Object.entries(predicted as Record<string, unknown>).flatMap(([stepId, value]) => {
+              const address = value && typeof value === 'object' && typeof (value as { predictedAddress?: unknown }).predictedAddress === 'string'
+                ? (value as { predictedAddress: string }).predictedAddress : undefined;
+              if (!address) return [];
+              const contractId = draft.steps.find((step) => step.id === stepId && step.kind === 'deploy')?.contractId;
+              const name = draft.contracts.find((contract) => contract.id === contractId)?.contractName ?? stepId;
+              return <div key={`${stepId}-${chainId}`} className="list-row flex gap-3"><span className="font-medium">{name}</span><span className="text-muted">{chains.find((chain) => String(chain.chainId) === chainId)?.name ?? `Chain ${chainId}`}</span><span className="mono-data ml-auto">{address}</span></div>;
+            });
+          })}
+        </section>
       )}
       <div className="flex justify-end">
         <button

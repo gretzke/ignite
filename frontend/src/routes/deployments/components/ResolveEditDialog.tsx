@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import type { GasOverrides, RpcEndpoint } from '@ignite/api';
+import type { CallTarget, GasOverrides, LibraryBinding, RpcEndpoint } from '@ignite/api';
 import Select from '../../../components/Select';
 
-interface ResolveEdits {
+export interface ResolveEdits {
   gas?: GasOverrides;
   rpcEndpointId?: string;
   argsByStep?: Record<string, Record<string, unknown>>;
+  targetByStep?: Record<string, CallTarget>;
+  librariesByStep?: Record<string, Record<string, LibraryBinding>>;
 }
 
 interface ResolveEditDialogProps {
@@ -14,6 +16,8 @@ interface ResolveEditDialogProps {
   onOpenChange: (open: boolean) => void;
   endpoints: RpcEndpoint[];
   initialRpcEndpointId?: string;
+  step?: { id: string; kind: 'deploy' | 'call'; libraries?: Record<string, LibraryBinding> };
+  pointerPath?: string;
   onSubmit: (edits: ResolveEdits) => void;
 }
 
@@ -22,6 +26,8 @@ export default function ResolveEditDialog({
   onOpenChange,
   endpoints,
   initialRpcEndpointId,
+  step,
+  pointerPath,
   onSubmit,
 }: ResolveEditDialogProps) {
   const [rpcEndpointId, setRpcEndpointId] = useState(
@@ -31,6 +37,9 @@ export default function ResolveEditDialog({
   const [maxFeePerGas, setMaxFeePerGas] = useState('');
   const [maxPriorityFeePerGas, setMaxPriorityFeePerGas] = useState('');
   const [argsJson, setArgsJson] = useState('');
+  const [targetAddress, setTargetAddress] = useState('');
+  const [librariesJson, setLibrariesJson] = useState('');
+  const [pointerAddress, setPointerAddress] = useState('');
 
   useEffect(
     () => setRpcEndpointId(initialRpcEndpointId ?? ''),
@@ -54,10 +63,23 @@ export default function ResolveEditDialog({
         return;
       }
     }
+    let librariesByStep: Record<string, Record<string, LibraryBinding>> | undefined;
+    if (librariesJson.trim() && step?.kind === 'deploy') {
+      try {
+        librariesByStep = { [step.id]: JSON.parse(librariesJson) as Record<string, LibraryBinding> };
+      } catch { return; }
+    }
+    if (pointerAddress.trim() && step && pointerPath) {
+      argsByStep = { ...(argsByStep ?? {}), [step.id]: { ...(argsByStep?.[step.id] ?? {}), [pointerPath]: pointerAddress.trim() } };
+    }
     onSubmit({
       ...(Object.keys(gas).length ? { gas } : {}),
       ...(rpcEndpointId ? { rpcEndpointId } : {}),
       ...(argsByStep ? { argsByStep } : {}),
+      ...(step?.kind === 'call' && /^0x[0-9a-fA-F]{40}$/.test(targetAddress.trim())
+        ? { targetByStep: { [step.id]: { kind: 'address' as const, address: targetAddress.trim() as `0x${string}` } } }
+        : {}),
+      ...(librariesByStep ? { librariesByStep } : {}),
     });
     onOpenChange(false);
   };
@@ -93,6 +115,15 @@ export default function ResolveEditDialog({
                 onValueChange={setRpcEndpointId}
               />
             </label>
+            {step?.kind === 'call' && (
+              <label className="grid gap-1"><span className="eyebrow">Call target</span><input className="input-glass mono-data" value={targetAddress} placeholder="0x… (address override for this chain)" onChange={(event) => setTargetAddress(event.target.value)} /></label>
+            )}
+            {step?.kind === 'deploy' && step.libraries && Object.keys(step.libraries).length > 0 && (
+              <label className="grid gap-1"><span className="eyebrow">Libraries (JSON)</span><textarea className="input-glass mono-data" rows={4} value={librariesJson} placeholder={'{"MathLib":{"kind":"address","address":"0x…"}}'} onChange={(event) => setLibrariesJson(event.target.value)} /></label>
+            )}
+            {pointerPath && (
+              <label className="grid gap-1"><span className="eyebrow">Literal address for {pointerPath}</span><input className="input-glass mono-data" value={pointerAddress} placeholder="0x…" onChange={(event) => setPointerAddress(event.target.value)} /></label>
+            )}
             <div className="grid grid-cols-3 gap-2">
               <label className="grid gap-1">
                 <span className="eyebrow">Gas limit</span>

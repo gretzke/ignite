@@ -282,10 +282,6 @@ export default function FilePage() {
   const artifactData = frameworkId
     ? fileData?.artifactData?.[`${frameworkId}:${selectedArtifactPath}`]
     : undefined;
-  const hasUnlinkedLibraries = Boolean(
-    artifactData?.creationCodeLinkReferences &&
-    Object.keys(artifactData.creationCodeLinkReferences).length > 0
-  );
   const draftContracts = useSelector(
     (state: RootState) => state.deployDraft.contracts
   );
@@ -401,14 +397,8 @@ export default function FilePage() {
                 className={inDraft ? 'btn btn-secondary' : 'btn btn-primary'}
                 // Deployability gates adding; removal must stay possible even
                 // when the artifact no longer loads or needs linking.
-                disabled={!inDraft && (!artifactData || hasUnlinkedLibraries)}
-                title={
-                  inDraft
-                    ? 'Remove from deployment'
-                    : hasUnlinkedLibraries
-                      ? 'Requires library linking (planned for D5)'
-                      : undefined
-                }
+                disabled={!inDraft && !artifactData}
+                title={inDraft ? 'Remove from deployment' : undefined}
                 onClick={deploy}
               >
                 {inDraft ? (
@@ -435,11 +425,6 @@ export default function FilePage() {
               </button>
             </div>
           </div>
-          {hasUnlinkedLibraries && (
-            <p className="text-xs text-warn mb-3">
-              Requires library linking (planned for D5).
-            </p>
-          )}
           {artifactData ? (
             <div className="flex flex-wrap gap-6 text-xs">
               <div>

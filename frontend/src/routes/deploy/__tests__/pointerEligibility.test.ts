@@ -1,7 +1,7 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
 import type { DeployDraftState } from '../../../store/features/deployments/types';
-import { eligiblePointerSteps } from '../pointerEligibility';
+import { dependentPlanStepIds, eligiblePointerSteps } from '../pointerEligibility';
 
 const draft = (): DeployDraftState => ({
   contracts: ['A', 'B', 'C'].map((id) => ({ id, repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: `${id}.json`, contractName: id, sourcePath: `${id}.sol` })),
@@ -26,5 +26,14 @@ describe('eligiblePointerSteps', () => {
     state.steps[0].args = { target: { $ref: { kind: 'step', stepId: 'deploy-B' } } };
     const options = eligiblePointerSteps(state, 'deploy-B');
     expect(options.find((option) => option.stepId === 'deploy-A')?.disabledReason).toBe('Would create a prediction cycle');
+  });
+
+  it('finds plan dependents through arguments, call targets, and library bindings', () => {
+    expect(dependentPlanStepIds([
+      { id: 'source', kind: 'deploy', contractId: 'A' },
+      { id: 'args', kind: 'deploy', contractId: 'B', args: { owner: { $ref: { kind: 'step', stepId: 'source' } } } },
+      { id: 'target', kind: 'call', target: { kind: 'step', stepId: 'source' } },
+      { id: 'library', kind: 'deploy', contractId: 'C', libraries: { Lib: { kind: 'step', stepId: 'source' } } },
+    ], 'source')).toEqual(['args', 'target', 'library']);
   });
 });

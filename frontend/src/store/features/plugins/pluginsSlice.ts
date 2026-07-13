@@ -38,6 +38,9 @@ export interface PluginRow {
   requested: PluginPermissionRequest[];
   // Manifest-declared config fields (settings-form schema), if any.
   configFields?: PluginConfigField[];
+  // Effective metadata served by the API: repository reads are inherent to
+  // container plugins and therefore informational rather than grantable.
+  repoRead?: boolean;
 }
 
 // Drives the global permissions modal: opened from a plugin card, after an
@@ -101,6 +104,7 @@ const pluginsSlice = createSlice({
             version: string;
             requested: PluginPermissionRequest[];
             configFields?: PluginConfigField[];
+            repoRead?: boolean;
           }
         >
       >
@@ -120,6 +124,7 @@ const pluginsSlice = createSlice({
           version: m.version,
           requested: m.requested,
           configFields: m.configFields,
+          repoRead: m.repoRead,
         };
       }
     },
@@ -234,6 +239,7 @@ export const pluginsApi = {
                   version: m.version,
                   requested: m.permissions ?? [],
                   configFields: m.configFields,
+                  repoRead: m.repoRead,
                 },
               ])
             )

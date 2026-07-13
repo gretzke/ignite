@@ -2,7 +2,7 @@ import { allowedActions } from '@ignite/api';
 import type { Lane, PauseContext, ResolveAction } from '@ignite/api';
 import { AlertTriangle } from 'lucide-react';
 
-const ACTION_LABELS: Record<ResolveAction, string> = {
+export const ACTION_LABELS: Record<ResolveAction, string> = {
   retry: 'Retry',
   edit: 'Edit & retry',
   skip: 'Skip step',
@@ -12,7 +12,13 @@ const ACTION_LABELS: Record<ResolveAction, string> = {
   'mark-not-sent': 'Mark not sent',
   replace: 'Replace transaction',
   'keep-waiting': 'Keep waiting',
-  'accept-deployed': 'Accept deployed contract',
+  'accept-deployed': 'Accept existing deployment',
+};
+
+const PAUSE_COPY: Partial<Record<PauseContext['reason'], string>> = {
+  'create2-collision': 'A contract already exists at the predicted address.',
+  'created-code-missing': 'The transaction succeeded but no code appeared at the predicted address.',
+  'pointer-unresolved': 'A referenced step has no deployed address.',
 };
 
 interface PauseBannerProps {
@@ -60,7 +66,10 @@ export default function PauseBanner({
         <AlertTriangle size={18} className="text-warn mt-0.5" />
         <div className="min-w-0 flex-1">
           <div className="font-semibold">Lane paused: {lane.pause.reason}</div>
-          <p className="text-sm text-muted mt-1">{lane.pause.error}</p>
+          <p className="text-sm text-muted mt-1">{PAUSE_COPY[lane.pause.reason] ?? lane.pause.error}</p>
+          {PAUSE_COPY[lane.pause.reason] && lane.pause.error && (
+            <p className="text-xs text-muted mt-1">{lane.pause.error}</p>
+          )}
           <div className="flex flex-wrap gap-2 mt-3">
             {safeActions.map((action) => (
               <button

@@ -15,8 +15,9 @@ export default function ContractsStep({
   onValidityChange,
 }: ContractsStepProps) {
   const [checks, setChecks] = useState<
-    Record<string, 'loading' | 'ok' | 'linked' | 'error'>
+    Record<string, 'loading' | 'ok' | 'error'>
   >({});
+  const [libraryNames, setLibraryNames] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -34,15 +35,16 @@ export default function ContractsStep({
         })
         .then((response) => {
           if (!('data' in response)) throw new Error(response.message);
-          const linked = Boolean(
-            response.data.creationCodeLinkReferences &&
-            Object.keys(response.data.creationCodeLinkReferences).length > 0
+          const names = Object.values(response.data.creationCodeLinkReferences ?? {}).flatMap(
+            (source) => Object.keys(source as Record<string, unknown>)
           );
-          if (!cancelled)
+          if (!cancelled) {
             setChecks((current) => ({
               ...current,
-              [contract.id]: linked ? 'linked' : 'ok',
+              [contract.id]: 'ok',
             }));
+            setLibraryNames((current) => ({ ...current, [contract.id]: names }));
+          }
         })
         .catch(() => {
           if (!cancelled)
@@ -96,10 +98,8 @@ export default function ContractsStep({
                     deployability…
                   </div>
                 )}
-                {checks[contract.id] === 'linked' && (
-                  <div className="text-xs text-warn">
-                    Requires library linking (planned for D5).
-                  </div>
+                {(libraryNames[contract.id] ?? []).length > 0 && (
+                  <div className="text-xs text-muted">Uses libraries: {libraryNames[contract.id].join(', ')}</div>
                 )}
                 {checks[contract.id] === 'error' && (
                   <div className="text-xs text-err">

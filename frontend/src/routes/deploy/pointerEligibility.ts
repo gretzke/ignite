@@ -1,3 +1,4 @@
+import type { Step } from '@ignite/api';
 import type { DraftStep, DeployDraftState } from '../../store/features/deployments/types';
 
 export interface EligiblePointerStep {
@@ -6,7 +7,7 @@ export interface EligiblePointerStep {
   disabledReason?: string;
 }
 
-function references(value: unknown, id: string): boolean {
+export function referencesStep(value: unknown, id: string): boolean {
   if (
     value &&
     typeof value === 'object' &&
@@ -14,9 +15,9 @@ function references(value: unknown, id: string): boolean {
     (value as { $ref?: { kind?: string; stepId?: string } }).$ref?.kind === 'step'
   )
     return (value as { $ref: { stepId: string } }).$ref.stepId === id;
-  if (Array.isArray(value)) return value.some((entry) => references(entry, id));
+  if (Array.isArray(value)) return value.some((entry) => referencesStep(entry, id));
   if (value && typeof value === 'object')
-    return Object.values(value).some((entry) => references(entry, id));
+    return Object.values(value).some((entry) => referencesStep(entry, id));
   return false;
 }
 
@@ -27,8 +28,8 @@ function predictionDependencies(draft: DeployDraftState, step: DraftStep): strin
     if (candidate.kind !== 'deploy') return [];
     const id = candidate.id;
     const linked =
-      references(step.args, id) ||
-      references(step.argsPerChain, id) ||
+      referencesStep(step.args, id) ||
+      referencesStep(step.argsPerChain, id) ||
       Object.values(extras?.libraries ?? {}).some(
         (binding) => binding.kind === 'step' && binding.stepId === id
       ) ||
@@ -38,6 +39,34 @@ function predictionDependencies(draft: DeployDraftState, step: DraftStep): strin
         )
       );
     return linked ? [id] : [];
+  });
+}
+
+/** Steps whose inputs require the address produced by `stepId`.  This is
+ * deliberately plan-shaped as well as draft-shaped: the run resolver needs
+ * the identical graph walk before allowing a skip. */
+export function dependentPlanStepIds(steps: Step[], stepId: string): string[] {
+  return steps.flatMap((step) => {
+    const argsReference =
+      referencesStep(step.args, stepId) ||
+      referencesStep(step.argsPerChain, stepId);
+    const targetReference =
+      step.kind === 'call' &&
+      (step.target.kind === 'step' && step.target.stepId === stepId ||
+        Object.values(step.targetPerChain ?? {}).some(
+          (target) => target.kind === 'step' && target.stepId === stepId
+        ));
+    const libraryReference =
+      step.kind === 'deploy' &&
+      (Object.values(step.libraries ?? {}).some(
+        (binding) => binding.kind === 'step' && binding.stepId === stepId
+      ) ||
+        Object.values(step.librariesPerChain ?? {}).some((bindings) =>
+          Object.values(bindings).some(
+            (binding) => binding.kind === 'step' && binding.stepId === stepId
+          )
+        ));
+    return argsReference || targetReference || libraryReference ? [step.id] : [];
   });
 }
 

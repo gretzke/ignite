@@ -157,6 +157,11 @@ function PluginCard({
                   {PERMISSION_TITLES[p]}
                 </span>
               ))}
+            {!isNative && plugin.repoRead && (
+              <Tooltip label="Reads your repository files inside its container" placement="top">
+                <span className="text-xs rounded-full pill pill-primary px-2 py-0.5 shrink-0 cursor-help">Repo Read</span>
+              </Tooltip>
+            )}
             {grantedFileFields.length > 0 && (
               <Tooltip
                 label={grantedFileFields.map((f) => f.label).join(', ')}

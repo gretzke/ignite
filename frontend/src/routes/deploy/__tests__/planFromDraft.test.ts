@@ -94,4 +94,33 @@ describe('planFromDraft', () => {
       'Missing currency metadata for chain 999'
     );
   });
+
+  it('assembles strategies, acknowledgements, libraries, and call fields without losing plan data', () => {
+    const hex = (digit: string, size = 40) => `0x${digit.repeat(size)}` as `0x${string}`;
+    const draft: DeployDraftState = {
+      contracts: [
+        { id: 'token', repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: 'Token.json', contractName: 'Token', sourcePath: 'Token.sol' },
+        { id: 'vault', repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: 'Vault.json', contractName: 'Vault', sourcePath: 'Vault.sol' },
+      ],
+      chains: [1], rpcSelection: {}, explorerSelection: {}, signers: { global: { pluginId: 'wallet', accountId: 'main', address: hex('a') } }, unseenIds: [],
+      steps: [
+        { id: 'deploy-token', kind: 'deploy', contractId: 'token', args: { owner: hex('b') }, value: '1', valuePerChain: { '1': '2' }, gasOverrides: { gasLimit: '500000' }, gasOverridesPerChain: { '1': { maxFeePerGas: '2' } }, signerOverride: { global: { pluginId: 'wallet', accountId: 'alt', address: hex('c') } } },
+        { id: 'call-vault', kind: 'call', target: { kind: 'step', stepId: 'deploy-token' }, targetPerChain: { '1': { kind: 'address', address: hex('d') } }, signature: 'setOwner(address)', payable: true, args: { owner: { $ref: { kind: 'step', stepId: 'deploy-token' } } }, argsPerChain: { '1': { owner: hex('e') } }, value: '0.5', valuePerChain: { '1': '0.25' }, gasOverrides: { maxPriorityFeePerGas: '1.5' }, gasOverridesPerChain: { '1': { gasLimit: '123' } }, signerOverride: { perChain: { '1': { pluginId: 'wallet', accountId: 'alt', address: hex('c') } } } },
+        { id: 'deploy-vault', kind: 'deploy', contractId: 'vault' },
+      ],
+      deployExtras: {
+        'deploy-token': { strategy: { kind: 'create2', salt: hex('1', 64), saltPerChain: { '1': hex('2', 64) }, }, libraries: { MathLib: { kind: 'address', address: hex('f') } }, librariesPerChain: { '1': { OtherLib: { kind: 'step', stepId: 'deploy-vault' } } }, acknowledged: { '1': { predictedAddress: hex('3'), initcodeHash: hex('4', 64) } } },
+        'deploy-vault': { strategy: { kind: 'plugin', pluginId: 'hook', params: { rounds: 7 } }, prepared: { '1': { salt: hex('5', 64), predictedAddress: hex('6'), initcodeHash: hex('7', 64), notes: [] } }, acknowledged: { '1': { predictedAddress: hex('6'), initcodeHash: hex('7', 64) } } },
+      },
+    };
+
+    expect(planFromDraft(draft, chains)).toEqual({
+      schemaVersion: 1, contracts: draft.contracts, chains: [1], signers: draft.signers,
+      steps: [
+        { id: 'deploy-token', kind: 'deploy', contractId: 'token', args: { owner: hex('b') }, value: '1000000000000000000', valuePerChain: { '1': '2000000000000000000' }, gasOverrides: { gasLimit: '500000' }, gasOverridesPerChain: { '1': { maxFeePerGas: '2000000000' } }, signerOverride: draft.steps[0].signerOverride, strategy: { kind: 'create2', salt: hex('1', 64), saltPerChain: { '1': hex('2', 64) }, acknowledgeDeployed: draft.deployExtras['deploy-token'].acknowledged }, libraries: draft.deployExtras['deploy-token'].libraries, librariesPerChain: draft.deployExtras['deploy-token'].librariesPerChain },
+        { id: 'call-vault', kind: 'call', target: { kind: 'step', stepId: 'deploy-token' }, targetPerChain: { '1': { kind: 'address', address: hex('d') } }, signature: 'setOwner(address)', payable: true, args: { owner: { $ref: { kind: 'step', stepId: 'deploy-token' } } }, argsPerChain: { '1': { owner: hex('e') } }, value: '500000000000000000', valuePerChain: { '1': '250000000000000000' }, gasOverrides: { maxPriorityFeePerGas: '1500000000' }, gasOverridesPerChain: { '1': { gasLimit: '123' } }, signerOverride: draft.steps[1].signerOverride },
+        { id: 'deploy-vault', kind: 'deploy', contractId: 'vault', strategy: { kind: 'plugin', pluginId: 'hook', params: { rounds: 7 }, salt: hex('5', 64), saltPerChain: { '1': hex('5', 64) }, prepared: { '1': { predictedAddress: hex('6'), initcodeHash: hex('7', 64) } }, acknowledgeDeployed: draft.deployExtras['deploy-vault'].acknowledged } },
+      ],
+    });
+  });
 });
