@@ -199,19 +199,11 @@ blocking current functionality.
 
 ## Plugin-platform genericity (special-casing audit, 2026-07-09)
 
-Audit verdict: no first-vs-third-party capability violations; four symmetric
-smells, ranked:
-
-1. **Closed operation vocabulary at the API route layer** — plugins cannot ship
-   new operations without a core PR. Generalize: manifest-declared operation
-   list + generic `POST /plugins/:id/:operation` dispatch reusing the existing
-   grant pipeline. Slot with D5 (deployment-type surface introduces new ops).
-2. **`OPERATION_PERMISSIONS` core-hardcoded op→permission map** (pre-flight UX
-   only; enforcement is structural) — derive from manifest-declared hints.
-3. **`requiresRepo` inferred from `type === COMPILER`** — promote to a
-   manifest-declared capability (e.g. `repoRead`), installer-validated.
-4. **Dead `PluginType.REPO_MANAGER` enum value** — remove or mark
-   non-functional legacy so plugin authors aren't misled.
+**[ALL RETIRED 2026-07-13: shipped in D5.]** Items 1-3 landed as
+manifest-declared `operations` + generic `POST /plugins/:id/operations/:op`
+dispatch, `operationPermissions` hints unioned with host minimums, and the
+`repoRead` capability with read-normalization; item 4 was removed earlier
+(6197ed5).
 
 ## Signer surface follow-ups (D2a, 2026-07-09)
 
@@ -243,6 +235,30 @@ smells, ranked:
   instead of settling them immediately. (3) `GET /plugins/:id/bundle`
   resolves the asset via `types[0]` — fine while frontend builtins are
   single-type; revisit if a multi-type frontend plugin ever lands.
+
+## Deployment follow-ups (D5, 2026-07-13)
+
+- **Bundled JS EVM simulation tier** (tevm/ethereumjs) — cut from D5 by steer
+  (anvil container only); would give dependency-aware validation without
+  Docker for RPCs lacking `eth_simulateV1`.
+- **Deterministic-deployment-proxy deploy affordance.** CREATE2 preflight
+  fails with CREATE2_PROXY_MISSING on chains without the canonical proxy; the
+  presigned Arachnid tx + one-time deployer address are already constants in
+  shared/api — an affordance could fund + broadcast it from the UI.
+- **Job-mode generic plugin dispatch** (async + progress). prepareDeployment
+  is synchronous with caps; a heavier deployment type (large search spaces)
+  needs job semantics like compile.
+- **Builtin argv ceiling RESOLVED via bundledInImage** for the hook deployer
+  (480KB bundle vs 128KiB/arg MAX_ARG_STRLEN): bundle baked into the plugin
+  image, staged bundle hashed into the image label. Remaining: consider
+  migrating the other builtins off argv injection for uniformity.
+- **Anvil cannot simulate creation calls via eth_simulateV1** — tier 1 falls
+  through to the fork tier on anvil by design; revisit if anvil gains create
+  support (would speed up validation against local chains).
+- **Tier-3 cross-contract conservatism**: any call after an earlier call is
+  unestimable under per-tx estimates; deploys after calls remain estimable
+  (constructors reading mutated state are an accepted residual of the
+  labeled fallback tier).
 
 ## Verification follow-ups (D4)
 
