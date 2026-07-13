@@ -9,6 +9,8 @@ import {
   addContracts,
   removeContract,
   markDraftSeen,
+  draftLaunched,
+  mintIdempotencyKey,
   toggleChain,
   setName,
   deployDraftInitialState,
@@ -180,5 +182,22 @@ describe('deployDraftSlice', () => {
     const state = deployDraftReducer(seeded, removeContract('ghost'));
 
     expect(state).toEqual(seeded);
+  });
+
+  it('draftLaunched clears only the draft that was launched', () => {
+    let state = deployDraftReducer(
+      undefined,
+      addContracts([contract('token', 'Token')])
+    );
+    state = deployDraftReducer(state, mintIdempotencyKey());
+    const launchedKey = state.idempotencyKey!;
+
+    // A stale launch response (user discarded and started a new draft with a
+    // different key) must not wipe the current draft.
+    const untouched = deployDraftReducer(state, draftLaunched('other-key'));
+    expect(untouched).toEqual(state);
+
+    const cleared = deployDraftReducer(state, draftLaunched(launchedKey));
+    expect(cleared).toEqual(deployDraftInitialState);
   });
 });

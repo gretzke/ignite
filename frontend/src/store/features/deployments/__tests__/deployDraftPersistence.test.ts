@@ -89,6 +89,20 @@ describe('deployDraftPersistence', () => {
     expect(loadDraft(storage)).toBeUndefined();
   });
 
+  it('rejects duplicate step ids', () => {
+    const draft = draftWithContracts();
+    const broken = {
+      ...draft,
+      // Two distinct contracts whose steps share one id: unique-contractId
+      // checks pass, but downstream step lookups and React keys would break.
+      steps: draft.steps.map((step) => ({ ...step, id: 'deploy-token' })),
+    };
+    const storage = fakeStorage({
+      [DEPLOY_DRAFT_STORAGE_KEY]: JSON.stringify(broken),
+    });
+    expect(loadDraft(storage)).toBeUndefined();
+  });
+
   it('rejects duplicate contract ids', () => {
     const draft = draftWithContracts();
     const broken = {

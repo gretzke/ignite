@@ -399,12 +399,14 @@ export default function FilePage() {
               <button
                 type="button"
                 className={inDraft ? 'btn btn-secondary' : 'btn btn-primary'}
-                disabled={!artifactData || hasUnlinkedLibraries}
+                // Deployability gates adding; removal must stay possible even
+                // when the artifact no longer loads or needs linking.
+                disabled={!inDraft && (!artifactData || hasUnlinkedLibraries)}
                 title={
-                  hasUnlinkedLibraries
-                    ? 'Requires library linking (planned for D5)'
-                    : inDraft
-                      ? 'Remove from deployment'
+                  inDraft
+                    ? 'Remove from deployment'
+                    : hasUnlinkedLibraries
+                      ? 'Requires library linking (planned for D5)'
                       : undefined
                 }
                 onClick={deploy}

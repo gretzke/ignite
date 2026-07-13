@@ -89,6 +89,13 @@ const deployDraftSlice = createSlice({
     markDraftSeen(state) {
       state.unseenIds = [];
     },
+    draftLaunched(state, action: PayloadAction<string>) {
+      // The launch response can arrive after the user discarded this draft
+      // and began composing a new one; only the draft that was actually
+      // launched may be cleared.
+      if (state.idempotencyKey !== action.payload) return state;
+      return initialState;
+    },
     reorderSteps(
       state,
       action: PayloadAction<string[] | { fromIndex: number; toIndex: number }>
@@ -270,6 +277,7 @@ export const {
   addContracts,
   removeContract,
   markDraftSeen,
+  draftLaunched,
   reorderSteps,
   toggleChain,
   selectRpc,

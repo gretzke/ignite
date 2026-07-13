@@ -36,6 +36,8 @@ function invariantsHold(draft: DeployDraftState): boolean {
   if (draft.steps.length !== draft.contracts.length) return false;
   const stepContractIds = new Set(draft.steps.map((step) => step.contractId));
   if (stepContractIds.size !== draft.steps.length) return false;
+  const stepIds = new Set(draft.steps.map((step) => step.id));
+  if (stepIds.size !== draft.steps.length) return false;
   for (const step of draft.steps) {
     if (step.kind !== 'deploy') return false;
     if (!contractIds.has(step.contractId)) return false;

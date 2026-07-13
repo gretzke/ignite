@@ -6,7 +6,7 @@ import { apiClient } from '../../../store/api/client';
 import { useAppDispatch, useAppSelector } from '../../../store';
 import { verifierPluginLabel } from '../../../store/features/plugins/pluginsSlice';
 import {
-  clearDraft,
+  draftLaunched,
   mintIdempotencyKey,
   setName,
 } from '../../../store/features/deployments/deployDraftSlice';
@@ -96,6 +96,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
 
   const launch = async () => {
     if (!draft.idempotencyKey || !validationGreen(report)) return;
+    const launchedKey = draft.idempotencyKey;
     setLaunching(true);
     setError(null);
     try {
@@ -104,13 +105,13 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           plan,
           rpcSelection,
           explorerSelection: draft.explorerSelection,
-          idempotencyKey: draft.idempotencyKey,
+          idempotencyKey: launchedKey,
           name: draft.name?.trim() || defaultName,
         },
       });
       if (!('data' in response)) throw new Error(response.message);
       dispatch(runSnapshotReceived(response.data.run));
-      dispatch(clearDraft());
+      dispatch(draftLaunched(launchedKey));
       navigate(`/deployments/${response.data.run.id}`, { replace: true });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
