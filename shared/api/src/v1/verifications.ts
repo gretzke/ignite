@@ -47,6 +47,7 @@ export interface VerificationTask {
   address: string;
   bundleHash: string;
   encodedConstructorArgs: string;
+  libraries?: Record<string, Hex>;
   creationTxHash?: string;
   explorer: ExplorerTargetSnapshot;
   explorerPageUrl?: string;
@@ -153,6 +154,7 @@ export const VerificationTaskSchema = z.object({
   address: z.string().regex(HEX_ADDRESS),
   bundleHash: z.string().regex(SHA256_HEX),
   encodedConstructorArgs: z.string().regex(HEX),
+  libraries: z.record(z.string(), z.string().regex(HEX_ADDRESS)).optional() as z.ZodType<Record<string, Hex> | undefined>,
   creationTxHash: z.string().regex(HEX).optional(),
   explorer: ExplorerTargetSnapshotSchema,
   explorerPageUrl: z.string().url().optional(),

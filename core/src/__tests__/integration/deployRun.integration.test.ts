@@ -194,7 +194,7 @@ describe.skipIf(!ready)('deployRun: two anvil containers (Docker)', () => {
     }>(`${baseUrl}/api/v1/deployments/runs/${launched.id}/artifact`);
     const artifact = artifactResponse.data.artifact;
     expect(artifact).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: launched.id,
       status: 'completed',
       contracts: [

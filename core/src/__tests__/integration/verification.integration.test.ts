@@ -292,7 +292,7 @@ describe('verification lifecycle through a launched run', () => {
       (candidate) =>
         candidate.status === 'queued' && candidate.attempts.length === 1
     );
-    expect(task.detail).toBe('RETRYABLE');
+    expect(task.detail).toMatch(/^RETRYABLE/);
     expect(task.nextAttemptAt).toBeDefined();
     task = await waitForTask(
       queue,
@@ -300,7 +300,7 @@ describe('verification lifecycle through a launched run', () => {
       (candidate) =>
         candidate.status === 'queued' && candidate.attempts.length === 2
     );
-    expect(task.detail).toBe('RETRYABLE');
+    expect(task.detail).toMatch(/^RETRYABLE/);
     expect(task.nextAttemptAt).toBeDefined();
     task = await waitForTask(
       queue,
@@ -488,12 +488,26 @@ function anvilSigner(rpcUrl: string) {
         capability: 'sign-and-send' as const,
       },
     }),
-    executeTx: async (args: { to: Hex | null; data: Hex; value: bigint }) => {
+    executeTx: async (args: {
+      to: Hex | null;
+      data: Hex;
+      value: bigint;
+      onPhase?: (
+        phase: 'built' | 'signed' | 'broadcasting',
+        data: { tx: { nonce: number } }
+      ) => Promise<void>;
+    }) => {
       const wallet = createWalletClient({
         account,
         chain,
         transport: viemHttp(rpcUrl),
       });
+      // The real SignerProviderService emits 'built' before any submission;
+      // Attempt.expected (and therefore verification enqueue) depends on it.
+      const nonce = await createPublicClient({
+        transport: viemHttp(rpcUrl),
+      }).getTransactionCount({ address: ANVIL_ADDRESS, blockTag: 'pending' });
+      await args.onPhase?.('built', { tx: { nonce } });
       const hash = await wallet.sendTransaction({
         to: args.to ?? undefined,
         data: args.data,

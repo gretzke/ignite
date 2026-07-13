@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { encodeDeployData, parseTransaction, type Abi, type Hex } from 'viem';
+import { encodeFunctionData, keccak256, parseTransaction, type Abi, type Hex } from 'viem';
 import type {
   DeploymentPlan,
   Lane,
@@ -9,7 +9,7 @@ import type {
   RunEvent,
   RunRecord,
 } from '@ignite/api';
-import { allowedActions } from '@ignite/api';
+import { allowedActions, CREATE2_PROXY_ADDRESS } from '@ignite/api';
 import { RpcProviderService } from '../chains/RpcProviderService.js';
 import { RpcStore } from '../chains/RpcStore.js';
 import { ChainRegistry } from '../chains/ChainRegistry.js';
@@ -25,12 +25,19 @@ import { writeArtifact } from './artifact.js';
 import { sanitizeRunError } from './errors.js';
 import { RunEvents, type RunListener } from './events.js';
 import {
+  callAbiItem,
   effectiveValue,
-  mergeArgs,
+  mergeCallTarget,
   mergeGas,
   resolveSigner,
+  resolveStepValues,
   toConstructorArgs,
+  validateDependencies,
 } from './resolver.js';
+import { ackIsFresh, buildInitcode, predictPlanAddresses } from './schedule.js';
+import { create2Calldata, initcodeHashOf } from './create2.js';
+import { decomposeCreationCalldata } from './create2.js';
+import { linkBytecode } from './linking.js';
 import { RunStore } from './RunStore.js';
 import { runStatus } from './runStatus.js';
 import { validatePlan } from './validation.js';
@@ -85,10 +92,11 @@ export interface DeployEngineDeps {
   ) => ReturnType<typeof validatePlan>;
   writeArtifact: (run: RunRecord) => Promise<unknown>;
   getReceipt: (url: string, hash: Hex) => Promise<Receipt | undefined>;
-  getTxOrigin: (
+  getTxForProvenance: (
     url: string,
     hash: Hex
-  ) => Promise<{ from: Hex; to: Hex | null } | undefined>;
+  ) => Promise<{ from: Hex; to: Hex | null; input: Hex; value: bigint } | undefined>;
+  getCode: (url: string, address: Hex) => Promise<Hex>;
   getTransactionData: (url: string, hash: Hex) => Promise<Hex | undefined>;
   verificationQueue: Pick<VerificationQueue, 'enqueueForConfirmedStep'>;
   rebroadcast: (url: string, raw: Hex) => Promise<Hex>;
@@ -147,15 +155,19 @@ export class DeployEngine {
             effectiveGasPrice: result.effectiveGasPrice.toString(),
           };
         }),
-      getTxOrigin:
-        deps?.getTxOrigin ??
+      getTxForProvenance:
+        deps?.getTxForProvenance ??
         (async (url, hash) => {
           const { createPublicClient, http } = await import('viem');
           const tx = await createPublicClient({ transport: http(url) })
             .getTransaction({ hash })
             .catch(() => undefined);
-          return tx ? { from: tx.from, to: tx.to ?? null } : undefined;
+          return tx ? { from: tx.from, to: tx.to ?? null, input: tx.input as Hex, value: tx.value } : undefined;
         }),
+      getCode: deps?.getCode ?? (async (url, address) => {
+        const { createPublicClient, http } = await import('viem');
+        return (await createPublicClient({ transport: http(url) }).getCode({ address })) ?? '0x';
+      }),
       getTransactionData: deps?.getTransactionData ??
         (async (url, hash) => {
           const { createPublicClient, http } = await import('viem');
@@ -225,11 +237,17 @@ export class DeployEngine {
           ? { explorerTargets: validated.explorerTargets }
           : {}),
         validation: validated.report,
+        ...(Object.keys(validated.report.chains).length
+          ? { simulationTiers: Object.fromEntries(Object.entries(validated.report.chains).flatMap(([key, checklist]) => {
+              const tier = (checklist.simulation?.details as { tier?: 'simulateV1' | 'fork' | 'estimate' } | undefined)?.tier;
+              return tier ? [[key, tier]] : [];
+            })) }
+          : {}),
         status: 'running',
         lanes: Object.fromEntries(
           args.plan.chains.map((chainId) => [
             String(chainId),
-            makeLane(chainId, args.plan),
+            makeLane(chainId, args.plan, validated.predicted?.[String(chainId)]),
           ])
         ),
       };
@@ -332,7 +350,68 @@ export class DeployEngine {
         this.resolvedCommands.set(replayKey, waiting);
         return waiting;
       }
+      if (cmd.action === 'accept-deployed') {
+        const pausedStep = run.plan.steps[lane.pause.stepIndex];
+        const predicted = lane.steps[lane.pause.stepIndex].predictedAddress;
+        if (pausedStep?.kind !== 'deploy' || !predicted)
+          throw new IgniteError('Only a deterministic deployment can be accepted', ErrorCodes.ILLEGAL_RESOLVE);
+        const code = await this.deps.getCode((await this.rpcFor(run, chainId)).url, predicted);
+        if (code === '0x') {
+          await this.mutate(profileId, runId, (current) => {
+            const target = current.lanes[String(chainId)];
+            target.pause = undefined; target.status = 'running';
+            target.steps[target.currentStepIndex].status = 'pending';
+          }, chainId);
+        } else {
+          await this.mutate(profileId, runId, (current) => {
+            const target = current.lanes[String(chainId)];
+            const planStep = current.plan.steps[target.currentStepIndex] as Extract<typeof pausedStep, { kind: 'deploy' }>;
+            const targetStep = target.steps[target.currentStepIndex];
+            const expected = targetStep.attempts.find((entry) => entry.id === cmd.attemptId);
+            const strategy = planStep.strategy;
+            if (!strategy || strategy.kind === 'create') throw new IgniteError('Only deterministic deployment can be accepted', ErrorCodes.ILLEGAL_RESOLVE);
+            const salt = strategy.saltPerChain?.[String(chainId)] ?? strategy.salt;
+            if (!salt) throw new IgniteError('Deterministic deployment has no salt', ErrorCodes.ILLEGAL_RESOLVE);
+            planStep.strategy = {
+              ...strategy,
+              acknowledgeDeployed: {
+                ...(strategy.acknowledgeDeployed ?? {}),
+                [String(chainId)]: {
+                  predictedAddress: predicted,
+                  initcodeHash: initcodeHashOf(buildInitcode(planStep, current.inputs[planStep.contractId]!, chainId, (id) => {
+                    const ref = target.steps.find((item) => item.stepId === id);
+                    if (!ref?.address && !ref?.predictedAddress) throw new Error('unresolved');
+                    return (ref.address ?? ref.predictedAddress)!;
+                  })),
+                },
+              },
+            };
+            if (expected) { expected.resolution = 'accept-deployed'; expected.endedAt = iso(this.deps.now()); }
+            targetStep.status = 'skipped'; targetStep.address = predicted;
+            target.currentStepIndex += 1; target.pause = undefined;
+            target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
+          }, chainId);
+        }
+        const result = await this.requireRun(profileId, runId);
+        if (result.lanes[String(chainId)].status === 'running') this.startLane(profileId, runId, chainId);
+        this.resolvedCommands.set(replayKey, result);
+        return result;
+      }
       if (cmd.action === 'recheck') {
+        if (lane.pause.reason === 'created-code-missing') {
+          const predicted = lane.steps[lane.pause.stepIndex].predictedAddress;
+          if (predicted && (await this.deps.getCode((await this.rpcFor(run, chainId)).url, predicted)) !== '0x') {
+            await this.mutate(profileId, runId, (current) => {
+              const target = current.lanes[String(chainId)]; const targetStep = target.steps[target.currentStepIndex];
+              targetStep.status = 'confirmed'; targetStep.address = predicted; target.currentStepIndex += 1;
+              target.pause = undefined; target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
+            }, chainId);
+          }
+          const result = await this.requireRun(profileId, runId);
+          this.resolvedCommands.set(replayKey, result);
+          if (result.lanes[String(chainId)].status === 'running') this.startLane(profileId, runId, chainId);
+          return result;
+        }
         if (attempt?.txHash)
           await this.reconcile(profileId, runId, chainId, attempt.txHash);
         const result = await this.requireRun(profileId, runId);
@@ -340,13 +419,14 @@ export class DeployEngine {
         return result;
       }
       if (cmd.action === 'confirm-hash') {
-        // The hash is operator-supplied: before treating it as this step's
-        // deployment, prove the tx is a contract creation sent by the lane's
-        // plan signer. Without this, pasting any successful transfer hash
-        // would mark the step confirmed with no deployed address.
+        // A hash is accepted only when it matches the durable intent written
+        // at the provider's `built` phase.  This protects calls and CREATE2
+        // proxy transactions as well as ordinary contract creations.
+        if (!attempt?.expected)
+          throw new IgniteError('No durable transaction intent is available for this attempt', ErrorCodes.ILLEGAL_RESOLVE);
         const step = run.plan.steps[lane.pause.stepIndex];
         const planSigner = step && resolveSigner(run.plan, step, chainId);
-        const origin = await this.deps.getTxOrigin(
+        const origin = await this.deps.getTxForProvenance(
           (await this.rpcFor(run, chainId)).url,
           cmd.txHash
         );
@@ -356,14 +436,19 @@ export class DeployEngine {
             'The supplied transaction hash is not known to the RPC yet'
           );
         if (
-          origin.to !== null ||
           !planSigner ||
-          origin.from.toLowerCase() !== planSigner.address.toLowerCase()
+          origin.from.toLowerCase() !== planSigner.address.toLowerCase() ||
+          origin.to?.toLowerCase() !== attempt.expected.to?.toLowerCase() ||
+          keccak256(origin.input) !== attempt.expected.dataHash ||
+          origin.value.toString() !== attempt.expected.value
         )
           throw new IgniteError(
-            'The supplied hash is not a contract deployment from this lane signer',
+            'The supplied hash does not match the durable transaction intent',
             ErrorCodes.ILLEGAL_RESOLVE
           );
+        const receipt = await this.safeReceipt((await this.rpcFor(run, chainId)).url, cmd.txHash);
+        if (!receipt || receipt.status !== 'success')
+          throw new IgniteError('The supplied transaction has not succeeded', ErrorCodes.ILLEGAL_RESOLVE);
         await this.reconcile(profileId, runId, chainId, cmd.txHash);
         const result = await this.requireRun(profileId, runId);
         this.resolvedCommands.set(replayKey, result);
@@ -393,6 +478,9 @@ export class DeployEngine {
           urlFingerprint: editedRpc.fingerprint,
         };
       }
+      const editedPredictions = cmd.action === 'edit'
+        ? this.validateEdits(run, lane, cmd)
+        : undefined;
       await this.mutate(
         profileId,
         runId,
@@ -410,6 +498,12 @@ export class DeployEngine {
               currentAttempt,
               editedRpcBinding
             );
+          if (cmd.action === 'edit' && editedPredictions) {
+            for (let index = currentLane.currentStepIndex; index < currentLane.steps.length; index += 1) {
+              const prediction = editedPredictions[currentLane.steps[index].stepId];
+              if (prediction) currentLane.steps[index].predictedAddress = prediction.predictedAddress;
+            }
+          }
           if (cmd.action === 'replace') {
             const key = String(currentLane.chainId);
             const planStep = current.plan.steps[currentLane.currentStepIndex];
@@ -843,10 +937,6 @@ export class DeployEngine {
     const run = await this.requireRun(profileId, runId);
     const lane = run.lanes[String(chainId)];
     const step = run.plan.steps[stepIndex];
-    // Call execution is installed with the plan-engine branch in Batch B2.
-    // Narrow here so the existing D3 deployment path remains type-safe.
-    if (step.kind !== 'deploy')
-      throw coded('estimation', `Call step ${step.id} cannot execute until plan-engine support is installed`);
     const signer = resolveSigner(run.plan, step, chainId);
     if (!signer)
       throw coded('signer-mismatch', 'No signer is configured for this chain');
@@ -864,20 +954,61 @@ export class DeployEngine {
         'Signer account no longer matches the deployment plan'
       );
     const rpc = await this.rpcFor(run, chainId);
-    const input = run.inputs[step.contractId];
-    if (!input)
-      throw coded('estimation', `Frozen input missing for ${step.contractId}`);
-    const abi = input.abi as Abi;
-    const constructor = abi.find((entry) => entry.type === 'constructor');
-    const args = toConstructorArgs(
-      (constructor?.inputs ?? []) as never,
-      mergeArgs(step, chainId)
-    );
-    const data = encodeDeployData({
-      abi,
-      bytecode: input.creationBytecode as Hex,
-      args,
-    }) as Hex;
+    const resolveRef = (id: string): Hex => {
+      const ref = lane.steps.find((candidate) => candidate.stepId === id);
+      if (!ref?.address && !ref?.predictedAddress)
+        throw coded('pointer-unresolved', `Pointer ${id} has no confirmed or predicted address`);
+      return (ref.address ?? ref.predictedAddress)!;
+    };
+    let to: Hex | null;
+    let data: Hex;
+    let libraries: Record<string, Hex> | undefined;
+    let pointers: Record<string, Hex> | undefined;
+    if (step.kind === 'call') {
+      const target = mergeCallTarget(step, chainId);
+      const callTarget = target.kind === 'step'
+        ? run.plan.steps.find((candidate): candidate is Extract<typeof candidate, { kind: 'deploy' }> => candidate.id === target.stepId && candidate.kind === 'deploy')
+        : undefined;
+      const fn = callAbiItem(step, chainId, callTarget ? run.inputs[callTarget.contractId]?.abi : undefined);
+      const values = resolveStepValues(step, chainId, resolveRef, fn?.inputs ?? []);
+      to = values.target!;
+      pointers = values.pointers;
+      data = fn
+        ? encodeFunctionData({ abi: [fn], functionName: fn.name, args: toConstructorArgs(fn.inputs, values.args) as never })
+        : '0x';
+    } else {
+      const input = run.inputs[step.contractId];
+      if (!input) throw coded('estimation', `Frozen input missing for ${step.contractId}`);
+      const ctor = (input.abi as Abi).find((entry) => entry.type === 'constructor');
+      const values = resolveStepValues(step, chainId, resolveRef, (ctor?.inputs ?? []) as never);
+      libraries = values.libraries;
+      pointers = values.pointers;
+      const initcode = buildInitcode(step, input, chainId, resolveRef);
+      const strategy = step.strategy ?? { kind: 'create' as const };
+      if (strategy.kind === 'create') {
+        to = null;
+        data = initcode;
+      } else {
+        const predictedAddress = lane.steps[stepIndex].predictedAddress;
+        if (!predictedAddress) throw coded('pointer-unresolved', `Create2 step ${step.id} has no predicted address`);
+        const code = await this.deps.getCode(rpc.url, predictedAddress);
+        if (code !== '0x') {
+          if (ackIsFresh(strategy, chainId, { predictedAddress, initcodeHash: initcodeHashOf(initcode) })) {
+            await this.mutate(profileId, runId, (current) => {
+              const target = current.lanes[String(chainId)];
+              const targetStep = target.steps[stepIndex];
+              targetStep.status = 'skipped'; targetStep.address = predictedAddress;
+              target.currentStepIndex += 1;
+              target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
+            }, chainId);
+            return;
+          }
+          throw coded('create2-collision', `Code already exists at predicted address ${predictedAddress}`);
+        }
+        to = CREATE2_PROXY_ADDRESS;
+        data = create2Calldata((strategy.saltPerChain?.[String(chainId)] ?? strategy.salt)!, initcode);
+      }
+    }
     const gas = mergeGas(step, chainId);
     const overrides: TxOverrides = Object.fromEntries(
       Object.entries(gas).map(([key, value]) => [key, BigInt(value)])
@@ -912,12 +1043,26 @@ export class DeployEngine {
         chainId,
         rpcUrl: rpc.url,
         chain,
-        to: null,
+        to,
         value: effectiveValue(step, chainId),
         data,
         expectedAddress: signer.address as Hex,
         overrides: overrides as ExecuteTxArgs['overrides'],
-        onPhase: async (phase, data) => {
+        onPhase: async (phase, phaseData) => {
+          if (phase === 'built') {
+            try {
+              await this.mutate(profileId, runId, (current) => {
+                const attempt = current.lanes[String(chainId)].steps[stepIndex].attempts.find((entry) => entry.id === attemptId);
+                if (!attempt) throw coded('write-failure', 'Deployment attempt disappeared before intent could be persisted');
+                attempt.expected = {
+                  to, value: effectiveValue(step, chainId).toString(), dataHash: keccak256(data),
+                  ...(libraries && Object.keys(libraries).length ? { libraries } : {}),
+                  ...(pointers && Object.keys(pointers).length ? { pointers } : {}),
+                };
+              }, chainId);
+            } catch (error) { throw coded('write-failure', sanitizeRunError(error)); }
+            return;
+          }
           if (phase !== 'broadcasting') return;
           try {
             await this.mutate(
@@ -934,9 +1079,9 @@ export class DeployEngine {
                     'write-failure',
                     'Deployment attempt disappeared before broadcast intent could be persisted'
                   );
-                attempt.txHash = data.txHash;
-                attempt.rawTx = data.rawTx;
-                attempt.nonce = data.tx.nonce;
+                attempt.txHash = phaseData.txHash;
+                attempt.rawTx = phaseData.rawTx;
+                attempt.nonce = phaseData.tx.nonce;
                 targetStep.status = 'broadcasting';
               },
               chainId
@@ -969,6 +1114,16 @@ export class DeployEngine {
     receipt: Receipt,
     attemptId?: string
   ): Promise<void> {
+    const before = await this.requireRun(profileId, runId);
+    const beforeLane = before.lanes[String(chainId)];
+    const planStep = before.plan.steps[beforeLane.currentStepIndex];
+    const laneStep = beforeLane.steps[beforeLane.currentStepIndex];
+    // The CREATE2 proxy does not put the created address in the receipt.
+    // Confirm the predicted runtime code before advancing the lane.
+    const deterministic = planStep?.kind === 'deploy' && planStep.strategy?.kind !== undefined && planStep.strategy.kind !== 'create';
+    const deterministicCodePresent = !deterministic || !laneStep.predictedAddress
+      ? true
+      : (await this.deps.getCode((await this.rpcFor(before, chainId)).url, laneStep.predictedAddress)) !== '0x';
     const settled = await this.mutate(
       profileId,
       runId,
@@ -1007,9 +1162,21 @@ export class DeployEngine {
             error: 'Transaction reverted',
             attemptId: attempt.id,
           };
+        } else if (deterministic && !deterministicCodePresent) {
+          step.status = 'failed';
+          lane.status = 'paused';
+          lane.pause = {
+            reason: 'created-code-missing',
+            stepIndex: lane.currentStepIndex,
+            error: 'Transaction succeeded but no code exists at the predicted CREATE2 address',
+            attemptId: attempt.id,
+          };
         } else {
           step.status = 'confirmed';
-          step.address = receipt.contractAddress ?? undefined;
+          if (planStep?.kind === 'deploy')
+            step.address = deterministic
+              ? lane.steps[lane.currentStepIndex].predictedAddress
+              : receipt.contractAddress ?? undefined;
           lane.currentStepIndex += 1;
           lane.status =
             lane.currentStepIndex >= lane.steps.length
@@ -1037,20 +1204,26 @@ export class DeployEngine {
     const attempt = step.attempts.find((candidate) => candidate.txHash === hash);
     const planStep = run.plan.steps.find((candidate) => candidate.id === step.stepId);
     if (!attempt || !planStep || planStep.kind !== 'deploy') return;
-    const creation = run.inputs[planStep.contractId]?.creationBytecode;
-    if (!creation) return;
+    const input = run.inputs[planStep.contractId];
+    if (!input || !attempt.expected) return;
     let data: Hex | undefined;
     try { data = await this.deps.getTransactionData((await this.rpcFor(run, chainId)).url, hash); }
     catch {
       if (attempt.rawTx) data = parseTransaction(attempt.rawTx).data as Hex | undefined;
     }
-    if (!data || !data.toLowerCase().startsWith(creation.toLowerCase())) {
-      getLogger().warn(`verification enqueue skipped for ${hash}: creation bytecode prefix mismatch`);
+    if (!data) return;
+    const linkedCreationCode = input.creationCodeLinkReferences
+      ? linkBytecode(input.creationBytecode, input.creationCodeLinkReferences, attempt.expected.libraries ?? {})
+      : input.creationBytecode as Hex;
+    const strategy = planStep.strategy?.kind === 'create' || !planStep.strategy ? 'create' : 'create2';
+    const decomposition = decomposeCreationCalldata(data, linkedCreationCode, strategy);
+    if (!decomposition) {
+      getLogger().warn(`verification enqueue skipped for ${hash}: creation calldata does not match frozen linked bytecode`);
       return;
     }
     await this.deps.verificationQueue.enqueueForConfirmedStep(
       run.profileId, run, chainId, step.stepId, planStep.contractId,
-      step.address, hash, `0x${data.slice(creation.length)}`
+      step.address, hash, decomposition.constructorData, attempt.expected.libraries
     );
   }
 
@@ -1149,6 +1322,20 @@ export class DeployEngine {
         };
       }
     }
+    for (const [stepId, target] of Object.entries(cmd.edits.targetByStep ?? {})) {
+      const index = run.plan.steps.findIndex((step) => step.id === stepId);
+      const planStep = run.plan.steps[index];
+      if (index >= lane.currentStepIndex && planStep?.kind === 'call') {
+        planStep.targetPerChain = { ...(planStep.targetPerChain ?? {}), [key]: target };
+      }
+    }
+    for (const [stepId, libraries] of Object.entries(cmd.edits.librariesByStep ?? {})) {
+      const index = run.plan.steps.findIndex((step) => step.id === stepId);
+      const planStep = run.plan.steps[index];
+      if (index >= lane.currentStepIndex && planStep?.kind === 'deploy') {
+        planStep.librariesPerChain = { ...(planStep.librariesPerChain ?? {}), [key]: { ...(planStep.librariesPerChain?.[key] ?? {}), ...libraries } };
+      }
+    }
     const current = run.plan.steps[lane.currentStepIndex];
     if (cmd.edits.gas)
       current.gasOverridesPerChain = {
@@ -1160,6 +1347,54 @@ export class DeployEngine {
       };
     if (rpcBinding) run.rpcSelection[key] = rpcBinding;
     attempt.edits = { ...cmd.edits };
+  }
+
+  /** Validate an edit on a clone before the durable mutation. */
+  private validateEdits(
+    run: RunRecord,
+    lane: Lane,
+    cmd: Extract<ResolveLaneRequest, { action: 'edit' }>
+  ) {
+    const draft = structuredClone(run);
+    const draftLane = draft.lanes[String(lane.chainId)];
+    const attempt = draftLane.steps[draftLane.currentStepIndex].attempts.find((entry) => entry.id === cmd.attemptId)
+      ?? { id: cmd.attemptId, startedAt: iso(this.deps.now()) };
+    this.applyEdits(draft, draftLane, cmd, attempt);
+    try {
+      validateDependencies(draft.plan);
+      const addresses = (id: string): Hex => {
+        const item = draftLane.steps.find((candidate) => candidate.stepId === id);
+        if (!item?.address && !item?.predictedAddress) throw coded('pointer-unresolved', `Pointer ${id} is unresolved after edit`);
+        return (item.address ?? item.predictedAddress)!;
+      };
+      for (let index = draftLane.currentStepIndex; index < draft.plan.steps.length; index += 1) {
+        const step = draft.plan.steps[index];
+        if (step.kind === 'call') {
+          const target = step.targetPerChain?.[String(lane.chainId)] ?? step.target;
+          const targetStep = target.kind === 'step'
+            ? draft.plan.steps.find((candidate): candidate is Extract<typeof candidate, { kind: 'deploy' }> => candidate.id === target.stepId && candidate.kind === 'deploy')
+            : undefined;
+          const fn = callAbiItem(step, lane.chainId, targetStep ? draft.inputs[targetStep.contractId]?.abi : undefined);
+          resolveStepValues(step, lane.chainId, addresses, fn?.inputs ?? []);
+        } else {
+          const input = draft.inputs[step.contractId];
+          if (!input) throw new Error(`Frozen input missing for ${step.contractId}`);
+          buildInitcode(step, input, lane.chainId, addresses);
+        }
+      }
+      const predictions = predictPlanAddresses(draft.plan, draft.inputs, lane.chainId);
+      for (const step of draft.plan.steps.slice(draftLane.currentStepIndex)) {
+        if (step.kind !== 'deploy' || step.strategy?.kind !== 'plugin') continue;
+        const prepared = step.strategy.prepared?.[String(lane.chainId)];
+        const next = predictions[step.id];
+        if (prepared && next && prepared.initcodeHash.toLowerCase() !== next.initcodeHash.toLowerCase())
+          throw new IgniteError('EDIT_REQUIRES_REMINE', ErrorCodes.ILLEGAL_RESOLVE);
+      }
+      return predictions;
+    } catch (error) {
+      if (error instanceof IgniteError && error.message === 'EDIT_REQUIRES_REMINE') throw error;
+      throw new IgniteError(error instanceof Error ? error.message : 'Edited plan is invalid', ErrorCodes.ILLEGAL_RESOLVE);
+    }
   }
   private async mutate(
     profileId: string,
@@ -1220,7 +1455,7 @@ export class DeployEngine {
   }
 }
 
-function makeLane(chainId: number, plan: DeploymentPlan): Lane {
+function makeLane(chainId: number, plan: DeploymentPlan, predicted?: Record<string, { predictedAddress: Hex }>): Lane {
   return {
     chainId,
     status: 'pending',
@@ -1228,6 +1463,7 @@ function makeLane(chainId: number, plan: DeploymentPlan): Lane {
     steps: plan.steps.map((step) => ({
       stepId: step.id,
       status: 'pending',
+      ...(predicted?.[step.id] ? { predictedAddress: predicted[step.id]!.predictedAddress } : {}),
       attempts: [],
     })),
   };

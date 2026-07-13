@@ -8,6 +8,8 @@ import { RunStore } from './RunStore.js';
 import { VerificationQueue } from '../verifications/VerificationQueue.js';
 import { getLogger } from '../utils/logger.js';
 import { RpcStore } from '../chains/RpcStore.js';
+import { decomposeCreationCalldata } from './create2.js';
+import { linkBytecode } from './linking.js';
 
 export function wireVerificationReconciliation(queue: VerificationQueue): void {
   queue.reconcileRuns = async () => {
@@ -28,8 +30,8 @@ export function wireVerificationReconciliation(queue: VerificationQueue): void {
           for (const step of lane.steps.filter((item) => item.status === 'confirmed' && item.address)) {
             const planStep = run.plan.steps.find((item) => item.id === step.stepId);
             const attempt = step.attempts.findLast((item) => item.txHash);
-            const creation = planStep?.kind === 'deploy' ? run.inputs[planStep.contractId]?.creationBytecode : undefined;
-            if (!planStep || planStep.kind !== 'deploy' || !attempt?.txHash || !creation || !step.address) continue;
+            const input = planStep?.kind === 'deploy' ? run.inputs[planStep.contractId] : undefined;
+            if (!planStep || planStep.kind !== 'deploy' || !attempt?.txHash || !attempt.expected || !input || !step.address) continue;
             const rpc = run.rpcSelection[chainKey];
             if (!rpc) continue;
             let data: Hex | undefined;
@@ -42,11 +44,17 @@ export function wireVerificationReconciliation(queue: VerificationQueue): void {
               }
             } catch { /* raw signed transaction fallback below */ }
             if (!data && attempt.rawTx) try { data = parseTransaction(attempt.rawTx).data as Hex | undefined; } catch { /* skip */ }
-            if (!data || !data.toLowerCase().startsWith(creation.toLowerCase())) {
-              getLogger().warn(`verification reconciliation skipped ${attempt.txHash}: transaction data unavailable or prefix mismatch`);
+            if (!data) continue;
+            const linked = input.creationCodeLinkReferences
+              ? linkBytecode(input.creationBytecode, input.creationCodeLinkReferences, attempt.expected.libraries ?? {})
+              : input.creationBytecode as Hex;
+            const strategy = !planStep.strategy || planStep.strategy.kind === 'create' ? 'create' : 'create2';
+            const decomposition = decomposeCreationCalldata(data, linked, strategy);
+            if (!decomposition) {
+              getLogger().warn(`verification reconciliation skipped ${attempt.txHash}: transaction data unavailable or calldata mismatch`);
               continue;
             }
-            await queue.enqueueForConfirmedStep(profileId, run, Number(chainKey), step.stepId, planStep.contractId, step.address, attempt.txHash, `0x${data.slice(creation.length)}`);
+            await queue.enqueueForConfirmedStep(profileId, run, Number(chainKey), step.stepId, planStep.contractId, step.address, attempt.txHash, decomposition.constructorData, attempt.expected.libraries);
           }
         }
       }

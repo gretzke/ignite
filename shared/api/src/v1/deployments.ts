@@ -859,6 +859,7 @@ export interface DeploymentArtifactAttempt {
   error?: string;
   resolution?: AttemptResolution;
   edits?: Attempt["edits"];
+  expected?: Attempt['expected'];
 }
 
 export interface DeploymentArtifact {
@@ -885,17 +886,24 @@ export interface DeploymentArtifact {
       chainId: number;
       status: LaneStatus;
       providerLabel: string;
+      simulationTier?: 'simulateV1' | 'fork' | 'estimate';
       pause?: { reason: PauseReason; error: string };
       steps: Array<{
         stepId: string;
+        kind: 'deploy' | 'call';
         contractId: string;
         status: StepStatus;
+        note?: string;
         args: ArgValues;
         value: string;
         gasOverrides?: GasOverrides;
         signerAddress?: string;
         address?: Hex;
         unresolvedTx?: { txHash?: Hex; note?: string };
+        strategy?: { kind: 'create' | 'create2' | 'plugin'; pluginId?: string; salt?: Hex32; predictedAddress?: Hex };
+        libraries?: Array<{ key: string; address: Hex; source: 'literal' | { stepId: string } }>;
+        call?: { target: Hex; targetSource: 'literal' | { stepId: string }; signature?: string };
+        pointers?: Array<{ path: string; stepId: string; address: Hex }>;
         attempts: DeploymentArtifactAttempt[];
       }>;
     }
@@ -1013,6 +1021,7 @@ export const DeploymentArtifactAttemptSchema = z.object({
   error: z.string().optional(),
   resolution: AttemptSchema.shape.resolution,
   edits: AttemptSchema.shape.edits,
+  expected: AttemptSchema.shape.expected,
 }) satisfies z.ZodType<DeploymentArtifactAttempt>;
 
 export const DeploymentArtifactSchema = z.object({
@@ -1041,12 +1050,15 @@ export const DeploymentArtifactSchema = z.object({
       chainId: z.number().int().positive(),
       status: LaneStatusSchema,
       providerLabel: z.string(),
+      simulationTier: z.enum(['simulateV1', 'fork', 'estimate']).optional(),
       pause: z.object({ reason: PauseReasonSchema, error: z.string() }).optional(),
       steps: z.array(
         z.object({
           stepId: z.string().min(1),
+          kind: z.enum(['deploy', 'call']),
           contractId: z.string().min(1),
           status: StepStatusSchema,
+          note: z.string().min(1).optional(),
           args: ArgValuesSchema,
           value: DecimalStringSchema,
           gasOverrides: GasOverridesSchema.optional(),
@@ -1057,6 +1069,10 @@ export const DeploymentArtifactSchema = z.object({
           unresolvedTx: z
             .object({ txHash: HexSchema.optional(), note: z.string().optional() })
             .optional(),
+          strategy: z.object({ kind: z.enum(['create', 'create2', 'plugin']), pluginId: z.string().min(1).optional(), salt: Hex32Schema.optional(), predictedAddress: AddressSchema.optional() }).optional(),
+          libraries: z.array(z.object({ key: z.string().min(1), address: AddressSchema, source: z.union([z.literal('literal'), z.object({ stepId: z.string().min(1) })]) })).optional(),
+          call: z.object({ target: AddressSchema, targetSource: z.union([z.literal('literal'), z.object({ stepId: z.string().min(1) })]), signature: z.string().min(1).optional() }).optional(),
+          pointers: z.array(z.object({ path: z.string().min(1), stepId: z.string().min(1), address: AddressSchema })).optional(),
           attempts: z.array(DeploymentArtifactAttemptSchema),
         })
       ),

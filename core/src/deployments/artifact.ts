@@ -9,7 +9,7 @@ import type {
 } from '@ignite/api';
 import { DeploymentArtifactSchema } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
-import { effectiveValue, mergeArgs, mergeGas, resolveSigner } from './resolver.js';
+import { collectRefs, effectiveValue, mergeArgs, mergeCallTarget, mergeGas, resolveSigner } from './resolver.js';
 
 export function renderArtifact(
   run: RunRecord,
@@ -36,6 +36,7 @@ export function renderArtifact(
       {
         chainId: lane.chainId,
         status: lane.status,
+        ...(run.simulationTiers?.[key] ? { simulationTier: run.simulationTiers[key] } : {}),
         providerLabel: sanitizeText(
           run.rpcSelection[key]?.label ?? 'RPC endpoint'
         ),
@@ -47,13 +48,25 @@ export function renderArtifact(
           const signer = step
             ? resolveSigner(run.plan, step, lane.chainId)
             : undefined;
+          const expected = laneStep.attempts.findLast((attempt) => attempt.expected)?.expected;
+          const refs = step ? collectRefs(step, lane.chainId) : [];
+          const pointerEntries = expected?.pointers
+            ? refs.flatMap((ref) => expected.pointers?.[ref.path] ? [{ path: ref.path, stepId: ref.stepId, address: expected.pointers[ref.path]! }] : [])
+            : [];
+          const strategy = step?.kind === 'deploy' ? step.strategy ?? { kind: 'create' as const } : undefined;
+          const effectiveSalt = strategy && strategy.kind !== 'create'
+            ? strategy.saltPerChain?.[key] ?? strategy.salt : undefined;
           return {
             stepId: sanitizeText(laneStep.stepId),
+            kind: step?.kind ?? 'deploy',
             // Ties each deployed address back to its frozen contract input —
             // without this a multi-contract artifact cannot say which
             // bytecode produced which address.
             contractId: sanitizeText(step?.kind === 'deploy' ? step.contractId : 'unknown'),
             status: laneStep.status,
+            ...(laneStep.status === 'skipped' && laneStep.address && laneStep.attempts.length === 0
+              ? { note: 'Acknowledged deployed address; no transaction was submitted' }
+              : {}),
             args: sanitizeValue(step ? mergeArgs(step, lane.chainId) : {}),
             value: step ? effectiveValue(step, lane.chainId).toString() : '0',
             ...(step ? { gasOverrides: sanitizeValue(mergeGas(step, lane.chainId)) } : {}),
@@ -62,6 +75,21 @@ export function renderArtifact(
             ...(laneStep.unresolvedTx
               ? { unresolvedTx: sanitizeValue(laneStep.unresolvedTx) }
               : {}),
+            ...(strategy ? { strategy: {
+              kind: strategy.kind,
+              ...(strategy.kind === 'plugin' ? { pluginId: sanitizeText(strategy.pluginId) } : {}),
+              ...(effectiveSalt ? { salt: effectiveSalt } : {}),
+              ...(laneStep.predictedAddress ? { predictedAddress: laneStep.predictedAddress } : {}),
+            } } : {}),
+            ...(step?.kind === 'deploy' && expected?.libraries ? { libraries: Object.entries(expected.libraries).map(([key, address]) => {
+              const binding = (step.librariesPerChain?.[String(lane.chainId)] ?? step.libraries ?? {})[key];
+              return { key: sanitizeText(key), address, source: binding?.kind === 'step' ? { stepId: sanitizeText(binding.stepId) } : 'literal' as const };
+            }) } : {}),
+            ...(step?.kind === 'call' && expected ? (() => {
+              const target = mergeCallTarget(step, lane.chainId);
+              return { call: { target: expected.to!, targetSource: target.kind === 'step' ? { stepId: sanitizeText(target.stepId) } : 'literal' as const, ...(step.signature ? { signature: sanitizeText(step.signature) } : {}) } };
+            })() : {}),
+            ...(pointerEntries.length ? { pointers: pointerEntries } : {}),
             attempts: laneStep.attempts.map(renderAttempt),
           };
         }),
@@ -143,6 +171,7 @@ function renderAttempt(
     ...(attempt.error ? { error: sanitizeText(attempt.error) } : {}),
     ...(attempt.resolution ? { resolution: attempt.resolution } : {}),
     ...(attempt.edits ? { edits: sanitizeValue(attempt.edits) } : {}),
+    ...(attempt.expected ? { expected: sanitizeValue(attempt.expected) } : {}),
   };
 }
 

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { keccak256 } from 'viem';
 import type {
   DeploymentPlan,
   PauseReason,
@@ -176,6 +177,7 @@ describe('DeployEngine', () => {
           data: args.data,
           overrides: args.overrides as Record<string, unknown>,
         });
+        await args.onPhase?.('built', { tx: { nonce: harness.executed.length } });
         await args.onPhase?.('broadcasting', {
           tx: { nonce: harness.executed.length },
           rawTx: RAW_TX,
@@ -189,7 +191,8 @@ describe('DeployEngine', () => {
       getReceipt: async () => undefined,
       // confirm-hash provenance gate: by default the supplied hash looks
       // like a creation tx from the plan signer, so existing flows pass.
-      getTxOrigin: async () => ({ from: ADDRESS, to: null }),
+      getTxForProvenance: async () => ({ from: ADDRESS, to: null, input: '0x6000', value: 0n }),
+      getCode: async () => '0x',
       rebroadcast: async () => TX_HASH,
       ...deps,
     });
@@ -246,7 +249,7 @@ describe('DeployEngine', () => {
           id: attemptId,
           startedAt: new Date(0).toISOString(),
           ...(opts.submitted
-            ? { txHash: TX_HASH, rawTx: RAW_TX, nonce: 0 }
+            ? { txHash: TX_HASH, rawTx: RAW_TX, nonce: 0, expected: { to: null, value: '0', dataHash: keccak256('0x6000') } }
             : {}),
           error: 'seeded failure',
         },

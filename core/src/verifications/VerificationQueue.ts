@@ -137,7 +137,8 @@ export class VerificationQueue {
     contractId: string,
     address: string,
     creationTxHash: string,
-    encodedConstructorArgs: string
+    encodedConstructorArgs: string,
+    libraries?: Record<string, `0x${string}`>
   ): Promise<void> {
     const frozen = run.inputs[contractId];
     if (!frozen?.bundleHash) return;
@@ -147,6 +148,7 @@ export class VerificationQueue {
         address,
         bundleHash: frozen.bundleHash,
         encodedConstructorArgs,
+        ...(libraries && Object.keys(libraries).length ? { libraries: structuredClone(libraries) } : {}),
         creationTxHash,
         explorer,
         origin: { runId: run.id, stepId, contractId },
@@ -439,6 +441,16 @@ export class VerificationQueue {
       });
       return null;
     }
+    let standardJsonInput: unknown;
+    try {
+      standardJsonInput = injectLibraries(bundle.standardJsonInput, task.libraries);
+    } catch (error) {
+      await this.change(profileId, task.id, (t) => {
+        t.status = 'failed';
+        t.detail = error instanceof Error ? error.message : 'LIBRARY_SETTINGS_CONFLICT';
+      });
+      return null;
+    }
     return this.executor.execute(
       task.explorer.verifierPluginId,
       'verify',
@@ -447,7 +459,7 @@ export class VerificationQueue {
         address: task.address,
         explorerUrl: task.explorer.url,
         apiUrl: task.explorer.apiUrl,
-        standardJsonInput: bundle.standardJsonInput,
+        standardJsonInput,
         solcVersion: bundle.solcVersion,
         contractIdentifier: bundle.contractIdentifier,
         encodedConstructorArgs: task.encodedConstructorArgs,
@@ -600,4 +612,23 @@ export class VerificationQueue {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+/** Inject the immutable link snapshot into a copy of the compiler input. */
+function injectLibraries(input: unknown, libraries?: Record<string, `0x${string}`>): unknown {
+  const copy = structuredClone(input) as { settings?: { libraries?: Record<string, Record<string, string>> } };
+  if (!libraries || Object.keys(libraries).length === 0) return copy;
+  copy.settings ??= {};
+  copy.settings.libraries ??= {};
+  for (const [key, address] of Object.entries(libraries)) {
+    const split = key.lastIndexOf(':');
+    if (split <= 0 || split === key.length - 1) throw new Error('LIBRARY_SETTINGS_CONFLICT');
+    const sourcePath = key.slice(0, split);
+    const name = key.slice(split + 1);
+    const source = (copy.settings.libraries[sourcePath] ??= {});
+    if (source[name] && source[name].toLowerCase() !== address.toLowerCase())
+      throw new Error('LIBRARY_SETTINGS_CONFLICT');
+    source[name] = address;
+  }
+  return copy;
 }
