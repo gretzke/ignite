@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Auto-discovery build script for all plugins
-import { readdir, mkdir, writeFile } from "fs/promises";
+import { readdir, mkdir, writeFile, copyFile } from "fs/promises";
 import { join, resolve } from "path";
 import { execSync } from "child_process";
 import { existsSync } from "fs";
@@ -193,6 +193,15 @@ async function generatePluginRegistry(builtResults) {
       // Record the Dockerfile hash so core can detect stale images at startup
       if (metadata.runtime !== "frontend") {
         metadata.imageHash = imageHash(metadata.baseImage);
+      }
+      // Bundles over the docker-exec argv limit are baked into the plugin's
+      // image instead of injected: stage the built bundle inside the plugin
+      // dir (the docker build context) so its Dockerfile can COPY it.
+      if (metadata.bundledInImage) {
+        const stageDir = join(plugin.path, ".bundle");
+        await mkdir(stageDir, { recursive: true });
+        await copyFile(filePath, join(stageDir, "index.js"));
+        log(`📦 Staged in-image bundle for ${metadata.id}`, "blue");
       }
       registry[metadata.id] = metadata;
       log(`✅ Added to registry: ${metadata.id} (${metadata.name})`, "green");

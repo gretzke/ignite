@@ -97,15 +97,19 @@ export async function makeForkRunner(
     container = await docker.createContainer({
       Image: IMAGE,
       Labels: { [LABEL]: '1' },
-      Env: [`ETH_RPC_URL=${opts.rpcUrl}`],
-      Cmd: [
-        'sh',
-        '-c',
-        'anvil --fork-url "$ETH_RPC_URL" --host 0.0.0.0 --port 8545',
-      ],
+      // Inside the container 127.0.0.1 is the container itself; rewrite
+      // loopback fork URLs to the host gateway (verification suite precedent).
+      Env: [`ETH_RPC_URL=${opts.rpcUrl.replace(/127\.0\.0\.1|localhost/, 'host.docker.internal')}`],
+      // The foundry image's default entrypoint wraps Cmd; override it or the
+      // shell invocation never runs (container exits, RPC never comes up).
+      Entrypoint: ['sh', '-c'],
+      Cmd: ['anvil --fork-url "$ETH_RPC_URL" --host 0.0.0.0 --port 8545'],
       HostConfig: {
         AutoRemove: true,
         PortBindings: { '8545/tcp': [{ HostPort: '' }] },
+        // Linux needs the explicit host-gateway mapping; Docker Desktop
+        // resolves host.docker.internal natively and tolerates the extra host.
+        ExtraHosts: ['host.docker.internal:host-gateway'],
       },
       ExposedPorts: { '8545/tcp': {} },
     });

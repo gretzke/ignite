@@ -10,7 +10,7 @@ import { sanitizePluginString } from '../verifications/sanitize.js';
 const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-const KEY = /^[a-z0-9][a-z0-9._-]*$/;
+const KEY = /^[a-zA-Z][a-zA-Z0-9._-]*$/;
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 
 type Provider = PluginConfig;

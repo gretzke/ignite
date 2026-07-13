@@ -16,7 +16,7 @@ const parseFlags = (value: unknown): number => {
 };
 const failed = <T>(code: string, message: string): PluginResponse<T> => ({ success: false, error: { code, message } });
 export class HookDeployerPlugin extends DeploymentTypePlugin {
-  protected static getMetadata(): PluginMetadata { return { id: 'hook-deployer', types: [PluginType.DEPLOYMENT_TYPE], name: 'v4 Hook Deployer', version: PLUGIN_VERSION, baseImage: 'ignite/deployment-type_hook-deployer:latest', permissions: [], operations: ['describeDeploymentType', 'prepareDeployment', 'validateDeployment'], configFields: [] }; }
+  protected static getMetadata(): PluginMetadata { return { id: 'hook-deployer', types: [PluginType.DEPLOYMENT_TYPE], name: 'v4 Hook Deployer', version: PLUGIN_VERSION, baseImage: 'ignite/deployment-type_hook-deployer:latest', bundledInImage: true, permissions: [], operations: ['describeDeploymentType', 'prepareDeployment', 'validateDeployment'], configFields: [] }; }
   async describeDeploymentType(): Promise<PluginResponse<DescribeDeploymentTypeResult>> { return { success: true, data: { label: 'v4 Hook Deployer', description: 'Mines a CREATE2 salt whose address encodes Uniswap v4 hook permissions.', params: [{ key: 'flagsOverride', label: 'Permission flags override', type: 'string', required: false, description: '14-bit hook permission mask (hex or decimal). Leave empty to derive from bytecode.' }] } }; }
   async prepareDeployment(options: PrepareDeploymentParams): Promise<PluginResponse<PrepareDeploymentResult>> {
     try {

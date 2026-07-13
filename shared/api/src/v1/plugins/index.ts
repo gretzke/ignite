@@ -91,6 +91,7 @@ export const PluginMetadataSchema = z.object({
     .refine((value) => Object.keys(value).length <= 32)
     .optional(),
   repoRead: z.boolean().optional(),
+  bundledInImage: z.boolean().optional(),
 }) satisfies z.ZodType<PluginMetadata>;
 
 // Type-safe IApiResponse schemas that enforce interface compliance

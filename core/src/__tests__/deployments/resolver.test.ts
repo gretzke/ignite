@@ -65,7 +65,7 @@ describe('deployment resolver', () => {
 
   it('resolves only address-typed pointer leaves', () => {
     const step = { id: 'a', kind: 'deploy' as const, contractId: 'a', args: { owner: { $ref: { kind: 'step' as const, stepId: 'b' } } } };
-    expect(resolveStepValues(step, 1, () => address, [{ name: 'owner', type: 'address' }])).toMatchObject({ args: { owner: address }, pointers: { owner: address } });
+    expect(resolveStepValues(step, 1, () => address, [{ name: 'owner', type: 'address' }])).toMatchObject({ args: { owner: address }, pointers: { 'args.owner': address } });
     try { resolveStepValues(step, 1, () => address, [{ name: 'owner', type: 'uint256' }]); throw new Error('expected failure'); }
     catch (error) { expect(error).toMatchObject({ code: 'ARG_TYPE_MISMATCH' }); }
   });

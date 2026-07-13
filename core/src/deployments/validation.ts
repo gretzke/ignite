@@ -26,6 +26,7 @@ import {
   mergeArgs,
   mergeGas,
   missingArgKeys,
+  resolveStepValues,
   resolveSigner,
   toConstructorArgs,
   validateDependencies,
@@ -603,6 +604,14 @@ function validateArgs(
     );
   try {
     validateDependencies(plan);
+    // Deterministic step pointers are concrete at review time. Resolve them
+    // before ABI coercion; passing the wire {$ref: ...} object to viem would
+    // incorrectly reject an otherwise valid address constructor argument.
+    // Plain-create targets have no review-time address, so retain the
+    // documented zero-address dry-run placeholder for type checking only.
+    const predictions = predictPlanAddresses(plan, frozen, chainId);
+    const resolveRef = (id: string): Hex =>
+      predictions[id]?.predictedAddress ?? '0x0000000000000000000000000000000000000000';
     for (const step of plan.steps) {
       if (step.kind === 'call') continue;
       const input = frozen[step.contractId];
@@ -632,11 +641,13 @@ function validateArgs(
           `Constructor arguments are missing for step ${step.id}`,
           { fields: missing }
         );
-      encodeDeployData({
-        abi: input.abi as Abi,
-        bytecode: input.creationBytecode as Hex,
-        args: toConstructorArgs(ctor, merged),
-      });
+      // `toConstructorArgs` is the same ABI coercion used by execution.
+      // Avoid encodeDeployData here: linked artifacts intentionally contain
+      // non-hex placeholders until their library bindings are resolved.
+      toConstructorArgs(
+        ctor,
+        resolveStepValues(step, chainId, resolveRef, ctor).args
+      );
     }
     return success('Constructor arguments are valid');
   } catch (error) {
@@ -684,7 +695,7 @@ async function validateCreate2(
         ),
       };
     const runtime = await client.getCode({ address: CREATE2_PROXY_ADDRESS });
-    if (runtime === '0x')
+    if (!runtime || runtime === '0x')
       return {
         item: failure(
           'CREATE2_PROXY_MISSING',
@@ -769,7 +780,7 @@ async function validateCreate2(
         }
       }
       const code = await client.getCode({ address: current.predictedAddress });
-      if (code !== '0x' && !ackIsFresh(strategy, chainId, current))
+      if (code && code !== '0x' && !ackIsFresh(strategy, chainId, current))
         return {
           item: failure(
             'CREATE2_ALREADY_DEPLOYED',
@@ -791,7 +802,10 @@ async function validateCreate2(
   } catch (error) {
     return {
       item: failure(
-        codeOf(error, 'CREATE2_PROXY_MISSING'),
+        // Untyped throws here are prediction failures (missing salt,
+        // unresolved pointer inside initcode) — never claim the proxy is
+        // missing when it was not even checked.
+        codeOf(error, 'CREATE2_PREDICTION_FAILED'),
         safeMessage(error, 'Create2 validation failed')
       ),
     };

@@ -78,7 +78,9 @@ export function resolveStepValues(step: Step, chainId: number, resolveRef: (step
   const args: ArgValues = {};
   for (let index = 0; index < abiInputs.length; index += 1) {
     const parameter = abiInputs[index]; const key = parameter.name || `arg${index}`;
-    if (Object.prototype.hasOwnProperty.call(merged, key)) args[key] = resolveAbiRefs(parameter, merged[key], key, resolve);
+    // Pointer paths use the same `args.`-rooted vocabulary as collectRefs so
+    // Attempt.expected.pointers and artifact rendering line up exactly.
+    if (Object.prototype.hasOwnProperty.call(merged, key)) args[key] = resolveAbiRefs(parameter, merged[key], `args.${key}`, resolve);
   }
   // Without ABI inputs, retain data for callers that only need target/library resolution.
   if (abiInputs.length === 0) Object.assign(args, merged);

@@ -356,7 +356,7 @@ export class DeployEngine {
         if (pausedStep?.kind !== 'deploy' || !predicted)
           throw new IgniteError('Only a deterministic deployment can be accepted', ErrorCodes.ILLEGAL_RESOLVE);
         const code = await this.deps.getCode((await this.rpcFor(run, chainId)).url, predicted);
-        if (code === '0x') {
+        if (!code || code === '0x') {
           await this.mutate(profileId, runId, (current) => {
             const target = current.lanes[String(chainId)];
             target.pause = undefined; target.status = 'running';
@@ -400,7 +400,10 @@ export class DeployEngine {
       if (cmd.action === 'recheck') {
         if (lane.pause.reason === 'created-code-missing') {
           const predicted = lane.steps[lane.pause.stepIndex].predictedAddress;
-          if (predicted && (await this.deps.getCode((await this.rpcFor(run, chainId)).url, predicted)) !== '0x') {
+          const code = predicted
+            ? await this.deps.getCode((await this.rpcFor(run, chainId)).url, predicted)
+            : undefined;
+          if (predicted && code && code !== '0x') {
             await this.mutate(profileId, runId, (current) => {
               const target = current.lanes[String(chainId)]; const targetStep = target.steps[target.currentStepIndex];
               targetStep.status = 'confirmed'; targetStep.address = predicted; target.currentStepIndex += 1;
@@ -992,7 +995,7 @@ export class DeployEngine {
         const predictedAddress = lane.steps[stepIndex].predictedAddress;
         if (!predictedAddress) throw coded('pointer-unresolved', `Create2 step ${step.id} has no predicted address`);
         const code = await this.deps.getCode(rpc.url, predictedAddress);
-        if (code !== '0x') {
+        if (code && code !== '0x') {
           if (ackIsFresh(strategy, chainId, { predictedAddress, initcodeHash: initcodeHashOf(initcode) })) {
             await this.mutate(profileId, runId, (current) => {
               const target = current.lanes[String(chainId)];
@@ -1121,9 +1124,12 @@ export class DeployEngine {
     // The CREATE2 proxy does not put the created address in the receipt.
     // Confirm the predicted runtime code before advancing the lane.
     const deterministic = planStep?.kind === 'deploy' && planStep.strategy?.kind !== undefined && planStep.strategy.kind !== 'create';
+    const deterministicCode = !deterministic || !laneStep.predictedAddress
+      ? undefined
+      : await this.deps.getCode((await this.rpcFor(before, chainId)).url, laneStep.predictedAddress);
     const deterministicCodePresent = !deterministic || !laneStep.predictedAddress
       ? true
-      : (await this.deps.getCode((await this.rpcFor(before, chainId)).url, laneStep.predictedAddress)) !== '0x';
+      : Boolean(deterministicCode && deterministicCode !== '0x');
     const settled = await this.mutate(
       profileId,
       runId,

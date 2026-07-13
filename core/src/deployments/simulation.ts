@@ -39,8 +39,6 @@ export interface SimClient {
   getBlockNumber(): Promise<number | bigint>;
 }
 
-const unsupported = /method|not (?:found|supported)|-32601/i;
-
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -223,10 +221,11 @@ export async function simulateChain(args: {
         const current = nonce.get(from) ?? 0;
         nonce.set(from, current + 1);
         return {
-          // viem's simulateBlocks expects `account` (not raw `from`) and
-          // preserves a null recipient for contract creation.
+          // viem's simulateBlocks expects `account` (not raw `from`). The
+          // `to` key must be OMITTED for contract creation: anvil rejects an
+          // explicit null with "missing keys: [to]".
           account: entry.from,
-          to: entry.to ?? null,
+          ...(entry.to ? { to: entry.to } : {}),
           data: entry.data,
           value: entry.value,
           nonce: BigInt(current),
@@ -249,9 +248,11 @@ export async function simulateChain(args: {
         fallthrough,
       };
     } catch (error) {
-      const detail = message(error);
-      if (!unsupported.test(detail)) throw error;
-      fallthrough.push(`SIMULATION_SIMULATEV1_UNAVAILABLE: ${detail}`);
+      // Tier 1 infrastructure/shape errors (method missing, RPCs like anvil
+      // that cannot build creation calls, transport failures) mean "this
+      // tier cannot judge the plan" — fall through with the reason recorded.
+      // Only simulation RESULTS (reverts, address divergence) block.
+      fallthrough.push(`SIMULATION_SIMULATEV1_UNAVAILABLE: ${message(error)}`);
     }
   } else {
     fallthrough.push(
@@ -293,12 +294,24 @@ export async function simulateChain(args: {
     );
   }
 
+  const touched = new Set<string>();
   for (const entry of schedule) {
     if (entry.kind === 'existing') continue;
+    const produced = (entry.address ?? entry.predictedAddress)?.toLowerCase();
+    // A call whose target address is created or called by an EARLIER schedule
+    // entry depends on sequence state; independent eth_estimateGas would run
+    // against pre-sequence chain state and mis-report (e.g. "not owner" on the
+    // second of two ownership transfers, or no code at a not-yet-deployed
+    // create2 target). Tiers 1-2 simulate the sequence; tier 3 must be honest.
+    const callTarget = !produced && entry.to ? entry.to.toLowerCase() : undefined;
+    const sequenceDependent = callTarget !== undefined && touched.has(callTarget);
+    if (produced) touched.add(produced);
+    if (callTarget) touched.add(callTarget);
     if (
       !entry.from ||
       !entry.data ||
       entry.value === undefined ||
+      sequenceDependent ||
       dependsOnPlainCreate(args.plan, entry, args.chainId)
     ) {
       entries[entry.stepId] = {

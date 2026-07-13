@@ -544,7 +544,8 @@ export class PluginExecutor {
         containerName,
         pluginConfig.origin,
         opts?.onOutput,
-        opts?.signal
+        opts?.signal,
+        pluginConfig.metadata.bundledInImage === true
       );
     } catch (error) {
       return {

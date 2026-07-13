@@ -158,6 +158,13 @@ export interface PluginMetadata {
   // Whether this plugin needs a read-only (unless repoWrite is granted)
   // workspace bind mount. Core normalizes omitted legacy manifests.
   repoRead?: boolean;
+  // Builtin whose bundle is baked into its Docker image at /plugin/index.js
+  // (built by plugins/scripts/build-all.js staging). Required when the
+  // minified bundle exceeds the docker-exec argv limit (MAX_ARG_STRLEN is
+  // 128 KiB per argument on Linux): `node -e <bundle>` injection fails with
+  // "argument list too long". Meaningless for installed plugins, which always
+  // run from their image.
+  bundledInImage?: boolean;
   // Hash of the Dockerfiles the baseImage was built from (set at registry
   // generation); compared against the image's ignite.dockerfileHash label
   // to detect stale images

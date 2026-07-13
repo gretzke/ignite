@@ -24,9 +24,14 @@ export class PluginExecutionUtils {
   // The operation is appended as argv, options are still sent over stdin.
   static buildExecCommand(
     origin: PluginOrigin,
-    pluginCode: string | null
+    pluginCode: string | null,
+    bundledInImage = false
   ): string[] {
-    if (origin === 'installed') {
+    // bundledInImage builtins run installed-style: their bundle exceeds the
+    // per-argument exec limit (MAX_ARG_STRLEN, 128 KiB on Linux), so argv
+    // injection would fail with "argument list too long". The build stages
+    // the bundle into the plugin image at the installed entrypoint path.
+    if (origin === 'installed' || bundledInImage) {
       return ['node', INSTALLED_PLUGIN_ENTRYPOINT];
     }
     if (pluginCode === null) {
@@ -46,7 +51,8 @@ export class PluginExecutionUtils {
     containerName: string,
     origin: PluginOrigin,
     onOutput?: (text: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    bundledInImage = false
   ): Promise<PluginResponse<TResult>> {
     if (signal?.aborted) {
       throw signal.reason instanceof Error
@@ -58,7 +64,7 @@ export class PluginExecutionUtils {
     // Built-in bundles are injected from the host; installed plugins run the
     // bundle baked into their image.
     const pluginCode =
-      origin === 'builtin'
+      origin === 'builtin' && !bundledInImage
         ? await this.pluginLoader.loadPlugin(pluginType, pluginId)
         : null;
 
@@ -66,7 +72,7 @@ export class PluginExecutionUtils {
     // never show up in the container's process list or `docker inspect` output
     const optionsJson = JSON.stringify(options);
     const cmd = [
-      ...this.buildExecCommand(origin, pluginCode),
+      ...this.buildExecCommand(origin, pluginCode, bundledInImage),
       String(operation),
     ];
 
