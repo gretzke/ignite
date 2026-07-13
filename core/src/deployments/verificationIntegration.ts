@@ -28,8 +28,8 @@ export function wireVerificationReconciliation(queue: VerificationQueue): void {
           for (const step of lane.steps.filter((item) => item.status === 'confirmed' && item.address)) {
             const planStep = run.plan.steps.find((item) => item.id === step.stepId);
             const attempt = step.attempts.findLast((item) => item.txHash);
-            const creation = planStep ? run.inputs[planStep.contractId]?.creationBytecode : undefined;
-            if (!planStep || !attempt?.txHash || !creation || !step.address) continue;
+            const creation = planStep?.kind === 'deploy' ? run.inputs[planStep.contractId]?.creationBytecode : undefined;
+            if (!planStep || planStep.kind !== 'deploy' || !attempt?.txHash || !creation || !step.address) continue;
             const rpc = run.rpcSelection[chainKey];
             if (!rpc) continue;
             let data: Hex | undefined;

@@ -76,7 +76,7 @@ export default function LanePanel({
               <span className="mt-0.5">{statusIcon(step.status)}</span>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">
-                  {planStep ? contractNames[planStep.contractId] : step.stepId}
+                  {planStep?.kind === 'deploy' ? contractNames[planStep.contractId] : step.stepId}
                 </div>
                 <div className="text-xs text-muted">{step.status}</div>
                 <div className="flex flex-wrap items-center gap-2 mt-2">

@@ -15,6 +15,7 @@ import { statFingerprint } from '../repos/fingerprint.js';
 import { getCompilerArtifactData } from '../api/plugins/compiler/index.js';
 import { getCompilerVerificationBundle } from '../api/plugins/compiler/index.js';
 import { BundleStore, type VerificationBundle } from '../verifications/BundleStore.js';
+import { validateUnlinkedBytecode } from './linking.js';
 
 export interface ArtifactFreezeDeps {
   getArtifactData: (input: {
@@ -112,19 +113,15 @@ export class ArtifactFreezeService {
           this.deps.getPluginConfig(contract.frameworkId),
           this.deps.repoDirty(profileId, contract),
         ]);
-        if (hasLinkReferences(artifact.creationCodeLinkReferences)) {
-          throw Object.assign(
-            new Error(
-              `Contract ${contract.contractName} requires library linking, which is not supported yet`
-            ),
-            { code: 'LIBRARY_LINKING_UNSUPPORTED' }
-          );
-        }
-        if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(artifact.creationCode)) {
+        const hasLinks = hasLinkReferences(artifact.creationCodeLinkReferences);
+        try {
+          if (hasLinks) validateUnlinkedBytecode(artifact.creationCode, artifact.creationCodeLinkReferences!);
+          else if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(artifact.creationCode)) throw new Error('invalid');
+        } catch (error) {
           throw Object.assign(
             new Error('Artifact creation bytecode is invalid'),
             {
-              code: 'ARTIFACT_DATA_ERROR',
+              code: typeof error === 'object' && error !== null && 'code' in error ? (error as { code: string }).code : 'ARTIFACT_DATA_ERROR',
             }
           );
         }
@@ -136,12 +133,13 @@ export class ArtifactFreezeService {
           viaIR: artifact.viaIR,
           bytecodeHash: artifact.bytecodeHash,
         };
-        const creationBytecode = artifact.creationCode as Hex;
+        const creationBytecode = artifact.creationCode;
         return [
           contract.id,
           {
             abi: artifact.abi,
             creationBytecode,
+            ...(hasLinks ? { creationCodeLinkReferences: artifact.creationCodeLinkReferences } : {}),
             compiler: {
               pluginId: contract.frameworkId,
               version: config.metadata.version,

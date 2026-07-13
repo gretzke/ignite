@@ -52,7 +52,7 @@ export function renderArtifact(
             // Ties each deployed address back to its frozen contract input —
             // without this a multi-contract artifact cannot say which
             // bytecode produced which address.
-            contractId: sanitizeText(step?.contractId ?? 'unknown'),
+            contractId: sanitizeText(step?.kind === 'deploy' ? step.contractId : 'unknown'),
             status: laneStep.status,
             args: sanitizeValue(step ? mergeArgs(step, lane.chainId) : {}),
             value: step ? effectiveValue(step, lane.chainId).toString() : '0',
@@ -89,7 +89,7 @@ export function renderArtifact(
       return all;
     }, {});
   return DeploymentArtifactSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId: sanitizeText(run.id),
     profileId: sanitizeText(run.profileId),
     name: sanitizeText(run.name),

@@ -3,6 +3,7 @@ import {
   createPublicClient,
   encodeDeployData,
   http,
+  keccak256,
   type Abi,
   type Hex,
 } from 'viem';
@@ -16,7 +17,9 @@ import type {
   ValidationItem,
   ValidationReport,
   ExplorerTargetSnapshot,
+  Hex32,
 } from '@ignite/api';
+import { CREATE2_PROXY_ADDRESS, CREATE2_PROXY_RUNTIME_HASH } from '@ignite/api';
 import { ArtifactFreezeService } from './ArtifactFreezeService.js';
 import {
   effectiveValue,
@@ -25,7 +28,10 @@ import {
   missingArgKeys,
   resolveSigner,
   toConstructorArgs,
+  validateDependencies,
 } from './resolver.js';
+import { ackIsFresh, buildInitcode, predictPlanAddresses } from './schedule.js';
+import { DeploymentTypeService } from './DeploymentTypeService.js';
 import { verifyRpcEndpoint } from '../chains/rpcVerify.js';
 import { SignerProviderService } from '../signers/SignerProviderService.js';
 import { RpcStore } from '../chains/RpcStore.js';
@@ -55,6 +61,7 @@ type Client = {
     maxFeePerGas?: bigint;
     maxPriorityFeePerGas?: bigint;
   }>;
+  getCode?(args: { address: Hex }): Promise<Hex>;
 };
 
 export interface ValidationDeps {
@@ -97,6 +104,7 @@ export interface ValidationDeps {
   resolveVerifierTrust: (
     pluginId: string
   ) => Promise<{ metadata: PluginMetadata; grant: PermissionGrant }>;
+  deploymentTypes: Pick<DeploymentTypeService, 'list' | 'validate'>;
 }
 
 export async function validatePlan(
@@ -108,6 +116,7 @@ export async function validatePlan(
   frozen: FrozenInputs;
   rpcBindings: Record<string, RpcBinding>;
   explorerTargets?: Record<string, ExplorerTargetSnapshot[]>;
+  predicted?: Record<string, Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>>;
 }> {
   const defaults = defaultDeps();
   const deps: ValidationDeps = { ...defaults, ...overrides };
@@ -148,6 +157,7 @@ export async function validatePlan(
   const bindings: Record<string, RpcBinding> = {};
   const chains: Record<string, ChainChecklist> = {};
   const explorerTargets: Record<string, ExplorerTargetSnapshot[]> = {};
+  const predicted: Record<string, Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>> = {};
   for (const chainId of plan.chains) {
     const key = String(chainId);
     const endpointId = rpcSelection[key];
@@ -172,6 +182,8 @@ export async function validatePlan(
       accountsError
     );
     const args = validateArgs(plan, chainId, frozen, freezeError);
+    const create2 = await validateCreate2(plan, chainId, frozen, endpoint?.url, deps, freezeError);
+    if (create2.predicted) predicted[key] = create2.predicted;
     const estimation = await validateEstimations(
       plan,
       chainId,
@@ -209,9 +221,10 @@ export async function validatePlan(
       balance,
       inputs,
       verification,
+      create2: create2.item,
     };
   }
-  return { report: { chains }, frozen, rpcBindings: bindings, explorerTargets };
+  return { report: { chains }, frozen, rpcBindings: bindings, explorerTargets, predicted };
 }
 
 function defaultDeps(): ValidationDeps {
@@ -258,6 +271,7 @@ function defaultDeps(): ValidationDeps {
       metadata: (await registry.getPluginConfig(pluginId)).metadata,
       grant: await trust.getGrant(pluginId),
     }),
+    deploymentTypes: DeploymentTypeService.getInstance(),
   };
 }
 
@@ -432,7 +446,7 @@ function validateSigners(
     // Checklist copy uses the contract name — step ids embed artifact paths
     // and read as noise in the UI.
     const stepName =
-      plan.contracts.find((contract) => contract.id === step.contractId)
+      plan.contracts.find((contract) => contract.id === (step.kind === 'deploy' ? step.contractId : undefined))
         ?.contractName ?? step.id;
     const signer = resolveSigner(plan, step, chainId);
     if (!signer) {
@@ -505,7 +519,9 @@ function validateArgs(
       'Arguments cannot be checked until inputs are frozen'
     );
   try {
+    validateDependencies(plan);
     for (const step of plan.steps) {
+      if (step.kind === 'call') continue;
       const input = frozen[step.contractId];
       if (!input)
         return failure(
@@ -535,7 +551,7 @@ function validateArgs(
         );
       encodeDeployData({
         abi: input.abi as Abi,
-        bytecode: input.creationBytecode,
+        bytecode: input.creationBytecode as Hex,
         args: toConstructorArgs(ctor, merged),
       });
     }
@@ -545,6 +561,50 @@ function validateArgs(
       codeOf(error, 'ARG_TYPE_MISMATCH'),
       safeMessage(error, 'Constructor arguments are invalid')
     );
+  }
+}
+
+async function validateCreate2(
+  plan: DeploymentPlan,
+  chainId: number,
+  frozen: FrozenInputs,
+  rpcUrl: string | undefined,
+  deps: ValidationDeps,
+  freezeError: unknown,
+): Promise<{ item: ValidationItem; predicted?: Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }> }> {
+  const deterministic = plan.steps.filter((step): step is import('@ignite/api').DeployStep => step.kind === 'deploy' && (step.strategy?.kind === 'create2' || step.strategy?.kind === 'plugin'));
+  if (!deterministic.length) return { item: success('No create2 steps') };
+  if (freezeError || !rpcUrl) return { item: failure('CREATE2_PROXY_MISSING', 'Create2 validation requires frozen inputs and a valid RPC') };
+  try {
+    const client = deps.createClient(rpcUrl);
+    if (!client.getCode) return { item: failure('CREATE2_PROXY_MISSING', 'RPC client cannot read the deterministic deployment proxy') };
+    const runtime = await client.getCode({ address: CREATE2_PROXY_ADDRESS });
+    if (runtime === '0x') return { item: failure('CREATE2_PROXY_MISSING', 'The canonical CREATE2 proxy is not deployed') };
+    if (keccak256(runtime).toLowerCase() !== CREATE2_PROXY_RUNTIME_HASH.toLowerCase()) return { item: failure('CREATE2_PROXY_MISMATCH', 'The canonical CREATE2 proxy has unexpected runtime code') };
+    const predictions = predictPlanAddresses(plan, frozen, chainId);
+    const installed = deterministic.some((step) => step.strategy?.kind === 'plugin')
+      ? await deps.deploymentTypes.list()
+      : [];
+    for (const step of deterministic) {
+      const current = predictions[step.id]!;
+      const strategy = step.strategy! as Exclude<NonNullable<typeof step.strategy>, { kind: 'create' }>;
+      if (strategy.kind === 'plugin') {
+        const info = installed.find((entry) => entry.pluginId === strategy.pluginId);
+        if (!info) return { item: failure('DEPLOYMENT_TYPE_PLUGIN_MISSING', `Deployment-type plugin ${strategy.pluginId} is not installed`) };
+        const prepared = strategy.prepared?.[String(chainId)];
+        if (!prepared || prepared.initcodeHash.toLowerCase() !== current.initcodeHash.toLowerCase() || prepared.predictedAddress.toLowerCase() !== current.predictedAddress.toLowerCase()) return { item: failure('DEPLOYMENT_TYPE_COMMITMENT_STALE', `Deployment-type commitment for ${step.id} is stale`) };
+        if (info.validateSupported) {
+          const initcode = buildInitcode(step, frozen[step.contractId]!, chainId, (id) => predictions[id]?.predictedAddress ?? (() => { throw new Error(`Missing predicted pointer ${id}`); })());
+          const verdict = await deps.deploymentTypes.validate(strategy.pluginId, { chainId, initcode, salt: current.salt, predictedAddress: current.predictedAddress, params: strategy.params });
+          if (!verdict.ok) return { item: failure('DEPLOYMENT_TYPE_VALIDATION_FAILED', verdict.reason ?? `Deployment type rejected ${step.id}`) };
+        }
+      }
+      const code = await client.getCode({ address: current.predictedAddress });
+      if (code !== '0x' && !ackIsFresh(strategy, chainId, current)) return { item: failure('CREATE2_ALREADY_DEPLOYED', `Code already exists at ${current.predictedAddress}`, { stepId: step.id, predictedAddress: current.predictedAddress, initcodeHash: current.initcodeHash }) };
+    }
+    return { item: success('CREATE2 proxy and predicted addresses are ready', { predicted: predictions }), predicted: predictions };
+  } catch (error) {
+    return { item: failure(codeOf(error, 'CREATE2_PROXY_MISSING'), safeMessage(error, 'Create2 validation failed')) };
   }
 }
 
@@ -569,6 +629,7 @@ async function validateEstimations(
   try {
     const client = deps.createClient(rpcUrl);
     for (const step of plan.steps) {
+      if (step.kind === 'call') continue;
       const input = frozen[step.contractId];
       const signer = signers.get(step.id);
       if (!input || !signer)
@@ -582,7 +643,7 @@ async function validateEstimations(
       );
       const data = encodeDeployData({
         abi: input.abi as Abi,
-        bytecode: input.creationBytecode,
+        bytecode: input.creationBytecode as Hex,
         args,
       });
       // Always estimate, even if an execution gasLimit override was supplied.
@@ -634,6 +695,7 @@ async function validateBalance(
       );
     const required = new Map<Hex, bigint>();
     for (const step of plan.steps) {
+      if (step.kind === 'call') continue;
       const signer = signers.get(step.id);
       const estimate = estimates.get(step.id);
       if (!signer || estimate === undefined)

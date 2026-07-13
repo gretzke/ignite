@@ -429,7 +429,7 @@ async function startDeploymentApp(
 
 function makePlan(
   chains: number[],
-  stepOverrides: Partial<DeploymentPlan['steps'][number]> = {}
+  stepOverrides: Partial<Extract<DeploymentPlan['steps'][number], { kind: 'deploy' }>> = {}
 ): DeploymentPlan {
   return {
     schemaVersion: 1,

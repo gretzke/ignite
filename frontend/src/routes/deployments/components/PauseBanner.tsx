@@ -12,6 +12,7 @@ const ACTION_LABELS: Record<ResolveAction, string> = {
   'mark-not-sent': 'Mark not sent',
   replace: 'Replace transaction',
   'keep-waiting': 'Keep waiting',
+  'accept-deployed': 'Accept deployed contract',
 };
 
 interface PauseBannerProps {
@@ -32,6 +33,7 @@ export function actionsForPausedLane(
     reason: lane.pause.reason,
     capability,
     submitted: Boolean(attempt?.txHash || attempt?.rawTx),
+    hasIntent: Boolean(attempt?.expected),
   });
 }
 

@@ -44,7 +44,7 @@ export function verifyNowLink(run: RunRecord): string {
       (candidate) => candidate.id === step.stepId
     );
     const contract = run.plan.contracts.find(
-      (candidate) => candidate.id === planStep?.contractId
+      (candidate) => candidate.id === (planStep?.kind === 'deploy' ? planStep.contractId : undefined)
     );
     const params = new URLSearchParams({
       runId: run.id,

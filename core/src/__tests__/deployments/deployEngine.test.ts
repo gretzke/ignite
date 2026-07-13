@@ -353,7 +353,7 @@ describe('DeployEngine', () => {
             reason,
             submitted,
           });
-          const allowed = allowedActions({ reason, capability, submitted });
+          const allowed = allowedActions({ reason, capability, submitted, hasIntent: false });
           for (const action of ALL_ACTIONS.filter(
             (entry) => !allowed.includes(entry)
           )) {

@@ -35,15 +35,15 @@ function laneFor(ctx: PauseContext): Lane {
 describe('PauseBanner actions', () => {
   it('uses the shared allowedActions table for every pause context', () => {
     const contexts: PauseContext[] = [
-      { reason: 'estimation', capability: 'sign-only', submitted: false },
-      { reason: 'revert', capability: 'sign-only', submitted: true },
-      { reason: 'receipt-timeout', capability: 'sign-only', submitted: true },
+      { reason: 'estimation', capability: 'sign-only', submitted: false, hasIntent: false },
+      { reason: 'revert', capability: 'sign-only', submitted: true, hasIntent: true },
+      { reason: 'receipt-timeout', capability: 'sign-only', submitted: true, hasIntent: true },
       {
         reason: 'receipt-timeout',
         capability: 'sign-and-send',
-        submitted: true,
+        submitted: true, hasIntent: true,
       },
-      { reason: 'needs-review', capability: 'sign-and-send', submitted: true },
+      { reason: 'needs-review', capability: 'sign-and-send', submitted: true, hasIntent: true },
     ];
     for (const context of contexts) {
       expect(

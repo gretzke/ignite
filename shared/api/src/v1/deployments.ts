@@ -20,7 +20,9 @@ const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
 
 export type Hex = `0x${string}`;
+export type Hex32 = `0x${string}`;
 export type ArgValues = Record<string, unknown>;
+export type LinkReferencesWire = Record<string, Record<string, Array<{ start: number; length: number }>>>;
 
 // Arachnid deterministic-deployment-proxy (EIP-2470 style). The runtime and
 // presigned transaction are immutable protocol constants consumed by D5 setup.
@@ -71,9 +73,26 @@ export interface DeployStep {
   gasOverrides?: GasOverrides;
   gasOverridesPerChain?: Record<string, Partial<GasOverrides>>;
   signerOverride?: SignerCascade;
+  strategy?: DeployStrategy;
+  libraries?: Record<string, LibraryBinding>;
+  librariesPerChain?: Record<string, Record<string, LibraryBinding>>;
 }
 
-export type Step = DeployStep;
+export interface ValueRef { $ref: { kind: 'step'; stepId: string } }
+export type LibraryBinding = { kind: 'address'; address: Hex } | { kind: 'step'; stepId: string };
+export type AckMap = Record<string, { predictedAddress: Hex; initcodeHash: Hex32 }>;
+export type DeployStrategy =
+  | { kind: 'create' }
+  | { kind: 'create2'; salt: Hex32; saltPerChain?: Record<string, Hex32>; acknowledgeDeployed?: AckMap }
+  | { kind: 'plugin'; pluginId: string; params?: Record<string, unknown>; salt?: Hex32; saltPerChain?: Record<string, Hex32>; prepared?: Record<string, { initcodeHash: Hex32; predictedAddress: Hex }>; acknowledgeDeployed?: AckMap };
+export type CallTarget = { kind: 'step'; stepId: string } | { kind: 'address'; address: Hex };
+export interface CallStep {
+  id: string; kind: 'call'; target: CallTarget; targetPerChain?: Record<string, CallTarget>;
+  signature?: string; payable?: boolean; args?: ArgValues; argsPerChain?: Record<string, Partial<ArgValues>>;
+  value?: string; valuePerChain?: Record<string, string>; gasOverrides?: GasOverrides;
+  gasOverridesPerChain?: Record<string, Partial<GasOverrides>>; signerOverride?: SignerCascade;
+}
+export type Step = DeployStep | CallStep;
 
 export interface DeploymentPlan {
   schemaVersion: 1;
@@ -86,6 +105,15 @@ export interface DeploymentPlan {
 export const DecimalStringSchema = z.string().regex(DECIMAL);
 export const ChainIdKeySchema = z.string().regex(CHAIN_ID_KEY);
 export const HexSchema = z.string().regex(HEX) as z.ZodType<Hex>;
+export const Hex32Schema = z.string().regex(/^0x[0-9a-fA-F]{64}$/) as z.ZodType<Hex32>;
+// Wire-level guard only; link-reference containment needs FrozenInput's
+// cross-field superRefine below.
+export const UnlinkedBytecodeSchema = z.string().startsWith('0x').max(2 * 1024 * 1024);
+const AddressSchema = z.string().regex(HEX_ADDRESS) as z.ZodType<Hex>;
+export const ValueRefSchema = z.object({ $ref: z.object({ kind: z.literal('step'), stepId: z.string().min(1) }) }) satisfies z.ZodType<ValueRef>;
+export function isValueRef(value: unknown): value is ValueRef {
+  return ValueRefSchema.safeParse(value).success;
+}
 
 export const ArgValuesSchema = z.record(z.string(), z.unknown());
 
@@ -115,6 +143,28 @@ export const ContractSourceSchema = z.object({
   sourcePath: z.string().min(1),
 }) satisfies z.ZodType<ContractSource>;
 
+export const LinkReferencesWireSchema = z.record(
+  z.string(),
+  z.record(
+    z.string(),
+    z.array(z.object({ start: z.number().int().nonnegative(), length: z.number().int().positive() })),
+  ),
+) satisfies z.ZodType<LinkReferencesWire>;
+export const LibraryBindingSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('address'), address: AddressSchema }),
+  z.object({ kind: z.literal('step'), stepId: z.string().min(1) }),
+]) satisfies z.ZodType<LibraryBinding>;
+const AckMapSchema = z.record(ChainIdKeySchema, z.object({ predictedAddress: AddressSchema, initcodeHash: Hex32Schema }));
+export const DeployStrategySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('create') }),
+  z.object({ kind: z.literal('create2'), salt: Hex32Schema, saltPerChain: z.record(ChainIdKeySchema, Hex32Schema).optional(), acknowledgeDeployed: AckMapSchema.optional() }),
+  z.object({ kind: z.literal('plugin'), pluginId: z.string().min(1), params: z.record(z.string(), z.unknown()).optional(), salt: Hex32Schema.optional(), saltPerChain: z.record(ChainIdKeySchema, Hex32Schema).optional(), prepared: z.record(ChainIdKeySchema, z.object({ initcodeHash: Hex32Schema, predictedAddress: AddressSchema })).optional(), acknowledgeDeployed: AckMapSchema.optional() }),
+]) satisfies z.ZodType<DeployStrategy>;
+export const CallTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('step'), stepId: z.string().min(1) }),
+  z.object({ kind: z.literal('address'), address: AddressSchema }),
+]) satisfies z.ZodType<CallTarget>;
+
 export const DeployStepSchema = z.object({
   id: z.string().min(1),
   kind: z.literal("deploy"),
@@ -130,9 +180,22 @@ export const DeployStepSchema = z.object({
     .record(ChainIdKeySchema, GasOverridesSchema.partial())
     .optional(),
   signerOverride: SignerCascadeSchema.optional(),
+  strategy: DeployStrategySchema.optional(),
+  libraries: z.record(z.string(), LibraryBindingSchema).optional(),
+  librariesPerChain: z.record(ChainIdKeySchema, z.record(z.string(), LibraryBindingSchema)).optional(),
 }) satisfies z.ZodType<DeployStep>;
 
-export const StepSchema = z.discriminatedUnion("kind", [DeployStepSchema]);
+export const CallStepSchema = z.object({
+  id: z.string().min(1), kind: z.literal('call'), target: CallTargetSchema,
+  targetPerChain: z.record(ChainIdKeySchema, CallTargetSchema).optional(), signature: z.string().min(1).optional(), payable: z.boolean().optional(),
+  args: ArgValuesSchema.optional(), argsPerChain: z.record(ChainIdKeySchema, ArgValuesSchema).optional(), value: DecimalStringSchema.optional(), valuePerChain: z.record(ChainIdKeySchema, DecimalStringSchema).optional(),
+  gasOverrides: GasOverridesSchema.optional(), gasOverridesPerChain: z.record(ChainIdKeySchema, GasOverridesSchema.partial()).optional(), signerOverride: SignerCascadeSchema.optional(),
+}).superRefine((step, ctx) => {
+  if ((step.value !== undefined || step.valuePerChain !== undefined) && step.signature !== undefined && step.payable !== true)
+    ctx.addIssue({ code: 'custom', message: 'call value requires payable: true when signature is present', path: ['payable'] });
+}) satisfies z.ZodType<CallStep>;
+
+export const StepSchema = z.discriminatedUnion("kind", [DeployStepSchema, CallStepSchema]);
 
 export const DeploymentPlanSchema = createRequestSchema<DeploymentPlan>(
   "DeploymentPlanSchema",
@@ -152,7 +215,25 @@ export const DeploymentPlanSchema = createRequestSchema<DeploymentPlan>(
     if (duplicate(plan.steps.map((step) => step.id))) ctx.addIssue({ code: 'custom', message: 'step ids must be unique', path: ['steps'] });
     if (new Set(plan.chains).size !== plan.chains.length) ctx.addIssue({ code: 'custom', message: 'chains must be unique', path: ['chains'] });
     const ids = new Set(plan.contracts.map((contract) => contract.id));
-    plan.steps.forEach((step, index) => { if (!ids.has(step.contractId)) ctx.addIssue({ code: 'custom', message: 'step contractId must reference a contract', path: ['steps', index, 'contractId'] }); });
+    const deployIds = new Set(plan.steps.filter((step): step is DeployStep => step.kind === 'deploy').map((step) => step.id));
+    const checkDeployId = (stepId: string, path: (string | number)[]) => { if (!deployIds.has(stepId)) ctx.addIssue({ code: 'custom', message: 'pointer, target, and library stepIds must name deploy steps', path }); };
+    const visitRefs = (value: unknown, path: (string | number)[]) => {
+      if (isValueRef(value)) { checkDeployId(value.$ref.stepId, path); return; }
+      if (Array.isArray(value)) value.forEach((entry, index) => visitRefs(entry, [...path, index]));
+      else if (value && typeof value === 'object') Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => visitRefs(entry, [...path, key]));
+    };
+    plan.steps.forEach((step, index) => {
+      if (step.kind === 'deploy') {
+        if (!ids.has(step.contractId)) ctx.addIssue({ code: 'custom', message: 'step contractId must reference a contract', path: ['steps', index, 'contractId'] });
+        visitRefs(step.args, ['steps', index, 'args']); visitRefs(step.argsPerChain, ['steps', index, 'argsPerChain']);
+        Object.entries(step.libraries ?? {}).forEach(([key, binding]) => { if (binding.kind === 'step') checkDeployId(binding.stepId, ['steps', index, 'libraries', key]); });
+        Object.entries(step.librariesPerChain ?? {}).forEach(([chainId, bindings]) => Object.entries(bindings).forEach(([key, binding]) => { if (binding.kind === 'step') checkDeployId(binding.stepId, ['steps', index, 'librariesPerChain', chainId, key]); }));
+      } else {
+        if (step.target.kind === 'step') checkDeployId(step.target.stepId, ['steps', index, 'target']);
+        Object.entries(step.targetPerChain ?? {}).forEach(([chainId, target]) => { if (target.kind === 'step') checkDeployId(target.stepId, ['steps', index, 'targetPerChain', chainId]); });
+        visitRefs(step.args, ['steps', index, 'args']); visitRefs(step.argsPerChain, ['steps', index, 'argsPerChain']);
+      }
+    });
   }),
 );
 
@@ -184,7 +265,10 @@ export type PauseReason =
   | "needs-review"
   | "write-failure"
   | "signer-mismatch"
-  | "rpc-binding-changed";
+  | "rpc-binding-changed"
+  | 'pointer-unresolved'
+  | 'create2-collision'
+  | 'created-code-missing';
 export type RunStatus =
   | "running"
   | "paused"
@@ -201,11 +285,14 @@ export type ResolveAction =
   | "confirm-hash"
   | "mark-not-sent"
   | "replace"
-  | "keep-waiting";
+  | "keep-waiting"
+  | 'accept-deployed';
 
 export interface FrozenInput {
   abi: unknown;
-  creationBytecode: Hex;
+  // With link references this is unlinkedCreationCode; otherwise strict Hex.
+  creationBytecode: string;
+  creationCodeLinkReferences?: LinkReferencesWire;
   compiler: { pluginId: string; version: string; settingsHash: string };
   artifactHash: string;
   repoDirty: boolean;
@@ -236,6 +323,8 @@ export interface ChainChecklist {
   balance: ValidationItem;
   inputs: ValidationItem;
   verification?: ValidationItem;
+  create2?: ValidationItem;
+  simulation?: ValidationItem;
 }
 
 export interface ValidationReport {
@@ -252,7 +341,8 @@ export type AttemptResolution =
   | "abort-run"
   | "confirm-hash"
   | "mark-not-sent"
-  | "replace";
+  | "replace"
+  | 'accept-deployed';
 
 export interface Attempt {
   id: string;
@@ -271,13 +361,17 @@ export interface Attempt {
     gas?: GasOverrides;
     rpcEndpointId?: string;
     argsByStep?: Record<string, ArgValues>;
+    targetByStep?: Record<string, CallTarget>;
+    librariesByStep?: Record<string, Record<string, LibraryBinding>>;
   };
+  expected?: { to: Hex | null; value: string; dataHash: Hex32; libraries?: Record<string, Hex>; pointers?: Record<string, Hex> };
 }
 
 export interface LaneStep {
   stepId: string;
   status: StepStatus;
   address?: Hex;
+  predictedAddress?: Hex;
   unresolvedTx?: { txHash?: Hex; note?: string };
   attempts: Attempt[];
 }
@@ -312,6 +406,7 @@ export interface RunRecord {
   lanes: Record<string, Lane>;
   abortRequested?: boolean;
   status: RunStatus;
+  simulationTiers?: Record<string, 'simulateV1' | 'fork' | 'estimate'>;
 }
 
 export const LaneStatusSchema = z.enum([
@@ -345,6 +440,9 @@ export const PauseReasonSchema = z.enum([
   "write-failure",
   "signer-mismatch",
   "rpc-binding-changed",
+  'pointer-unresolved',
+  'create2-collision',
+  'created-code-missing',
 ]) satisfies z.ZodType<PauseReason>;
 export const RunStatusSchema = z.enum([
   "running",
@@ -354,9 +452,12 @@ export const RunStatusSchema = z.enum([
   "aborted",
 ]) satisfies z.ZodType<RunStatus>;
 
+// Link-reference containment is cross-field: creationBytecode itself cannot
+// know which placeholder byte ranges are legal. Freeze repeats this check.
 export const FrozenInputSchema = z.object({
   abi: z.unknown(),
-  creationBytecode: HexSchema,
+  creationBytecode: z.string(),
+  creationCodeLinkReferences: LinkReferencesWireSchema.optional(),
   compiler: z.object({
     pluginId: z.string().min(1),
     version: z.string().min(1),
@@ -365,6 +466,23 @@ export const FrozenInputSchema = z.object({
   artifactHash: z.string().regex(SHA256_HEX),
   repoDirty: z.boolean(),
   bundleHash: z.string().regex(SHA256_HEX).optional(),
+}).superRefine((input, ctx) => {
+  const refs = input.creationCodeLinkReferences;
+  if (!refs || Object.keys(refs).length === 0) {
+    if (!HEX.test(input.creationBytecode)) ctx.addIssue({ code: 'custom', message: 'creationBytecode must be strict hex without link references', path: ['creationBytecode'] });
+    return;
+  }
+  const ranges: Array<{ start: number; length: number }> = [];
+  for (const file of Object.values(refs)) for (const entries of Object.values(file)) ranges.push(...entries);
+  const code = input.creationBytecode;
+  if (!code.startsWith('0x') || (code.length - 2) % 2 !== 0) { ctx.addIssue({ code: 'custom', message: 'unlinked creation bytecode must be 0x-prefixed byte data', path: ['creationBytecode'] }); return; }
+  const bytes = (code.length - 2) / 2;
+  const covered = new Set<number>();
+  for (const range of ranges) {
+    if (range.length !== 20 || range.start + range.length > bytes) { ctx.addIssue({ code: 'custom', message: 'link reference must be an in-bounds 20-byte range', path: ['creationCodeLinkReferences'] }); return; }
+    for (let i = range.start; i < range.start + range.length; i += 1) { if (covered.has(i)) { ctx.addIssue({ code: 'custom', message: 'link references must not overlap', path: ['creationCodeLinkReferences'] }); return; } covered.add(i); }
+  }
+  for (let byte = 0; byte < bytes; byte += 1) if (!/^[0-9a-fA-F]{2}$/.test(code.slice(2 + byte * 2, 4 + byte * 2)) && !covered.has(byte)) { ctx.addIssue({ code: 'custom', message: 'non-hex creation bytecode is only allowed inside link-reference ranges', path: ['creationBytecode'] }); return; }
 }) satisfies z.ZodType<FrozenInput>;
 
 export const RpcBindingSchema = z.object({
@@ -389,6 +507,8 @@ export const ChainChecklistSchema = z.object({
   balance: ValidationItemSchema,
   inputs: ValidationItemSchema,
   verification: ValidationItemSchema.optional(),
+  create2: ValidationItemSchema.optional(),
+  simulation: ValidationItemSchema.optional(),
 }) satisfies z.ZodType<ChainChecklist>;
 
 export const ValidationReportSchema = z.object({
@@ -417,6 +537,7 @@ export const AttemptSchema = z.object({
       "confirm-hash",
       "mark-not-sent",
       "replace",
+      'accept-deployed',
     ])
     .optional(),
   edits: z
@@ -424,8 +545,11 @@ export const AttemptSchema = z.object({
       gas: GasOverridesSchema.optional(),
       rpcEndpointId: z.string().min(1).optional(),
       argsByStep: z.record(z.string(), ArgValuesSchema).optional(),
+      targetByStep: z.record(z.string(), CallTargetSchema).optional(),
+      librariesByStep: z.record(z.string(), z.record(z.string(), LibraryBindingSchema)).optional(),
     })
     .optional(),
+  expected: z.object({ to: z.union([AddressSchema, z.null()]), value: DecimalStringSchema, dataHash: Hex32Schema, libraries: z.record(z.string(), AddressSchema).optional(), pointers: z.record(z.string(), AddressSchema).optional() }).optional(),
 }) satisfies z.ZodType<Attempt>;
 
 export const LaneStepSchema = z.object({
@@ -434,6 +558,7 @@ export const LaneStepSchema = z.object({
   address: z.string().regex(HEX_ADDRESS).optional() as z.ZodType<
     Hex | undefined
   >,
+  predictedAddress: z.string().regex(HEX_ADDRESS).optional() as z.ZodType<Hex | undefined>,
   unresolvedTx: z
     .object({ txHash: HexSchema.optional(), note: z.string().optional() })
     .optional(),
@@ -474,6 +599,7 @@ export const RunRecordSchema = z.object({
   lanes: z.record(ChainIdKeySchema, LaneSchema),
   abortRequested: z.boolean().optional(),
   status: RunStatusSchema,
+  simulationTiers: z.record(ChainIdKeySchema, z.enum(['simulateV1', 'fork', 'estimate'])).optional(),
 }) satisfies z.ZodType<RunRecord>;
 
 export interface RunEvent {
@@ -502,6 +628,7 @@ export interface PauseContext {
   reason: PauseReason;
   capability: "sign-only" | "sign-and-send";
   submitted: boolean;
+  hasIntent: boolean;
 }
 
 const PRE_SUBMISSION_ACTIONS: ResolveAction[] = [
@@ -544,17 +671,17 @@ const NEEDS_REVIEW_UNKNOWN_HASH_ACTIONS: ResolveAction[] = [
 ];
 
 export function allowedActions(ctx: PauseContext): ResolveAction[] {
+  if (ctx.reason === 'pointer-unresolved') return PRE_SUBMISSION_ACTIONS;
+  if (ctx.reason === 'create2-collision') return ['accept-deployed', 'retry', 'skip', 'abort-lane'];
+  if (ctx.reason === 'created-code-missing') return ['recheck', 'abort-lane'];
   if (ctx.reason === "revert") return REVERT_ACTIONS;
   if (ctx.reason === "receipt-timeout") {
-    if (!ctx.submitted) return SIGN_AND_SEND_UNKNOWN_HASH_ACTIONS;
+    if (!ctx.submitted) return ctx.hasIntent ? SIGN_AND_SEND_UNKNOWN_HASH_ACTIONS : SIGN_AND_SEND_UNKNOWN_HASH_ACTIONS.filter((action) => action !== 'confirm-hash');
     return ctx.capability === "sign-only"
       ? SIGN_ONLY_TIMEOUT_ACTIONS
       : SIGN_AND_SEND_TIMEOUT_ACTIONS;
   }
-  if (ctx.reason === "needs-review")
-    return ctx.submitted
-      ? NEEDS_REVIEW_ACTIONS
-      : NEEDS_REVIEW_UNKNOWN_HASH_ACTIONS;
+  if (ctx.reason === "needs-review") return ctx.submitted ? NEEDS_REVIEW_ACTIONS : (ctx.hasIntent ? NEEDS_REVIEW_UNKNOWN_HASH_ACTIONS : NEEDS_REVIEW_UNKNOWN_HASH_ACTIONS.filter((action) => action !== 'confirm-hash'));
   // All remaining pause reasons are classified by the engine as failures
   // before submission. `submitted` is carried so callers cannot discard the
   // fact, but no additional submitted state is legal for these reasons.
@@ -573,11 +700,14 @@ export type ResolveLaneRequest =
       edits: {
         gas?: GasOverrides;
         rpcEndpointId?: string;
-        argsByStep?: Record<string, ArgValues>;
+    argsByStep?: Record<string, ArgValues>;
+    targetByStep?: Record<string, CallTarget>;
+    librariesByStep?: Record<string, Record<string, LibraryBinding>>;
       };
     })
   | (ResolveLaneRequestBase & { action: "skip"; note?: string })
   | (ResolveLaneRequestBase & { action: "abort-lane" })
+  | (ResolveLaneRequestBase & { action: 'accept-deployed' })
   | (ResolveLaneRequestBase & { action: "recheck" })
   | (ResolveLaneRequestBase & { action: "confirm-hash"; txHash: Hex })
   | (ResolveLaneRequestBase & { action: "mark-not-sent" })
@@ -608,6 +738,8 @@ export const ResolveLaneRequestSchema = createRequestSchema<ResolveLaneRequest>(
         gas: GasOverridesSchema.optional(),
         rpcEndpointId: z.string().min(1).optional(),
         argsByStep: z.record(z.string(), ArgValuesSchema).optional(),
+        targetByStep: z.record(z.string(), CallTargetSchema).optional(),
+        librariesByStep: z.record(z.string(), z.record(z.string(), LibraryBindingSchema)).optional(),
       }),
     }),
     z.object({
@@ -619,6 +751,7 @@ export const ResolveLaneRequestSchema = createRequestSchema<ResolveLaneRequest>(
       ...ResolveLaneRequestBaseSchema,
       action: z.literal("abort-lane"),
     }),
+    z.object({ ...ResolveLaneRequestBaseSchema, action: z.literal('accept-deployed') }),
     z.object({ ...ResolveLaneRequestBaseSchema, action: z.literal("recheck") }),
     z.object({
       ...ResolveLaneRequestBaseSchema,
@@ -659,6 +792,21 @@ export interface ValidateDeploymentData {
   chains: Record<string, ChainChecklist>;
   frozenCandidates?: FrozenInputs;
 }
+
+// Server-authoritative preview: the client supplies draft plan context, never
+// resolved addresses. Batch B2 supplies the handler and spreads this route.
+export interface PrepareStepRequest { contracts: ContractSource[]; steps: Step[]; stepId: string; chainIds: number[]; }
+export interface PrepareStepData { chains: Record<string, { salt: Hex32; predictedAddress: Hex; initcodeHash: Hex32; notes: string[] }> }
+export const PrepareStepRequestSchema = createRequestSchema<PrepareStepRequest>('PrepareStepRequestSchema')(
+  z.object({ contracts: z.array(ContractSourceSchema).min(1), steps: z.array(StepSchema).min(1), stepId: z.string().min(1), chainIds: z.array(z.number().int().positive()).min(1) }).superRefine((request, ctx) => {
+    const plan = DeploymentPlanSchema.safeParse({ schemaVersion: 1, contracts: request.contracts, steps: request.steps, chains: request.chainIds, signers: {} });
+    if (!plan.success) for (const issue of plan.error.issues) ctx.addIssue({ ...issue, path: issue.path });
+    if (!request.steps.some((step) => step.id === request.stepId && step.kind === 'deploy')) ctx.addIssue({ code: 'custom', message: 'stepId must name a deploy step', path: ['stepId'] });
+  }),
+);
+export const PrepareStepResponseSchema = createApiResponseSchema<PrepareStepData>('PrepareStepResponseSchema')(
+  z.object({ chains: z.record(ChainIdKeySchema, z.object({ salt: Hex32Schema, predictedAddress: AddressSchema, initcodeHash: Hex32Schema, notes: z.array(z.string()) })) }),
+);
 
 export interface CreateRunRequest extends ValidateDeploymentRequest {
   name?: string;
@@ -714,7 +862,7 @@ export interface DeploymentArtifactAttempt {
 }
 
 export interface DeploymentArtifact {
-  schemaVersion: 1;
+  schemaVersion: 2;
   runId: string;
   profileId: string;
   name: string;
@@ -868,7 +1016,7 @@ export const DeploymentArtifactAttemptSchema = z.object({
 }) satisfies z.ZodType<DeploymentArtifactAttempt>;
 
 export const DeploymentArtifactSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   runId: z.string().min(1),
   profileId: z.string().min(1),
   name: z.string().min(1),
@@ -1008,4 +1156,12 @@ export const deploymentRoutes = {
       response: { 200: GetDeploymentArtifactResponseSchema },
     },
   },
+} as const;
+
+// Deliberately not spread into deploymentRoutes: B2 installs the handler.
+// Keeping it exported makes the request/response contract available now.
+export const prepareDeploymentStepRoute = {
+  method: 'POST' as const,
+  path: `${V1_BASE_PATH}/deployments/steps/prepare`,
+  schema: { tags: ['deployments'], body: PrepareStepRequestSchema, response: { 200: PrepareStepResponseSchema } },
 } as const;

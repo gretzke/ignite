@@ -286,6 +286,7 @@ export class DeployEngine {
           reason: lane.pause.reason,
           capability,
           submitted,
+          hasIntent: Boolean(attempt?.expected),
         }).includes(cmd.action)
       )
         throw new IgniteError(
@@ -842,6 +843,10 @@ export class DeployEngine {
     const run = await this.requireRun(profileId, runId);
     const lane = run.lanes[String(chainId)];
     const step = run.plan.steps[stepIndex];
+    // Call execution is installed with the plan-engine branch in Batch B2.
+    // Narrow here so the existing D3 deployment path remains type-safe.
+    if (step.kind !== 'deploy')
+      throw coded('estimation', `Call step ${step.id} cannot execute until plan-engine support is installed`);
     const signer = resolveSigner(run.plan, step, chainId);
     if (!signer)
       throw coded('signer-mismatch', 'No signer is configured for this chain');
@@ -870,7 +875,7 @@ export class DeployEngine {
     );
     const data = encodeDeployData({
       abi,
-      bytecode: input.creationBytecode,
+      bytecode: input.creationBytecode as Hex,
       args,
     }) as Hex;
     const gas = mergeGas(step, chainId);
@@ -1031,7 +1036,7 @@ export class DeployEngine {
     if (!step?.address || !run.explorerTargets?.[String(chainId)]?.length) return;
     const attempt = step.attempts.find((candidate) => candidate.txHash === hash);
     const planStep = run.plan.steps.find((candidate) => candidate.id === step.stepId);
-    if (!attempt || !planStep) return;
+    if (!attempt || !planStep || planStep.kind !== 'deploy') return;
     const creation = run.inputs[planStep.contractId]?.creationBytecode;
     if (!creation) return;
     let data: Hex | undefined;
