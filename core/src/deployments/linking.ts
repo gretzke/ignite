@@ -31,6 +31,13 @@ export function validateUnlinkedBytecode(code: string, refs: LinkReferencesWire)
 
 export function linkBytecode(unlinkedCreationCode: string, refs: LinkReferencesWire, resolved: Record<string, Hex>): Hex {
   validateUnlinkedBytecode(unlinkedCreationCode, refs);
+  // Bindings must match the compiler's reference set EXACTLY: extra keys
+  // would survive into attempt provenance and be injected into verification
+  // settings.libraries (final-review F12).
+  const known = new Set(flattenLinkReferences(refs).map((ref) => ref.key));
+  for (const key of Object.keys(resolved)) {
+    if (!known.has(key)) throw new IgniteError(`Library binding ${key} does not match any link reference`, 'LIBRARY_BINDING_UNKNOWN', { key });
+  }
   let linkedCreationCode = unlinkedCreationCode;
   for (const ref of flattenLinkReferences(refs)) {
     const address = resolved[ref.key];

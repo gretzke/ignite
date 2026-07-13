@@ -17,4 +17,3 @@ contract LinkedCounter {
         value = MathLib.increment(value);
     }
 }
-

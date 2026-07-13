@@ -346,8 +346,19 @@ export default function RunPage() {
                 run.rpcSelection[String(editChainId)]?.endpointId
               }
               step={planStep && (planStep.kind === 'call'
-                ? { id: planStep.id, kind: 'call' as const }
-                : { id: planStep.id, kind: 'deploy' as const, libraries: planStep.librariesPerChain?.[String(editChainId)] ?? planStep.libraries })}
+                ? {
+                    id: planStep.id,
+                    kind: 'call' as const,
+                    args: planStep.argsPerChain?.[String(editChainId)] ?? planStep.args,
+                    target: planStep.targetPerChain?.[String(editChainId)] ?? planStep.target,
+                  }
+                : {
+                    id: planStep.id,
+                    kind: 'deploy' as const,
+                    args: planStep.argsPerChain?.[String(editChainId)] ?? planStep.args,
+                    libraries: planStep.librariesPerChain?.[String(editChainId)] ?? planStep.libraries,
+                  })}
+              pointerDetails={(lane?.pause as { details?: unknown } | undefined)?.details}
               onSubmit={(edits) => {
                 if (attempt)
                   void sendResolution(editChainId, {

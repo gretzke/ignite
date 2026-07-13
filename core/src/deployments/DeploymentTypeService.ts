@@ -60,6 +60,7 @@ export class DeploymentTypeService {
     this.assertParamKeys(info, input.params);
     const result = await this.execute(pluginId, 'validateDeployment', input, input.chainId);
     if (!result || typeof result !== 'object') this.failed('validateDeployment returned an invalid result');
+    if (Object.keys(result as object).some((key) => !['ok', 'reason'].includes(key))) this.failed('validateDeployment returned unexpected fields');
     const value = result as Record<string, unknown>;
     if (typeof value.ok !== 'boolean') this.failed('validateDeployment returned an invalid result');
     const reason = value.reason === undefined ? undefined : text(value.reason, 500);
@@ -83,8 +84,10 @@ export class DeploymentTypeService {
   private async execute(pluginId: string, operation: string, options: Record<string, unknown>, chainScope: number | 'none'): Promise<unknown> {
     let response: PluginResponse<unknown>;
     try { response = await this.deps.execute(pluginId, operation, options, { chainScope }); }
-    catch (error) { this.failed(`${operation} failed: ${error instanceof Error ? error.message : String(error)}`); }
-    if (!response!.success) this.failed(`${operation} failed: ${response!.error.message}`);
+    catch (error) { this.failed(`${operation} failed: ${text(error instanceof Error ? error.message : String(error), 300) ?? 'plugin error'}`); }
+    // Plugin-authored messages are untrusted and this error may persist into
+    // validation items/artifacts — cap + control-strip (final-review F5).
+    if (!response!.success) this.failed(`${operation} failed: ${text(response!.error.message, 300) ?? 'plugin error'}`);
     return response!.data;
   }
   private parseDescribe(raw: unknown): Omit<DeploymentTypeInfo, 'pluginId' | 'validateSupported'> {
@@ -114,6 +117,7 @@ export class DeploymentTypeService {
   }
   private parsePrepare(raw: unknown): { salt: `0x${string}`; predictedAddress: `0x${string}`; notes: string[] } {
     if (!raw || typeof raw !== 'object') this.failed('prepareDeployment returned an invalid result');
+    if (Object.keys(raw as object).some((key) => !['salt', 'predictedAddress', 'notes'].includes(key))) this.failed('prepareDeployment returned unexpected fields');
     const value = raw as Record<string, unknown>;
     if (typeof value.salt !== 'string' || !HEX32.test(value.salt) || typeof value.predictedAddress !== 'string' || !ADDRESS.test(value.predictedAddress) || (value.notes !== undefined && (!Array.isArray(value.notes) || value.notes.length > 8))) this.failed('prepareDeployment returned invalid fields');
     const notes = (value.notes ?? []).map((note) => { const result = text(note, 256); if (result === undefined) this.failed('prepareDeployment returned an invalid note'); return result!; });
@@ -122,6 +126,22 @@ export class DeploymentTypeService {
   private validateInput(input: { chainId: number; initcode: string; params?: Record<string, unknown> }): void {
     if (!Number.isInteger(input.chainId) || input.chainId <= 0 || !HEX.test(input.initcode) || (input.initcode.length - 2) / 2 > 1024 * 1024 || (input.params !== undefined && (typeof input.params !== 'object' || input.params === null || Array.isArray(input.params) || (serializedBytes(input.params) ?? Infinity) > 64 * 1024))) this.failed('Deployment-type input is invalid');
   }
-  private assertParamKeys(info: DeploymentTypeInfo, params: Record<string, unknown> | undefined): void { for (const key of Object.keys(params ?? {})) if (!info.params.some((field) => field.key === key)) throw new IgniteError(`Unknown deployment-type parameter '${key}'`, 'UNKNOWN_PARAM_KEY'); }
+  private assertParamKeys(info: DeploymentTypeInfo, params: Record<string, unknown> | undefined): void {
+    for (const key of Object.keys(params ?? {})) if (!info.params.some((field) => field.key === key)) throw new IgniteError(`Unknown deployment-type parameter '${key}'`, 'UNKNOWN_PARAM_KEY');
+    // Strict contract validation (final-review F4): required fields present,
+    // primitive types exact, select values from the declared option set.
+    for (const field of info.params) {
+      const value = params?.[field.key];
+      if (value === undefined || value === '') {
+        if (field.required) throw new IgniteError(`Deployment-type parameter '${field.key}' is required`, 'INVALID_PARAM_VALUE', { key: field.key });
+        continue;
+      }
+      const bad = (reason: string): never => { throw new IgniteError(`Deployment-type parameter '${field.key}' ${reason}`, 'INVALID_PARAM_VALUE', { key: field.key }); };
+      if (field.type === 'string' && typeof value !== 'string') bad('must be a string');
+      if (field.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) bad('must be a finite number');
+      if (field.type === 'boolean' && typeof value !== 'boolean') bad('must be a boolean');
+      if (field.type === 'select' && !(field.options ?? []).some((option) => option.value === value)) bad('must be one of the declared options');
+    }
+  }
   private failed(message: string): never { throw new IgniteError(message, 'DEPLOYMENT_TYPE_OP_FAILED'); }
 }

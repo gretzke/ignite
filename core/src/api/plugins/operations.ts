@@ -9,6 +9,7 @@ import { RESERVED_OPERATIONS } from '@ignite/api';
 import { PluginRegistryLoader, type PluginConfig } from '../../assets/PluginRegistryLoader.js';
 import { PluginExecutor } from '../../plugins/containers/PluginExecutor.js';
 import { ErrorCodes } from '../../types/errors.js';
+import { sanitizePluginString } from '../../verifications/sanitize.js';
 import type { PluginResponse } from '@ignite/plugin-types/types';
 
 export interface PluginOperationHandlerDeps {
@@ -85,7 +86,13 @@ export function createPluginOperationHandlers(
         return sendError(reply, 500, ErrorCodes.OPERATION_EXECUTION_FAILED, 'Plugin operation failed');
       }
       if (!result.success) {
-        return sendError(reply, 500, result.error.code, result.error.message);
+        // Plugin-authored envelopes are untrusted: cap + strip before they
+        // reach API consumers (final-review F5).
+        const code = /^[A-Z0-9_]{1,64}$/.test(result.error.code)
+          ? result.error.code
+          : ErrorCodes.OPERATION_EXECUTION_FAILED;
+        const message = (sanitizePluginString(result.error.message, 300) ?? 'Plugin operation failed');
+        return sendError(reply, 500, code, message);
       }
       const size = serializedBytes(result.data);
       if (size === undefined || size > 256 * 1024) {

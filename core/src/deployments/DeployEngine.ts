@@ -404,11 +404,18 @@ export class DeployEngine {
             ? await this.deps.getCode((await this.rpcFor(run, chainId)).url, predicted)
             : undefined;
           if (predicted && code && code !== '0x') {
-            await this.mutate(profileId, runId, (current) => {
+            const confirmedHash = attempt?.txHash;
+            const settled = await this.mutate(profileId, runId, (current) => {
               const target = current.lanes[String(chainId)]; const targetStep = target.steps[target.currentStepIndex];
               targetStep.status = 'confirmed'; targetStep.address = predicted; target.currentStepIndex += 1;
               target.pause = undefined; target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
             }, chainId);
+            // Late confirmation follows the same post-confirmation path as
+            // confirmReceipt — without this the step never verifies (F9).
+            if (confirmedHash)
+              void this.enqueueConfirmedVerification(settled, chainId, confirmedHash).catch((error) =>
+                getLogger().warn(`verification enqueue skipped for ${confirmedHash}: ${error instanceof Error ? error.message : String(error)}`)
+              );
           }
           const result = await this.requireRun(profileId, runId);
           this.resolvedCommands.set(replayKey, result);
@@ -505,6 +512,18 @@ export class DeployEngine {
             for (let index = currentLane.currentStepIndex; index < currentLane.steps.length; index += 1) {
               const prediction = editedPredictions[currentLane.steps[index].stepId];
               if (prediction) currentLane.steps[index].predictedAddress = prediction.predictedAddress;
+            }
+            // Prune acknowledgments whose provenance no longer matches the
+            // refreshed predictions (review F18) — execution re-checks too,
+            // but a stale entry must not present as valid.
+            const chainKey = String(currentLane.chainId);
+            for (const planStep of current.plan.steps) {
+              if (planStep.kind !== 'deploy' || !planStep.strategy || planStep.strategy.kind === 'create') continue;
+              const ack = planStep.strategy.acknowledgeDeployed?.[chainKey];
+              const prediction = editedPredictions[planStep.id];
+              if (ack && prediction && (ack.predictedAddress.toLowerCase() !== prediction.predictedAddress.toLowerCase() || ack.initcodeHash.toLowerCase() !== prediction.initcodeHash.toLowerCase())) {
+                delete planStep.strategy.acknowledgeDeployed![chainKey];
+              }
             }
           }
           if (cmd.action === 'replace') {
@@ -959,9 +978,14 @@ export class DeployEngine {
     const rpc = await this.rpcFor(run, chainId);
     const resolveRef = (id: string): Hex => {
       const ref = lane.steps.find((candidate) => candidate.stepId === id);
-      if (!ref?.address && !ref?.predictedAddress)
-        throw coded('pointer-unresolved', `Pointer ${id} has no confirmed or predicted address`);
-      return (ref.address ?? ref.predictedAddress)!;
+      if (ref?.address) return ref.address;
+      // A prediction only stands in for a step that will still execute:
+      // failure-skipped steps have no code at the predicted address, so
+      // resolving through them would bake a dead address in (review F6).
+      // Accept-deployed skips carry `address` and resolve above.
+      if (ref?.predictedAddress && ref.status !== 'skipped' && ref.status !== 'failed')
+        return ref.predictedAddress;
+      throw coded('pointer-unresolved', `Pointer ${id} has no confirmed or predicted address`);
     };
     let to: Hex | null;
     let data: Hex;
@@ -1177,6 +1201,22 @@ export class DeployEngine {
             error: 'Transaction succeeded but no code exists at the predicted CREATE2 address',
             attemptId: attempt.id,
           };
+        } else if (
+          planStep?.kind === 'deploy' &&
+          !deterministic &&
+          !receipt.contractAddress
+        ) {
+          // A successful plain-create receipt MUST carry the created
+          // address; confirming without one strands every dependent
+          // pointer (review F8). Operator verbs sort out the anomaly.
+          step.status = 'failed';
+          lane.status = 'paused';
+          lane.pause = {
+            reason: 'needs-review',
+            stepIndex: lane.currentStepIndex,
+            error: 'Transaction succeeded but the receipt reports no created contract address',
+            attemptId: attempt.id,
+          };
         } else {
           step.status = 'confirmed';
           if (planStep?.kind === 'deploy')
@@ -1300,11 +1340,17 @@ export class DeployEngine {
         attempt.endedAt = iso(this.deps.now());
         if (reason === 'revert') step.status = 'failed';
         lane.status = 'paused';
+        // POINTER_UNRESOLVED errors carry {stepId, path}: the run view uses
+        // them to route the edit dialog to the broken field (review F17).
+        const errorDetails = (error as { details?: Record<string, unknown> })?.details;
         lane.pause = {
           reason,
           stepIndex,
           error: sanitizeRunError(error),
           attemptId: attempt.id,
+          ...(reason === 'pointer-unresolved' && errorDetails
+            ? { details: { stepId: errorDetails.stepId, path: errorDetails.path } }
+            : {}),
         };
       },
       chainId
@@ -1320,6 +1366,8 @@ export class DeployEngine {
     const key = String(lane.chainId);
     for (const [stepId, args] of Object.entries(cmd.edits.argsByStep ?? {})) {
       const index = run.plan.steps.findIndex((step) => step.id === stepId);
+      if (index < 0)
+        throw new IgniteError(`Argument edit for unknown step ${stepId}`, ErrorCodes.ILLEGAL_RESOLVE);
       if (index >= lane.currentStepIndex) {
         const planStep = run.plan.steps[index];
         planStep.argsPerChain = {
@@ -1331,16 +1379,18 @@ export class DeployEngine {
     for (const [stepId, target] of Object.entries(cmd.edits.targetByStep ?? {})) {
       const index = run.plan.steps.findIndex((step) => step.id === stepId);
       const planStep = run.plan.steps[index];
-      if (index >= lane.currentStepIndex && planStep?.kind === 'call') {
-        planStep.targetPerChain = { ...(planStep.targetPerChain ?? {}), [key]: target };
-      }
+      // Inapplicable edits reject the WHOLE request — silently dropping a
+      // field would persist a half-applied edit (final-review F18).
+      if (index < lane.currentStepIndex || planStep?.kind !== 'call')
+        throw new IgniteError(`Target edit for ${stepId} is not applicable`, ErrorCodes.ILLEGAL_RESOLVE);
+      planStep.targetPerChain = { ...(planStep.targetPerChain ?? {}), [key]: target };
     }
     for (const [stepId, libraries] of Object.entries(cmd.edits.librariesByStep ?? {})) {
       const index = run.plan.steps.findIndex((step) => step.id === stepId);
       const planStep = run.plan.steps[index];
-      if (index >= lane.currentStepIndex && planStep?.kind === 'deploy') {
-        planStep.librariesPerChain = { ...(planStep.librariesPerChain ?? {}), [key]: { ...(planStep.librariesPerChain?.[key] ?? {}), ...libraries } };
-      }
+      if (index < lane.currentStepIndex || planStep?.kind !== 'deploy')
+        throw new IgniteError(`Library edit for ${stepId} is not applicable`, ErrorCodes.ILLEGAL_RESOLVE);
+      planStep.librariesPerChain = { ...(planStep.librariesPerChain ?? {}), [key]: { ...(planStep.librariesPerChain?.[key] ?? {}), ...libraries } };
     }
     const current = run.plan.steps[lane.currentStepIndex];
     if (cmd.edits.gas)
@@ -1505,6 +1555,9 @@ function classify(error: unknown): PauseReason {
     name?: unknown;
   };
   if (codedError.pauseReason) return codedError.pauseReason;
+  // The canonical resolver wraps unresolved refs in a typed IgniteError; the
+  // pause must carry the dedicated reason or its verb set is wrong.
+  if (codedError.code === 'POINTER_UNRESOLVED') return 'pointer-unresolved';
   if (codedError.code === ErrorCodes.SIGNER_ADDRESS_MISMATCH)
     return 'signer-mismatch';
   if (codedError.code === ErrorCodes.INSUFFICIENT_FUNDS) return 'balance';

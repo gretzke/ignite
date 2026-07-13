@@ -109,7 +109,7 @@ describe('planFromDraft', () => {
         { id: 'deploy-vault', kind: 'deploy', contractId: 'vault' },
       ],
       deployExtras: {
-        'deploy-token': { strategy: { kind: 'create2', salt: hex('1', 64), saltPerChain: { '1': hex('2', 64) }, }, libraries: { MathLib: { kind: 'address', address: hex('f') } }, librariesPerChain: { '1': { OtherLib: { kind: 'step', stepId: 'deploy-vault' } } }, acknowledged: { '1': { predictedAddress: hex('3'), initcodeHash: hex('4', 64) } } },
+        'deploy-token': { strategy: { kind: 'create2', salt: hex('1', 64), saltPerChain: { '1': hex('2', 64) }, }, libraries: { 'src/MathLib.sol:MathLib': { kind: 'address', address: hex('f') } }, librariesPerChain: { '1': { 'src/OtherLib.sol:OtherLib': { kind: 'step', stepId: 'deploy-vault' } } }, acknowledged: { '1': { predictedAddress: hex('3'), initcodeHash: hex('4', 64) } } },
         'deploy-vault': { strategy: { kind: 'plugin', pluginId: 'hook', params: { rounds: 7 } }, prepared: { '1': { salt: hex('5', 64), predictedAddress: hex('6'), initcodeHash: hex('7', 64), notes: [] } }, acknowledged: { '1': { predictedAddress: hex('6'), initcodeHash: hex('7', 64) } } },
       },
     };
@@ -121,6 +121,28 @@ describe('planFromDraft', () => {
         { id: 'call-vault', kind: 'call', target: { kind: 'step', stepId: 'deploy-token' }, targetPerChain: { '1': { kind: 'address', address: hex('d') } }, signature: 'setOwner(address)', payable: true, args: { owner: { $ref: { kind: 'step', stepId: 'deploy-token' } } }, argsPerChain: { '1': { owner: hex('e') } }, value: '500000000000000000', valuePerChain: { '1': '250000000000000000' }, gasOverrides: { maxPriorityFeePerGas: '1500000000' }, gasOverridesPerChain: { '1': { gasLimit: '123' } }, signerOverride: draft.steps[1].signerOverride },
         { id: 'deploy-vault', kind: 'deploy', contractId: 'vault', strategy: { kind: 'plugin', pluginId: 'hook', params: { rounds: 7 }, salt: hex('5', 64), saltPerChain: { '1': hex('5', 64) }, prepared: { '1': { predictedAddress: hex('6'), initcodeHash: hex('7', 64) } }, acknowledgeDeployed: draft.deployExtras['deploy-vault'].acknowledged } },
       ],
+    });
+  });
+
+  it('keeps the compiler canonical library key when assembling a linked contract', () => {
+    const draft: DeployDraftState = {
+      contracts: [{ id: 'uses-library', repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: 'UsesLibrary.json', contractName: 'UsesLibrary', sourcePath: 'src/UsesLibrary.sol' }],
+      chains: [1], rpcSelection: {}, explorerSelection: {}, signers: {}, unseenIds: [],
+      steps: [{ id: 'deploy-uses-library', kind: 'deploy', contractId: 'uses-library' }],
+      deployExtras: {
+        'deploy-uses-library': {
+          strategy: { kind: 'create' },
+          libraries: {
+            'src/MathLib.sol:MathLib': { kind: 'address', address: `0x${'a'.repeat(40)}` },
+          },
+        },
+      },
+    };
+
+    expect(planFromDraft(draft, chains).steps[0]).toMatchObject({
+      libraries: {
+        'src/MathLib.sol:MathLib': { kind: 'address' },
+      },
     });
   });
 });

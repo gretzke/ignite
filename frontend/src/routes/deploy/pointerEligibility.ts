@@ -113,3 +113,42 @@ export function earlierDeploySteps(draft: DeployDraftState, stepId: string): Eli
     }];
   });
 }
+
+/** Call targets are executed immediately at their place in the plan, so only
+ * a deployment which has already run can be selected as a target. */
+export function callTargetPointerSteps(
+  draft: DeployDraftState,
+  stepId: string
+): EligiblePointerStep[] {
+  return earlierDeploySteps(draft, stepId);
+}
+
+/** A call argument may point at any deterministic deployment. A later plain
+ * CREATE has no address at the time this call is encoded, however, so leave it
+ * visible but unavailable and explain why. */
+export function callArgumentPointerSteps(
+  draft: DeployDraftState,
+  stepId: string
+): EligiblePointerStep[] {
+  const sourceIndex = draft.steps.findIndex((step) => step.id === stepId);
+  if (sourceIndex === -1) return [];
+  return draft.steps.flatMap((target, targetIndex) => {
+    if (target.kind !== 'deploy') return [];
+    const label =
+      draft.contracts.find((contract) => contract.id === target.contractId)
+        ?.contractName ?? target.id;
+    const strategy = draft.deployExtras[target.id]?.strategy.kind ?? 'create';
+    return [
+      {
+        stepId: target.id,
+        label,
+        ...(strategy === 'create' && targetIndex > sourceIndex
+          ? {
+              disabledReason:
+                'Later plain-create step — address unknown at prediction time',
+            }
+          : {}),
+      },
+    ];
+  });
+}

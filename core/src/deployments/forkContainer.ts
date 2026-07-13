@@ -1,4 +1,8 @@
 import Docker from 'dockerode';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createPublicClient, http, type Hex } from 'viem';
 import type { ScheduleEntry } from './schedule.js';
 
@@ -91,22 +95,27 @@ export async function makeForkRunner(
   }
   if (!(await acquire())) return undefined;
   let container: Docker.Container | undefined;
+  let urlFile: string | undefined;
   try {
-    // URL is intentionally only in Env. The shell expands it inside the
-    // container so docker inspect never exposes an authenticated endpoint.
+    // The fork URL may carry credentials, and BOTH argv and Env surface in
+    // `docker inspect` (final-review F2) — so the URL rides a 0600 host
+    // tmpfile bind-mounted read-only; inspect shows only the mount path.
+    // Loopback hosts are rewritten to the host gateway (inside the container
+    // 127.0.0.1 is the container itself).
+    const forkUrl = opts.rpcUrl.replace(/127\.0\.0\.1|localhost/, 'host.docker.internal');
+    urlFile = path.join(os.tmpdir(), `ignite-simfork-${crypto.randomUUID()}`);
+    await fs.writeFile(urlFile, forkUrl, { mode: 0o600 });
     container = await docker.createContainer({
       Image: IMAGE,
       Labels: { [LABEL]: '1' },
-      // Inside the container 127.0.0.1 is the container itself; rewrite
-      // loopback fork URLs to the host gateway (verification suite precedent).
-      Env: [`ETH_RPC_URL=${opts.rpcUrl.replace(/127\.0\.0\.1|localhost/, 'host.docker.internal')}`],
       // The foundry image's default entrypoint wraps Cmd; override it or the
       // shell invocation never runs (container exits, RPC never comes up).
       Entrypoint: ['sh', '-c'],
-      Cmd: ['anvil --fork-url "$ETH_RPC_URL" --host 0.0.0.0 --port 8545'],
+      Cmd: ['anvil --fork-url "$(cat /run/ignite-fork-url)" --host 0.0.0.0 --port 8545'],
       HostConfig: {
         AutoRemove: true,
         PortBindings: { '8545/tcp': [{ HostPort: '' }] },
+        Binds: [`${urlFile}:/run/ignite-fork-url:ro`],
         // Linux needs the explicit host-gateway mapping; Docker Desktop
         // resolves host.docker.internal natively and tolerates the extra host.
         ExtraHosts: ['host.docker.internal:host-gateway'],
@@ -180,6 +189,7 @@ export async function makeForkRunner(
             await owned.stop({ t: 1 });
           } finally {
             release();
+            if (urlFile) await fs.rm(urlFile, { force: true }).catch(() => {});
           }
         }
       },
@@ -193,6 +203,7 @@ export async function makeForkRunner(
       }
     }
     release();
+    if (urlFile) await fs.rm(urlFile, { force: true }).catch(() => {});
     return undefined;
   }
 }

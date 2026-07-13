@@ -73,7 +73,7 @@ export function computeCreateAddresses(plan: DeploymentPlan, _frozen: FrozenInpu
   return addresses;
 }
 
-export function buildSchedule(plan: DeploymentPlan, frozen: FrozenInputs, chainId: number, opts: { signers: Map<string, Hex>; createAddresses?: Map<string, Hex> }): ScheduleEntry[] {
+export function buildSchedule(plan: DeploymentPlan, frozen: FrozenInputs, chainId: number, opts: { signers: Map<string, Hex>; createAddresses?: Map<string, Hex>; confirmedExisting?: Set<string> }): ScheduleEntry[] {
   const predictions = predictPlanAddresses(plan, frozen, chainId);
   const creates = opts.createAddresses ?? new Map<string, Hex>();
   const addresses = (id: string) => predictions[id]?.predictedAddress ?? creates.get(id) ?? (() => { throw new Error(`No resolved address for ${id}`); })();
@@ -89,7 +89,15 @@ export function buildSchedule(plan: DeploymentPlan, frozen: FrozenInputs, chainI
     }
     const strategy = step.strategy ?? { kind: 'create' as const };
     const data = buildInitcode(step, frozen[step.contractId]!, chainId, addresses);
-    if (strategy.kind !== 'create' && ackIsFresh(strategy, chainId, predictions[step.id]!)) return { stepId: step.id, kind: 'existing', address: predictions[step.id]!.predictedAddress, predictedAddress: predictions[step.id]!.predictedAddress };
+    // 'existing' requires OBSERVED code, not just a fresh acknowledgment —
+    // the caller (simulation) verifies via eth_getCode; execution deploys
+    // when code is absent, so the schedule must include that tx (F7). When
+    // no confirmation set is provided, fall back to acknowledgment freshness
+    // (pure callers that cannot read the chain).
+    const existing = opts.confirmedExisting
+      ? opts.confirmedExisting.has(step.id)
+      : strategy.kind !== 'create' && ackIsFresh(strategy, chainId, predictions[step.id]!);
+    if (strategy.kind !== 'create' && existing) return { stepId: step.id, kind: 'existing', address: predictions[step.id]!.predictedAddress, predictedAddress: predictions[step.id]!.predictedAddress };
     return strategy.kind === 'create'
       ? { stepId: step.id, kind: 'tx', from, to: null, data, value: effectiveValue(step, chainId), address: creates.get(step.id) }
       : { stepId: step.id, kind: 'tx', from, to: CREATE2_PROXY_ADDRESS, data: create2Calldata(predictions[step.id]!.salt, data), value: effectiveValue(step, chainId), predictedAddress: predictions[step.id]!.predictedAddress };

@@ -30,4 +30,3 @@ contract MiniHook {
         p.afterSwap = true;
     }
 }
-

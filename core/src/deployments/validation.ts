@@ -28,7 +28,8 @@ import {
   resolveSigner,
   toConstructorArgs,
   validateDependencies,
-} from './resolver.js';
+  callAbiItem,
+  mergeCallTarget,} from './resolver.js';
 import { ackIsFresh, buildInitcode, predictPlanAddresses } from './schedule.js';
 import {
   simulateChain,
@@ -611,7 +612,31 @@ function validateArgs(
     const resolveRef = (id: string): Hex =>
       predictions[id]?.predictedAddress ?? '0x0000000000000000000000000000000000000000';
     for (const step of plan.steps) {
-      if (step.kind === 'call') continue;
+      if (step.kind === 'call') {
+        // Calls get the same unknown/missing/type discipline as constructors
+        // (final-review F10): args without a signature would be silently
+        // discarded at execution, and unknown keys silently dropped.
+        const fn = callAbiItem(step, chainId, callTargetAbi(plan, step, chainId, frozen));
+        const merged = mergeArgs(step, chainId);
+        if (!fn) {
+          if (Object.keys(merged).length)
+            return failure(
+              'UNKNOWN_ARGUMENT',
+              `Call step ${step.id} has arguments but no function signature`,
+              { fields: Object.keys(merged) }
+            );
+          continue;
+        }
+        const knownCall = new Set(fn.inputs.map((entry, index) => entry.name || `arg${index}`));
+        const unknownCall = Object.keys(merged).filter((key) => !knownCall.has(key));
+        if (unknownCall.length)
+          return failure('UNKNOWN_ARGUMENT', `Unknown call arguments for step ${step.id}`, { fields: unknownCall });
+        const missingCall = missingArgKeys([...fn.inputs], merged);
+        if (missingCall.length)
+          return failure('MISSING_ARGUMENT', `Call arguments are missing for step ${step.id}`, { fields: missingCall });
+        toConstructorArgs(fn.inputs, resolveStepValues(step, chainId, resolveRef, fn.inputs).args);
+        continue;
+      }
       const input = frozen[step.contractId];
       if (!input)
         return failure(
@@ -843,24 +868,26 @@ async function validateSimulation(
       // production viem clients provide both chain reads.
       getTransactionCount: client.getTransactionCount ?? (async () => 0),
       getBlockNumber: client.getBlockNumber ?? (async () => 0),
+      getCode: client.getCode ?? (async () => undefined),
       ...(client.simulateBlocks
         ? { simulateBlocks: client.simulateBlocks }
         : {}),
     };
-    // A real viem public client always has these reads. Their absence marks a
-    // legacy test/dry client that can only do estimateGas; do not start anvil
-    // against an endpoint it cannot otherwise query.
-    const fork =
-      client.getTransactionCount && client.getBlockNumber
-        ? await deps.makeForkRunner({ rpcUrl, chainId })
-        : undefined;
+    // Lazy: the fork container only exists if tier 2 actually runs (F1).
+    // A real viem public client always has these reads; their absence marks
+    // a legacy test/dry client that can only do estimateGas — do not start
+    // anvil against an endpoint it cannot otherwise query.
+    const canFork = Boolean(client.getTransactionCount && client.getBlockNumber);
     const outcome = await simulateChain({
       chainId,
       plan,
       frozen,
       signers,
       client: simClient,
-      fork,
+      getFork: () =>
+        canFork
+          ? deps.makeForkRunner({ rpcUrl, chainId })
+          : Promise.resolve(undefined),
     });
     const reverted = Object.entries(outcome.perStep).find(
       ([, value]) => value.status === 'reverted'
@@ -998,6 +1025,21 @@ async function validateBalance(
       safeMessage(error, 'Balance check failed')
     );
   }
+}
+
+function callTargetAbi(
+  plan: DeploymentPlan,
+  step: Extract<DeploymentPlan['steps'][number], { kind: 'call' }>,
+  chainId: number,
+  frozen: FrozenInputs
+): unknown {
+  const target = mergeCallTarget(step, chainId);
+  if (target.kind !== 'step') return undefined;
+  const targetStep = plan.steps.find(
+    (candidate): candidate is Extract<typeof candidate, { kind: 'deploy' }> =>
+      candidate.id === target.stepId && candidate.kind === 'deploy'
+  );
+  return targetStep ? frozen[targetStep.contractId]?.abi : undefined;
 }
 
 function constructorInputs(

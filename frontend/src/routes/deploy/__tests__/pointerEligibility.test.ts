@@ -1,7 +1,12 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
 import type { DeployDraftState } from '../../../store/features/deployments/types';
-import { dependentPlanStepIds, eligiblePointerSteps } from '../pointerEligibility';
+import {
+  callArgumentPointerSteps,
+  callTargetPointerSteps,
+  dependentPlanStepIds,
+  eligiblePointerSteps,
+} from '../pointerEligibility';
 
 const draft = (): DeployDraftState => ({
   contracts: ['A', 'B', 'C'].map((id) => ({ id, repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: `${id}.json`, contractName: id, sourcePath: `${id}.sol` })),
@@ -35,5 +40,20 @@ describe('eligiblePointerSteps', () => {
       { id: 'target', kind: 'call', target: { kind: 'step', stepId: 'source' } },
       { id: 'library', kind: 'deploy', contractId: 'C', libraries: { Lib: { kind: 'step', stepId: 'source' } } },
     ], 'source')).toEqual(['args', 'target', 'library']);
+  });
+
+  it('limits call targets to earlier deploys but permits deterministic later argument pointers', () => {
+    const state = draft();
+    state.steps.splice(1, 0, { id: 'call', kind: 'call', target: null });
+    state.deployExtras['deploy-C'] = { strategy: { kind: 'create2', salt: `0x${'1'.repeat(64)}` } };
+
+    expect(callTargetPointerSteps(state, 'call')).toEqual([
+      { stepId: 'deploy-A', label: 'A' },
+    ]);
+    expect(callArgumentPointerSteps(state, 'call')).toEqual([
+      { stepId: 'deploy-A', label: 'A' },
+      { stepId: 'deploy-B', label: 'B', disabledReason: 'Later plain-create step — address unknown at prediction time' },
+      { stepId: 'deploy-C', label: 'C' },
+    ]);
   });
 });

@@ -9,7 +9,7 @@ import type {
 } from '@ignite/api';
 import { DeploymentArtifactSchema } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
-import { collectRefs, effectiveValue, mergeArgs, mergeCallTarget, mergeGas, resolveSigner } from './resolver.js';
+import { collectRefs, effectiveValue, mergeArgs, mergeCallTarget, mergeGas, mergeLibraries, resolveSigner } from './resolver.js';
 
 export function renderArtifact(
   run: RunRecord,
@@ -82,8 +82,11 @@ export function renderArtifact(
               ...(laneStep.predictedAddress ? { predictedAddress: laneStep.predictedAddress } : {}),
             } } : {}),
             ...(step?.kind === 'deploy' && expected?.libraries ? { libraries: Object.entries(expected.libraries).map(([key, address]) => {
-              const binding = (step.librariesPerChain?.[String(lane.chainId)] ?? step.libraries ?? {})[key];
-              return { key: sanitizeText(key), address, source: binding?.kind === 'step' ? { stepId: sanitizeText(binding.stepId) } : 'literal' as const };
+              // Canonical per-chain merge: choosing one whole map would
+              // misreport inherited global bindings as literals whenever any
+              // per-chain override exists (final-review F13).
+              const binding = mergeLibraries(step, lane.chainId)[key];
+              return { key: portableLibKey(key), address, source: binding?.kind === 'step' ? { stepId: sanitizeText(binding.stepId) } : 'literal' as const };
             }) } : {}),
             ...(step?.kind === 'call' && expected ? (() => {
               const target = mergeCallTarget(step, lane.chainId);
@@ -184,6 +187,15 @@ function portableRepoName(repoPathOrUrl: string): string {
     const name = path.basename(repoPathOrUrl.replace(/[\\/]$/, ''));
     return sanitizeText(name || 'repository');
   }
+}
+
+// Library keys are `<sourcePath>:<Name>`; the path half gets the same
+// portability treatment as contract source paths (absolute paths from a
+// malformed record must never leak — final-review F13).
+function portableLibKey(key: string): string {
+  const split = key.lastIndexOf(':');
+  if (split <= 0) return sanitizeText(key);
+  return `${portableSourcePath(key.slice(0, split))}:${sanitizeText(key.slice(split + 1))}`;
 }
 
 function portableSourcePath(sourcePath: string): string {

@@ -7,6 +7,7 @@ import { useAppDispatch, useAppSelector } from '../../../store';
 import {
   setPluginParams,
   setSalt,
+  setSaltPerChain,
   setStrategy,
   storePrepared,
 } from '../../../store/features/deployments/deployDraftSlice';
@@ -58,7 +59,7 @@ export default function StrategySection({ stepId }: { stepId: string }) {
           ...types.map((item) => ({ value: `plugin:${item.pluginId}`, label: item.label })),
         ]} onValueChange={selectStrategy} />
       </label>
-      {strategy.kind === 'create2' && <label className="grid gap-1"><span className="eyebrow">Salt</span><div className="flex gap-2"><input className="input-glass" value={strategy.salt ?? ''} placeholder="0x… (32 bytes)" onChange={(event) => dispatch(setSalt({ stepId, salt: (event.target.value || undefined) as `0x${string}` | undefined }))} /><button type="button" className="btn btn-secondary" onClick={() => dispatch(setSalt({ stepId, salt: keccak256(stringToHex(strategy.salt ?? '')) }))}>Text → keccak</button></div></label>}
+      {strategy.kind === 'create2' && <><label className="grid gap-1"><span className="eyebrow">Salt</span><div className="flex gap-2"><input className="input-glass" value={strategy.salt ?? ''} placeholder="0x… (32 bytes)" onChange={(event) => dispatch(setSalt({ stepId, salt: (event.target.value || undefined) as `0x${string}` | undefined }))} /><button type="button" className="btn btn-secondary" onClick={() => dispatch(setSalt({ stepId, salt: keccak256(stringToHex(strategy.salt ?? '')) }))}>Text → keccak</button></div></label>{draft.chains.length > 1 && <details className="text-xs"><summary className="text-muted cursor-pointer">Per-chain salt</summary><div className="grid gap-3 mt-2">{draft.chains.map((chainId) => <label key={chainId} className="card-milky p-3 grid gap-1"><span className="font-medium">{chains.find((chain) => chain.chainId === chainId)?.name ?? chainId}</span><input className="input-glass" value={strategy.saltPerChain?.[String(chainId)] ?? ''} placeholder="Use global salt" onChange={(event) => dispatch(setSaltPerChain({ stepId, chainId, salt: (event.target.value || undefined) as `0x${string}` | undefined }))} /></label>)}</div></details>}</>}
       {plugin?.params.map((field) => {
         const value = strategy.kind === 'plugin' ? strategy.params?.[field.key] : undefined;
         const change = (next: unknown) => dispatch(setPluginParams({ stepId, params: { ...(strategy.kind === 'plugin' ? strategy.params : {}), [field.key]: next } }));

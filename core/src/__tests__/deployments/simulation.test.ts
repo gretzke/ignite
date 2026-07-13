@@ -61,8 +61,9 @@ describe('simulateChain', () => {
         estimateGas: vi.fn(),
         getTransactionCount: async ({ address }) => (address === A ? 5 : 9),
         getBlockNumber: async () => 99,
+      getCode: async () => undefined,
       },
-      fork: undefined,
+      getFork: async () => undefined,
     });
     expect(outcome).toMatchObject({
       tier: 'simulateV1',
@@ -102,8 +103,9 @@ describe('simulateChain', () => {
         estimateGas: vi.fn(),
         getTransactionCount: async () => 0,
         getBlockNumber: async () => 1,
+      getCode: async () => undefined,
       },
-      fork,
+      getFork: async () => fork,
     });
     expect(outcome).toMatchObject({
       tier: 'fork',
@@ -135,8 +137,9 @@ describe('simulateChain', () => {
         estimateGas: async () => 7n,
         getTransactionCount: async () => 0,
         getBlockNumber: async () => 1,
+      getCode: async () => undefined,
       },
-      fork: undefined,
+      getFork: async () => undefined,
     });
     expect(outcome).toMatchObject({
       tier: 'estimate',
@@ -163,12 +166,13 @@ describe('simulateChain', () => {
           estimateGas: vi.fn(),
           getTransactionCount: async () => 0,
           getBlockNumber: async () => 1,
+      getCode: async () => undefined,
         },
-        fork: {
+        getFork: async () => ({
           run: async () => ({
             one: { status: 'ok', gasUsed: '1', createdAddress: B },
           }),
-        },
+        }),
       })
     ).rejects.toMatchObject({ code: 'SIMULATION_ADDRESS_DIVERGENCE' });
   });

@@ -37,6 +37,7 @@ export interface SimClient {
     blockTag?: 'latest';
   }): Promise<number | bigint>;
   getBlockNumber(): Promise<number | bigint>;
+  getCode(args: { address: Hex }): Promise<Hex | undefined>;
 }
 
 function message(error: unknown): string {
@@ -151,7 +152,10 @@ export async function simulateChain(args: {
   frozen: FrozenInputs;
   signers: Map<string, Hex>;
   client: SimClient;
-  fork: ForkRunner | undefined;
+  // Lazy: a fork container must only exist when tier 2 actually runs — an
+  // eagerly created runner leaks its container + concurrency permit when
+  // tier 1 succeeds (final-review F1).
+  getFork: () => Promise<ForkRunner | undefined>;
 }): Promise<SimulationOutcome> {
   const signerAddresses = [
     ...new Set(
@@ -170,20 +174,26 @@ export async function simulateChain(args: {
     })
   );
   // Acknowledged-existing create2 steps broadcast nothing, so they must not
-  // consume a nonce in the create-address pre-pass (spec §5.0).
+  // consume a nonce in the create-address pre-pass (spec §5.0). Freshness
+  // alone is not enough: execution re-checks the chain and DEPLOYS when the
+  // predicted address has no code, so simulation may only omit a tx after
+  // observing nonempty code itself (final-review F7).
   const predictions = predictPlanAddresses(args.plan, args.frozen, args.chainId);
-  const skipTx = new Set(
-    args.plan.steps
-      .filter(
-        (step) =>
-          step.kind === 'deploy' &&
-          step.strategy &&
-          step.strategy.kind !== 'create' &&
-          predictions[step.id] !== undefined &&
-          ackIsFresh(step.strategy, args.chainId, predictions[step.id])
-      )
-      .map((step) => step.id)
+  const ackCandidates = args.plan.steps.filter(
+    (step) =>
+      step.kind === 'deploy' &&
+      step.strategy &&
+      step.strategy.kind !== 'create' &&
+      predictions[step.id] !== undefined &&
+      ackIsFresh(step.strategy, args.chainId, predictions[step.id])
   );
+  const skipTx = new Set<string>();
+  for (const step of ackCandidates) {
+    const code = await args.client
+      .getCode({ address: predictions[step.id].predictedAddress })
+      .catch(() => undefined);
+    if (code && code !== '0x') skipTx.add(step.id);
+  }
   const createAddresses = computeCreateAddresses(
     args.plan,
     args.frozen,
@@ -195,6 +205,7 @@ export async function simulateChain(args: {
   const schedule = buildSchedule(args.plan, args.frozen, args.chainId, {
     signers: args.signers,
     createAddresses,
+    confirmedExisting: skipTx,
   });
   const entries = initialEntries(schedule);
   const fallthrough: string[] = [];
@@ -260,9 +271,10 @@ export async function simulateChain(args: {
     );
   }
 
-  if (args.fork) {
+  const fork = await args.getFork().catch(() => undefined);
+  if (fork) {
     try {
-      const receipts = await args.fork.run(schedule);
+      const receipts = await fork.run(schedule);
       assertForkAddresses(schedule, receipts);
       for (const entry of schedule) {
         if (entry.kind === 'tx') {
@@ -295,6 +307,7 @@ export async function simulateChain(args: {
   }
 
   const touched = new Set<string>();
+  let sawCall = false;
   for (const entry of schedule) {
     if (entry.kind === 'existing') continue;
     const produced = (entry.address ?? entry.predictedAddress)?.toLowerCase();
@@ -304,7 +317,14 @@ export async function simulateChain(args: {
     // second of two ownership transfers, or no code at a not-yet-deployed
     // create2 target). Tiers 1-2 simulate the sequence; tier 3 must be honest.
     const callTarget = !produced && entry.to ? entry.to.toLowerCase() : undefined;
-    const sequenceDependent = callTarget !== undefined && touched.has(callTarget);
+    // Calls mutate arbitrary state, so under independent estimates every call
+    // AFTER another call is unestimable (cross-contract effects are invisible
+    // to a same-target check — final-review F11). Deploys stay estimable:
+    // fresh-contract constructors reading mutated state are the accepted
+    // residual of this labeled fallback tier.
+    const sequenceDependent =
+      callTarget !== undefined && (touched.has(callTarget) || sawCall);
+    if (callTarget) sawCall = true;
     if (produced) touched.add(produced);
     if (callTarget) touched.add(callTarget);
     if (

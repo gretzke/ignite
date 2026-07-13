@@ -386,6 +386,8 @@ export interface Lane {
     stepIndex: number;
     error: string;
     attemptId: string;
+    // Typed context for recovery UIs (e.g. the broken pointer's field path).
+    details?: Record<string, unknown>;
   };
   steps: LaneStep[];
 }
@@ -576,6 +578,7 @@ export const LaneSchema = z.object({
       stepIndex: z.number().int().nonnegative(),
       error: z.string(),
       attemptId: z.string().min(1),
+      details: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
   steps: z.array(LaneStepSchema),

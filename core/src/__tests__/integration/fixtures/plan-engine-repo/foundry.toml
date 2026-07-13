@@ -2,4 +2,3 @@
 src = "src"
 out = "out"
 solc_version = "0.8.24"
-

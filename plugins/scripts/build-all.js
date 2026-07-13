@@ -190,18 +190,20 @@ async function generatePluginRegistry(builtResults) {
     const { plugin, filePath } = result;
     const metadata = await extractPluginMetadata(plugin, filePath);
     if (metadata) {
-      // Record the Dockerfile hash so core can detect stale images at startup
-      if (metadata.runtime !== "frontend") {
-        metadata.imageHash = imageHash(metadata.baseImage);
-      }
       // Bundles over the docker-exec argv limit are baked into the plugin's
       // image instead of injected: stage the built bundle inside the plugin
-      // dir (the docker build context) so its Dockerfile can COPY it.
+      // dir (the docker build context) so its Dockerfile can COPY it. This
+      // MUST precede imageHash(): the staged bundle is part of the staleness
+      // hash, and the label build-docker writes must match the registry.
       if (metadata.bundledInImage) {
         const stageDir = join(plugin.path, ".bundle");
         await mkdir(stageDir, { recursive: true });
         await copyFile(filePath, join(stageDir, "index.js"));
         log(`📦 Staged in-image bundle for ${metadata.id}`, "blue");
+      }
+      // Record the content hash so core can detect stale images at startup
+      if (metadata.runtime !== "frontend") {
+        metadata.imageHash = imageHash(metadata.baseImage);
       }
       registry[metadata.id] = metadata;
       log(`✅ Added to registry: ${metadata.id} (${metadata.name})`, "green");

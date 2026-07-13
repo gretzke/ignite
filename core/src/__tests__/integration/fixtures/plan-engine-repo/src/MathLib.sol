@@ -6,4 +6,3 @@ library MathLib {
         return value + 1;
     }
 }
-

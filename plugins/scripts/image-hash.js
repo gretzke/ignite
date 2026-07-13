@@ -2,7 +2,7 @@
 // The hash covers the image's own Dockerfile plus the shared base Dockerfile,
 // so editing either flags every derived image as stale.
 import { createHash } from "crypto";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 
 const SHARED_DOCKERFILE = "src/shared/Dockerfile";
 
@@ -22,6 +22,14 @@ export function imageHash(imageName) {
   const own = dockerfileForImage(imageName);
   if (own !== SHARED_DOCKERFILE) {
     hash.update(readFileSync(own));
+    // bundledInImage builtins bake their JS bundle into the image, so the
+    // bundle content must be part of the staleness hash — otherwise an image
+    // holding an older bundle passes validation (final-review F3). The stage
+    // dir sits next to the Dockerfile; hash it when present.
+    const staged = own.replace(/Dockerfile$/, ".bundle/index.js");
+    if (existsSync(staged)) {
+      hash.update(readFileSync(staged));
+    }
   }
   return hash.digest("hex").slice(0, 16);
 }

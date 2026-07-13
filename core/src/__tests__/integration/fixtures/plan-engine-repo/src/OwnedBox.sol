@@ -15,4 +15,3 @@ contract OwnedBox {
         owner = nextOwner;
     }
 }
-

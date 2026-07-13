@@ -973,3 +973,125 @@ function holdUntilAborted(
     void gate.then(() => fail('gated'));
   });
 }
+
+describe('final-review regressions', () => {
+  let home: string;
+  beforeEach(async () => {
+    home = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-engine-fr-'));
+  });
+  afterEach(async () => {
+    await fs.rm(home, { recursive: true, force: true });
+  });
+
+  it('F6: a failure-skipped step never resolves pointers via its prediction', async () => {
+    const store = new RunStore({ baseDir: home });
+    const plan = makePlan({
+      chains: [1],
+      steps: [
+        { id: 'step-1', kind: 'deploy', contractId: 'c1' },
+        {
+          id: 'step-2',
+          kind: 'deploy',
+          contractId: 'c2',
+          args: { owner: { $ref: { kind: 'step', stepId: 'step-1' } } },
+        },
+      ],
+    });
+    const executed: string[] = [];
+    const withCtor = (p: DeploymentPlan) => {
+      const base = validated(p);
+      // The pointer only resolves through the ABI walk: c2 needs a real
+      // address-typed constructor input.
+      (base.frozen as Record<string, { abi: unknown }>).c2.abi = [
+        { type: 'constructor', inputs: [{ name: 'owner', type: 'address' }] },
+      ];
+      return base;
+    };
+    const engine = new DeployEngine({
+      runStore: store,
+      validate: async (p) => withCtor(p),
+      resolveRpcUrl: async () => ({ url: 'http://rpc.local', fingerprint: HASH }),
+      verifyRpc: async () => ({ ok: true, chainIdMatch: true, checkedAt: new Date().toISOString() }),
+      resolveAccount: async () => ({ account: { id: 'a', address: ADDRESS, capability: 'sign-only' } }),
+      chainMetadata: async () => ({ name: 'Anvil', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } }),
+      // First step fails pre-broadcast so it can be skipped.
+      executeTx: async (args) => {
+        executed.push(args.data);
+        if (executed.length === 1) throw Object.assign(new Error('boom'), { pauseReason: 'estimation' });
+        return { txHash: TX_HASH, ...RECEIPT };
+      },
+      writeArtifact: async () => undefined,
+      getReceipt: async () => undefined,
+      getTxForProvenance: async () => undefined,
+      getCode: async () => '0x',
+      rebroadcast: async () => TX_HASH,
+    });
+    try {
+      const run = await engine.launch({
+        profileId: 'p1',
+        plan,
+        rpcSelection: { '1': 'rpc' },
+        idempotencyKey: crypto.randomUUID(),
+      });
+      await eventually(async () => {
+        const current = await store.get('p1', run.id);
+        return current?.lanes['1'].pause?.reason === 'estimation';
+      }, 'estimation pause');
+      // Give the lane step a prediction to prove skip suppresses its use.
+      await store.mutate('p1', run.id, (current) => {
+        current.lanes['1'].steps[0].predictedAddress =
+          '0x00000000000000000000000000000000000000aa';
+      });
+      const paused = await store.get('p1', run.id);
+      const attemptId = paused!.lanes['1'].pause!.attemptId;
+      await engine.resolveLane('p1', run.id, 1, {
+        action: 'skip',
+        attemptId,
+        commandId: crypto.randomUUID(),
+      });
+      await eventually(async () => {
+        const current = await store.get('p1', run.id);
+        return current?.lanes['1'].pause?.reason === 'pointer-unresolved';
+      }, 'pointer-unresolved pause');
+      const final = await store.get('p1', run.id);
+      expect(final?.lanes['1'].pause?.details).toMatchObject({ stepId: 'step-1' });
+    } finally {
+      await engine.shutdown();
+    }
+  });
+
+  it('F8: a successful plain-create receipt without contractAddress pauses needs-review', async () => {
+    const store = new RunStore({ baseDir: home });
+    const plan = makePlan({ chains: [1], steps: [{ id: 'step-1', kind: 'deploy', contractId: 'c1' }] });
+    const engine = new DeployEngine({
+      runStore: store,
+      validate: async (p) => validated(p),
+      resolveRpcUrl: async () => ({ url: 'http://rpc.local', fingerprint: HASH }),
+      verifyRpc: async () => ({ ok: true, chainIdMatch: true, checkedAt: new Date().toISOString() }),
+      resolveAccount: async () => ({ account: { id: 'a', address: ADDRESS, capability: 'sign-only' } }),
+      chainMetadata: async () => ({ name: 'Anvil', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } }),
+      executeTx: async () => ({ txHash: TX_HASH, ...RECEIPT, contractAddress: null }),
+      writeArtifact: async () => undefined,
+      getReceipt: async () => undefined,
+      getTxForProvenance: async () => undefined,
+      getCode: async () => '0x',
+      rebroadcast: async () => TX_HASH,
+    });
+    try {
+      const run = await engine.launch({
+        profileId: 'p1',
+        plan,
+        rpcSelection: { '1': 'rpc' },
+        idempotencyKey: crypto.randomUUID(),
+      });
+      await eventually(async () => {
+        const current = await store.get('p1', run.id);
+        return current?.lanes['1'].pause?.reason === 'needs-review';
+      }, 'needs-review pause');
+      const final = await store.get('p1', run.id);
+      expect(final?.lanes['1'].steps[0].address).toBeUndefined();
+    } finally {
+      await engine.shutdown();
+    }
+  });
+});
