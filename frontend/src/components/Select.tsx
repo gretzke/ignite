@@ -24,6 +24,9 @@ export interface SelectProps {
   // Render the menu in place instead of a portal. Portalled menus inside a
   // dialog automatically mount in that dialog, above any scrollable body.
   portal?: boolean;
+  // Select menus default to a solid surface for reliable readability. Set to
+  // false only when a translucent glass menu is intentional.
+  solidMenu?: boolean;
   renderTrigger?: (props: {
     ref: (node: HTMLElement | null) => void;
     open: boolean;
@@ -44,6 +47,7 @@ export default function Select({
   className = '',
   anchor = 'right',
   portal = true,
+  solidMenu = true,
   requireSelection = false,
   renderTrigger,
 }: SelectProps) {
@@ -106,14 +110,14 @@ export default function Select({
         // In-place menus can't use backdrop blur (the parent dialog already
         // owns the backdrop) and can overflow the dialog bounds, so use a
         // near-opaque fill instead of translucent glass.
-        ...(portal
-          ? {}
-          : {
+        ...(!portal || solidMenu
+          ? {
               background: 'color-mix(in oklch, var(--bg-base) 94%, #fff 6%)',
               borderColor: 'var(--ovl-brd)',
               backdropFilter: 'none',
               WebkitBackdropFilter: 'none',
-            }),
+            }
+          : {}),
         zIndex: 9999,
         display: 'flex',
         flexDirection: 'column',
