@@ -158,6 +158,56 @@ describe('PluginInstaller', () => {
     expect(deps.sources.waffle).toEqual(enrichedGitSource);
   });
 
+  it('revokes an orphaned trust grant before a fresh install can use its id', async () => {
+    deps.grants.waffle = {
+      trust: 'trusted',
+      repoWrite: true,
+      net: true,
+      secrets: ['api-key'],
+    };
+    deps.trust.revoke.mockImplementation(async () => {
+      delete deps.grants.waffle;
+    });
+    const installer = new PluginInstaller(backend, deps);
+
+    await installer.install(gitSource);
+
+    expect(deps.trust.revoke).toHaveBeenCalledWith('waffle');
+    expect(deps.grants.waffle).toBeUndefined();
+    expect(await deps.trust.getGrant('waffle')).toMatchObject({
+      trust: 'untrusted',
+      repoWrite: false,
+      net: false,
+      secrets: [],
+    });
+    // The wipe covers ALL id-scoped state uninstall would clear, not just
+    // trust — orphaned vault secrets, config values, and the cache volume
+    // must not carry over either.
+    expect(deps.vaultDeletedPlugins).toContain('waffle');
+    expect(deps.configDeletedPlugins).toContain('waffle');
+    expect(deps.removeVolume).toHaveBeenCalledWith(
+      'ignite-plugin-cache-waffle'
+    );
+  });
+
+  it('does not delete a working install\'s image when a same-version reinstall is refused', async () => {
+    const installer = new PluginInstaller(backend, deps);
+    await installer.install(gitSource);
+    expect(deps.store.waffle.baseImage).toBe('ignite/installed_waffle:1.0.0');
+    deps.removeImage.mockClear();
+
+    // Reinstalling the same id+version without uninstalling first is refused,
+    // but the candidate was already finalized onto the SAME canonical tag the
+    // working install owns — cleanup must not remove it.
+    await expect(installer.install(gitSource)).rejects.toThrow(
+      /already installed/
+    );
+    expect(deps.removeImage).not.toHaveBeenCalledWith(
+      'ignite/installed_waffle:1.0.0'
+    );
+    expect(deps.store.waffle.baseImage).toBe('ignite/installed_waffle:1.0.0');
+  });
+
   it('records the built commit sha when the backend reports one', async () => {
     const shaBackend = backendReturning({
       imageTag: 'ignite/installed_waffle:1.0.0',
@@ -188,11 +238,21 @@ describe('PluginInstaller', () => {
     await installer.install(gitSource);
     deps.removeImage.mockClear();
 
-    await expect(installer.install(gitSource)).rejects.toMatchObject({
+    // A NEWER candidate of the same id finalizes onto its own version tag —
+    // refusing the reinstall must clean that candidate image up (it is not
+    // the tag the working install owns).
+    const newerInstaller = new PluginInstaller(
+      backendReturning({
+        imageTag: 'ignite/installed_waffle:2.0.0',
+        metadata: { ...waffleMeta, version: '2.0.0' },
+      }),
+      deps
+    );
+    await expect(newerInstaller.install(gitSource)).rejects.toMatchObject({
       code: 'PLUGIN_INSTALL_CONFLICT',
     });
     expect(deps.removeImage).toHaveBeenCalledWith(
-      'ignite/installed_waffle:1.0.0'
+      'ignite/installed_waffle:2.0.0'
     );
     // Original registration untouched.
     expect(deps.store.waffle).toEqual(

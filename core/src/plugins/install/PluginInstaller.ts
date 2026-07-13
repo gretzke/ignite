@@ -175,6 +175,15 @@ export class PluginInstaller {
         );
       }
 
+      // A removed builtin can leave orphaned id-scoped state behind. This is
+      // a fresh installed-registry entry, so nothing may carry over to the
+      // newly built code: no trust grant, no vault secrets, no config values,
+      // no cache volume — the same wipe uninstall performs.
+      await this.deps.trust.revoke(metadata.id);
+      await this.deps.vaultStore.deletePlugin(metadata.id);
+      await this.deps.configStore.deletePlugin(metadata.id);
+      await this.deps.removeVolume(pluginCacheVolumeName(metadata.id));
+
       // Persisted metadata points at the tag we actually built, so execution
       // resolves the right image regardless of what the plugin declared. The
       // install source is recorded alongside so a later update can prove it
@@ -185,8 +194,17 @@ export class PluginInstaller {
       return persisted;
     } catch (error) {
       // Any refusal past this point leaves a built image orphaned unless we
-      // clean it up here.
-      await this.deps.removeImage(imageTag).catch(() => {});
+      // clean it up here — EXCEPT when the candidate finalized onto the exact
+      // tag a working install already owns (same id + version reinstalled
+      // without uninstalling first): removing it would strand the existing
+      // registry entry pointing at a deleted image.
+      const ownedByExisting = await (async () =>
+        (await this.deps.pluginManager.hasPlugin(metadata.id)) &&
+        (await this.deps.pluginManager.getPlugin(metadata.id)).baseImage ===
+          imageTag)().catch(() => true); // on doubt, leak a tag over breaking a working install
+      if (!ownedByExisting) {
+        await this.deps.removeImage(imageTag).catch(() => {});
+      }
       throw error;
     }
   }
