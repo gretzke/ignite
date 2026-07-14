@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -186,5 +186,34 @@ describe('deployment artifact renderer', () => {
       'https://scan.test/address/0x1111111111111111111111111111111111111111'
     );
     expect(outcome?.status).toBe('verified');
+  });
+
+  it('copies workflow artifacts into the repo and records a written outcome', async () => {
+    const record = run();
+    record.workflow = { repoPathOrUrl: '/workflow', name: 'release', hooks: [], docHash: 'c'.repeat(64) };
+    const writeRepoFile = vi.fn(async () => ({ success: true as const, data: null }));
+    const mutate = vi.fn(async (_profileId: string, _runId: string, fn: (draft: RunRecord) => void) => {
+      fn(record); return record;
+    });
+    temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-artifacts-'));
+
+    await writeArtifact(record, { baseDir: temp, repoService: { writeRepoFile }, runStore: { mutate }, now: () => Date.parse('2026-07-14T12:00:00.000Z') });
+
+    expect(writeRepoFile).toHaveBeenCalledWith('/workflow', 'ignite/deployments/release/run-1.json', `${JSON.stringify(renderArtifact(record), null, 2)}\n`);
+    expect(record.repoArtifact).toEqual({ path: 'ignite/deployments/release/run-1.json', status: 'written', updatedAt: '2026-07-14T12:00:00.000Z' });
+  });
+
+  it('keeps the profile artifact authoritative and records a failed repo-copy outcome', async () => {
+    const record = run();
+    record.workflow = { repoPathOrUrl: '/workflow', name: 'release', hooks: [], docHash: 'c'.repeat(64) };
+    const mutate = vi.fn(async (_profileId: string, _runId: string, fn: (draft: RunRecord) => void) => { fn(record); return record; });
+    temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-artifacts-'));
+    const file = await writeArtifact(record, {
+      baseDir: temp,
+      repoService: { writeRepoFile: async () => ({ success: false as const, error: { code: 'FILE_WRITE_ERROR', message: 'read only' } }) },
+      runStore: { mutate }, now: () => Date.parse('2026-07-14T12:00:00.000Z'),
+    });
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).runId).toBe(record.id);
+    expect(record.repoArtifact).toEqual({ path: 'ignite/deployments/release/run-1.json', status: 'failed', error: 'read only', updatedAt: '2026-07-14T12:00:00.000Z' });
   });
 });

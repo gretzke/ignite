@@ -163,6 +163,24 @@ export class RunStore {
     return recovered;
   }
 
+  /** Valid records across profiles, used by durable outbox reconciliation. */
+  async listAllRuns(): Promise<RunRecord[]> {
+    const profilesDir = path.join(this.baseDir, 'profiles');
+    let profileIds: string[] = [];
+    try {
+      profileIds = (await fs.readdir(profilesDir, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const records: RunRecord[] = [];
+    for (const profileId of profileIds)
+      records.push(...await this.readProfileRuns(profileId, false));
+    return records;
+  }
+
   private runsDir(profileId: string): string {
     return path.join(
       this.baseDir,

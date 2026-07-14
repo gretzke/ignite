@@ -10,6 +10,7 @@ import type {
   ResolveAction,
   ResolveLaneRequest,
   RunEvent,
+  RunRecord,
 } from '@ignite/api';
 import { allowedActions } from '@ignite/api';
 import {
@@ -319,6 +320,35 @@ describe('DeployEngine', () => {
       expect(perChain).toEqual([...perChain].sort((a, b) => a - b));
     }
     expect(harness.artifactWrites).toBeGreaterThanOrEqual(2);
+  });
+
+  it('atomically adds the durable hook outbox on the first terminal transition and dispatches only once', async () => {
+    const store = new RunStore({ baseDir: home });
+    const terminalSnapshots: RunRecord[] = [];
+    const runStore = {
+      create: store.create.bind(store), get: store.get.bind(store), list: store.list.bind(store),
+      findByIdempotencyKey: store.findByIdempotencyKey.bind(store), recoverStartup: store.recoverStartup.bind(store),
+      listAllRuns: store.listAllRuns.bind(store),
+      mutate: (profileId: string, runId: string, fn: (run: RunRecord) => void) => store.mutate(profileId, runId, (draft) => {
+        fn(draft);
+        if (['completed', 'failed', 'aborted'].includes(draft.status)) terminalSnapshots.push(structuredClone(draft));
+      }),
+    };
+    const dispatch = vi.fn(async () => undefined);
+    const harness = makeEngine({ runStore, deploymentHooks: { dispatch, reconcileStartup: async () => undefined } });
+    const plan = makePlan({ chains: [1] });
+    const workflow = { repoPathOrUrl: '/workflow', name: 'release', hooks: ['chronicles'], docHash: HASH };
+    const launched = await harness.engine.launch({
+      profileId: 'p1', plan, rpcSelection: { '1': 'rpc' }, idempotencyKey: crypto.randomUUID(), workflow,
+    });
+    await eventually(async () => (await store.get('p1', launched.id))?.status === 'completed');
+
+    expect(terminalSnapshots[0]).toMatchObject({
+      status: 'completed', hookRuns: { chronicles: { status: 'pending' } },
+    });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    await harness.engine.abort('p1', launched.id);
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('enforces exactly the shared verb table for every pause context', async () => {

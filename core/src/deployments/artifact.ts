@@ -9,6 +9,9 @@ import type {
 } from '@ignite/api';
 import { DeploymentArtifactSchema } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
+import { RepoService } from '../repos/RepoService.js';
+import { RunStore } from './RunStore.js';
+import { getLogger } from '../utils/logger.js';
 import { collectRefs, effectiveValue, mergeArgs, mergeCallTarget, mergeGas, mergeLibraries, resolveSigner } from './resolver.js';
 
 export function renderArtifact(
@@ -152,7 +155,13 @@ export function renderArtifact(
 
 export async function writeArtifact(
   run: RunRecord,
-  deps?: { baseDir?: string; verifications?: VerificationTask[] }
+  deps?: {
+    baseDir?: string;
+    verifications?: VerificationTask[];
+    repoService?: Pick<RepoService, 'writeRepoFile'>;
+    runStore?: Pick<RunStore, 'mutate'>;
+    now?: () => number;
+  }
 ): Promise<string> {
   const baseDir = deps?.baseDir ?? FileSystem.getInstance().getIgniteHome();
   const file = path.join(
@@ -163,7 +172,39 @@ export async function writeArtifact(
     'artifacts',
     `${run.id}.json`
   );
-  await FileSystem.getInstance().writeJsonFile(file, renderArtifact(run, deps?.verifications));
+  const artifact = renderArtifact(run, deps?.verifications);
+  await FileSystem.getInstance().writeJsonFile(file, artifact);
+  if (run.workflow) {
+    const relPath = path.posix.join('ignite', 'deployments', run.workflow.name, `${run.id}.json`);
+    const repos = deps?.repoService ?? RepoService.getInstance();
+    const store = deps?.runStore ?? new RunStore({ baseDir });
+    const updatedAt = new Date((deps?.now ?? Date.now)()).toISOString();
+    let outcome: RunRecord['repoArtifact'];
+    try {
+      const result = await repos.writeRepoFile(
+        run.workflow.repoPathOrUrl,
+        relPath,
+        `${JSON.stringify(artifact, null, 2)}\n`
+      );
+      outcome = result.success
+        ? { path: relPath, status: 'written', updatedAt }
+        : { path: relPath, status: 'failed', error: result.error.message, updatedAt };
+    } catch (error) {
+      outcome = {
+        path: relPath,
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+        updatedAt,
+      };
+    }
+    try {
+      await store.mutate(run.profileId, run.id, (current) => { current.repoArtifact = outcome; });
+    } catch (error) {
+      getLogger().warn(`workflow artifact outcome persist failed for ${run.id}: ${String(error)}`);
+    }
+    if (outcome.status === 'failed')
+      getLogger().warn(`workflow artifact copy failed for ${run.id}: ${outcome.error}`);
+  }
   return file;
 }
 

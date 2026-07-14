@@ -45,6 +45,7 @@ import { runStatus } from './runStatus.js';
 import { validatePlan } from './validation.js';
 import { VerificationQueue } from '../verifications/VerificationQueue.js';
 import { getLogger } from '../utils/logger.js';
+import { DeploymentHookService } from './DeploymentHookService.js';
 
 type ResolvedRpc = { url: string; fingerprint: string; label?: string };
 type ExecuteResult = {
@@ -103,6 +104,7 @@ export interface DeployEngineDeps {
   verificationQueue: Pick<VerificationQueue, 'enqueueForConfirmedStep'>;
   rebroadcast: (url: string, raw: Hex) => Promise<Hex>;
   chainMetadata: (chainId: number) => Promise<ChainMetadata>;
+  deploymentHooks: Pick<DeploymentHookService, 'dispatch' | 'reconcileStartup'>;
   now: () => number;
 }
 
@@ -184,6 +186,7 @@ export class DeployEngine {
             .createPublicClient({ transport: (await import('viem')).http(url) })
             .sendRawTransaction({ serializedTransaction: raw })),
       chainMetadata: deps?.chainMetadata ?? defaultChainMetadata,
+      deploymentHooks: deps?.deploymentHooks ?? DeploymentHookService.getInstance(),
       now: deps?.now ?? Date.now,
     };
   }
@@ -753,6 +756,7 @@ export class DeployEngine {
         )
       )
     );
+    await this.deps.deploymentHooks.reconcileStartup();
   }
   async get(profileId: string, runId: string): Promise<RunRecord | undefined> {
     return this.deps.runStore.get(profileId, runId);
@@ -1464,17 +1468,31 @@ export class DeployEngine {
     fn: (run: RunRecord) => void,
     chainId?: number
   ): Promise<RunRecord> {
+    let enteredTerminal = false;
     const next = await this.deps.runStore.mutate(profileId, runId, (run) => {
+      const wasTerminal = terminalRunStatus(run.status);
       fn(run);
       run.updatedAt = iso(this.deps.now());
       run.status = runStatus(run);
+      enteredTerminal = !wasTerminal && terminalRunStatus(run.status);
+      if (enteredTerminal && run.workflow) {
+        run.hookRuns ??= {};
+        for (const pluginId of run.workflow.hooks)
+          run.hookRuns[pluginId] ??= { status: 'pending' };
+      }
     });
     if (chainId === undefined) this.events.emitRun(next, this.deps.now());
     else {
       this.events.emitLane(next, chainId, this.deps.now());
       this.events.emitRun(next, this.deps.now());
     }
+    if (enteredTerminal) {
+      void this.deps.deploymentHooks.dispatch(next).catch((error) =>
+        getLogger().warn(`deployment hook dispatch failed for ${next.id}: ${String(error)}`)
+      );
+    }
     if (
+      enteredTerminal ||
       terminal(
         next.lanes[String(chainId ?? -1)] ?? ({ status: 'pending' } as Lane)
       )
@@ -1532,6 +1550,10 @@ function makeLane(chainId: number, plan: DeploymentPlan, predicted?: Record<stri
 }
 function terminal(lane: Lane): boolean {
   return lane.status === 'completed' || lane.status === 'aborted';
+}
+
+function terminalRunStatus(status: RunRecord['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'aborted';
 }
 function iso(now: number): string {
   return new Date(now).toISOString();
