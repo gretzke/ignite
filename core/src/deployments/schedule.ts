@@ -1,11 +1,17 @@
 import { encodeDeployData, encodeFunctionData, getContractAddress, type Abi, type AbiParameter } from 'viem';
 import { CREATE2_PROXY_ADDRESS, type DeploymentPlan, type DeployStep, type FrozenInputs, type Hex, type Hex32 } from '@ignite/api';
 import { effectiveSalt, initcodeHashOf, predictCreate2Address, create2Calldata } from './create2.js';
-import { callAbiItem, effectiveValue, mergeCallTarget, resolveSigner, resolveStepValues, toConstructorArgs, validateDependencies } from './resolver.js';
+import { callAbiItem, dynamicDeterministicStepIds, effectiveValue, mergeCallTarget, resolveSigner, resolveStepValues, toConstructorArgs, validateDependencies } from './resolver.js';
 import { flattenLinkReferences, linkBytecode } from './linking.js';
+import type { DeploymentTypeService } from './DeploymentTypeService.js';
 
 export interface ScheduleEntry { stepId: string; kind: 'tx' | 'existing'; from?: Hex; to?: Hex | null; data?: Hex; value?: bigint; address?: Hex; predictedAddress?: Hex; }
 export type Predictions = Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>;
+export type ProvisionalPrediction = { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32; provisional?: true; notes?: string[] } | { absent: true; reason: string; provisional: true };
+export type ChainPredictions = { predictions: Predictions; entries: Record<string, ProvisionalPrediction>; createAddresses: Map<string, Hex>; baseNonces: Map<Hex, number>; confirmedExisting: Set<string>; dynamic: Set<string> };
+type SnapshotClient = { getTransactionCount?(args: { address: Hex; blockTag?: 'latest' }): Promise<number | bigint>; getCode?(args: { address: Hex }): Promise<Hex | undefined> };
+export function hasPredicted(entry: ProvisionalPrediction | undefined): entry is Exclude<ProvisionalPrediction, { absent: true }> { return Boolean(entry && 'predictedAddress' in entry); }
+const provisionalCache = new Map<string, { expires: number; value: Promise<{ salt: Hex32; predictedAddress: Hex; notes: string[] }> }>();
 
 function constructorInputs(abi: unknown): AbiParameter[] {
   return Array.isArray(abi) ? ((abi.find((entry) => entry && typeof entry === 'object' && (entry as { type?: string }).type === 'constructor') as { inputs?: AbiParameter[] } | undefined)?.inputs ?? []) : [];
@@ -32,7 +38,8 @@ export function buildRuntimeCode(step: DeployStep, input: FrozenInputs[string], 
 export function predictPlanAddresses(plan: DeploymentPlan, frozen: FrozenInputs, chainId: number): Predictions {
   validateDependencies(plan);
   const predicted: Predictions = {};
-  const remaining = plan.steps.filter((step): step is DeployStep => step.kind === 'deploy' && (step.strategy?.kind === 'create2' || step.strategy?.kind === 'plugin'));
+  const dynamic = dynamicDeterministicStepIds(plan, chainId);
+  const remaining = plan.steps.filter((step): step is DeployStep => step.kind === 'deploy' && !dynamic.has(step.id) && (step.strategy?.kind === 'create2' || step.strategy?.kind === 'plugin'));
   while (remaining.length) {
     let firstRealError: unknown;
     const next = remaining.find((step) => {
@@ -59,6 +66,75 @@ export function predictPlanAddresses(plan: DeploymentPlan, frozen: FrozenInputs,
   return predicted;
 }
 
+/** One review-time view: static commitments plus disposable dynamic estimates. */
+export async function buildChainPredictions(plan: DeploymentPlan, frozen: FrozenInputs, chainId: number, deps: { client?: SnapshotClient; signers?: Map<string, Hex>; deploymentTypes?: Pick<DeploymentTypeService, 'prepare'> }): Promise<ChainPredictions> {
+  validateDependencies(plan);
+  const dynamic = dynamicDeterministicStepIds(plan, chainId);
+  const predictions = predictPlanAddresses(plan, frozen, chainId);
+  const entries: Record<string, ProvisionalPrediction> = { ...predictions };
+  const signers = new Map<string, Hex>();
+  for (const step of plan.steps) {
+    const signer = deps.signers?.get(step.id) ?? resolveSigner(plan, step, chainId)?.address as Hex | undefined;
+    if (signer) signers.set(step.id, signer);
+  }
+  const baseNonces = new Map<Hex, number>();
+  let nonceError: string | undefined;
+  const addresses = [...new Set([...signers.values()].map((address) => address.toLowerCase() as Hex))];
+  if (!deps.client?.getTransactionCount && addresses.length) nonceError = 'nonce read is unavailable';
+  else await Promise.all(addresses.map(async (address) => {
+    try { baseNonces.set(address, Number(await deps.client!.getTransactionCount!({ address, blockTag: 'latest' }))); }
+    catch (error) { nonceError ??= error instanceof Error ? error.message : String(error); }
+  }));
+  const confirmedExisting = new Set<string>();
+  if (deps.client?.getCode) for (const step of plan.steps) {
+    if (step.kind !== 'deploy' || dynamic.has(step.id) || !step.strategy || step.strategy.kind === 'create') continue;
+    const current = predictions[step.id];
+    if (!current || !ackIsFresh(step.strategy, chainId, current)) continue;
+    const code = await deps.client.getCode({ address: current.predictedAddress }).catch(() => undefined);
+    if (code && code !== '0x') confirmedExisting.add(step.id);
+  }
+  const createAddresses = nonceError ? new Map<string, Hex>() : computeCreateAddresses(plan, frozen, chainId, signers, baseNonces, confirmedExisting);
+  for (const step of plan.steps) {
+    if (step.kind !== 'deploy' || !dynamic.has(step.id)) continue;
+    const absent = (reason: string) => { entries[step.id] = { absent: true, provisional: true, reason }; };
+    const signer = signers.get(step.id);
+    if (!signer) { absent('signer is unavailable'); continue; }
+    if (nonceError) { absent(`nonce read failed: ${nonceError}`); continue; }
+    try {
+      const input = frozen[step.contractId]; if (!input) throw new Error(`Frozen input missing for ${step.contractId}`);
+      const initcode = buildInitcode(step, input, chainId, (id) => {
+        const entry = entries[id];
+        if (hasPredicted(entry)) return entry.predictedAddress;
+        const created = createAddresses.get(id); if (created) return created;
+        throw new Error(`Missing provisional pointer ${id}`);
+      });
+      const hash = initcodeHashOf(initcode);
+      const strategy = step.strategy!;
+      if (strategy.kind === 'create2') {
+        const salt = effectiveSalt(strategy, chainId); if (!salt) throw new Error(`No salt is available for ${step.id}`);
+        entries[step.id] = { salt, initcodeHash: hash, predictedAddress: predictCreate2Address(salt, hash), provisional: true };
+        continue;
+      }
+      if (!deps.deploymentTypes) throw new Error('deployment-type preparation is unavailable');
+      const runtimeBytecode = buildRuntimeCode(step, input, chainId, (id) => {
+        const entry = entries[id]; if (hasPredicted(entry)) return entry.predictedAddress;
+        return createAddresses.get(id) ?? (() => { throw new Error(`Missing provisional pointer ${id}`); })();
+      });
+      if (strategy.kind !== 'plugin') throw new Error(`Unsupported deterministic strategy for ${step.id}`);
+      const cacheKey = `${strategy.pluginId}:${chainId}:${hash}:${runtimeBytecode ? initcodeHashOf(runtimeBytecode) : ''}:${JSON.stringify(strategy.params ?? {})}`;
+      const now = Date.now(); let cached = provisionalCache.get(cacheKey);
+      if (!cached || cached.expires < now) {
+        cached = { expires: now + 30_000, value: deps.deploymentTypes.prepare(strategy.pluginId, { chainId, initcode, ...(runtimeBytecode === undefined ? {} : { runtimeBytecode }), params: strategy.params }) };
+        provisionalCache.set(cacheKey, cached);
+        if (provisionalCache.size > 50) provisionalCache.delete(provisionalCache.keys().next().value!);
+      }
+      const prepared = await cached.value;
+      entries[step.id] = { salt: prepared.salt as Hex32, initcodeHash: hash, predictedAddress: prepared.predictedAddress as Hex, provisional: true, notes: prepared.notes };
+    } catch (error) { absent(error instanceof Error ? error.message : String(error)); }
+  }
+  return { predictions, entries, createAddresses, baseNonces, confirmedExisting, dynamic };
+}
+
 export function ackIsFresh(strategy: Exclude<NonNullable<DeployStep['strategy']>, { kind: 'create' }>, chainId: number, current: { predictedAddress: Hex; initcodeHash: Hex32 }): boolean {
   const ack = strategy.acknowledgeDeployed?.[String(chainId)];
   return Boolean(ack && ack.predictedAddress.toLowerCase() === current.predictedAddress.toLowerCase() && ack.initcodeHash.toLowerCase() === current.initcodeHash.toLowerCase());
@@ -83,8 +159,8 @@ export function computeCreateAddresses(plan: DeploymentPlan, _frozen: FrozenInpu
   return addresses;
 }
 
-export function buildSchedule(plan: DeploymentPlan, frozen: FrozenInputs, chainId: number, opts: { signers: Map<string, Hex>; createAddresses?: Map<string, Hex>; confirmedExisting?: Set<string> }): ScheduleEntry[] {
-  const predictions = predictPlanAddresses(plan, frozen, chainId);
+export function buildSchedule(plan: DeploymentPlan, frozen: FrozenInputs, chainId: number, opts: { signers: Map<string, Hex>; createAddresses?: Map<string, Hex>; confirmedExisting?: Set<string>; predictions?: Predictions }): ScheduleEntry[] {
+  const predictions = opts.predictions ?? predictPlanAddresses(plan, frozen, chainId);
   const creates = opts.createAddresses ?? new Map<string, Hex>();
   const addresses = (id: string) => predictions[id]?.predictedAddress ?? creates.get(id) ?? (() => { throw new Error(`No resolved address for ${id}`); })();
   return plan.steps.map((step) => {

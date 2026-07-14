@@ -4,7 +4,10 @@ import {
   ackIsFresh,
   buildSchedule,
   computeCreateAddresses,
+  hasPredicted,
   predictPlanAddresses,
+  type ChainPredictions,
+  type Predictions,
   type ScheduleEntry,
 } from './schedule.js';
 import type { ForkRunner } from './forkContainer.js';
@@ -156,21 +159,17 @@ export async function simulateChain(args: {
   // eagerly created runner leaks its container + concurrency permit when
   // tier 1 succeeds (final-review F1).
   getFork: () => Promise<ForkRunner | undefined>;
+  predictions?: ChainPredictions;
 }): Promise<SimulationOutcome> {
   const signerAddresses = [
     ...new Set(
       [...args.signers.values()].map((address) => address.toLowerCase() as Hex)
     ),
   ];
-  const baseNonces = new Map<Hex, number>();
-  await Promise.all(
+  const baseNonces = args.predictions?.baseNonces ?? new Map<Hex, number>();
+  if (!args.predictions) await Promise.all(
     signerAddresses.map(async (address) => {
-      baseNonces.set(
-        address,
-        asNumber(
-          await args.client.getTransactionCount({ address, blockTag: 'latest' })
-        )
-      );
+      baseNonces.set(address, asNumber(await args.client.getTransactionCount({ address, blockTag: 'latest' })));
     })
   );
   // Acknowledged-existing create2 steps broadcast nothing, so they must not
@@ -178,34 +177,30 @@ export async function simulateChain(args: {
   // alone is not enough: execution re-checks the chain and DEPLOYS when the
   // predicted address has no code, so simulation may only omit a tx after
   // observing nonempty code itself (final-review F7).
-  const predictions = predictPlanAddresses(args.plan, args.frozen, args.chainId);
+  const predictions: Predictions = args.predictions
+    ? Object.fromEntries(Object.entries(args.predictions.entries).flatMap(([id, entry]) => hasPredicted(entry) ? [[id, entry]] : []))
+    : predictPlanAddresses(args.plan, args.frozen, args.chainId);
   const ackCandidates = args.plan.steps.filter(
     (step) =>
       step.kind === 'deploy' &&
       step.strategy &&
       step.strategy.kind !== 'create' &&
-      predictions[step.id] !== undefined &&
+      predictions[step.id] !== undefined && !args.predictions?.dynamic.has(step.id) &&
       ackIsFresh(step.strategy, args.chainId, predictions[step.id])
   );
-  const skipTx = new Set<string>();
-  for (const step of ackCandidates) {
+  const skipTx = args.predictions ? new Set(args.predictions.confirmedExisting) : new Set<string>();
+  for (const step of args.predictions ? [] : ackCandidates) {
     const code = await args.client
       .getCode({ address: predictions[step.id].predictedAddress })
       .catch(() => undefined);
     if (code && code !== '0x') skipTx.add(step.id);
   }
-  const createAddresses = computeCreateAddresses(
-    args.plan,
-    args.frozen,
-    args.chainId,
-    args.signers,
-    baseNonces,
-    skipTx
-  );
+  const createAddresses = args.predictions?.createAddresses ?? computeCreateAddresses(args.plan, args.frozen, args.chainId, args.signers, baseNonces, skipTx);
   const schedule = buildSchedule(args.plan, args.frozen, args.chainId, {
     signers: args.signers,
     createAddresses,
     confirmedExisting: skipTx,
+    predictions,
   });
   const entries = initialEntries(schedule);
   const fallthrough: string[] = [];

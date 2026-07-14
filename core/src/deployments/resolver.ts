@@ -143,6 +143,7 @@ export function validateDependencies(plan: DeploymentPlan): void {
   // Per-chain: per-chain overrides can introduce refs/targets that the first
   // chain's merge never sees, and libraries may differ per chain.
   for (const chainId of plan.chains.length ? plan.chains : [1]) {
+    const dynamic = dynamicDeterministicStepIds(plan, chainId);
     const graph = new Map<string, string[]>();
     for (const [id, current] of byId) {
       if (current.step.kind === 'call') {
@@ -165,8 +166,10 @@ export function validateDependencies(plan: DeploymentPlan): void {
         const target = byId.get(ref.stepId);
         if (!target || target.step.kind !== 'deploy') throw new IgniteError(`Pointer target ${ref.stepId} is not a deploy step`, 'POINTER_TARGET_NOT_DEPLOY', { stepId: ref.stepId });
         const targetStrategy = target.step.strategy ?? { kind: 'create' as const };
-        if (strategy.kind !== 'create' && targetStrategy.kind === 'create') throw new IgniteError(`Create2 input ${ref.path} references non-concrete create step ${ref.stepId}`, 'CREATE2_POINTER_NOT_CONCRETE', { stepId: ref.stepId, path: ref.path });
+        if (strategy.kind !== 'create' && targetStrategy.kind === 'create' && target.index >= current.index) throw new IgniteError(`Create2 input ${ref.path} references non-concrete create step ${ref.stepId} (later in this lane)`, 'CREATE2_POINTER_NOT_CONCRETE', { stepId: ref.stepId, path: ref.path });
         if (strategy.kind === 'create' && targetStrategy.kind === 'create' && target.index >= current.index) throw new IgniteError(`Create step references later create step ${ref.stepId}`, 'POINTER_FORWARD_CREATE', { stepId: ref.stepId, path: ref.path });
+        if (strategy.kind !== 'create' && targetStrategy.kind !== 'create' && dynamic.has(id) && dynamic.has(ref.stepId) && target.index >= current.index)
+          throw new IgniteError(`Create2 input ${ref.path} references later dynamic step ${ref.stepId}`, 'CREATE2_POINTER_NOT_CONCRETE', { stepId: ref.stepId, path: ref.path });
         if (strategy.kind !== 'create' && targetStrategy.kind !== 'create') graph.set(id, [...(graph.get(id) ?? []), ref.stepId]);
       }
     }
@@ -174,6 +177,30 @@ export function validateDependencies(plan: DeploymentPlan): void {
     const visit = (id: string) => { if (visiting.has(id)) { const cycle = [...stack.slice(stack.indexOf(id)), id]; throw new IgniteError(`Create2 prediction cycle: ${cycle.join(' -> ')}`, 'CREATE2_PREDICTION_CYCLE', { cycle }); } if (visited.has(id)) return; visiting.add(id); stack.push(id); for (const next of graph.get(id) ?? []) visit(next); stack.pop(); visiting.delete(id); visited.add(id); };
     for (const id of graph.keys()) visit(id);
   }
+}
+
+/** Deterministic inputs that cannot be committed before this chain's lane runs. */
+export function dynamicDeterministicStepIds(plan: DeploymentPlan, chainId: number): Set<string> {
+  const byId = new Map(plan.steps.map((step) => [step.id, step]));
+  const memo = new Map<string, boolean>();
+  const visiting = new Set<string>();
+  const dynamic = (id: string): boolean => {
+    const known = memo.get(id); if (known !== undefined) return known;
+    const step = byId.get(id);
+    if (!step || step.kind !== 'deploy' || !step.strategy || step.strategy.kind === 'create') return false;
+    // A deterministic-only cycle remains the existing prediction-cycle error;
+    // it is not evidence that either input is runtime-dynamic.
+    if (visiting.has(id)) return false;
+    visiting.add(id);
+    const result = collectRefs(step, chainId).some((ref) => {
+      const target = byId.get(ref.stepId);
+      if (!target || target.kind !== 'deploy') return false;
+      return !target.strategy || target.strategy.kind === 'create' || dynamic(target.id);
+    });
+    visiting.delete(id); memo.set(id, result); return result;
+  };
+  for (const step of plan.steps) if (step.kind === 'deploy' && step.strategy && step.strategy.kind !== 'create' && dynamic(step.id)) memo.set(step.id, true);
+  return new Set([...memo].flatMap(([id, value]) => value ? [id] : []));
 }
 
 export function resolveSigner(

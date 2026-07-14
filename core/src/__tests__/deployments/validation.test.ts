@@ -7,7 +7,7 @@ import {
 } from '@ignite/api';
 import { validatePlan } from '../../deployments/validation.js';
 import { initcodeHashOf, predictCreate2Address } from '../../deployments/create2.js';
-import { buildInitcode } from '../../deployments/schedule.js';
+import { buildChainPredictions, buildInitcode } from '../../deployments/schedule.js';
 
 const ADDRESS = '0x0000000000000000000000000000000000000001';
 const HASH = 'b'.repeat(64);
@@ -106,6 +106,21 @@ function deps(overrides: Record<string, unknown> = {}): any {
 }
 
 describe('validatePlan', () => {
+  it('builds one nonce snapshot and keeps dynamic plugin estimates provisional', async () => {
+    const nonce = vi.fn(async () => 7);
+    const salt = `0x${'22'.repeat(32)}` as const;
+    const prepared = vi.fn(async (_pluginId: string, input: { initcode: `0x${string}` }) => ({ salt, predictedAddress: predictCreate2Address(salt, initcodeHashOf(input.initcode)), notes: ['mined'] }));
+    const hookFrozen = { ...frozen, hook: { ...frozen.token, abi: [{ type: 'constructor', inputs: [{ name: 'owner', type: 'address' }] }] } };
+    const snapshot = await buildChainPredictions(plan({ steps: [
+      { id: 'plain', kind: 'deploy', contractId: 'token', args: { supply: '1' } },
+      { id: 'hook', kind: 'deploy', contractId: 'hook', args: { owner: { $ref: { kind: 'step', stepId: 'plain' } } }, strategy: { kind: 'plugin', pluginId: 'hook', prepared: { '1': { predictedAddress: ADDRESS, initcodeHash: `0x${'44'.repeat(32)}` } } } },
+    ] }), hookFrozen, 1, { client: { getTransactionCount: nonce }, deploymentTypes: { prepare: prepared } as any });
+    expect(nonce).toHaveBeenCalledOnce();
+    expect(prepared).toHaveBeenCalledOnce();
+    expect(snapshot.entries.hook).toMatchObject({ provisional: true, notes: ['mined'] });
+    expect(snapshot.predictions.hook).toBeUndefined();
+  });
+
   it('single-flights only byte-identical validation requests', async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => {

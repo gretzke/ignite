@@ -32,7 +32,7 @@ import {
   validateDependencies,
   callAbiItem,
   mergeCallTarget,} from './resolver.js';
-import { ackIsFresh, buildInitcode, buildRuntimeCode, predictPlanAddresses } from './schedule.js';
+import { ackIsFresh, buildChainPredictions, buildInitcode, buildRuntimeCode, hasPredicted, type ChainPredictions } from './schedule.js';
 import {
   simulateChain,
   type SimulationOutcome,
@@ -145,7 +145,7 @@ export interface ValidationDeps {
   resolveVerifierTrust: (
     pluginId: string
   ) => Promise<{ metadata: PluginMetadata; grant: PermissionGrant }>;
-  deploymentTypes: Pick<DeploymentTypeService, 'list' | 'validate'>;
+  deploymentTypes: Pick<DeploymentTypeService, 'list' | 'prepare' | 'validate'>;
   makeForkRunner: (opts: {
     rpcUrl: string;
     chainId: number;
@@ -266,14 +266,25 @@ async function validatePlanOnce(
       accountsSnapshot,
       accountsError
     );
-    const args = validateArgs(plan, chainId, frozen, freezeError);
+    let snapshot: ChainPredictions | undefined;
+    if (!freezeError) {
+      try {
+        snapshot = await buildChainPredictions(plan, frozen, chainId, {
+          client: endpoint?.url ? deps.createClient(endpoint.url) : undefined,
+          signers: signerResults.signers,
+          deploymentTypes: deps.deploymentTypes,
+        });
+      } catch { /* static prediction errors remain the args/create2 blocker */ }
+    }
+    const args = validateArgs(plan, chainId, frozen, freezeError, snapshot);
     const create2 = await validateCreate2(
       plan,
       chainId,
       frozen,
       endpoint?.url,
       deps,
-      freezeError
+      freezeError,
+      snapshot
     );
     if (create2.predicted) predicted[key] = create2.predicted;
     const simulation = await validateSimulation(
@@ -283,7 +294,8 @@ async function validatePlanOnce(
       endpoint?.url,
       signerResults.signers,
       deps,
-      freezeError
+      freezeError,
+      snapshot
     );
     const balance = await validateBalance(
       plan,
@@ -292,7 +304,8 @@ async function validatePlanOnce(
       signerResults.signers,
       simulation.outcome,
       deps,
-      freezeError
+      freezeError,
+      snapshot
     );
     const verification = await validateVerification(
       plan,
@@ -675,7 +688,8 @@ function validateArgs(
   plan: DeploymentPlan,
   chainId: number,
   frozen: FrozenInputs,
-  freezeError: unknown
+  freezeError: unknown,
+  snapshot?: ChainPredictions
 ): ValidationItem {
   if (freezeError)
     return failure(
@@ -689,9 +703,9 @@ function validateArgs(
     // incorrectly reject an otherwise valid address constructor argument.
     // Plain-create targets have no review-time address, so retain the
     // documented zero-address dry-run placeholder for type checking only.
-    const predictions = predictPlanAddresses(plan, frozen, chainId);
+    const predictions = snapshot?.entries ?? {};
     const resolveRef = (id: string): Hex =>
-      predictions[id]?.predictedAddress ?? '0x0000000000000000000000000000000000000000';
+      hasPredicted(predictions[id]) ? predictions[id].predictedAddress : '0x0000000000000000000000000000000000000000';
     for (const step of plan.steps) {
       if (step.kind === 'call') {
         // Calls get the same unknown/missing/type discipline as constructors
@@ -779,7 +793,8 @@ async function validateCreate2(
   frozen: FrozenInputs,
   rpcUrl: string | undefined,
   deps: ValidationDeps,
-  freezeError: unknown
+  freezeError: unknown,
+  snapshot?: ChainPredictions
 ): Promise<{
   item: ValidationItem;
   predicted?: Record<
@@ -827,13 +842,15 @@ async function validateCreate2(
           'The canonical CREATE2 proxy has unexpected runtime code'
         ),
       };
-    const predictions = predictPlanAddresses(plan, frozen, chainId);
+    if (!snapshot) throw new Error('Create2 predictions are unavailable');
+    const predictions = snapshot.predictions;
     const installed = deterministic.some(
-      (step) => step.strategy?.kind === 'plugin'
+      (step) => step.strategy?.kind === 'plugin' && !snapshot.dynamic.has(step.id)
     )
       ? await deps.deploymentTypes.list()
       : [];
     for (const step of deterministic) {
+      if (snapshot.dynamic.has(step.id)) continue;
       const current = predictions[step.id]!;
       const strategy = step.strategy! as Exclude<
         NonNullable<typeof step.strategy>,
@@ -916,10 +933,20 @@ async function validateCreate2(
           ),
         };
     }
+    const provisionalSteps = deterministic.filter((step) => snapshot.dynamic.has(step.id)).map((step) => {
+      const entry = snapshot.entries[step.id];
+      return hasPredicted(entry)
+        ? { stepId: step.id, predictedAddress: entry.predictedAddress, ...(entry.notes?.length ? { note: entry.notes.join('; ') } : {}) }
+        : { stepId: step.id, degraded: entry && 'reason' in entry ? entry.reason : 'prediction unavailable' };
+    });
+    const reviewPredicted = Object.fromEntries(Object.entries(snapshot.entries).flatMap(([id, entry]) => hasPredicted(entry) ? [[id, { ...entry, ...(entry.provisional ? { provisional: true } : {}) }]] : []));
     return {
       item: success('CREATE2 proxy and predicted addresses are ready', {
-        predicted: predictions,
+        predicted: reviewPredicted,
+        ...(provisionalSteps.length ? { provisionalSteps } : {}),
       }),
+      // Lane seeding is intentionally static-only; provisional addresses are
+      // review data and must never become execution commitments.
       predicted: predictions,
     };
   } catch (error) {
@@ -942,8 +969,14 @@ async function validateSimulation(
   rpcUrl: string | undefined,
   signers: Map<string, Hex>,
   deps: ValidationDeps,
-  freezeError: unknown
+  freezeError: unknown,
+  snapshot?: ChainPredictions
 ) {
+  const degraded = snapshot && [...snapshot.dynamic].map((id) => snapshot.entries[id]).find((entry) => entry && 'absent' in entry) as Extract<ChainPredictions['entries'][string], { absent: true }> | undefined;
+  if (degraded) {
+    const message = `Estimation unavailable: provisional mining failed: ${degraded.reason}`;
+    return { item: warning('SIMULATION_UNAVAILABLE', message), estimation: warning('ESTIMATION_FAILED', message), outcome: undefined };
+  }
   if (freezeError || !rpcUrl)
     return {
       item: failure(
@@ -984,6 +1017,7 @@ async function validateSimulation(
       frozen,
       signers,
       client: simClient,
+      predictions: snapshot,
       getFork: () =>
         canFork
           ? deps.makeForkRunner({ rpcUrl, chainId })
@@ -1052,8 +1086,11 @@ async function validateBalance(
   signers: Map<string, Hex>,
   outcome: SimulationOutcome | undefined,
   deps: ValidationDeps,
-  freezeError: unknown
+  freezeError: unknown,
+  snapshot?: ChainPredictions
 ): Promise<ValidationItem> {
+  const degraded = snapshot && [...snapshot.dynamic].map((id) => snapshot.entries[id]).find((entry) => entry && 'absent' in entry) as Extract<ChainPredictions['entries'][string], { absent: true }> | undefined;
+  if (degraded) return warning('BALANCE_UNAVAILABLE', `Balance unavailable: provisional mining failed: ${degraded.reason}`);
   if (freezeError || !rpcUrl)
     return failure(
       'BALANCE_UNAVAILABLE',

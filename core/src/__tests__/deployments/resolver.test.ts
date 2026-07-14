@@ -10,6 +10,7 @@ import {
   resolveSigner,
   resolveStepValues,
   toConstructorArgs,
+  dynamicDeterministicStepIds,
   validateDependencies,
 } from '../../deployments/resolver.js';
 
@@ -78,6 +79,17 @@ describe('deployment resolver', () => {
     try { validateDependencies(plan); throw new Error('expected failure'); }
     catch (error) { expect(error).toMatchObject({ code: 'CREATE2_PREDICTION_CYCLE' }); }
   });
+
+  it('classifies dynamic deterministic steps transitively per chain and ignores calls', () => {
+    const plan: DeploymentPlan = { schemaVersion: 1, contracts: [], chains: [1, 2], signers: {}, steps: [
+      { id: 'plain', kind: 'deploy', contractId: 'a' },
+      { id: 'first', kind: 'deploy', contractId: 'b', strategy: { kind: 'create2', salt: `0x${'01'.repeat(32)}` }, argsPerChain: { '1': { owner: { $ref: { kind: 'step', stepId: 'plain' } } } } },
+      { id: 'second', kind: 'deploy', contractId: 'c', strategy: { kind: 'create2', salt: `0x${'02'.repeat(32)}` }, args: { owner: { $ref: { kind: 'step', stepId: 'first' } } } },
+      { id: 'call', kind: 'call', target: { kind: 'address', address }, signature: 'poke()', payable: false },
+    ] };
+    expect(dynamicDeterministicStepIds(plan, 1)).toEqual(new Set(['first', 'second']));
+    expect(dynamicDeterministicStepIds(plan, 2)).toEqual(new Set());
+  });
 });
 
 describe('call-arg and per-chain dependency validation', () => {
@@ -104,5 +116,22 @@ describe('call-arg and per-chain dependency validation', () => {
       ],
     };
     expect(() => validateDependencies(plan)).toThrowError(/non-concrete create step/);
+  });
+
+  it('allows earlier creates, rejects forward dynamic refs, and preserves static forward commitments', () => {
+    const salt = `0x${'55'.repeat(32)}` as const;
+    expect(() => validateDependencies({ ...base, steps: [
+      { id: 'plain', kind: 'deploy', contractId: 'c' },
+      { id: 'dynamic', kind: 'deploy', contractId: 'c', strategy: { kind: 'create2', salt }, args: { owner: { $ref: { kind: 'step', stepId: 'plain' } } } },
+    ] })).not.toThrow();
+    expect(() => validateDependencies({ ...base, steps: [
+      { id: 'plain', kind: 'deploy', contractId: 'c' },
+      { id: 'early', kind: 'deploy', contractId: 'c', strategy: { kind: 'create2', salt }, args: { owner: { $ref: { kind: 'step', stepId: 'late' } } } },
+      { id: 'late', kind: 'deploy', contractId: 'c', strategy: { kind: 'create2', salt }, args: { owner: { $ref: { kind: 'step', stepId: 'plain' } } } },
+    ] })).toThrow(/later dynamic step/);
+    expect(() => validateDependencies({ ...base, steps: [
+      { id: 'early', kind: 'deploy', contractId: 'c', strategy: { kind: 'create2', salt }, args: { owner: { $ref: { kind: 'step', stepId: 'late' } } } },
+      { id: 'late', kind: 'deploy', contractId: 'c', strategy: { kind: 'create2', salt } },
+    ] })).not.toThrow();
   });
 });
