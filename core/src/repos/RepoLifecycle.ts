@@ -20,8 +20,9 @@ import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { statFingerprint } from './fingerprint.js';
 import { ErrorCodes } from '../types/errors.js';
 import { getLogger } from '../utils/logger.js';
+import { PinnedStore } from './PinnedStore.js';
 
-export type LifecycleMode = 'sweep' | 'add' | 'recompile';
+export type LifecycleMode = 'sweep' | 'add' | 'recompile' | 'pinned';
 
 export const LIFECYCLE_JOB_TYPE = 'repo.lifecycle';
 
@@ -44,9 +45,10 @@ export interface RepoLifecycleDeps {
   jobs: Pick<JobManager, 'start' | 'get'>;
   executor: Pick<PluginExecutor, 'execute'>;
   registryLoader: Pick<PluginRegistryLoader, 'getPluginsByType'>;
-  repos: Pick<RepoService, 'init' | 'resolveWorkspacePath'>;
+  repos: Pick<RepoService, 'init' | 'resolveWorkspacePath'> & Partial<Pick<RepoService, 'ensurePinnedClone'>>;
   registry: Pick<ProfileRepoRegistry, 'list' | 'updateRepoState'>;
   sessionPath: () => string | null;
+  pinnedStore: Pick<PinnedStore, 'worktreePath' | 'get' | 'upsert'>;
 }
 
 function isTerminal(state: JobRecord['state']): boolean {
@@ -80,6 +82,7 @@ export class RepoLifecycle {
       registry: deps?.registry ?? new ProfileRepoRegistry(),
       sessionPath:
         deps?.sessionPath ?? (() => process.env.IGNITE_WORKSPACE_PATH || null),
+      pinnedStore: deps?.pinnedStore ?? new PinnedStore(),
     };
   }
 
@@ -188,6 +191,28 @@ export class RepoLifecycle {
     return job;
   }
 
+  // Pinned jobs retain url+commit in their durable payload, while active-job
+  // de-duplication keys by the eventual worktree path rather than the URL.
+  startPinnedLifecycle(url: string, commit: string, profileId: string): JobRecord {
+    const worktree = this.deps.pinnedStore.worktreePath(profileId, url, commit);
+    const existingId = this.activeJobs.get(worktree);
+    if (existingId) {
+      const existing = this.deps.jobs.get(existingId);
+      if (existing && !isTerminal(existing.state)) return existing;
+      this.activeJobs.delete(worktree);
+    }
+    const job = this.deps.jobs.start(
+      LIFECYCLE_JOB_TYPE,
+      { pathOrUrl: worktree, mode: 'pinned', profileId, url, commit },
+      async (ctx) => {
+        try { return await this.runLifecycle(worktree, profileId, 'pinned', ctx, { url, commit }); }
+        finally { this.activeJobs.delete(worktree); }
+      }
+    );
+    this.activeJobs.set(worktree, job.id);
+    return job;
+  }
+
   activeJobFor(pathOrUrl: string): string | undefined {
     const id = this.activeJobs.get(pathOrUrl);
     if (!id) return undefined;
@@ -286,19 +311,20 @@ export class RepoLifecycle {
     pathOrUrl: string,
     profileId: string,
     mode: LifecycleMode,
-    ctx: JobContext
+    ctx: JobContext,
+    pin?: { url: string; commit: string }
   ): Promise<LifecycleResult> {
-    ctx.log(`phase: init (${mode})\n`);
-    const initResult = await this.deps.repos.init(pathOrUrl, {
-      signal: ctx.signal,
-    });
-    if (!initResult.success) {
-      throw coded(initResult.error.message, initResult.error.code);
+    let workspacePath: string;
+    if (mode === 'pinned') {
+      if (!pin || !this.deps.repos.ensurePinnedClone) throw coded('Pinned lifecycle requires a url and commit.', 'INVALID_PINNED_LIFECYCLE');
+      ctx.log('phase: materialize (pinned)\n');
+      workspacePath = (await this.deps.repos.ensurePinnedClone(profileId, pin.url, pin.commit)).path;
+    } else {
+      ctx.log(`phase: init (${mode})\n`);
+      const initResult = await this.deps.repos.init(pathOrUrl, { signal: ctx.signal });
+      if (!initResult.success) throw coded(initResult.error.message, initResult.error.code);
+      workspacePath = await this.deps.repos.resolveWorkspacePath(pathOrUrl, profileId);
     }
-    const workspacePath = await this.deps.repos.resolveWorkspacePath(
-      pathOrUrl,
-      profileId
-    );
 
     ctx.log('phase: detect\n');
     const compilers = await this.deps.registryLoader.getPluginsByType(
@@ -311,7 +337,8 @@ export class RepoLifecycle {
       );
     }
 
-    const prior = await this.priorRecord(pathOrUrl, profileId);
+    const pinnedPrior = mode === 'pinned' && pin ? await this.deps.pinnedStore.get(profileId, pin.url, pin.commit) : undefined;
+    const prior = pinnedPrior ? { pathOrUrl, frameworks: pinnedPrior.frameworks, detectedAt: pinnedPrior.detectedAt } : await this.priorRecord(pathOrUrl, profileId);
 
     // Sequential on purpose: lifecycle jobs already run per-repo in
     // parallel; fanning out per-plugin containers on top of that invites
@@ -391,7 +418,7 @@ export class RepoLifecycle {
     }
 
     const compiledThisRun = new Set<string>();
-    if (mode === 'add') {
+    if (mode === 'add' || mode === 'pinned') {
       for (const fw of frameworks) {
         ctx.log(`phase: install ${fw.id}\n`);
         const install = await this.deps.executor.execute(
@@ -481,7 +508,9 @@ export class RepoLifecycle {
 
     ctx.log('phase: persist\n');
     const detectedAt = new Date().toISOString();
-    if (this.isSessionPath(pathOrUrl)) {
+    if (mode === 'pinned' && pin) {
+      await this.deps.pinnedStore.upsert(profileId, { url: pin.url, commit: pin.commit, frameworks, detectedAt, lastUsedAt: new Date().toISOString() });
+    } else if (this.isSessionPath(pathOrUrl)) {
       this.sessionRecords.set(pathOrUrl, {
         pathOrUrl,
         frameworks,

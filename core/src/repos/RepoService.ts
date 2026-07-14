@@ -21,6 +21,7 @@ import { runCommand, type RunCommandResult } from '../utils/runCommand.js';
 import { KeyedMutex } from '../utils/KeyedMutex.js';
 import { redactUrlCredentials } from '../utils/redact.js';
 import { getLogger } from '../utils/logger.js';
+import { PinnedStore, pinnedOrigin } from './PinnedStore.js';
 
 export enum RepoKind {
   LOCAL = 'local',
@@ -66,6 +67,23 @@ export type RepoResult<T> =
 interface GitOutput {
   stdout: string;
   stderr: string;
+}
+
+// Core-internal writers (workflow saves and artifact copies) share one lock
+// per canonical root. The lock deliberately covers caller-provided read/CAS
+// sections too, so later API handlers can make read-compare-write atomic.
+const repoWriteLocks = new Map<string, Promise<void>>();
+export async function withRepoWriteLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
+  const previous = repoWriteLocks.get(root) ?? Promise.resolve();
+  let release!: () => void;
+  const tail = previous.then(() => new Promise<void>((resolve) => { release = resolve; }));
+  repoWriteLocks.set(root, tail);
+  await previous;
+  try { return await fn(); }
+  finally {
+    release();
+    if (repoWriteLocks.get(root) === tail) repoWriteLocks.delete(root);
+  }
 }
 
 // Host git safety rails (Global Constraints): hooks disabled so a malicious
@@ -125,11 +143,13 @@ export class RepoService {
   // concurrently (the pre-Phase-3 KeyedMutex guarded the container-name
   // race; this is its host-side equivalent).
   private readonly locks = new KeyedMutex();
+  private readonly pinnedStore: PinnedStore;
 
   constructor(deps?: RepoServiceDeps) {
     this.fileSystem = deps?.fileSystem ?? FileSystem.getInstance();
     this.injectedProfiles = deps?.profiles;
     this.run = deps?.run ?? runCommand;
+    this.pinnedStore = new PinnedStore(this.fileSystem);
   }
 
   // Lock key: canonical URL for cloned repos (so https/ssh forms of the same
@@ -146,6 +166,73 @@ export class RepoService {
       RepoService.instance = new RepoService();
     }
     return RepoService.instance;
+  }
+
+  // Materialize a collaborator-authored URL only after first-contact origin
+  // approval. The worktree is intentionally detached and never participates
+  // in ordinary branch/pull/reset operations.
+  async ensurePinnedClone(profileId: string, url: string, commit: string): Promise<{ path: string }> {
+    const origin = pinnedOrigin(url);
+    if (!(await this.pinnedStore.isOriginApproved(profileId, url))) {
+      throw Object.assign(new Error(`Pinned origin approval required: ${origin}`), { code: 'PINNED_ORIGIN_UNAPPROVED', origins: [origin] });
+    }
+    const worktree = this.pinnedStore.worktreePath(profileId, url, commit);
+    return this.locks.run(`pinned:${worktree}`, async () => {
+      try {
+        await this.assertPinnedIntegrity(worktree, commit);
+        await this.pinnedStore.upsert(profileId, { url, commit, lastUsedAt: new Date().toISOString() });
+        return { path: worktree };
+      } catch {
+        await fs.rm(worktree, { recursive: true, force: true });
+      }
+      const parent = path.dirname(worktree);
+      const temp = path.join(parent, `.${path.basename(worktree)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+      await fs.mkdir(parent, { recursive: true });
+      await fs.rm(temp, { recursive: true, force: true });
+      await fs.mkdir(temp, { recursive: true });
+      const init = await this.runPinnedGit(temp, ['init'], TIMEOUT_LOCAL_MS); if (!init.success) throw Object.assign(new Error(init.error.message), { code: init.error.code });
+      const remote = await this.runPinnedGit(temp, ['remote', 'add', 'origin', url], TIMEOUT_LOCAL_MS); if (!remote.success) throw Object.assign(new Error(remote.error.message), { code: remote.error.code });
+      const shallow = await this.runPinnedGit(temp, ['fetch', '--depth', '1', 'origin', commit], TIMEOUT_FETCH_MS);
+      const fetched = shallow.success ? shallow : await this.runPinnedGit(temp, ['fetch', 'origin'], TIMEOUT_FETCH_MS);
+      if (!fetched.success) { await fs.rm(temp, { recursive: true, force: true }); throw Object.assign(new Error(fetched.error.message), { code: fetched.error.code }); }
+      const checkoutRef = shallow.success ? 'FETCH_HEAD' : commit;
+      const checkout = await this.runPinnedGit(temp, ['checkout', '--detach', checkoutRef], TIMEOUT_LOCAL_MS);
+      if (!checkout.success) { await fs.rm(temp, { recursive: true, force: true }); throw Object.assign(new Error(checkout.error.message), { code: checkout.error.code }); }
+      const submodules = await this.runPinnedGit(temp, ['-c', 'protocol.file.allow=never', 'submodule', 'update', '--init', '--recursive', '--depth', '1'], TIMEOUT_FETCH_MS);
+      if (!submodules.success) { await fs.rm(temp, { recursive: true, force: true }); throw Object.assign(new Error(submodules.error.message), { code: submodules.error.code }); }
+      await this.assertPinnedIntegrity(temp, commit);
+      await fs.rename(temp, worktree);
+      await this.pinnedStore.upsert(profileId, { url, commit, lastUsedAt: new Date().toISOString() });
+      return { path: worktree };
+    });
+  }
+
+  // Build outputs are untracked by convention, so they are excluded. Tracked
+  // source mutations are reset; a dirty submodule requires re-materializing
+  // its parent because reset --hard cannot restore nested worktrees.
+  async assertPinnedIntegrity(worktree: string, commit: string): Promise<void> {
+    const head = await this.runPinnedGit(worktree, ['rev-parse', 'HEAD'], TIMEOUT_LOCAL_MS);
+    const status = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS);
+    const submoduleStatus = await this.runPinnedGit(worktree, ['submodule', 'foreach', '--recursive', 'git status --porcelain'], TIMEOUT_LOCAL_MS);
+    const badHead = !head.success || head.data.stdout.trim().toLowerCase() !== commit.toLowerCase();
+    const badStatus = !status.success || status.data.stdout.trim() !== '';
+    const badSubmodule = !submoduleStatus.success || submoduleStatus.data.stdout.trim() !== '';
+    if (!badHead) {
+      if (badSubmodule) throw Object.assign(new Error('Pinned submodule integrity violation requires re-materialization'), { code: 'PINNED_INTEGRITY_VIOLATION' });
+      if (badStatus) {
+        getLogger().warn(`Resetting tracked mutation in pinned worktree ${worktree}`);
+        const reset = await this.runPinnedGit(worktree, ['reset', '--hard', commit], TIMEOUT_LOCAL_MS);
+        if (!reset.success) throw Object.assign(new Error(reset.error.message), { code: reset.error.code });
+        const clean = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS);
+        if (!clean.success || clean.data.stdout.trim() !== '') throw Object.assign(new Error('Pinned worktree remained dirty after reset'), { code: 'PINNED_INTEGRITY_VIOLATION' });
+      }
+      return;
+    }
+    throw Object.assign(new Error('Pinned worktree HEAD does not match requested commit'), { code: 'PINNED_INTEGRITY_VIOLATION' });
+  }
+
+  private async runPinnedGit(cwd: string, args: string[], timeoutMs: number): Promise<RepoResult<GitOutput>> {
+    return this.runGit(cwd, args, timeoutMs, undefined, true);
   }
 
   // === Identity -> host workspace dir ===
@@ -507,6 +594,7 @@ export class RepoService {
     pathOrUrl: string,
     branch: string
   ): Promise<RepoResult<null>> {
+    if (this.isPinnedWorktree(pathOrUrl)) return this.pinnedReadOnlyResult();
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.checkoutBranchLocked(pathOrUrl, branch)
     );
@@ -591,6 +679,7 @@ export class RepoService {
     pathOrUrl: string,
     commit: string
   ): Promise<RepoResult<null>> {
+    if (this.isPinnedWorktree(pathOrUrl)) return this.pinnedReadOnlyResult();
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.checkoutCommitLocked(pathOrUrl, commit)
     );
@@ -641,6 +730,7 @@ export class RepoService {
   }
 
   async pullChanges(pathOrUrl: string): Promise<RepoResult<null>> {
+    if (this.isPinnedWorktree(pathOrUrl)) return this.pinnedReadOnlyResult();
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.pullChangesLocked(pathOrUrl)
     );
@@ -682,6 +772,7 @@ export class RepoService {
   // Destructive by design (frontend confirms before calling): discard
   // uncommitted changes and remove untracked files. Identical for both kinds.
   async reset(pathOrUrl: string): Promise<RepoResult<null>> {
+    if (this.isPinnedWorktree(pathOrUrl)) return this.pinnedReadOnlyResult();
     return this.locks.run(this.lockKey(pathOrUrl), async () => {
       try {
         const cwd = await this.resolveWorkspacePath(pathOrUrl);
@@ -695,6 +786,19 @@ export class RepoService {
         };
       }
     });
+  }
+
+  private isPinnedWorktree(pathOrUrl: string): boolean {
+    if (!path.isAbsolute(pathOrUrl)) return false;
+    const profileId = this.injectedProfiles?.getCurrentProfile();
+    if (!profileId) return false;
+    const root = path.resolve(this.fileSystem.getReposPath(profileId), 'pinned');
+    const candidate = path.resolve(pathOrUrl);
+    return candidate === root || candidate.startsWith(root + path.sep);
+  }
+
+  private pinnedReadOnlyResult(): RepoResult<null> {
+    return { success: false, error: { code: 'PINNED_REPO_READ_ONLY', message: 'Pinned worktrees are read-only; materialize another pin instead.' } };
   }
 
   async getRepoInfo(pathOrUrl: string): Promise<RepoResult<RepoInfoResult>> {
@@ -863,6 +967,44 @@ export class RepoService {
         success: false,
         error: { code: 'FILE_READ_ERROR', message: errMsg(error) },
       };
+    }
+  }
+
+  // Internal-only write counterpart to getFile. Both lexical and realpath
+  // containment checks are needed: git worktrees can contain attacker-owned
+  // symlinks, and parents must be verified again after mkdir before rename.
+  async writeRepoFile(pathOrUrl: string, filePath: string, contents: string): Promise<RepoResult<null>> {
+    const validated = this.validateFilePath(filePath);
+    if (!validated.success) return validated;
+    try {
+      const root = await this.resolveExistingWorkspacePath(pathOrUrl);
+      const resolvedRoot = path.resolve(root);
+      const target = path.resolve(resolvedRoot, filePath.replace(/^[/\\]+/, ''));
+      if (target === resolvedRoot || !target.startsWith(resolvedRoot + path.sep)) return { success: false, error: { code: 'INVALID_PATH', message: 'File path escapes repository root' } };
+      const realRoot = await fs.realpath(resolvedRoot);
+      return await withRepoWriteLock(realRoot, async () => {
+        const parent = path.dirname(target);
+        // The lexical parent is known to be inside root. mkdir may traverse a
+        // symlink, so realpath afterwards is the authority.
+        await fs.mkdir(parent, { recursive: true });
+        const realParent = await fs.realpath(parent);
+        if (realParent !== realRoot && !realParent.startsWith(realRoot + path.sep)) return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'File parent resolves outside the repository (symlink escape)' } };
+        let existing: import('node:fs').Stats | undefined;
+        try { existing = await fs.lstat(target); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        if (existing && (!existing.isFile() || existing.isSymbolicLink())) return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'Write target must be a regular file or absent' } };
+        const temp = path.join(realParent, `.${path.basename(target)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+        try {
+          await fs.writeFile(temp, contents, 'utf8');
+          // Recheck the parent immediately before publish. This narrows the
+          // unavoidable local symlink-swap race and catches ordinary changes.
+          const verifiedParent = await fs.realpath(parent);
+          if (verifiedParent !== realParent) return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'Write parent changed during operation' } };
+          await fs.rename(temp, target);
+          return { success: true, data: null };
+        } finally { await fs.rm(temp, { force: true }).catch(() => {}); }
+      });
+    } catch (error) {
+      return { success: false, error: { code: 'FILE_WRITE_ERROR', message: errMsg(error) } };
     }
   }
 
@@ -1138,7 +1280,8 @@ export class RepoService {
     cwd: string,
     args: string[],
     timeoutMs: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    pinned = false
   ): Promise<RepoResult<GitOutput>> {
     let result: RunCommandResult;
     try {
@@ -1147,6 +1290,7 @@ export class RepoService {
         env: {
           ...process.env,
           GIT_ALLOW_PROTOCOL,
+          ...(pinned ? { GIT_LFS_SKIP_SMUDGE: '1' } : {}),
           // Never hang on an interactive credential prompt — this runs in a
           // server. Failing fast is what makes the SSH fallback reachable.
           GIT_TERMINAL_PROMPT: '0',

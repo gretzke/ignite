@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import {
   parseLsRemote,
   parseSemverTag,
@@ -6,6 +10,8 @@ import {
   releasesFromTags,
   deriveTrack,
   assertAllowedGitUrl,
+  inspectGitRemote,
+  clearGitRemoteCaches,
 } from '../../plugins/install/gitRemote.js';
 
 const SAMPLE = [
@@ -34,6 +40,21 @@ describe('gitRemote', () => {
     expect(refs.tags['not-a-version']).toBeDefined();
   });
 
+  it('publishes branch heads from a file:// remote', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-git-remote-'));
+    try {
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+      await fs.writeFile(path.join(dir, 'README.md'), 'test\n');
+      execFileSync('git', ['add', '.'], { cwd: dir }); execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: dir });
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+      clearGitRemoteCaches();
+      const inspected = await inspectGitRemote(`file://${dir}`);
+      expect(inspected.branchHeads).toEqual({ main: head });
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
   it('orders semver correctly, including double-digit segments and prereleases', () => {
     expect(compareVersionStrings('0.10.0', '0.4.0')).toBeGreaterThan(0);
     expect(compareVersionStrings('1.0.0', '1.0.0-rc.1')).toBeGreaterThan(0);
@@ -54,6 +75,7 @@ describe('gitRemote', () => {
     const remote = {
       defaultBranch: 'main',
       branches: ['main', 'dev'],
+      branchHeads: { main: 'a'.repeat(40), dev: 'b'.repeat(40) },
       releases: [{ tag: 'v0.4.0', version: '0.4.0', sha: 'd'.repeat(40) }],
     };
     expect(deriveTrack(undefined, remote)).toEqual({

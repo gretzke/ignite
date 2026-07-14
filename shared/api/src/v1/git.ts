@@ -20,6 +20,9 @@ export interface GitReleaseData {
 export interface InspectGitRemoteData {
   defaultBranch: string | null;
   branches: string[];
+  // Branch names are retained for existing clients; this additive map carries
+  // their ls-remote SHAs for pinned-workflow update checks.
+  branchHeads?: Record<string, string>;
   // Semver tags, newest first. Present for any git host (releases metadata
   // only when GitHub is reachable).
   releases: GitReleaseData[];
@@ -47,6 +50,7 @@ export const InspectGitRemoteResponseSchema =
     z.object({
       defaultBranch: z.string().nullable(),
       branches: z.array(z.string()),
+      branchHeads: z.record(z.string(), z.string()),
       releases: z.array(GitReleaseSchema),
       github: z
         .object({

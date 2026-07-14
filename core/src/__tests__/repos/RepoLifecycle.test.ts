@@ -113,6 +113,7 @@ function makeLifecycle(opts: {
   compilers?: string[];
   responses?: Record<string, Record<string, PluginResponse<unknown>>>;
   sessionPath?: string | null;
+  pinnedPath?: string;
 }) {
   const jobs = makeFakeJobs();
   const executor = makeFakeExecutor(opts.responses ?? {});
@@ -141,11 +142,17 @@ function makeLifecycle(opts: {
   const repoService = {
     init: vi.fn(async () => ({ success: true as const, data: null })),
     resolveWorkspacePath: vi.fn(async () => opts.workspaceDir),
+    ensurePinnedClone: vi.fn(async () => ({ path: opts.pinnedPath ?? opts.workspaceDir })),
   };
   const registryLoader = {
     getPluginsByType: vi.fn(async () =>
       makeCompilerConfigs(opts.compilers ?? ['foundry'])
     ),
+  };
+  const pinnedStore = {
+    worktreePath: vi.fn(() => opts.pinnedPath ?? opts.workspaceDir),
+    get: vi.fn(async () => undefined),
+    upsert: vi.fn(async () => {}),
   };
   const deps: RepoLifecycleDeps = {
     jobs: jobs as unknown as RepoLifecycleDeps['jobs'],
@@ -155,9 +162,10 @@ function makeLifecycle(opts: {
     repos: repoService as unknown as RepoLifecycleDeps['repos'],
     registry: registry as unknown as RepoLifecycleDeps['registry'],
     sessionPath: () => opts.sessionPath ?? null,
+    pinnedStore: pinnedStore as unknown as RepoLifecycleDeps['pinnedStore'],
   };
   const lifecycle = new RepoLifecycle(deps);
-  return { lifecycle, jobs, executor, registry, repoService, registryLoader };
+  return { lifecycle, jobs, executor, registry, repoService, registryLoader, pinnedStore };
 }
 
 const DETECTED: PluginResponse<unknown> = {
@@ -175,6 +183,22 @@ const WATCH: PluginResponse<unknown> = {
 const OK: PluginResponse<unknown> = { success: true, data: {} };
 
 describe('RepoLifecycle', () => {
+  it('pinned: materializes, detects, installs, compiles, and persists frameworks', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, executor, repoService, registry, pinnedStore } = makeLifecycle({
+        workspaceDir: dir,
+        responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK } },
+      });
+      const job = lifecycle.startPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1');
+      expect(job.params).toMatchObject({ mode: 'pinned', url: 'https://example.test/repo.git', commit: 'a'.repeat(40) });
+      await jobs.runAll();
+      expect(repoService.ensurePinnedClone).toHaveBeenCalledWith('p1', 'https://example.test/repo.git', 'a'.repeat(40));
+      expect(executor.calls.map((call) => call.op)).toEqual(['detect', 'getWatchPaths', 'install', 'compile']);
+      expect(registry.updates).toHaveLength(0);
+      expect(pinnedStore.upsert).toHaveBeenCalledWith('p1', expect.objectContaining({ url: 'https://example.test/repo.git', commit: 'a'.repeat(40), frameworks: [expect.objectContaining({ id: 'foundry' })] }));
+    } finally { await cleanupTestDirectory(dir); }
+  });
   it('sweep: init -> detect -> watchPaths -> persist, no install/compile', async () => {
     const dir = await createTestDirectory();
     try {
