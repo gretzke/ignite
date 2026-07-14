@@ -481,7 +481,9 @@ export const FrozenInputSchema = z.object({
   abi: z.unknown(),
   creationBytecode: z.string(),
   creationCodeLinkReferences: LinkReferencesWireSchema.optional(),
-  runtimeBytecode: z.string().optional(),
+  // Auxiliary input; capped at 1 MiB of bytes (freeze omits larger) so
+  // persisted run records stay bounded.
+  runtimeBytecode: z.string().max(2 + 2 * 1024 * 1024).optional(),
   runtimeBytecodeLinkReferences: LinkReferencesWireSchema.optional(),
   compiler: z.object({
     pluginId: z.string().min(1),

@@ -141,6 +141,9 @@ export class ArtifactFreezeService {
         let runtime: { code: string; refs?: import('@ignite/api').LinkReferencesWire } | undefined;
         if (hasRuntime) {
           try {
+            // Same 1 MiB byte ceiling DeploymentTypeService enforces at use
+            // time — freeze is the only other door into persisted state.
+            if ((runtimeBytecode.length - 2) / 2 > 1024 * 1024) throw new Error('runtime bytecode exceeds 1 MiB');
             if (hasRuntimeLinks && runtimeRefs) validateUnlinkedBytecode(runtimeBytecode, runtimeRefs);
             else if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(runtimeBytecode)) throw new Error('invalid runtime bytecode');
             runtime = { code: runtimeBytecode, ...(hasRuntimeLinks && runtimeRefs ? { refs: runtimeRefs } : {}) };

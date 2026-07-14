@@ -23,6 +23,7 @@ describe('D5 plan wire schema', () => {
     expect(input.runtimeBytecode).toBe(`0x60${'zz'.repeat(20)}00`);
     expect(() => FrozenInputSchema.parse({ ...input, runtimeBytecode: '0x60zz', runtimeBytecodeLinkReferences: { 'src/L.sol': { L: [{ start: 0, length: 20 }] } } })).toThrow();
     expect(() => FrozenInputSchema.parse({ ...input, runtimeBytecode: undefined })).toThrow();
+    expect(() => FrozenInputSchema.parse({ ...input, runtimeBytecode: `0x${'00'.repeat(1024 * 1024 + 1)}`, runtimeBytecodeLinkReferences: undefined })).toThrow();
   });
   it('exposes collision verbs and suppresses unknown-hash confirmation without intent', () => {
     expect(allowedActions({ reason: 'create2-collision', capability: 'sign-and-send', submitted: false, hasIntent: false })).toEqual(['accept-deployed', 'retry', 'skip', 'abort-lane']);

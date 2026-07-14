@@ -41,4 +41,10 @@ describe('ArtifactFreezeService runtime bytecode', () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Runtime bytecode omitted for token (out/Token.json)'));
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('invalid runtime bytecode'));
   });
+
+  it('omits runtime code over the 1 MiB byte ceiling', async () => {
+    const frozen = await freeze({ ...base, deployedBytecode: `0x${'00'.repeat(1024 * 1024 + 1)}` });
+    expect(frozen.token.runtimeBytecode).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('exceeds 1 MiB'));
+  });
 });
