@@ -324,7 +324,7 @@ describe('validatePlan', () => {
     const predictedAddress = predictCreate2Address(salt, hash);
     const validate = vi.fn(async () => ({ ok: true }));
     await validatePlan(plan({
-      steps: [{ ...deploy, strategy: { kind: 'plugin', pluginId: 'hook', salt, prepared: { '1': { initcodeHash: hash, predictedAddress, notes: [] } } } }],
+      steps: [{ ...deploy, strategy: { kind: 'plugin', pluginId: 'hook', salt, prepared: { '1': { initcodeHash: hash, predictedAddress } } } }],
     }), { '1': 'rpc-1' }, deps({
       freezeInputs: vi.fn(async () => ({ token: { ...frozen.token, runtimeBytecode: `0x60${'zz'.repeat(20)}00`, runtimeBytecodeLinkReferences: { 'src/R.sol': { R: [{ start: 1, length: 20 }] } } } })),
       deploymentTypes: { list: vi.fn(async () => [{ pluginId: 'hook', label: 'Hook', description: 'Hook', params: [], validateSupported: true }]), validate },
