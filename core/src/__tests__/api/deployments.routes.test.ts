@@ -168,6 +168,22 @@ describe('deployment route handlers', () => {
     ).toEqual(['mined']);
   });
 
+  it('forwards linked runtime bytecode to deployment-type preparation', async () => {
+    const salt = `0x${'34'.repeat(32)}` as Hex;
+    const prepare = vi.fn(async () => ({ salt, predictedAddress: predictCreate2Address(salt, initcodeHashOf('0x6000' as Hex)), notes: [] }));
+    const handlers = createDeploymentHandlers({
+      engine: { launch: vi.fn(), resolveLane: vi.fn(), resume: vi.fn(), abort: vi.fn() } as never,
+      getProfileManager: async () => ({ getCurrentProfile: () => 'one' }),
+      freezeInputs: vi.fn(async () => ({ c: { ...frozen.c, runtimeBytecode: `0x60${'zz'.repeat(20)}00`, runtimeBytecodeLinkReferences: { 'src/R.sol': { R: [{ start: 1, length: 20 }] } } } }) as never),
+      deploymentTypes: { prepare },
+    });
+    await handlers.prepareDeploymentStep(request({
+      ...prepareBody({ kind: 'plugin', pluginId: 'hook' }),
+      steps: [{ id: 's', kind: 'deploy', contractId: 'c', libraries: { 'src/R.sol:R': { kind: 'address', address: '0x0000000000000000000000000000000000000002' } }, strategy: { kind: 'plugin', pluginId: 'hook' } }],
+    }) as never, reply());
+    expect(prepare).toHaveBeenCalledWith('hook', expect.objectContaining({ runtimeBytecode: `0x60${'0000000000000000000000000000000000000002'}00` }));
+  });
+
   it('rejects a prepare input that depends on a plain-create address', async () => {
     const handlers = createDeploymentHandlers({
       engine: {

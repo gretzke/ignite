@@ -46,4 +46,29 @@ describe('DeploymentTypeService', () => {
     });
     await expect(service.list()).rejects.toMatchObject({ code: 'DEPLOYMENT_TYPE_OP_FAILED' });
   });
+
+  it('passes runtime bytecode through prepare and validate, and validates it', async () => {
+    const execute = vi.fn(async (_id: string, operation: string) => {
+      if (operation === 'describeDeploymentType') return { success: true as const, data: { label: 'Hook', description: 'Desc', params: [] } };
+      if (operation === 'prepareDeployment') return { success: true as const, data: { salt: hex32, predictedAddress: '0x1111111111111111111111111111111111111111', notes: [] } };
+      return { success: true as const, data: { ok: true } };
+    });
+    const service = new DeploymentTypeService({ getProviders: async () => [config], execute });
+    await service.prepare('hook', { chainId: 1, initcode: '0x00', runtimeBytecode: '0x6000' });
+    await service.validate('hook', { chainId: 1, initcode: '0x00', runtimeBytecode: '0x6000', salt: hex32, predictedAddress: '0x1111111111111111111111111111111111111111' });
+    expect(execute).toHaveBeenCalledWith('hook', 'prepareDeployment', expect.objectContaining({ runtimeBytecode: '0x6000' }), { chainScope: 1 });
+    expect(execute).toHaveBeenCalledWith('hook', 'validateDeployment', expect.objectContaining({ runtimeBytecode: '0x6000' }), { chainScope: 1 });
+    await expect(service.prepare('hook', { chainId: 1, initcode: '0x00', runtimeBytecode: '0x0' })).rejects.toMatchObject({ code: 'DEPLOYMENT_TYPE_OP_FAILED' });
+  });
+
+  it('surfaces valid plugin error codes only', async () => {
+    const failing = (code: string) => new DeploymentTypeService({
+      getProviders: async () => [config],
+      execute: async (id, operation) => operation === 'describeDeploymentType'
+        ? { success: true, data: { label: 'Hook', description: 'Desc', params: [] } }
+        : { success: false, error: { code, message: 'derivation failed' } },
+    });
+    await expect(failing('PLUGIN_CODE').prepare('hook', { chainId: 1, initcode: '0x00' })).rejects.toThrow('prepareDeployment failed [PLUGIN_CODE]: derivation failed');
+    await expect(failing('not safe').prepare('hook', { chainId: 1, initcode: '0x00' })).rejects.toThrow('prepareDeployment failed: derivation failed');
+  });
 });

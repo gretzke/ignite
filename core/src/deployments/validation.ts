@@ -30,7 +30,7 @@ import {
   validateDependencies,
   callAbiItem,
   mergeCallTarget,} from './resolver.js';
-import { ackIsFresh, buildInitcode, predictPlanAddresses } from './schedule.js';
+import { ackIsFresh, buildInitcode, buildRuntimeCode, predictPlanAddresses } from './schedule.js';
 import {
   simulateChain,
   type SimulationOutcome,
@@ -812,11 +812,18 @@ async function validateCreate2(
                 throw new Error(`Missing predicted pointer ${id}`);
               })()
           );
+          const runtimeBytecode = buildRuntimeCode(
+            step,
+            frozen[step.contractId]!,
+            chainId,
+            (id) => predictions[id]?.predictedAddress ?? (() => { throw new Error(`Missing predicted pointer ${id}`); })()
+          );
           const verdict = await deps.deploymentTypes.validate(
             strategy.pluginId,
             {
               chainId,
               initcode,
+              ...(runtimeBytecode === undefined ? {} : { runtimeBytecode }),
               salt: current.salt,
               predictedAddress: current.predictedAddress,
               params: strategy.params,

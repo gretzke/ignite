@@ -19,6 +19,10 @@ describe('D5 plan wire schema', () => {
   it('makes prepare context server-authoritative and validates persisted unlinked bytecode containment', () => {
     expect(PrepareStepRequestSchema.parse({ contracts: [contract], steps: [{ id: 'deploy', kind: 'deploy', contractId: 'c', strategy: { kind: 'create2', salt } }], stepId: 'deploy', chainIds: [1] }).stepId).toBe('deploy');
     expect(() => FrozenInputSchema.parse({ abi: [], creationBytecode: '0x60zz', creationCodeLinkReferences: { 'src/L.sol': { L: [{ start: 0, length: 20 }] } }, compiler: { pluginId: 'f', version: '1', settingsHash: 'a'.repeat(64) }, artifactHash: 'a'.repeat(64), repoDirty: false })).toThrow();
+    const input = FrozenInputSchema.parse({ abi: [], creationBytecode: '0x6000', runtimeBytecode: `0x60${'zz'.repeat(20)}00`, runtimeBytecodeLinkReferences: { 'src/L.sol': { L: [{ start: 1, length: 20 }] } }, compiler: { pluginId: 'f', version: '1', settingsHash: 'a'.repeat(64) }, artifactHash: 'a'.repeat(64), repoDirty: false });
+    expect(input.runtimeBytecode).toBe(`0x60${'zz'.repeat(20)}00`);
+    expect(() => FrozenInputSchema.parse({ ...input, runtimeBytecode: '0x60zz', runtimeBytecodeLinkReferences: { 'src/L.sol': { L: [{ start: 0, length: 20 }] } } })).toThrow();
+    expect(() => FrozenInputSchema.parse({ ...input, runtimeBytecode: undefined })).toThrow();
   });
   it('exposes collision verbs and suppresses unknown-hash confirmation without intent', () => {
     expect(allowedActions({ reason: 'create2-collision', capability: 'sign-and-send', submitted: false, hasIntent: false })).toEqual(['accept-deployed', 'retry', 'skip', 'abort-lane']);

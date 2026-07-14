@@ -15,6 +15,7 @@ import { getCompilerArtifactData } from '../api/plugins/compiler/index.js';
 import { getCompilerVerificationBundle } from '../api/plugins/compiler/index.js';
 import { BundleStore, type VerificationBundle } from '../verifications/BundleStore.js';
 import { validateUnlinkedBytecode } from './linking.js';
+import { getLogger } from '../utils/logger.js';
 
 export interface ArtifactFreezeDeps {
   getArtifactData: (input: {
@@ -133,12 +134,27 @@ export class ArtifactFreezeService {
           bytecodeHash: artifact.bytecodeHash,
         };
         const creationBytecode = artifact.creationCode;
+        const runtimeBytecode = artifact.deployedBytecode;
+        const runtimeRefs = artifact.deployedBytecodeLinkReferences;
+        const hasRuntime = runtimeBytecode !== undefined && runtimeBytecode !== '' && runtimeBytecode !== '0x';
+        const hasRuntimeLinks = hasLinkReferences(runtimeRefs);
+        let runtime: { code: string; refs?: import('@ignite/api').LinkReferencesWire } | undefined;
+        if (hasRuntime) {
+          try {
+            if (hasRuntimeLinks && runtimeRefs) validateUnlinkedBytecode(runtimeBytecode, runtimeRefs);
+            else if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(runtimeBytecode)) throw new Error('invalid runtime bytecode');
+            runtime = { code: runtimeBytecode, ...(hasRuntimeLinks && runtimeRefs ? { refs: runtimeRefs } : {}) };
+          } catch (error) {
+            getLogger().warn(`Runtime bytecode omitted for ${contract.id} (${contract.artifactPath}): ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
         return [
           contract.id,
           {
             abi: artifact.abi,
             creationBytecode,
             ...(hasLinks ? { creationCodeLinkReferences: artifact.creationCodeLinkReferences } : {}),
+            ...(runtime ? { runtimeBytecode: runtime.code, ...(runtime.refs ? { runtimeBytecodeLinkReferences: runtime.refs } : {}) } : {}),
             compiler: {
               pluginId: contract.frameworkId,
               version: config.metadata.version,
@@ -148,6 +164,7 @@ export class ArtifactFreezeService {
               canonicalJson({
                 abi: artifact.abi,
                 creationCode: creationBytecode,
+                ...(runtime ? { runtimeCode: runtime.code, ...(runtime.refs ? { runtimeCodeLinkReferences: runtime.refs } : {}) } : {}),
               })
             ),
             repoDirty,

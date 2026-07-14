@@ -44,7 +44,7 @@ export class DeploymentTypeService {
     return this.cache;
   }
 
-  async prepare(pluginId: string, input: { chainId: number; initcode: `0x${string}`; params?: Record<string, unknown> }): Promise<{ salt: `0x${string}`; predictedAddress: `0x${string}`; notes: string[] }> {
+  async prepare(pluginId: string, input: { chainId: number; initcode: `0x${string}`; runtimeBytecode?: `0x${string}`; params?: Record<string, unknown> }): Promise<{ salt: `0x${string}`; predictedAddress: `0x${string}`; notes: string[] }> {
     this.validateInput(input);
     const info = await this.getInfo(pluginId);
     this.assertParamKeys(info, input.params);
@@ -53,7 +53,7 @@ export class DeploymentTypeService {
     return parsed;
   }
 
-  async validate(pluginId: string, input: { chainId: number; initcode: `0x${string}`; salt: `0x${string}`; predictedAddress: `0x${string}`; params?: Record<string, unknown> }): Promise<{ ok: boolean; reason?: string }> {
+  async validate(pluginId: string, input: { chainId: number; initcode: `0x${string}`; runtimeBytecode?: `0x${string}`; salt: `0x${string}`; predictedAddress: `0x${string}`; params?: Record<string, unknown> }): Promise<{ ok: boolean; reason?: string }> {
     this.validateInput(input);
     if (!HEX32.test(input.salt) || !ADDRESS.test(input.predictedAddress)) this.failed('validateDeployment returned or received invalid address data');
     const info = await this.getInfo(pluginId);
@@ -87,7 +87,10 @@ export class DeploymentTypeService {
     catch (error) { this.failed(`${operation} failed: ${text(error instanceof Error ? error.message : String(error), 300) ?? 'plugin error'}`); }
     // Plugin-authored messages are untrusted and this error may persist into
     // validation items/artifacts — cap + control-strip (final-review F5).
-    if (!response!.success) this.failed(`${operation} failed: ${text(response!.error.message, 300) ?? 'plugin error'}`);
+    if (!response!.success) {
+      const code = typeof response!.error.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(response!.error.code) ? ` [${response!.error.code}]` : '';
+      this.failed(`${operation} failed${code}: ${text(response!.error.message, 300) ?? 'plugin error'}`);
+    }
     return response!.data;
   }
   private parseDescribe(raw: unknown): Omit<DeploymentTypeInfo, 'pluginId' | 'validateSupported'> {
@@ -123,8 +126,8 @@ export class DeploymentTypeService {
     const notes = (value.notes ?? []).map((note) => { const result = text(note, 256); if (result === undefined) this.failed('prepareDeployment returned an invalid note'); return result!; });
     return { salt: value.salt as `0x${string}`, predictedAddress: value.predictedAddress as `0x${string}`, notes };
   }
-  private validateInput(input: { chainId: number; initcode: string; params?: Record<string, unknown> }): void {
-    if (!Number.isInteger(input.chainId) || input.chainId <= 0 || !HEX.test(input.initcode) || (input.initcode.length - 2) / 2 > 1024 * 1024 || (input.params !== undefined && (typeof input.params !== 'object' || input.params === null || Array.isArray(input.params) || (serializedBytes(input.params) ?? Infinity) > 64 * 1024))) this.failed('Deployment-type input is invalid');
+  private validateInput(input: { chainId: number; initcode: string; runtimeBytecode?: string; params?: Record<string, unknown> }): void {
+    if (!Number.isInteger(input.chainId) || input.chainId <= 0 || !HEX.test(input.initcode) || (input.initcode.length - 2) / 2 > 1024 * 1024 || (input.runtimeBytecode !== undefined && (!HEX.test(input.runtimeBytecode) || (input.runtimeBytecode.length - 2) / 2 > 1024 * 1024)) || (input.params !== undefined && (typeof input.params !== 'object' || input.params === null || Array.isArray(input.params) || (serializedBytes(input.params) ?? Infinity) > 64 * 1024))) this.failed('Deployment-type input is invalid');
   }
   private assertParamKeys(info: DeploymentTypeInfo, params: Record<string, unknown> | undefined): void {
     for (const key of Object.keys(params ?? {})) if (!info.params.some((field) => field.key === key)) throw new IgniteError(`Unknown deployment-type parameter '${key}'`, 'UNKNOWN_PARAM_KEY');

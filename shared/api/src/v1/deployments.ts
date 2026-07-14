@@ -293,6 +293,9 @@ export interface FrozenInput {
   // With link references this is unlinkedCreationCode; otherwise strict Hex.
   creationBytecode: string;
   creationCodeLinkReferences?: LinkReferencesWire;
+  // With link references this is unlinkedRuntimeCode; otherwise strict Hex.
+  runtimeBytecode?: string;
+  runtimeBytecodeLinkReferences?: LinkReferencesWire;
   compiler: { pluginId: string; version: string; settingsHash: string };
   artifactHash: string;
   repoDirty: boolean;
@@ -454,12 +457,32 @@ export const RunStatusSchema = z.enum([
   "aborted",
 ]) satisfies z.ZodType<RunStatus>;
 
-// Link-reference containment is cross-field: creationBytecode itself cannot
-// know which placeholder byte ranges are legal. Freeze repeats this check.
+function validateBytecodeLinkReferences(input: { code: string; refs?: LinkReferencesWire }, ctx: z.RefinementCtx, field: 'creationBytecode' | 'runtimeBytecode', refsField: 'creationCodeLinkReferences' | 'runtimeBytecodeLinkReferences'): void {
+  const refs = input.refs;
+  if (!refs || Object.keys(refs).length === 0) {
+    if (!HEX.test(input.code)) ctx.addIssue({ code: 'custom', message: `${field} must be strict hex without link references`, path: [field] });
+    return;
+  }
+  const ranges: Array<{ start: number; length: number }> = [];
+  for (const file of Object.values(refs)) for (const entries of Object.values(file)) ranges.push(...entries);
+  if (!input.code.startsWith('0x') || (input.code.length - 2) % 2 !== 0) { ctx.addIssue({ code: 'custom', message: `unlinked ${field} must be 0x-prefixed byte data`, path: [field] }); return; }
+  const bytes = (input.code.length - 2) / 2;
+  const covered = new Set<number>();
+  for (const range of ranges) {
+    if (range.length !== 20 || range.start + range.length > bytes) { ctx.addIssue({ code: 'custom', message: 'link reference must be an in-bounds 20-byte range', path: [refsField] }); return; }
+    for (let i = range.start; i < range.start + range.length; i += 1) { if (covered.has(i)) { ctx.addIssue({ code: 'custom', message: 'link references must not overlap', path: [refsField] }); return; } covered.add(i); }
+  }
+  for (let byte = 0; byte < bytes; byte += 1) if (!/^[0-9a-fA-F]{2}$/.test(input.code.slice(2 + byte * 2, 4 + byte * 2)) && !covered.has(byte)) { ctx.addIssue({ code: 'custom', message: `non-hex ${field} is only allowed inside link-reference ranges`, path: [field] }); return; }
+}
+
+// Link-reference containment is cross-field: bytecode itself cannot know
+// which placeholder byte ranges are legal. Freeze repeats this check.
 export const FrozenInputSchema = z.object({
   abi: z.unknown(),
   creationBytecode: z.string(),
   creationCodeLinkReferences: LinkReferencesWireSchema.optional(),
+  runtimeBytecode: z.string().optional(),
+  runtimeBytecodeLinkReferences: LinkReferencesWireSchema.optional(),
   compiler: z.object({
     pluginId: z.string().min(1),
     version: z.string().min(1),
@@ -469,22 +492,9 @@ export const FrozenInputSchema = z.object({
   repoDirty: z.boolean(),
   bundleHash: z.string().regex(SHA256_HEX).optional(),
 }).superRefine((input, ctx) => {
-  const refs = input.creationCodeLinkReferences;
-  if (!refs || Object.keys(refs).length === 0) {
-    if (!HEX.test(input.creationBytecode)) ctx.addIssue({ code: 'custom', message: 'creationBytecode must be strict hex without link references', path: ['creationBytecode'] });
-    return;
-  }
-  const ranges: Array<{ start: number; length: number }> = [];
-  for (const file of Object.values(refs)) for (const entries of Object.values(file)) ranges.push(...entries);
-  const code = input.creationBytecode;
-  if (!code.startsWith('0x') || (code.length - 2) % 2 !== 0) { ctx.addIssue({ code: 'custom', message: 'unlinked creation bytecode must be 0x-prefixed byte data', path: ['creationBytecode'] }); return; }
-  const bytes = (code.length - 2) / 2;
-  const covered = new Set<number>();
-  for (const range of ranges) {
-    if (range.length !== 20 || range.start + range.length > bytes) { ctx.addIssue({ code: 'custom', message: 'link reference must be an in-bounds 20-byte range', path: ['creationCodeLinkReferences'] }); return; }
-    for (let i = range.start; i < range.start + range.length; i += 1) { if (covered.has(i)) { ctx.addIssue({ code: 'custom', message: 'link references must not overlap', path: ['creationCodeLinkReferences'] }); return; } covered.add(i); }
-  }
-  for (let byte = 0; byte < bytes; byte += 1) if (!/^[0-9a-fA-F]{2}$/.test(code.slice(2 + byte * 2, 4 + byte * 2)) && !covered.has(byte)) { ctx.addIssue({ code: 'custom', message: 'non-hex creation bytecode is only allowed inside link-reference ranges', path: ['creationBytecode'] }); return; }
+  validateBytecodeLinkReferences({ code: input.creationBytecode, refs: input.creationCodeLinkReferences }, ctx, 'creationBytecode', 'creationCodeLinkReferences');
+  if (input.runtimeBytecode === undefined && input.runtimeBytecodeLinkReferences !== undefined) ctx.addIssue({ code: 'custom', message: 'runtimeBytecodeLinkReferences requires runtimeBytecode', path: ['runtimeBytecodeLinkReferences'] });
+  else if (input.runtimeBytecode !== undefined) validateBytecodeLinkReferences({ code: input.runtimeBytecode, refs: input.runtimeBytecodeLinkReferences }, ctx, 'runtimeBytecode', 'runtimeBytecodeLinkReferences');
 }) satisfies z.ZodType<FrozenInput>;
 
 export const RpcBindingSchema = z.object({

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { keccak256, stringToHex } from 'viem';
 import type { DeploymentTypeInfo } from '@ignite/api';
+import { ApiError } from '@ignite/api/client';
 import Select from '../../../components/Select';
 import { apiClient } from '../../../store/api/client';
 import { useAppDispatch, useAppSelector } from '../../../store';
@@ -13,6 +14,10 @@ import {
 } from '../../../store/features/deployments/deployDraftSlice';
 import { draftToPlanFragment } from '../planFromDraft';
 import { replaceIdsForDisplay } from '../../../utils/displayText';
+
+export function apiErrorMessage(reason: unknown): string {
+  return reason instanceof ApiError ? reason.body.message ?? reason.message : reason instanceof Error ? reason.message : String(reason);
+}
 
 export default function StrategySection({ stepId }: { stepId: string }) {
   const dispatch = useAppDispatch();
@@ -54,7 +59,7 @@ export default function StrategySection({ stepId }: { stepId: string }) {
       if (!('data' in response)) throw new Error(response.message);
       dispatch(storePrepared({ stepId, chains: response.data.chains }));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(apiErrorMessage(reason));
     } finally {
       setLoading(false);
     }

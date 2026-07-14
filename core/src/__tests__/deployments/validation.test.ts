@@ -6,6 +6,8 @@ import {
   type FrozenInputs,
 } from '@ignite/api';
 import { validatePlan } from '../../deployments/validation.js';
+import { initcodeHashOf, predictCreate2Address } from '../../deployments/create2.js';
+import { buildInitcode } from '../../deployments/schedule.js';
 
 const ADDRESS = '0x0000000000000000000000000000000000000001';
 const HASH = 'b'.repeat(64);
@@ -313,6 +315,22 @@ describe('validatePlan', () => {
       blocking: true,
       code: 'LIBRARY_LINKING_UNSUPPORTED',
     });
+  });
+
+  it('passes linked runtime bytecode to deployment-type validation', async () => {
+    const salt = `0x${'12'.repeat(32)}` as const;
+    const deploy = { id: 'deploy-token', kind: 'deploy' as const, contractId: 'token', args: { supply: '1' }, libraries: { 'src/R.sol:R': { kind: 'address' as const, address: '0x0000000000000000000000000000000000000002' as const } } };
+    const hash = initcodeHashOf(buildInitcode(deploy, frozen.token, 1, () => { throw new Error('unexpected'); }));
+    const predictedAddress = predictCreate2Address(salt, hash);
+    const validate = vi.fn(async () => ({ ok: true }));
+    await validatePlan(plan({
+      steps: [{ ...deploy, strategy: { kind: 'plugin', pluginId: 'hook', salt, prepared: { '1': { initcodeHash: hash, predictedAddress, notes: [] } } } }],
+    }), { '1': 'rpc-1' }, deps({
+      freezeInputs: vi.fn(async () => ({ token: { ...frozen.token, runtimeBytecode: `0x60${'zz'.repeat(20)}00`, runtimeBytecodeLinkReferences: { 'src/R.sol': { R: [{ start: 1, length: 20 }] } } } })),
+      deploymentTypes: { list: vi.fn(async () => [{ pluginId: 'hook', label: 'Hook', description: 'Hook', params: [], validateSupported: true }]), validate },
+      createClient: vi.fn(() => ({ estimateGas: vi.fn(async () => 100n), getBalance: vi.fn(async () => 10_000n), estimateFeesPerGas: vi.fn(async () => ({ maxFeePerGas: 10n, maxPriorityFeePerGas: 1n })), getCode: vi.fn(async ({ address }: { address: string }) => address.toLowerCase() === CREATE2_PROXY_ADDRESS.toLowerCase() ? CREATE2_PROXY_RUNTIME_CODE : '0x') })),
+    }));
+    expect(validate).toHaveBeenCalledWith('hook', expect.objectContaining({ runtimeBytecode: `0x60${'0000000000000000000000000000000000000002'}00` }));
   });
 
   it('keeps a bundle coherence failure as a non-blocking verification warning when nothing is selected', async () => {

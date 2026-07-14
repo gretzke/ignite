@@ -21,6 +21,7 @@ export interface DescribeDeploymentTypeResult {
 export interface PrepareDeploymentParams {
   chainId: number;
   initcode: string;
+  runtimeBytecode?: string;
   proxyAddress: string;
   params?: Record<string, unknown>;
 }
@@ -34,6 +35,7 @@ export interface PrepareDeploymentResult {
 export interface ValidateDeploymentParams {
   chainId: number;
   initcode: string;
+  runtimeBytecode?: string;
   salt: string;
   predictedAddress: string;
   params?: Record<string, unknown>;

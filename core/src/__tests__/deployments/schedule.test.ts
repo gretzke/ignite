@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DeploymentPlan, FrozenInputs } from '@ignite/api';
 import { getContractAddress } from 'viem';
 import { CREATE2_PROXY_ADDRESS } from '@ignite/api';
-import { buildSchedule, computeCreateAddresses } from '../../deployments/schedule.js';
+import { buildRuntimeCode, buildSchedule, computeCreateAddresses } from '../../deployments/schedule.js';
 
 const from = '0x0000000000000000000000000000000000000001' as const;
 const plan: DeploymentPlan = { schemaVersion: 1, contracts: [{ id: 'c', repoPathOrUrl: '/repo', frameworkId: 'f', artifactPath: 'x', contractName: 'C', sourcePath: 'C.sol' }], chains: [1], signers: { global: { pluginId: 'p', accountId: 'a', address: from } }, steps: [{ id: 'create', kind: 'deploy', contractId: 'c' }] };
@@ -47,5 +47,15 @@ describe('execution schedule', () => {
     const [entry] = buildSchedule(c2plan, frozen, 1, { signers: new Map([['create', from]]) });
     expect(entry).toMatchObject({ kind: 'tx', to: CREATE2_PROXY_ADDRESS });
     expect(entry.predictedAddress).toMatch(/^0x[0-9a-f]{40}$/i);
+  });
+
+  it('builds runtime code per chain without leaking creation-only library bindings', () => {
+    const step = { id: 'create', kind: 'deploy' as const, contractId: 'c', libraries: { 'src/R.sol:R': { kind: 'address' as const, address: '0x0000000000000000000000000000000000000002' as const }, 'src/C.sol:C': { kind: 'address' as const, address: '0x0000000000000000000000000000000000000003' as const } } };
+    const refs = { 'src/R.sol': { R: [{ start: 1, length: 20 }] } };
+    const linked: FrozenInputs['c'] = { ...frozen.c, runtimeBytecode: `0x60${'zz'.repeat(20)}00`, runtimeBytecodeLinkReferences: refs };
+    expect(buildRuntimeCode(step, linked, 1, () => { throw new Error('unexpected'); })).toBe(`0x60${'0000000000000000000000000000000000000002'}00`);
+    expect(buildRuntimeCode(step, { ...linked, runtimeBytecode: undefined }, 1, () => { throw new Error('unexpected'); })).toBeUndefined();
+    expect(buildRuntimeCode(step, { ...linked, runtimeBytecode: '0x6000', runtimeBytecodeLinkReferences: undefined }, 1, () => { throw new Error('unexpected'); })).toBe('0x6000');
+    expect(buildRuntimeCode({ ...step, libraries: {} }, linked, 1, () => { throw new Error('unexpected'); })).toBeUndefined();
   });
 });

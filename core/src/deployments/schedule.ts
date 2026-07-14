@@ -2,7 +2,7 @@ import { encodeDeployData, encodeFunctionData, getContractAddress, type Abi, typ
 import { CREATE2_PROXY_ADDRESS, type DeploymentPlan, type DeployStep, type FrozenInputs, type Hex, type Hex32 } from '@ignite/api';
 import { effectiveSalt, initcodeHashOf, predictCreate2Address, create2Calldata } from './create2.js';
 import { callAbiItem, effectiveValue, mergeCallTarget, resolveSigner, resolveStepValues, toConstructorArgs, validateDependencies } from './resolver.js';
-import { linkBytecode } from './linking.js';
+import { flattenLinkReferences, linkBytecode } from './linking.js';
 
 export interface ScheduleEntry { stepId: string; kind: 'tx' | 'existing'; from?: Hex; to?: Hex | null; data?: Hex; value?: bigint; address?: Hex; predictedAddress?: Hex; }
 export type Predictions = Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>;
@@ -17,6 +17,16 @@ export function buildInitcode(step: DeployStep, input: FrozenInputs[string], cha
   const ctor = constructorInputs(input.abi);
   const values = resolveStepValues(step, chainId, resolveRef, ctor);
   return encodeDeployData({ abi: input.abi as Abi, bytecode: linkedCode(step, input, values.libraries), args: toConstructorArgs(ctor, values.args) });
+}
+
+export function buildRuntimeCode(step: DeployStep, input: FrozenInputs[string], chainId: number, resolveRef: (stepId: string) => Hex): Hex | undefined {
+  if (input.runtimeBytecode === undefined) return undefined;
+  if (!input.runtimeBytecodeLinkReferences) return input.runtimeBytecode as Hex;
+  try {
+    const libraries = resolveStepValues(step, chainId, resolveRef).libraries ?? {};
+    const keys = new Set(flattenLinkReferences(input.runtimeBytecodeLinkReferences).map((ref) => ref.key));
+    return linkBytecode(input.runtimeBytecode, input.runtimeBytecodeLinkReferences, Object.fromEntries(Object.entries(libraries).filter(([key]) => keys.has(key))));
+  } catch { return undefined; }
 }
 
 export function predictPlanAddresses(plan: DeploymentPlan, frozen: FrozenInputs, chainId: number): Predictions {

@@ -21,6 +21,7 @@ import {
 } from '../deployments/create2.js';
 import {
   buildInitcode,
+  buildRuntimeCode,
   predictPlanAddresses,
 } from '../deployments/schedule.js';
 import { validateDependencies } from '../deployments/resolver.js';
@@ -221,6 +222,7 @@ export function createDeploymentHandlers(
             throw mapPreparePointerError(error, plan);
           }
           let initcode: `0x${string}`;
+          let runtimeBytecode: `0x${string}` | undefined;
           try {
             initcode = buildInitcode(
               step,
@@ -232,6 +234,12 @@ export function createDeploymentHandlers(
                   throw new Error(`Missing predicted pointer ${id}`);
                 })()
             );
+            runtimeBytecode = buildRuntimeCode(
+              step,
+              input,
+              chainId,
+              (id) => predictions[id]?.predictedAddress ?? (() => { throw new Error(`Missing predicted pointer ${id}`); })()
+            );
           } catch (error) {
             throw mapPreparePointerError(error, plan);
           }
@@ -239,7 +247,7 @@ export function createDeploymentHandlers(
           if (step.strategy?.kind === 'plugin') {
             const prepared = await d.deploymentTypes.prepare(
               step.strategy.pluginId,
-              { chainId, initcode, params: step.strategy.params }
+              { chainId, initcode, ...(runtimeBytecode === undefined ? {} : { runtimeBytecode }), params: step.strategy.params }
             );
             const predictedAddress = predictCreate2Address(
               prepared.salt,
