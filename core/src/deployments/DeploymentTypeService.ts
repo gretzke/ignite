@@ -6,6 +6,7 @@ import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
 import { effectiveOperations } from '../plugins/operationBaselines.js';
 import { IgniteError } from '../types/errors.js';
 import { sanitizePluginString } from '../verifications/sanitize.js';
+import { clearProvisionalPredictionCache } from './schedule.js';
 
 const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
@@ -37,7 +38,7 @@ export class DeploymentTypeService {
   }
   static getInstance(): DeploymentTypeService { return this.instance ??= new DeploymentTypeService(); }
   static resetInstance(): void { this.instance = undefined as unknown as DeploymentTypeService; }
-  invalidate(): void { this.cache = undefined; }
+  invalidate(): void { this.cache = undefined; clearProvisionalPredictionCache(); }
 
   async list(refresh = false): Promise<DeploymentTypeInfo[]> {
     if (refresh || !this.cache) this.cache = this.describeAll();

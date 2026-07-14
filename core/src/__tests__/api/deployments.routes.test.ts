@@ -216,6 +216,7 @@ describe('deployment route handlers', () => {
     );
     expect(res.statusCode).toBe(400);
     expect((res.body as { code: string }).code).toBe('POINTER_NOT_CONCRETE');
+    expect((res.body as { message: string }).message).toMatch(/salt.*mined during the run/i);
   });
 
   it('validates without launching or writing a run', async () => {

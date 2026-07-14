@@ -267,6 +267,7 @@ async function validatePlanOnce(
       accountsError
     );
     let snapshot: ChainPredictions | undefined;
+    let snapshotError: unknown;
     if (!freezeError) {
       try {
         snapshot = await buildChainPredictions(plan, frozen, chainId, {
@@ -274,9 +275,9 @@ async function validatePlanOnce(
           signers: signerResults.signers,
           deploymentTypes: deps.deploymentTypes,
         });
-      } catch { /* static prediction errors remain the args/create2 blocker */ }
+      } catch (error) { snapshotError = error; }
     }
-    const args = validateArgs(plan, chainId, frozen, freezeError, snapshot);
+    const args = validateArgs(plan, chainId, frozen, freezeError, snapshot, snapshotError);
     const create2 = await validateCreate2(
       plan,
       chainId,
@@ -284,7 +285,8 @@ async function validatePlanOnce(
       endpoint?.url,
       deps,
       freezeError,
-      snapshot
+      snapshot,
+      snapshotError
     );
     if (create2.predicted) predicted[key] = create2.predicted;
     const simulation = await validateSimulation(
@@ -689,7 +691,8 @@ function validateArgs(
   chainId: number,
   frozen: FrozenInputs,
   freezeError: unknown,
-  snapshot?: ChainPredictions
+  snapshot?: ChainPredictions,
+  snapshotError?: unknown
 ): ValidationItem {
   if (freezeError)
     return failure(
@@ -698,6 +701,7 @@ function validateArgs(
     );
   try {
     validateDependencies(plan);
+    if (snapshotError) throw snapshotError;
     // Deterministic step pointers are concrete at review time. Resolve them
     // before ABI coercion; passing the wire {$ref: ...} object to viem would
     // incorrectly reject an otherwise valid address constructor argument.
@@ -794,7 +798,8 @@ async function validateCreate2(
   rpcUrl: string | undefined,
   deps: ValidationDeps,
   freezeError: unknown,
-  snapshot?: ChainPredictions
+  snapshot?: ChainPredictions,
+  snapshotError?: unknown
 ): Promise<{
   item: ValidationItem;
   predicted?: Record<
@@ -842,7 +847,7 @@ async function validateCreate2(
           'The canonical CREATE2 proxy has unexpected runtime code'
         ),
       };
-    if (!snapshot) throw new Error('Create2 predictions are unavailable');
+    if (!snapshot) throw snapshotError ?? new Error('Create2 predictions are unavailable');
     const predictions = snapshot.predictions;
     const installed = deterministic.some(
       (step) => step.strategy?.kind === 'plugin' && !snapshot.dynamic.has(step.id)

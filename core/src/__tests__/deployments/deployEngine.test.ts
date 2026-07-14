@@ -6,19 +6,22 @@ import crypto from 'node:crypto';
 import { keccak256 } from 'viem';
 import type {
   DeploymentPlan,
+  DeployStep,
   PauseReason,
   ResolveAction,
   ResolveLaneRequest,
   RunEvent,
   RunRecord,
 } from '@ignite/api';
-import { allowedActions } from '@ignite/api';
+import { allowedActions, CREATE2_PROXY_ADDRESS } from '@ignite/api';
 import {
   DeployEngine,
   type DeployEngineDeps,
 } from '../../deployments/DeployEngine.js';
 import { RunStore } from '../../deployments/RunStore.js';
 import { ErrorCodes, IgniteError } from '../../types/errors.js';
+import { initcodeHashOf, predictCreate2Address } from '../../deployments/create2.js';
+import { buildInitcode } from '../../deployments/schedule.js';
 
 const ADDRESS = '0x0000000000000000000000000000000000000001' as const;
 const HASH = 'a'.repeat(64);
@@ -118,6 +121,7 @@ type Harness = {
   executed: Array<{
     chainId: number;
     data: string;
+    to?: string | null;
     overrides?: Record<string, unknown>;
   }>;
   artifactWrites: number;
@@ -176,6 +180,7 @@ describe('DeployEngine', () => {
         harness.executed.push({
           chainId: args.chainId,
           data: args.data,
+          to: args.to,
           overrides: args.overrides as Record<string, unknown>,
         });
         await args.onPhase?.('built', { tx: { nonce: harness.executed.length } });
@@ -215,6 +220,19 @@ describe('DeployEngine', () => {
       ),
       idempotencyKey: key,
     });
+  }
+
+  function dynamicPlan(strategy: NonNullable<DeployStep['strategy']>): DeploymentPlan {
+    return makePlan({ chains: [1], steps: [
+      { id: 'step-1', kind: 'deploy', contractId: 'c1' },
+      { id: 'step-2', kind: 'deploy', contractId: 'c2', args: { owner: { $ref: { kind: 'step', stepId: 'step-1' } } }, strategy },
+    ] });
+  }
+
+  function dynamicValidation(plan: DeploymentPlan) {
+    const result = validated(plan);
+    (result.frozen.c2 as { abi: unknown }).abi = [{ type: 'constructor', inputs: [{ name: 'owner', type: 'address' }] }];
+    return result;
   }
 
   // Seeds a paused run directly through the store so arbitrary pause contexts
@@ -320,6 +338,241 @@ describe('DeployEngine', () => {
       expect(perChain).toEqual([...perChain].sort((a, b) => a - b));
     }
     expect(harness.artifactWrites).toBeGreaterThanOrEqual(2);
+  });
+
+  it('mines a dynamic plugin salt JIT and submits it in proxy calldata', async () => {
+    const salt = `0x${'45'.repeat(32)}` as const;
+    let predicted: `0x${string}` | undefined; let reads = 0;
+    const prepare = vi.fn(async (_pluginId: string, input: { initcode: `0x${string}` }) => {
+      predicted = predictCreate2Address(salt, initcodeHashOf(input.initcode));
+      return { salt, predictedAddress: predicted, notes: ['jit'] };
+    });
+    const plan = dynamicPlan({ kind: 'plugin', pluginId: 'hook' });
+    const harness = makeEngine({
+      validate: async () => dynamicValidation(plan),
+      deploymentTypes: { prepare, list: async () => [{ pluginId: 'hook', label: 'Hook', description: '', params: [], validateSupported: false }], validate: vi.fn() },
+      getCode: async (_url, address) => address.toLowerCase() === predicted?.toLowerCase() && ++reads > 1 ? '0x01' : '0x',
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.status === 'completed', 'JIT run completed');
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(harness.executed[1]).toMatchObject({ to: CREATE2_PROXY_ADDRESS });
+    expect(harness.executed[1].data.slice(0, 66)).toBe(salt);
+    expect(harness.executed[1].data.toLowerCase()).toContain(RECEIPT.contractAddress.slice(2).toLowerCase());
+    expect((await harness.engine.get('p1', run.id))!.lanes['1'].steps[1]).toMatchObject({ predictedAddress: predicted, salt, notes: ['jit'] });
+  });
+
+  it('pauses mismatched JIT preparation as estimation before submission', async () => {
+    const salt = `0x${'46'.repeat(32)}` as const;
+    const plan = dynamicPlan({ kind: 'plugin', pluginId: 'hook' });
+    const harness = makeEngine({
+      validate: async () => dynamicValidation(plan),
+      deploymentTypes: { prepare: vi.fn(async () => ({ salt, predictedAddress: ADDRESS, notes: [] })), list: async () => [], validate: vi.fn() },
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].status === 'paused', 'mismatch paused');
+    expect((await harness.engine.get('p1', run.id))!.lanes['1'].pause?.reason).toBe('estimation');
+    expect(harness.executed).toHaveLength(1);
+  });
+
+  it('retries a failed plugin prepare and re-mines', async () => {
+    const salt = `0x${'47'.repeat(32)}` as const;
+    const plan = dynamicPlan({ kind: 'plugin', pluginId: 'hook' });
+    const prepare = vi.fn()
+      .mockRejectedValueOnce(new Error('miner offline'))
+      .mockImplementation(async (_pluginId: string, input: { initcode: `0x${string}` }) => ({ salt, predictedAddress: predictCreate2Address(salt, initcodeHashOf(input.initcode)), notes: [] }));
+    const harness = makeEngine({
+      validate: async () => dynamicValidation(plan),
+      deploymentTypes: { prepare, list: async () => [], validate: vi.fn() },
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].status === 'paused', 'prepare paused');
+    let current = (await harness.engine.get('p1', run.id))!;
+    expect(current.lanes['1'].pause?.reason).toBe('estimation');
+    await harness.engine.resolveLane('p1', run.id, 1, { action: 'retry', attemptId: current.lanes['1'].pause!.attemptId, commandId: crypto.randomUUID() });
+    await eventually(() => prepare.mock.calls.length === 2, 'prepare retried');
+    await eventually(async () => Boolean((await harness.engine.get('p1', run.id))?.lanes['1'].steps[1].salt), 'JIT facts persisted');
+    current = (await harness.engine.get('p1', run.id))!;
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(current.lanes['1'].steps[1].salt).toBe(salt);
+  });
+
+  it('pauses static deterministic steps without a seeded prediction', async () => {
+    const plan = makePlan({ chains: [1], steps: [{ id: 'step-1', kind: 'deploy', contractId: 'c1', strategy: { kind: 'create2', salt: `0x${'48'.repeat(32)}` } }] });
+    const harness = makeEngine({ validate: async () => validated(plan) });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].status === 'paused', 'static fail closed');
+    expect((await harness.engine.get('p1', run.id))!.lanes['1'].pause?.reason).toBe('pointer-unresolved');
+    expect(harness.executed).toHaveLength(0);
+  });
+
+  it('launches through non-blocking provisional degradation and pauses at JIT execution', async () => {
+    const plan = dynamicPlan({ kind: 'plugin', pluginId: 'hook' });
+    const harness = makeEngine({
+      validate: async () => {
+        const result = dynamicValidation(plan); const chain = result.report.chains['1'] as Record<string, { ok: boolean; blocking: boolean; message: string; details?: Record<string, unknown> }>;
+        chain.create2 = { ok: true, blocking: false, message: 'provisional unavailable', details: { provisionalSteps: [{ stepId: 'step-2', degraded: 'bad flags' }] } };
+        chain.estimation = { ok: false, blocking: false, message: 'estimation unavailable' };
+        chain.simulation = { ok: false, blocking: false, message: 'simulation unavailable' };
+        chain.balance = { ok: false, blocking: false, message: 'balance unknown' };
+        return result;
+      },
+      deploymentTypes: { prepare: vi.fn(async () => { throw new Error('bad flags'); }), list: async () => [], validate: vi.fn() },
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'estimation', 'degraded launch reached JIT');
+    expect((await harness.engine.get('p1', run.id))?.id).toBe(run.id);
+  });
+
+  it('accepts a dynamic collision without a plan salt and records acknowledgement provenance', async () => {
+    const salt = `0x${'49'.repeat(32)}` as const;
+    const plan = dynamicPlan({ kind: 'plugin', pluginId: 'hook' });
+    const prepare = vi.fn(async (_pluginId: string, input: { initcode: `0x${string}` }) => ({ salt, predictedAddress: predictCreate2Address(salt, initcodeHashOf(input.initcode)), notes: ['collision'] }));
+    const harness = makeEngine({
+      validate: async () => dynamicValidation(plan),
+      deploymentTypes: { prepare, list: async () => [], validate: vi.fn() },
+      getCode: async () => '0x01',
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'create2-collision', 'collision paused');
+    let current = (await harness.engine.get('p1', run.id))!;
+    await harness.engine.resolveLane('p1', run.id, 1, { action: 'accept-deployed', attemptId: current.lanes['1'].pause!.attemptId, commandId: crypto.randomUUID() });
+    current = (await harness.engine.get('p1', run.id))!;
+    const step = current.lanes['1'].steps[1];
+    expect(step).toMatchObject({ status: 'skipped', address: step.predictedAddress, salt });
+    const strategy = (current.plan.steps[1] as DeployStep).strategy;
+    expect(strategy && strategy.kind !== 'create' ? strategy.acknowledgeDeployed?.['1'] : undefined).toEqual({ predictedAddress: step.predictedAddress, initcodeHash: expect.stringMatching(/^0x[0-9a-f]{64}$/) });
+  });
+
+  it('restores static accept-deployed acknowledgement persistence', async () => {
+    const salt = `0x${'56'.repeat(32)}` as const;
+    const plan = makePlan({ chains: [1], steps: [{ id: 'step-1', kind: 'deploy', contractId: 'c1', strategy: { kind: 'create2', salt } }] });
+    const initcodeHash = initcodeHashOf('0x6000'); const predictedAddress = predictCreate2Address(salt, initcodeHash);
+    const harness = makeEngine({
+      validate: async () => ({ ...validated(plan), predicted: { '1': { 'step-1': { salt, initcodeHash, predictedAddress } } } }),
+      getCode: async () => '0x01',
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'create2-collision', 'static collision paused');
+    let current = (await harness.engine.get('p1', run.id))!;
+    await harness.engine.resolveLane('p1', run.id, 1, { action: 'accept-deployed', attemptId: current.lanes['1'].pause!.attemptId, commandId: crypto.randomUUID() });
+    current = (await harness.engine.get('p1', run.id))!;
+    const strategy = (current.plan.steps[0] as DeployStep).strategy;
+    expect(strategy && strategy.kind !== 'create' ? strategy.acknowledgeDeployed?.['1'] : undefined).toEqual({ predictedAddress, initcodeHash });
+  });
+
+  it('skips an acknowledged dynamic collision idempotently', async () => {
+    const salt = `0x${'51'.repeat(32)}` as const;
+    const plan = dynamicPlan({ kind: 'plugin', pluginId: 'hook' });
+    const frozen = dynamicValidation(plan).frozen;
+    const deploy = plan.steps[1] as DeployStep;
+    const initcode = buildInitcode(deploy, frozen.c2, 1, () => RECEIPT.contractAddress);
+    const predictedAddress = predictCreate2Address(salt, initcodeHashOf(initcode));
+    const strategy = deploy.strategy;
+    if (!strategy || strategy.kind !== 'plugin') throw new Error('bad fixture');
+    strategy.acknowledgeDeployed = { '1': { predictedAddress, initcodeHash: initcodeHashOf(initcode) } };
+    const harness = makeEngine({
+      validate: async () => dynamicValidation(plan),
+      deploymentTypes: { prepare: vi.fn(async () => ({ salt, predictedAddress, notes: [] })), list: async () => [], validate: vi.fn() },
+      getCode: async () => '0x01',
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.status === 'completed', 'acknowledged dynamic skip');
+    const current = (await harness.engine.get('p1', run.id))!;
+    expect(current.lanes['1'].steps[1]).toMatchObject({ status: 'skipped', address: predictedAddress });
+    expect(harness.executed).toHaveLength(1);
+  });
+
+  it('submits dynamic create2 with its plan salt', async () => {
+    const salt = `0x${'50'.repeat(32)}` as const;
+    const plan = dynamicPlan({ kind: 'create2', salt });
+    let reads = 0;
+    const harness = makeEngine({
+      validate: async () => dynamicValidation(plan),
+      getCode: async () => ++reads > 1 ? '0x01' : '0x',
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.status === 'completed', 'dynamic create2 completed');
+    expect(harness.executed[1].data.slice(0, 66)).toBe(salt);
+  });
+
+  it('recovers a real attempt when restarted after atomic JIT persistence before send', async () => {
+    const salt = `0x${'52'.repeat(32)}` as const;
+    const plan = dynamicPlan({ kind: 'plugin', pluginId: 'hook' });
+    const prepare = vi.fn(async (_pluginId: string, input: { initcode: `0x${string}` }) => ({ salt, predictedAddress: predictCreate2Address(salt, initcodeHashOf(input.initcode)), notes: ['durable'] }));
+    let sends = 0;
+    const first = makeEngine({
+      validate: async () => dynamicValidation(plan),
+      deploymentTypes: { prepare, list: async () => [], validate: vi.fn() },
+      executeTx: async (args, ctx) => {
+        sends += 1;
+        if (sends === 1) { await args.onPhase?.('broadcasting', { tx: { nonce: 0 }, rawTx: RAW_TX, txHash: TX_HASH }); return { txHash: TX_HASH, ...RECEIPT }; }
+        return holdUntilAborted(new Promise<void>(() => undefined), ctx.signal);
+      },
+    });
+    const run = await launchDefault(first, plan);
+    await eventually(async () => {
+      const step = (await first.engine.get('p1', run.id))?.lanes['1'].steps[1];
+      return step?.status === 'awaiting-signature' && step.attempts.length === 1;
+    }, 'JIT attempt persisted');
+    await first.engine.shutdown();
+    const second = makeEngine({ runStore: first.store });
+    await second.engine.recoverOnStartup();
+    const recovered = (await second.engine.get('p1', run.id))!;
+    const step = recovered.lanes['1'].steps[1];
+    expect(recovered.lanes['1'].pause).toMatchObject({ reason: 'interrupted', attemptId: step.attempts[0].id });
+    expect(step).toMatchObject({ salt, notes: ['durable'], attempts: [{ expected: { pointers: { 'args.owner': RECEIPT.contractAddress } } }] });
+  });
+
+  it('clears seeded static facts when an edit flips the step dynamic', async () => {
+    const salt = `0x${'53'.repeat(32)}` as const; const gate = createGate();
+    const plan = makePlan({ chains: [1], steps: [
+      { id: 'step-1', kind: 'deploy', contractId: 'c1' },
+      { id: 'step-2', kind: 'deploy', contractId: 'c2', args: { owner: ADDRESS }, strategy: { kind: 'plugin', pluginId: 'hook', salt } },
+    ] });
+    const initial = dynamicValidation(plan); const deploy = plan.steps[1] as DeployStep;
+    const initcode = buildInitcode(deploy, initial.frozen.c2, 1, () => RECEIPT.contractAddress);
+    const prediction = { salt, initcodeHash: initcodeHashOf(initcode), predictedAddress: predictCreate2Address(salt, initcodeHashOf(initcode)) };
+    const strategy = deploy.strategy; if (!strategy || strategy.kind !== 'plugin') throw new Error('bad fixture');
+    strategy.prepared = { '1': { initcodeHash: prediction.initcodeHash, predictedAddress: prediction.predictedAddress } };
+    const harness = makeEngine({
+      validate: async () => ({ ...dynamicValidation(plan), predicted: { '1': { 'step-2': prediction } } }),
+      deploymentTypes: { prepare: vi.fn(async (_id, input) => { await gate.promise; return { salt, predictedAddress: predictCreate2Address(salt, initcodeHashOf(input.initcode)), notes: [] }; }), list: async () => [], validate: vi.fn() },
+      getCode: async (_url, address) => address.toLowerCase() === prediction.predictedAddress.toLowerCase() ? '0x01' : '0x',
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'create2-collision', 'static collision');
+    const paused = (await harness.engine.get('p1', run.id))!;
+    await harness.store.mutate('p1', run.id, (current) => { current.lanes['1'].pause!.reason = 'estimation'; });
+    const edited = await harness.engine.resolveLane('p1', run.id, 1, { action: 'edit', attemptId: paused.lanes['1'].pause!.attemptId, commandId: crypto.randomUUID(), edits: { argsByStep: { 'step-2': { owner: { $ref: { kind: 'step', stepId: 'step-1' } } } } } });
+    expect(edited.lanes['1'].steps[1]).not.toHaveProperty('predictedAddress');
+    expect(edited.lanes['1'].steps[1]).not.toHaveProperty('salt');
+    expect(edited.lanes['1'].steps[1]).not.toHaveProperty('notes');
+    gate.release();
+  });
+
+  it('clears JIT salt and notes and reseeds prediction when an edit flips dynamic to static', async () => {
+    const planSalt = `0x${'54'.repeat(32)}` as const; const jitSalt = `0x${'55'.repeat(32)}` as const;
+    const plan = dynamicPlan({ kind: 'plugin', pluginId: 'hook', salt: planSalt });
+    const frozen = dynamicValidation(plan).frozen; const deploy = plan.steps[1] as DeployStep;
+    const staticStep = { ...deploy, args: { owner: ADDRESS } } as DeployStep;
+    const staticInitcode = buildInitcode(staticStep, frozen.c2, 1, () => RECEIPT.contractAddress);
+    const staticPrediction = predictCreate2Address(planSalt, initcodeHashOf(staticInitcode));
+    const strategy = deploy.strategy; if (!strategy || strategy.kind !== 'plugin') throw new Error('bad fixture');
+    strategy.prepared = { '1': { initcodeHash: initcodeHashOf(staticInitcode), predictedAddress: staticPrediction } };
+    const harness = makeEngine({
+      validate: async () => dynamicValidation(plan),
+      deploymentTypes: { prepare: vi.fn(async (_id, input) => ({ salt: jitSalt, predictedAddress: predictCreate2Address(jitSalt, initcodeHashOf(input.initcode)), notes: ['old JIT'] })), list: async () => [], validate: vi.fn() },
+      getCode: async () => '0x01',
+    });
+    const run = await launchDefault(harness, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'create2-collision', 'dynamic collision');
+    const paused = (await harness.engine.get('p1', run.id))!;
+    await harness.store.mutate('p1', run.id, (current) => { current.lanes['1'].pause!.reason = 'estimation'; });
+    const edited = await harness.engine.resolveLane('p1', run.id, 1, { action: 'edit', attemptId: paused.lanes['1'].pause!.attemptId, commandId: crypto.randomUUID(), edits: { argsByStep: { 'step-2': { owner: ADDRESS } } } });
+    expect(edited.lanes['1'].steps[1].predictedAddress).toBe(staticPrediction);
+    expect(edited.lanes['1'].steps[1]).not.toHaveProperty('salt');
+    expect(edited.lanes['1'].steps[1]).not.toHaveProperty('notes');
   });
 
   it('atomically adds the durable hook outbox on the first terminal transition and dispatches only once', async () => {

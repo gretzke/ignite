@@ -225,4 +225,23 @@ describe('deployment artifact renderer', () => {
     expect(JSON.parse(await fs.readFile(file, 'utf8')).runId).toBe(record.id);
     expect(record.repoArtifact).toEqual({ path: 'ignite/deployments/release/run-1.json', status: 'failed', error: 'read only', updatedAt: '2026-07-14T12:00:00.000Z' });
   });
+
+  it.each(['confirmed', 'skipped'] as const)('renders lane JIT provenance for a %s dynamic deployment', (status) => {
+    const record = run(); const salt = `0x${'77'.repeat(32)}` as const;
+    record.plan.steps = [
+      { id: 'box', kind: 'deploy', contractId: 'token' },
+      { id: 'hook', kind: 'deploy', contractId: 'token', args: { owner: { $ref: { kind: 'step', stepId: 'box' } } }, strategy: { kind: 'plugin', pluginId: 'hook' } },
+    ];
+    record.lanes['1'].currentStepIndex = 2;
+    record.lanes['1'].steps = [
+      { stepId: 'box', status: 'confirmed', address: '0x0000000000000000000000000000000000000010', attempts: [] },
+      {
+        stepId: 'hook', status, address: '0x0000000000000000000000000000000000000020', predictedAddress: '0x0000000000000000000000000000000000000020', salt, notes: ['flags 0x2080'],
+        attempts: [{ id: 'jit', startedAt: record.createdAt, ...(status === 'confirmed' ? { txHash: '0x1234' as const } : { resolution: 'accept-deployed' as const }), expected: { to: '0x4e59b44847b379578588920cA78FbF26c0B4956C', value: '0', dataHash: `0x${'11'.repeat(32)}`, pointers: { 'args.owner': '0x0000000000000000000000000000000000000010' } } }],
+      },
+    ];
+    const step = renderArtifact(record).lanes['1'].steps[1];
+    expect(step.strategy).toEqual({ kind: 'plugin', pluginId: 'hook', salt, predictedAddress: '0x0000000000000000000000000000000000000020', notes: ['flags 0x2080'] });
+    expect(step.pointers).toEqual([{ path: 'args.owner', stepId: 'box', address: '0x0000000000000000000000000000000000000010' }]);
+  });
 });

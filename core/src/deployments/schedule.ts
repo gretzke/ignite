@@ -12,6 +12,7 @@ export type ChainPredictions = { predictions: Predictions; entries: Record<strin
 type SnapshotClient = { getTransactionCount?(args: { address: Hex; blockTag?: 'latest' }): Promise<number | bigint>; getCode?(args: { address: Hex }): Promise<Hex | undefined> };
 export function hasPredicted(entry: ProvisionalPrediction | undefined): entry is Exclude<ProvisionalPrediction, { absent: true }> { return Boolean(entry && 'predictedAddress' in entry); }
 const provisionalCache = new Map<string, { expires: number; value: Promise<{ salt: Hex32; predictedAddress: Hex; notes: string[] }> }>();
+export function clearProvisionalPredictionCache(): void { provisionalCache.clear(); }
 
 function constructorInputs(abi: unknown): AbiParameter[] {
   return Array.isArray(abi) ? ((abi.find((entry) => entry && typeof entry === 'object' && (entry as { type?: string }).type === 'constructor') as { inputs?: AbiParameter[] } | undefined)?.inputs ?? []) : [];
@@ -124,8 +125,10 @@ export async function buildChainPredictions(plan: DeploymentPlan, frozen: Frozen
       const cacheKey = `${strategy.pluginId}:${chainId}:${hash}:${runtimeBytecode ? initcodeHashOf(runtimeBytecode) : ''}:${JSON.stringify(strategy.params ?? {})}`;
       const now = Date.now(); let cached = provisionalCache.get(cacheKey);
       if (!cached || cached.expires < now) {
-        cached = { expires: now + 30_000, value: deps.deploymentTypes.prepare(strategy.pluginId, { chainId, initcode, ...(runtimeBytecode === undefined ? {} : { runtimeBytecode }), params: strategy.params }) };
+        const value = deps.deploymentTypes.prepare(strategy.pluginId, { chainId, initcode, ...(runtimeBytecode === undefined ? {} : { runtimeBytecode }), params: strategy.params });
+        cached = { expires: now + 30_000, value };
         provisionalCache.set(cacheKey, cached);
+        void value.catch(() => { if (provisionalCache.get(cacheKey)?.value === value) provisionalCache.delete(cacheKey); });
         if (provisionalCache.size > 50) provisionalCache.delete(provisionalCache.keys().next().value!);
       }
       const prepared = await cached.value;

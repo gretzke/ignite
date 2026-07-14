@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DeploymentPlan, FrozenInputs, Hex } from '@ignite/api';
 import { simulateChain } from '../../deployments/simulation.js';
+import type { ChainPredictions } from '../../deployments/schedule.js';
 
 const A = '0x0000000000000000000000000000000000000001' as Hex;
 const B = '0x0000000000000000000000000000000000000002' as Hex;
@@ -175,5 +176,24 @@ describe('simulateChain', () => {
         }),
       })
     ).rejects.toMatchObject({ code: 'SIMULATION_ADDRESS_DIVERGENCE' });
+  });
+
+  it('consumes a supplied snapshot without recomputing predictions or nonces', async () => {
+    const salt = `0x${'88'.repeat(32)}` as Hex;
+    const candidate = plan([{ id: 'one', kind: 'deploy', contractId: 'c', args: { peer: A }, strategy: { kind: 'plugin', pluginId: 'hook' } }]);
+    const snapshot: ChainPredictions = {
+      predictions: { one: { salt, initcodeHash: `0x${'99'.repeat(32)}`, predictedAddress: B } },
+      entries: { one: { salt, initcodeHash: `0x${'99'.repeat(32)}`, predictedAddress: B } },
+      createAddresses: new Map(), baseNonces: new Map([[A, 4]]), confirmedExisting: new Set(), dynamic: new Set(),
+    };
+    const nonce = vi.fn(async () => { throw new Error('must not refetch'); });
+    const simulated = vi.fn(async () => ({ blocks: [{ calls: [{ status: 'success', gasUsed: '5' }] }] }));
+    const outcome = await simulateChain({
+      chainId: 1, plan: candidate, frozen, signers: new Map([['one', A]]), predictions: snapshot,
+      client: { simulateBlocks: simulated, estimateGas: vi.fn(), getTransactionCount: nonce, getBlockNumber: async () => 1, getCode: async () => undefined },
+      getFork: async () => undefined,
+    });
+    expect(outcome).toMatchObject({ tier: 'simulateV1', perStep: { one: { status: 'ok', gasUsed: '5' } } });
+    expect(nonce).not.toHaveBeenCalled();
   });
 });

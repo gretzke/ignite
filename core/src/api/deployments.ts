@@ -28,7 +28,7 @@ import {
   buildRuntimeCode,
   predictPlanAddresses,
 } from '../deployments/schedule.js';
-import { mergeArgs, mergeCallTarget, mergeLibraries, validateDependencies } from '../deployments/resolver.js';
+import { dynamicDeterministicStepIds, mergeArgs, mergeCallTarget, mergeLibraries, validateDependencies } from '../deployments/resolver.js';
 import { ArtifactFreezeService } from '../deployments/ArtifactFreezeService.js';
 import { DeploymentTypeService } from '../deployments/DeploymentTypeService.js';
 import { renderArtifact } from '../deployments/artifact.js';
@@ -216,6 +216,14 @@ export function createDeploymentHandlers(
           validateDependencies(plan);
         } catch (error) {
           throw mapPreparePointerError(error, plan);
+        }
+        for (const chainId of body.chainIds) {
+          if (dynamicDeterministicStepIds(plan, chainId).has(step.id))
+            throw new IgniteError(
+              `Salt for ${step.id} is mined during the run on chain ${chainId}`,
+              'POINTER_NOT_CONCRETE',
+              { stepId: step.id, chainId }
+            );
         }
         // Freezing the submitted context is deliberately server-authoritative;
         // resolving only a client-provided address map would bypass §3 rules.

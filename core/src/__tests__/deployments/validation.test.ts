@@ -7,7 +7,8 @@ import {
 } from '@ignite/api';
 import { validatePlan } from '../../deployments/validation.js';
 import { initcodeHashOf, predictCreate2Address } from '../../deployments/create2.js';
-import { buildChainPredictions, buildInitcode } from '../../deployments/schedule.js';
+import { buildChainPredictions, buildInitcode, clearProvisionalPredictionCache } from '../../deployments/schedule.js';
+import { DeploymentTypeService } from '../../deployments/DeploymentTypeService.js';
 
 const ADDRESS = '0x0000000000000000000000000000000000000001';
 const HASH = 'b'.repeat(64);
@@ -119,6 +120,64 @@ describe('validatePlan', () => {
     expect(prepared).toHaveBeenCalledOnce();
     expect(snapshot.entries.hook).toMatchObject({ provisional: true, notes: ['mined'] });
     expect(snapshot.predictions.hook).toBeUndefined();
+  });
+
+  it('evicts rejected provisional prepares and clears successful entries on plugin invalidation', async () => {
+    clearProvisionalPredictionCache();
+    const salt = `0x${'66'.repeat(32)}` as const;
+    const hookFrozen = { ...frozen, hook: { ...frozen.token, abi: [{ type: 'constructor', inputs: [{ name: 'owner', type: 'address' }] }] } };
+    const candidate = plan({ steps: [
+      { id: 'plain', kind: 'deploy', contractId: 'token', args: { supply: '1' } },
+      { id: 'hook', kind: 'deploy', contractId: 'hook', args: { owner: { $ref: { kind: 'step', stepId: 'plain' } } }, strategy: { kind: 'plugin', pluginId: 'hook' } },
+    ] });
+    const rejected = vi.fn(async () => { throw new Error('mine failed'); });
+    const args = { client: { getTransactionCount: async () => 1 }, deploymentTypes: { prepare: rejected } as any };
+    await buildChainPredictions(candidate, hookFrozen, 1, args);
+    await buildChainPredictions(candidate, hookFrozen, 1, args);
+    expect(rejected).toHaveBeenCalledTimes(2);
+
+    const prepared = vi.fn(async (_pluginId: string, input: { initcode: `0x${string}` }) => ({ salt, predictedAddress: predictCreate2Address(salt, initcodeHashOf(input.initcode)), notes: [] }));
+    const successful = { client: { getTransactionCount: async () => 1 }, deploymentTypes: { prepare: prepared } as any };
+    await buildChainPredictions(candidate, hookFrozen, 1, successful);
+    await buildChainPredictions(candidate, hookFrozen, 1, successful);
+    expect(prepared).toHaveBeenCalledOnce();
+    new DeploymentTypeService({ getProviders: async () => [], execute: vi.fn() as never }).invalidate();
+    await buildChainPredictions(candidate, hookFrozen, 1, successful);
+    expect(prepared).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves the precise static prediction failure instead of replacing it with snapshot unavailable', async () => {
+    const getCode = vi.fn(async ({ address }: { address: string }) => address.toLowerCase() === CREATE2_PROXY_ADDRESS.toLowerCase() ? CREATE2_PROXY_RUNTIME_CODE : '0x');
+    const result = await validatePlan(plan({ steps: [{ id: 'deploy-token', kind: 'deploy', contractId: 'token', args: { supply: '1' }, strategy: { kind: 'plugin', pluginId: 'hook' } }] }), { '1': 'rpc-1' }, deps({
+      createClient: vi.fn(() => ({ estimateGas: vi.fn(async () => 100n), getBalance: vi.fn(async () => 10_000n), estimateFeesPerGas: vi.fn(async () => ({ maxFeePerGas: 10n, maxPriorityFeePerGas: 1n })), getTransactionCount: vi.fn(async () => 0), getBlockNumber: vi.fn(async () => 1), getCode })),
+      makeForkRunner: vi.fn(async () => undefined),
+    }));
+    expect(result.report.chains['1'].create2).toMatchObject({ ok: false, code: 'CREATE2_PREDICTION_FAILED' });
+    expect(result.report.chains['1'].create2?.message).toBe('No salt is available for Token');
+  });
+
+  it('keeps provisional prepare degradation informational and non-blocking', async () => {
+    const hookFrozen: FrozenInputs = { ...frozen, hook: { ...frozen.token, abi: [{ type: 'constructor', inputs: [{ name: 'owner', type: 'address' }] }] } };
+    const candidate = plan({
+      contracts: [...plan().contracts, { ...plan().contracts[0], id: 'hook', contractName: 'Hook' }],
+      steps: [
+        { id: 'plain', kind: 'deploy', contractId: 'token', args: { supply: '1' } },
+        { id: 'hook', kind: 'deploy', contractId: 'hook', args: { owner: { $ref: { kind: 'step', stepId: 'plain' } } }, strategy: { kind: 'plugin', pluginId: 'hook' } },
+      ],
+    });
+    const getCode = vi.fn(async ({ address }: { address: string }) => address.toLowerCase() === CREATE2_PROXY_ADDRESS.toLowerCase() ? CREATE2_PROXY_RUNTIME_CODE : '0x');
+    const result = await validatePlan(candidate, { '1': 'rpc-1' }, deps({
+      freezeInputs: vi.fn(async () => hookFrozen),
+      deploymentTypes: { prepare: vi.fn(async () => { throw new Error('bad flags'); }), list: vi.fn(async () => []), validate: vi.fn() },
+      createClient: vi.fn(() => ({ estimateGas: vi.fn(async () => 100n), getBalance: vi.fn(async () => 10_000n), estimateFeesPerGas: vi.fn(async () => ({ maxFeePerGas: 10n, maxPriorityFeePerGas: 1n })), getTransactionCount: vi.fn(async () => 0), getBlockNumber: vi.fn(async () => 1), getCode })),
+      makeForkRunner: vi.fn(async () => undefined),
+    }));
+    const checklist = result.report.chains['1'];
+    expect(checklist.create2).toMatchObject({ ok: true, blocking: false, details: { provisionalSteps: [{ stepId: 'hook', degraded: 'bad flags' }] } });
+    expect(checklist.estimation).toMatchObject({ ok: false, blocking: false });
+    expect(checklist.simulation).toMatchObject({ ok: false, blocking: false });
+    expect(checklist.balance).toMatchObject({ ok: false, blocking: false });
+    expect(Object.entries(checklist).filter(([, item]) => item.blocking && !item.ok)).toEqual([]);
   });
 
   it('single-flights only byte-identical validation requests', async () => {
