@@ -185,4 +185,11 @@ describe('RunStore', () => {
       store.create({ ...run('run-2'), idempotencyKey: record.idempotencyKey })
     ).rejects.toThrow(/idempotency/i);
   });
+
+  it('includes the workflow name in run summaries', async () => {
+    const record = run();
+    record.workflow = { repoPathOrUrl: '/workspace', name: 'release', docHash: HASH, hooks: [] };
+    await store.create(record);
+    expect((await store.list('profile-1')).runs[0].workflow).toEqual({ name: 'release' });
+  });
 });

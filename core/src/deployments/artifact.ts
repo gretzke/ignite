@@ -27,6 +27,7 @@ export function renderArtifact(
       contractName: sanitizeText(contract.contractName),
       artifactHash: input.artifactHash,
       compiler: { ...input.compiler, pluginId: sanitizeText(input.compiler.pluginId), version: sanitizeText(input.compiler.version) },
+      ...(contract.pin?.ref ? { versionLabel: sanitizeText(contract.pin.ref) } : {}),
     };
   });
 
@@ -50,9 +51,22 @@ export function renderArtifact(
             : undefined;
           const expected = laneStep.attempts.findLast((attempt) => attempt.expected)?.expected;
           const refs = step ? collectRefs(step, lane.chainId) : [];
-          const pointerEntries = expected?.pointers
-            ? refs.flatMap((ref) => expected.pointers?.[ref.path] ? [{ path: ref.path, stepId: ref.stepId, address: expected.pointers[ref.path]! }] : [])
+          const pointerEntries: NonNullable<DeploymentArtifact['lanes'][string]['steps'][number]['pointers']> = expected?.pointers
+            ? refs.flatMap((ref) => expected.pointers?.[ref.path] ? [{ path: ref.path, stepId: ref.stepId, address: expected.pointers[ref.path]!, source: 'step' as const }] : [])
             : [];
+          for (const resolution of run.workflow?.resolutions ?? []) {
+            if (resolution.stepId !== laneStep.stepId || resolution.chainId !== lane.chainId) continue;
+            const entry = {
+              path: resolution.path,
+              stepId: resolution.stepId,
+              address: resolution.address,
+              source: resolution.source,
+              ...(resolution.via ? { via: sanitizeText(`${resolution.via.kind}:${resolution.via.kind === 'artifact' ? resolution.via.runId : resolution.via.pluginId}`) } : {}),
+            };
+            const existing = pointerEntries.findIndex((pointer) => pointer.path === resolution.path);
+            if (existing >= 0) pointerEntries[existing] = entry;
+            else pointerEntries.push(entry);
+          }
           const strategy = step?.kind === 'deploy' ? step.strategy ?? { kind: 'create' as const } : undefined;
           const effectiveSalt = strategy && strategy.kind !== 'create'
             ? strategy.saltPerChain?.[key] ?? strategy.salt : undefined;
@@ -128,6 +142,7 @@ export function renderArtifact(
     ...(run.abortRequested ? { abortRequested: true } : {}),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
+    ...(run.workflow ? { workflow: { name: sanitizeText(run.workflow.name), docHash: run.workflow.docHash } } : {}),
     contracts,
     validation: sanitizeValue(run.validation),
     lanes,

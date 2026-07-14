@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DeploymentPlanSchema, FrozenInputSchema, PrepareStepRequestSchema, RunRecordSchema, allowedActions } from '@ignite/api';
+import { DeploymentPlanSchema, FrozenInputSchema, PrepareStepRequestSchema, RunRecordSchema, RunSummarySchema, ValidateDeploymentRequestSchema, allowedActions } from '@ignite/api';
 import { renderArtifact } from '../../deployments/artifact.js';
 
 const address = '0x0000000000000000000000000000000000000001';
@@ -37,11 +37,10 @@ describe('D5 plan wire schema', () => {
   });
 });
 
-describe('D3-era record compatibility (final-review F19)', () => {
-  // A pristine pre-D5 run record: deploy-only steps, no strategy/libraries/
-  // expected/predictedAddress, artifact-era attempt shape. Widening must keep
-  // this parsing forever and the artifact must regenerate deterministically.
-  const d3Record = {
+describe('D5 record compatibility and D6 workflow widening', () => {
+  // A pristine D5 run record. D6 widening must keep this parsing forever and
+  // the artifact must regenerate deterministically.
+  const d5Record = {
     schemaVersion: 1,
     id: 'run-d3',
     profileId: 'p1',
@@ -61,7 +60,7 @@ describe('D3-era record compatibility (final-review F19)', () => {
           sourcePath: 'src/Token.sol',
         },
       ],
-      steps: [{ id: 's1', kind: 'deploy', contractId: 'token' }],
+      steps: [{ id: 's1', kind: 'deploy', contractId: 'token', strategy: { kind: 'create2', salt } }],
       chains: [31337],
       signers: {
         global: {
@@ -125,12 +124,12 @@ describe('D3-era record compatibility (final-review F19)', () => {
     status: 'completed',
   };
 
-  it('parses a pristine D3 run record under the widened schema', () => {
-    expect(() => RunRecordSchema.parse(d3Record)).not.toThrow();
+  it('parses a pristine D5 run record under the widened schema', () => {
+    expect(() => RunRecordSchema.parse(d5Record)).not.toThrow();
   });
 
-  it('regenerates the legacy artifact deterministically as v2 with optionals absent', () => {
-    const record = RunRecordSchema.parse(d3Record);
+  it('regenerates the pristine D5 artifact byte-identically with D6 optionals absent', () => {
+    const record = RunRecordSchema.parse(d5Record);
     const artifact = renderArtifact(record);
     expect(artifact.schemaVersion).toBe(2);
     const step = artifact.lanes['31337'].steps[0];
@@ -140,5 +139,46 @@ describe('D3-era record compatibility (final-review F19)', () => {
     expect(artifact.lanes['31337']).not.toHaveProperty('simulationTier');
     // No timestamps/randomness enter rendering: byte-identical regeneration.
     expect(JSON.stringify(renderArtifact(structuredClone(record)))).toBe(JSON.stringify(artifact));
+  });
+
+  it('round-trips a D6 workflow-bound record and renders additive provenance', () => {
+    const commit = 'd'.repeat(40);
+    const record = structuredClone(d5Record) as any;
+    record.plan.contracts[0].repoPathOrUrl = 'https://example.test/token.git';
+    record.plan.contracts[0].pin = { url: 'https://example.test/token.git', commit, ref: 'v2.0.0', refKind: 'tag' };
+    record.plan.steps[0].args = { owner: address };
+    record.workflow = {
+      repoPathOrUrl: '/workspace', name: 'release', docHash: 'e'.repeat(64), hooks: ['chronicles'],
+      resolutions: [{ stepId: 's1', path: '/args/owner', chainId: 31337, address, source: 'suggestion', via: { kind: 'artifact', runId: 'older' } }],
+      acknowledgeArtifactDrift: { token: { expected: '1'.repeat(64), actual: '2'.repeat(64) } },
+    };
+    record.hookRuns = { chronicles: { status: 'completed', jobId: 'job-1', notes: ['logged'] } };
+    record.repoArtifact = { path: 'ignite/deployments/release/run-d3.json', status: 'written', updatedAt: record.updatedAt };
+    record.validation.run = {
+      workflow: { ok: true, blocking: false, message: 'bound' },
+      outputs: { ok: true, blocking: false, message: 'ready' },
+    };
+
+    const parsed = RunRecordSchema.parse(record);
+    expect(parsed).toEqual(record);
+    expect(RunSummarySchema.parse({ id: parsed.id, profileId: parsed.profileId, name: parsed.name, createdAt: parsed.createdAt, updatedAt: parsed.updatedAt, status: parsed.status, chains: [31337], workflow: { name: 'release' } }).workflow?.name).toBe('release');
+    const artifact = renderArtifact(parsed);
+    expect(artifact.workflow).toEqual({ name: 'release', docHash: 'e'.repeat(64) });
+    expect(artifact.contracts[0].versionLabel).toBe('v2.0.0');
+    expect(artifact.lanes['31337'].steps[0].pointers).toContainEqual({ path: '/args/owner', stepId: 's1', address, source: 'suggestion', via: 'artifact:older' });
+  });
+
+  it('accepts only step-rooted RFC 6901 resolution paths and drift acknowledgements', () => {
+    const base = { plan: d5Record.plan, rpcSelection: { '31337': 'rpc1' } };
+    const workflow = {
+      repoPathOrUrl: '/workspace', name: 'release', hooks: ['chronicles'],
+      acknowledgeArtifactDrift: { token: { expected: '1'.repeat(64), actual: '2'.repeat(64) } },
+    };
+    for (const pointer of ['/args/owner', '/args/nested/0', '/target', '/libraries/src~1Lib.sol:Lib']) {
+      expect(() => ValidateDeploymentRequestSchema.parse({ ...base, workflow: { ...workflow, resolutions: [{ stepId: 's1', path: pointer, chainId: 31337, address, source: 'manual' }] } })).not.toThrow();
+    }
+    for (const pointer of ['', '/args', '/target/address', '/libraries', '/libraries/src/Lib.sol:Lib', '/value', '/args/bad~2escape']) {
+      expect(() => ValidateDeploymentRequestSchema.parse({ ...base, workflow: { ...workflow, resolutions: [{ stepId: 's1', path: pointer, chainId: 31337, address, source: 'manual' }] } })).toThrow();
+    }
   });
 });

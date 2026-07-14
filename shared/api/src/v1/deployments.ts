@@ -352,6 +352,51 @@ export interface ChainChecklist {
 
 export interface ValidationReport {
   chains: Record<string, ChainChecklist>;
+  run?: {
+    workflow?: ValidationItem;
+    outputs?: ValidationItem;
+  };
+}
+
+export type ExternalResolutionVia =
+  | { kind: 'artifact'; runId: string }
+  | { kind: 'plugin'; pluginId: string };
+
+export interface ExternalResolution {
+  stepId: string;
+  path: string;
+  chainId: number;
+  address: Hex;
+  source: 'suggestion' | 'manual';
+  via?: ExternalResolutionVia;
+}
+
+export type ArtifactDriftAcknowledgements = Record<string, { expected: string; actual: string }>;
+
+export interface WorkflowRunRequest {
+  repoPathOrUrl: string;
+  name: string;
+  hooks: string[];
+  resolutions?: ExternalResolution[];
+  acknowledgeArtifactDrift?: ArtifactDriftAcknowledgements;
+}
+
+export interface WorkflowRunBinding extends WorkflowRunRequest {
+  docHash: string;
+}
+
+export interface HookRunRecord {
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  jobId?: string;
+  notes?: string[];
+  error?: string;
+}
+
+export interface RepoArtifactOutcome {
+  path: string;
+  status: 'written' | 'failed';
+  error?: string;
+  updatedAt: string;
 }
 
 // What settled an attempt. recheck/keep-waiting never settle one, so they are
@@ -432,6 +477,9 @@ export interface RunRecord {
   abortRequested?: boolean;
   status: RunStatus;
   simulationTiers?: Record<string, 'simulateV1' | 'fork' | 'estimate'>;
+  workflow?: WorkflowRunBinding;
+  hookRuns?: Record<string, HookRunRecord>;
+  repoArtifact?: RepoArtifactOutcome;
 }
 
 export const LaneStatusSchema = z.enum([
@@ -547,7 +595,52 @@ export const ChainChecklistSchema = z.object({
 
 export const ValidationReportSchema = z.object({
   chains: z.record(ChainIdKeySchema, ChainChecklistSchema),
+  run: z.object({
+    workflow: ValidationItemSchema.optional(),
+    outputs: ValidationItemSchema.optional(),
+  }).optional(),
 }) satisfies z.ZodType<ValidationReport>;
+
+const JSON_POINTER_TOKEN = '(?:[^~/]|~0|~1)+';
+const EXTERNAL_RESOLUTION_PATH = new RegExp(`^(?:/target|/args/${JSON_POINTER_TOKEN}(?:/${JSON_POINTER_TOKEN})*|/libraries/${JSON_POINTER_TOKEN})$`);
+export const ExternalResolutionViaSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('artifact'), runId: z.string().min(1) }),
+  z.object({ kind: z.literal('plugin'), pluginId: z.string().min(1) }),
+]) satisfies z.ZodType<ExternalResolutionVia>;
+export const ExternalResolutionSchema = z.object({
+  stepId: z.string().min(1),
+  path: z.string().regex(EXTERNAL_RESOLUTION_PATH, 'path must be a supported RFC 6901 pointer rooted at the step'),
+  chainId: z.number().int().positive(),
+  address: AddressSchema,
+  source: z.enum(['suggestion', 'manual']),
+  via: ExternalResolutionViaSchema.optional(),
+}) satisfies z.ZodType<ExternalResolution>;
+export const ArtifactDriftAcknowledgementsSchema = z.record(z.string().min(1), z.object({
+  expected: z.string().regex(SHA256_HEX),
+  actual: z.string().regex(SHA256_HEX),
+})) satisfies z.ZodType<ArtifactDriftAcknowledgements>;
+export const WorkflowRunRequestSchema = z.object({
+  repoPathOrUrl: z.string().min(1),
+  name: z.string().min(1),
+  hooks: z.array(z.string().min(1)).max(16),
+  resolutions: z.array(ExternalResolutionSchema).max(4096).optional(),
+  acknowledgeArtifactDrift: ArtifactDriftAcknowledgementsSchema.optional(),
+}) satisfies z.ZodType<WorkflowRunRequest>;
+export const WorkflowRunBindingSchema = WorkflowRunRequestSchema.extend({
+  docHash: z.string().regex(SHA256_HEX),
+}) satisfies z.ZodType<WorkflowRunBinding>;
+export const HookRunRecordSchema = z.object({
+  status: z.enum(['pending', 'running', 'completed', 'failed']),
+  jobId: z.string().min(1).optional(),
+  notes: z.array(z.string().max(256)).max(8).optional(),
+  error: z.string().optional(),
+}) satisfies z.ZodType<HookRunRecord>;
+export const RepoArtifactOutcomeSchema = z.object({
+  path: z.string().min(1),
+  status: z.enum(['written', 'failed']),
+  error: z.string().optional(),
+  updatedAt: z.string(),
+}) satisfies z.ZodType<RepoArtifactOutcome>;
 
 export const AttemptSchema = z.object({
   id: z.string().min(1),
@@ -635,6 +728,9 @@ export const RunRecordSchema = z.object({
   abortRequested: z.boolean().optional(),
   status: RunStatusSchema,
   simulationTiers: z.record(ChainIdKeySchema, z.enum(['simulateV1', 'fork', 'estimate'])).optional(),
+  workflow: WorkflowRunBindingSchema.optional(),
+  hookRuns: z.record(z.string().min(1), HookRunRecordSchema).optional(),
+  repoArtifact: RepoArtifactOutcomeSchema.optional(),
 }) satisfies z.ZodType<RunRecord>;
 
 export interface RunEvent {
@@ -821,10 +917,12 @@ export interface ValidateDeploymentRequest {
   plan: DeploymentPlan;
   rpcSelection: RpcSelection;
   explorerSelection?: Record<string, string[]>;
+  workflow?: WorkflowRunRequest;
 }
 
 export interface ValidateDeploymentData {
   chains: Record<string, ChainChecklist>;
+  run?: ValidationReport['run'];
   frozenCandidates?: FrozenInputs;
 }
 
@@ -864,6 +962,7 @@ export interface RunSummary {
   updatedAt: string;
   status: RunStatus;
   chains: number[];
+  workflow?: { name: string };
 }
 
 export interface ListRunsData {
@@ -906,6 +1005,7 @@ export interface DeploymentArtifact {
   abortRequested?: boolean;
   createdAt: string;
   updatedAt: string;
+  workflow?: { name: string; docHash: string };
   contracts: Array<{
     id: string;
     repoName: string;
@@ -913,6 +1013,7 @@ export interface DeploymentArtifact {
     contractName: string;
     artifactHash: string;
     compiler: FrozenInput["compiler"];
+    versionLabel?: string;
   }>;
   validation: ValidationReport;
   lanes: Record<
@@ -938,7 +1039,7 @@ export interface DeploymentArtifact {
         strategy?: { kind: 'create' | 'create2' | 'plugin'; pluginId?: string; salt?: Hex32; predictedAddress?: Hex };
         libraries?: Array<{ key: string; address: Hex; source: 'literal' | { stepId: string } }>;
         call?: { target: Hex; targetSource: 'literal' | { stepId: string }; signature?: string };
-        pointers?: Array<{ path: string; stepId: string; address: Hex }>;
+        pointers?: Array<{ path: string; stepId: string; address: Hex; source?: 'step' | 'suggestion' | 'manual'; via?: string }>;
         attempts: DeploymentArtifactAttempt[];
       }>;
     }
@@ -970,6 +1071,7 @@ export const ValidateDeploymentRequestSchema =
       plan: DeploymentPlanSchema,
       rpcSelection: RpcSelectionSchema,
       explorerSelection: DeploymentExplorerSelectionSchema.optional(),
+      workflow: WorkflowRunRequestSchema.optional(),
     }),
   );
 
@@ -979,6 +1081,7 @@ export const ValidateDeploymentResponseSchema =
   )(
     z.object({
       chains: z.record(ChainIdKeySchema, ChainChecklistSchema),
+      run: ValidationReportSchema.shape.run,
       frozenCandidates: z.record(z.string(), FrozenInputSchema).optional(),
     }),
   );
@@ -990,6 +1093,7 @@ export const CreateRunRequestSchema = createRequestSchema<CreateRunRequest>(
     plan: DeploymentPlanSchema,
     rpcSelection: RpcSelectionSchema,
     explorerSelection: DeploymentExplorerSelectionSchema.optional(),
+    workflow: WorkflowRunRequestSchema.optional(),
     name: z.string().min(1).optional(),
     idempotencyKey: z.string().min(1),
   }),
@@ -1011,6 +1115,7 @@ export const RunSummarySchema = z.object({
   updatedAt: z.string(),
   status: RunStatusSchema,
   chains: z.array(z.number().int().positive()),
+  workflow: z.object({ name: z.string().min(1) }).optional(),
 }) satisfies z.ZodType<RunSummary>;
 
 export const ListRunsResponseSchema = createApiResponseSchema<ListRunsData>(
@@ -1068,6 +1173,7 @@ export const DeploymentArtifactSchema = z.object({
   abortRequested: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  workflow: z.object({ name: z.string().min(1), docHash: z.string().regex(SHA256_HEX) }).optional(),
   contracts: z.array(
     z.object({
       id: z.string().min(1),
@@ -1076,6 +1182,7 @@ export const DeploymentArtifactSchema = z.object({
       contractName: z.string().min(1),
       artifactHash: z.string().regex(SHA256_HEX),
       compiler: FrozenInputSchema.shape.compiler,
+      versionLabel: z.string().min(1).optional(),
     })
   ),
   validation: ValidationReportSchema,
@@ -1107,7 +1214,7 @@ export const DeploymentArtifactSchema = z.object({
           strategy: z.object({ kind: z.enum(['create', 'create2', 'plugin']), pluginId: z.string().min(1).optional(), salt: Hex32Schema.optional(), predictedAddress: AddressSchema.optional() }).optional(),
           libraries: z.array(z.object({ key: z.string().min(1), address: AddressSchema, source: z.union([z.literal('literal'), z.object({ stepId: z.string().min(1) })]) })).optional(),
           call: z.object({ target: AddressSchema, targetSource: z.union([z.literal('literal'), z.object({ stepId: z.string().min(1) })]), signature: z.string().min(1).optional() }).optional(),
-          pointers: z.array(z.object({ path: z.string().min(1), stepId: z.string().min(1), address: AddressSchema })).optional(),
+          pointers: z.array(z.object({ path: z.string().min(1), stepId: z.string().min(1), address: AddressSchema, source: z.enum(['step', 'suggestion', 'manual']).optional(), via: z.string().max(256).optional() })).optional(),
           attempts: z.array(DeploymentArtifactAttemptSchema),
         })
       ),

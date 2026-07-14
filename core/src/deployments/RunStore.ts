@@ -247,5 +247,6 @@ function toSummary(run: RunRecord): RunSummary {
     updatedAt: run.updatedAt,
     status: run.status,
     chains: Object.values(run.lanes).map((lane) => lane.chainId),
+    ...(run.workflow ? { workflow: { name: run.workflow.name } } : {}),
   };
 }
