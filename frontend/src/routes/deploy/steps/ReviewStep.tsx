@@ -26,6 +26,7 @@ import {
   openPermissionsModal,
   pluginsApi,
 } from '../../../store/features/plugins/pluginsSlice';
+import { reviewPredictedAddresses } from '../reviewPredictions';
 
 function validationGreen(report: ValidationReport | null): boolean {
   return Boolean(
@@ -436,59 +437,33 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           }}
         />
       )}
-      {Object.entries(report?.chains ?? {}).flatMap(([chainId, checklist]) => {
-        const predicted = checklist.create2?.details?.predicted;
-        if (!predicted || typeof predicted !== 'object') return [];
-        return Object.entries(predicted as Record<string, unknown>).flatMap(
-          ([stepId, value]) => {
-            const address =
-              value &&
-              typeof value === 'object' &&
-              typeof (value as { predictedAddress?: unknown })
-                .predictedAddress === 'string'
-                ? (value as { predictedAddress: string }).predictedAddress
-                : undefined;
-            return address ? [[chainId, stepId, address] as const] : [];
-          }
-        );
-      }).length > 0 && (
+      {reviewPredictedAddresses(report).length > 0 && (
         <section className="card-milky p-4 grid gap-2">
           <h3 className="font-semibold">Predicted addresses</h3>
-          {Object.entries(report?.chains ?? {}).flatMap(
-            ([chainId, checklist]) => {
-              const predicted = checklist.create2?.details?.predicted;
-              if (!predicted || typeof predicted !== 'object') return [];
-              return Object.entries(
-                predicted as Record<string, unknown>
-              ).flatMap(([stepId, value]) => {
-                const address =
-                  value &&
-                  typeof value === 'object' &&
-                  typeof (value as { predictedAddress?: unknown })
-                    .predictedAddress === 'string'
-                    ? (value as { predictedAddress: string }).predictedAddress
-                    : undefined;
-                if (!address) return [];
-                const contractId = draft.steps.find(
-                  (step) => step.id === stepId && step.kind === 'deploy'
-                )?.contractId;
-                const name =
-                  draft.contracts.find((contract) => contract.id === contractId)
-                    ?.contractName ?? stepId;
-                return (
-                  <div
-                    key={`${stepId}-${chainId}`}
-                    className="list-row flex gap-3"
-                  >
-                    <span className="font-medium">{name}</span>
-                    <span className="text-muted">
-                      {chains.find((chain) => String(chain.chainId) === chainId)
-                        ?.name ?? `Chain ${chainId}`}
-                    </span>
-                    <span className="mono-data ml-auto">{address}</span>
-                  </div>
-                );
-              });
+          {reviewPredictedAddresses(report).map(
+            ({ chainId, stepId, address, provisional }) => {
+              const contractId = draft.steps.find(
+                (step) => step.id === stepId && step.kind === 'deploy'
+              )?.contractId;
+              const name =
+                draft.contracts.find((contract) => contract.id === contractId)
+                  ?.contractName ?? stepId;
+              return (
+                <div
+                  key={`${stepId}-${chainId}`}
+                  className="list-row flex gap-3"
+                >
+                  <span className="font-medium">{name}</span>
+                  <span className="text-muted">
+                    {chains.find((chain) => String(chain.chainId) === chainId)
+                      ?.name ?? `Chain ${chainId}`}
+                  </span>
+                  {provisional && (
+                    <span className="chip">provisional — mined during run</span>
+                  )}
+                  <span className="mono-data ml-auto">{address}</span>
+                </div>
+              );
             }
           )}
         </section>
