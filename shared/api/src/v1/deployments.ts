@@ -335,7 +335,7 @@ export interface ValidationItem {
   blocking: boolean;
   code?: string;
   message: string;
-  details?: Record<string, unknown>;
+  details?: Record<string, unknown> & { provisionalSteps?: Array<{ stepId: string; predictedAddress?: Hex; note?: string; degraded?: string }>; predicted?: Record<string, { predictedAddress: Hex; initcodeHash?: Hex32; salt?: Hex32; provisional?: boolean; notes?: string[] }> };
 }
 
 export interface ChainChecklist {
@@ -440,6 +440,8 @@ export interface LaneStep {
   status: StepStatus;
   address?: Hex;
   predictedAddress?: Hex;
+  salt?: Hex32;
+  notes?: string[];
   unresolvedTx?: { txHash?: Hex; note?: string };
   attempts: Attempt[];
 }
@@ -578,7 +580,10 @@ export const ValidationItemSchema = z.object({
   blocking: z.boolean(),
   code: z.string().optional(),
   message: z.string(),
-  details: z.record(z.string(), z.unknown()).optional(),
+  details: z.object({
+    provisionalSteps: z.array(z.object({ stepId: z.string().min(1), predictedAddress: HexSchema.optional(), note: z.string().optional(), degraded: z.string().optional() })).optional(),
+    predicted: z.record(z.string(), z.object({ predictedAddress: AddressSchema, initcodeHash: Hex32Schema.optional(), salt: Hex32Schema.optional(), provisional: z.boolean().optional(), notes: z.array(z.string()).optional() })).optional(),
+  }).catchall(z.unknown()).optional(),
 }) satisfies z.ZodType<ValidationItem>;
 
 export const ChainChecklistSchema = z.object({
@@ -686,6 +691,8 @@ export const LaneStepSchema = z.object({
     Hex | undefined
   >,
   predictedAddress: z.string().regex(HEX_ADDRESS).optional() as z.ZodType<Hex | undefined>,
+  salt: Hex32Schema.optional(),
+  notes: z.array(z.string().max(256)).max(8).optional(),
   unresolvedTx: z
     .object({ txHash: HexSchema.optional(), note: z.string().optional() })
     .optional(),
@@ -1084,7 +1091,7 @@ export interface DeploymentArtifact {
         signerAddress?: string;
         address?: Hex;
         unresolvedTx?: { txHash?: Hex; note?: string };
-        strategy?: { kind: 'create' | 'create2' | 'plugin'; pluginId?: string; salt?: Hex32; predictedAddress?: Hex };
+        strategy?: { kind: 'create' | 'create2' | 'plugin'; pluginId?: string; salt?: Hex32; predictedAddress?: Hex; notes?: string[] };
         libraries?: Array<{ key: string; address: Hex; source: 'literal' | { stepId: string } }>;
         call?: { target: Hex; targetSource: 'literal' | { stepId: string }; signature?: string };
         pointers?: Array<{ path: string; stepId: string; address: Hex; source?: 'step' | 'suggestion' | 'manual'; via?: string }>;
@@ -1259,7 +1266,7 @@ export const DeploymentArtifactSchema = z.object({
           unresolvedTx: z
             .object({ txHash: HexSchema.optional(), note: z.string().optional() })
             .optional(),
-          strategy: z.object({ kind: z.enum(['create', 'create2', 'plugin']), pluginId: z.string().min(1).optional(), salt: Hex32Schema.optional(), predictedAddress: AddressSchema.optional() }).optional(),
+          strategy: z.object({ kind: z.enum(['create', 'create2', 'plugin']), pluginId: z.string().min(1).optional(), salt: Hex32Schema.optional(), predictedAddress: AddressSchema.optional(), notes: z.array(z.string().max(256)).max(8).optional() }).optional(),
           libraries: z.array(z.object({ key: z.string().min(1), address: AddressSchema, source: z.union([z.literal('literal'), z.object({ stepId: z.string().min(1) })]) })).optional(),
           call: z.object({ target: AddressSchema, targetSource: z.union([z.literal('literal'), z.object({ stepId: z.string().min(1) })]), signature: z.string().min(1).optional() }).optional(),
           pointers: z.array(z.object({ path: z.string().min(1), stepId: z.string().min(1), address: AddressSchema, source: z.enum(['step', 'suggestion', 'manual']).optional(), via: z.string().max(256).optional() })).optional(),

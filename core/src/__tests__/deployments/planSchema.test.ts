@@ -129,6 +129,14 @@ describe('D5 record compatibility and D6 workflow widening', () => {
     expect(() => RunRecordSchema.parse(d5Record)).not.toThrow();
   });
 
+  it('round-trips lane JIT facts and provisional review details', () => {
+    const record = structuredClone(d5Record) as any;
+    record.lanes['31337'].steps[0].salt = salt;
+    record.lanes['31337'].steps[0].notes = ['mined during run'];
+    record.validation.chains['31337'].create2 = { ok: true, blocking: false, message: 'ready', details: { predicted: { s1: { predictedAddress: address, provisional: true } }, provisionalSteps: [{ stepId: 's1', predictedAddress: address, note: 'mined during run' }] } };
+    expect(RunRecordSchema.parse(record)).toMatchObject({ lanes: { '31337': { steps: [{ salt, notes: ['mined during run'] }] } }, validation: { chains: { '31337': { create2: { details: { provisionalSteps: [{ stepId: 's1' }] } } } } } });
+  });
+
   it('regenerates the pristine D5 artifact byte-identically with D6 optionals absent', () => {
     const record = RunRecordSchema.parse(d5Record);
     const artifact = renderArtifact(record);

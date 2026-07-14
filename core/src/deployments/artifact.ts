@@ -12,7 +12,7 @@ import { FileSystem } from '../filesystem/FileSystem.js';
 import { RepoService } from '../repos/RepoService.js';
 import { RunStore } from './RunStore.js';
 import { getLogger } from '../utils/logger.js';
-import { collectRefs, effectiveValue, mergeArgs, mergeCallTarget, mergeGas, mergeLibraries, resolveSigner } from './resolver.js';
+import { collectRefs, dynamicDeterministicStepIds, effectiveValue, mergeArgs, mergeCallTarget, mergeGas, mergeLibraries, resolveSigner } from './resolver.js';
 
 export function renderArtifact(
   run: RunRecord,
@@ -71,8 +71,9 @@ export function renderArtifact(
             else pointerEntries.push(entry);
           }
           const strategy = step?.kind === 'deploy' ? step.strategy ?? { kind: 'create' as const } : undefined;
+          const dynamic = step?.kind === 'deploy' && dynamicDeterministicStepIds(run.plan, lane.chainId).has(step.id);
           const effectiveSalt = strategy && strategy.kind !== 'create'
-            ? strategy.saltPerChain?.[key] ?? strategy.salt : undefined;
+            ? (dynamic ? laneStep.salt : strategy.saltPerChain?.[key] ?? strategy.salt) : undefined;
           return {
             stepId: sanitizeText(laneStep.stepId),
             kind: step?.kind ?? 'deploy',
@@ -97,6 +98,7 @@ export function renderArtifact(
               ...(strategy.kind === 'plugin' ? { pluginId: sanitizeText(strategy.pluginId) } : {}),
               ...(effectiveSalt ? { salt: effectiveSalt } : {}),
               ...(laneStep.predictedAddress ? { predictedAddress: laneStep.predictedAddress } : {}),
+              ...(dynamic && laneStep.notes?.length ? { notes: laneStep.notes.map(sanitizeText) } : {}),
             } } : {}),
             ...(step?.kind === 'deploy' && expected?.libraries ? { libraries: Object.entries(expected.libraries).map(([key, address]) => {
               // Canonical per-chain merge: choosing one whole map would
