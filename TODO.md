@@ -268,6 +268,35 @@ dispatch, `operationPermissions` hints unioned with host minimums, and the
   (constructors reading mutated state are an accepted residual of the
   labeled fallback tier).
 
+## Workflow follow-ups (D6, 2026-07-14)
+
+- **Bytecode-vs-log validation of suggested pointer addresses + explorer
+  links on suggestions** (promoted from the DEPLOYMENTS §5 later-TODO;
+  suggestions are confirm-only untrusted history today).
+- **Hook re-fire / verification-update hooks.** Hooks fire once per run at
+  terminal status with verification state as of then; late verification
+  outcomes never re-fire.
+- **No-workspace notifier hooks for ephemeral runs** (Sol #12b) — the hook
+  surface requires a workflow repo mount today; a net-only notifier hook
+  could serve ephemeral runs.
+- **Pinned-clone GC** — records carry lastUsedAt; no eviction. Manual remove
+  only.
+- **Global workflows browser** across repos (per-repo Deployments section
+  only today).
+- **Blank-slate workflow editor** (creation = promotion or hand-written JSON).
+- **Signer roles in workflow files** — revisit if a consumer appears
+  (deliberately excluded; spec §0.1.1).
+- **Clone object/byte ceilings** — materialization has a wall-clock deadline
+  but no size budget.
+- **VerificationQueue.lifecycle poll-deadline test flake** (observed
+  2026-07-14, pre-existing): VirtualScheduler's drain window (200
+  setImmediates) races real fs writes under load — same class as the
+  directoryListing flake; green isolated. Consider draining until fs
+  settles or injecting the store.
+- **Chronicles D7 spin-out**: move plugins/ecosystem/chronicles-logger to
+  its own repo; workflow requiredPlugins entries then carry its git source
+  (the "install manually" exception retires — spec §0.1.8).
+
 ## Verification follow-ups (D4)
 
 - **Reconciliation with provider-plugin RPC bindings.** `verificationIntegration.ts`
