@@ -56,6 +56,7 @@ export interface RepoServiceDeps {
   fileSystem?: FileSystem;
   profiles?: ProfileManager;
   run?: typeof runCommand;
+  materializationTimeoutMs?: number;
 }
 export interface PromotionSourceInspection {
   origin: string;
@@ -113,6 +114,7 @@ const GIT_AUTH_ERROR =
 const TIMEOUT_CLONE_MS = 10 * 60 * 1000;
 const TIMEOUT_FETCH_MS = 2 * 60 * 1000;
 const TIMEOUT_LOCAL_MS = 30 * 1000;
+export const PINNED_MATERIALIZATION_TIMEOUT_MS = 10 * 60 * 1000;
 
 // Schemes git is allowed to clone. Anything else (notably ext:: and fd::,
 // which can execute an arbitrary host command / inherit an arbitrary fd) is
@@ -151,12 +153,14 @@ export class RepoService {
   // race; this is its host-side equivalent).
   private readonly locks = new KeyedMutex();
   private readonly pinnedStore: PinnedStore;
+  private readonly materializationTimeoutMs: number;
 
   constructor(deps?: RepoServiceDeps) {
     this.fileSystem = deps?.fileSystem ?? FileSystem.getInstance();
     this.injectedProfiles = deps?.profiles;
     this.run = deps?.run ?? runCommand;
     this.pinnedStore = new PinnedStore(this.fileSystem);
+    this.materializationTimeoutMs = deps?.materializationTimeoutMs ?? PINNED_MATERIALIZATION_TIMEOUT_MS;
   }
 
   // Lock key: canonical URL for cloned repos (so https/ssh forms of the same
@@ -185,44 +189,61 @@ export class RepoService {
     }
     const worktree = this.pinnedStore.worktreePath(profileId, url, commit);
     return this.locks.run(`pinned:${worktree}`, async () => {
+      const controller = new AbortController();
+      const deadline = Date.now() + this.materializationTimeoutMs;
+      const timer = setTimeout(() => controller.abort(Object.assign(new Error('Pinned repository materialization timed out'), { code: 'PINNED_MATERIALIZATION_TIMEOUT' })), this.materializationTimeoutMs);
+      const budget = { signal: controller.signal, remaining: () => Math.max(0, deadline - Date.now()) };
+      let temp: string | undefined;
       try {
-        await this.assertPinnedIntegrity(worktree, commit);
+        try {
+          await this.assertPinnedIntegrity(worktree, commit, budget);
+          await this.pinnedStore.upsert(profileId, { url, commit, lastUsedAt: new Date().toISOString() });
+          return { path: worktree };
+        } catch {
+          if (controller.signal.aborted) throw controller.signal.reason;
+          await fs.rm(worktree, { recursive: true, force: true });
+        }
+        const parent = path.dirname(worktree);
+        temp = path.join(parent, `.${path.basename(worktree)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+        await fs.mkdir(parent, { recursive: true });
+        await fs.rm(temp, { recursive: true, force: true });
+        await fs.mkdir(temp, { recursive: true });
+        const git = (args: string[], cap: number) => this.runPinnedGit(temp!, args, cap, budget);
+        const init = await git(['init'], TIMEOUT_LOCAL_MS); if (!init.success) throw Object.assign(new Error(init.error.message), { code: init.error.code });
+        const remote = await git(['remote', 'add', 'origin', url], TIMEOUT_LOCAL_MS); if (!remote.success) throw Object.assign(new Error(remote.error.message), { code: remote.error.code });
+        const shallow = await git(['fetch', '--depth', '1', 'origin', commit], TIMEOUT_FETCH_MS);
+        // Fetch tags explicitly: a requested commit may be reachable only from
+        // a tag and therefore absent from the remote's branch-head fetch.
+        const fetched = shallow.success ? shallow : await git(['fetch', '--tags', 'origin'], TIMEOUT_FETCH_MS);
+        if (!fetched.success) throw Object.assign(new Error(fetched.error.message), { code: fetched.error.code });
+        const checkoutRef = shallow.success ? 'FETCH_HEAD' : commit;
+        const checkout = await git(['checkout', '--detach', checkoutRef], TIMEOUT_LOCAL_MS);
+        if (!checkout.success) throw Object.assign(new Error(checkout.error.message), { code: checkout.error.code });
+        // Approved top-level origins own their checked-out submodule content;
+        // per-submodule approval is intentionally not required. The transport
+        // allowlist and protocol.file.allow=never remain mandatory here.
+        const submodules = await git(['-c', 'protocol.file.allow=never', 'submodule', 'update', '--init', '--recursive', '--depth', '1'], TIMEOUT_FETCH_MS);
+        if (!submodules.success) throw Object.assign(new Error(submodules.error.message), { code: submodules.error.code });
+        await this.assertPinnedIntegrity(temp, commit, budget);
+        if (controller.signal.aborted) throw controller.signal.reason;
+        await fs.rename(temp, worktree);
+        temp = undefined;
         await this.pinnedStore.upsert(profileId, { url, commit, lastUsedAt: new Date().toISOString() });
         return { path: worktree };
-      } catch {
-        await fs.rm(worktree, { recursive: true, force: true });
+      } finally {
+        clearTimeout(timer);
+        if (temp) await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
       }
-      const parent = path.dirname(worktree);
-      const temp = path.join(parent, `.${path.basename(worktree)}.${process.pid}.${crypto.randomUUID()}.tmp`);
-      await fs.mkdir(parent, { recursive: true });
-      await fs.rm(temp, { recursive: true, force: true });
-      await fs.mkdir(temp, { recursive: true });
-      const init = await this.runPinnedGit(temp, ['init'], TIMEOUT_LOCAL_MS); if (!init.success) throw Object.assign(new Error(init.error.message), { code: init.error.code });
-      const remote = await this.runPinnedGit(temp, ['remote', 'add', 'origin', url], TIMEOUT_LOCAL_MS); if (!remote.success) throw Object.assign(new Error(remote.error.message), { code: remote.error.code });
-      const shallow = await this.runPinnedGit(temp, ['fetch', '--depth', '1', 'origin', commit], TIMEOUT_FETCH_MS);
-      // Fetch tags explicitly: a requested commit may be reachable only from
-      // a tag and therefore absent from the remote's branch-head fetch.
-      const fetched = shallow.success ? shallow : await this.runPinnedGit(temp, ['fetch', '--tags', 'origin'], TIMEOUT_FETCH_MS);
-      if (!fetched.success) { await fs.rm(temp, { recursive: true, force: true }); throw Object.assign(new Error(fetched.error.message), { code: fetched.error.code }); }
-      const checkoutRef = shallow.success ? 'FETCH_HEAD' : commit;
-      const checkout = await this.runPinnedGit(temp, ['checkout', '--detach', checkoutRef], TIMEOUT_LOCAL_MS);
-      if (!checkout.success) { await fs.rm(temp, { recursive: true, force: true }); throw Object.assign(new Error(checkout.error.message), { code: checkout.error.code }); }
-      const submodules = await this.runPinnedGit(temp, ['-c', 'protocol.file.allow=never', 'submodule', 'update', '--init', '--recursive', '--depth', '1'], TIMEOUT_FETCH_MS);
-      if (!submodules.success) { await fs.rm(temp, { recursive: true, force: true }); throw Object.assign(new Error(submodules.error.message), { code: submodules.error.code }); }
-      await this.assertPinnedIntegrity(temp, commit);
-      await fs.rename(temp, worktree);
-      await this.pinnedStore.upsert(profileId, { url, commit, lastUsedAt: new Date().toISOString() });
-      return { path: worktree };
     });
   }
 
   // Build outputs are untracked by convention, so they are excluded. Tracked
   // source mutations are reset; a dirty submodule requires re-materializing
   // its parent because reset --hard cannot restore nested worktrees.
-  async assertPinnedIntegrity(worktree: string, commit: string): Promise<void> {
-    const head = await this.runPinnedGit(worktree, ['rev-parse', 'HEAD'], TIMEOUT_LOCAL_MS);
-    const status = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS);
-    const submoduleStatus = await this.runPinnedGit(worktree, ['submodule', 'foreach', '--recursive', 'git status --porcelain'], TIMEOUT_LOCAL_MS);
+  async assertPinnedIntegrity(worktree: string, commit: string, budget?: { signal: AbortSignal; remaining: () => number }): Promise<void> {
+    const head = await this.runPinnedGit(worktree, ['rev-parse', 'HEAD'], TIMEOUT_LOCAL_MS, budget);
+    const status = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS, budget);
+    const submoduleStatus = await this.runPinnedGit(worktree, ['submodule', 'foreach', '--recursive', 'git status --porcelain'], TIMEOUT_LOCAL_MS, budget);
     const badHead = !head.success || head.data.stdout.trim().toLowerCase() !== commit.toLowerCase();
     const badStatus = !status.success || status.data.stdout.trim() !== '';
     const badSubmodule = !submoduleStatus.success || submoduleStatus.data.stdout.trim() !== '';
@@ -230,9 +251,9 @@ export class RepoService {
       if (badSubmodule) throw Object.assign(new Error('Pinned submodule integrity violation requires re-materialization'), { code: 'PINNED_INTEGRITY_VIOLATION' });
       if (badStatus) {
         getLogger().warn(`Resetting tracked mutation in pinned worktree ${worktree}`);
-        const reset = await this.runPinnedGit(worktree, ['reset', '--hard', commit], TIMEOUT_LOCAL_MS);
+        const reset = await this.runPinnedGit(worktree, ['reset', '--hard', commit], TIMEOUT_LOCAL_MS, budget);
         if (!reset.success) throw Object.assign(new Error(reset.error.message), { code: reset.error.code });
-        const clean = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS);
+        const clean = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS, budget);
         if (!clean.success || clean.data.stdout.trim() !== '') throw Object.assign(new Error('Pinned worktree remained dirty after reset'), { code: 'PINNED_INTEGRITY_VIOLATION' });
       }
       return;
@@ -240,8 +261,10 @@ export class RepoService {
     throw Object.assign(new Error('Pinned worktree HEAD does not match requested commit'), { code: 'PINNED_INTEGRITY_VIOLATION' });
   }
 
-  private async runPinnedGit(cwd: string, args: string[], timeoutMs: number): Promise<RepoResult<GitOutput>> {
-    return this.runGit(cwd, args, timeoutMs, undefined, true);
+  private async runPinnedGit(cwd: string, args: string[], timeoutMs: number, budget?: { signal: AbortSignal; remaining: () => number }): Promise<RepoResult<GitOutput>> {
+    if (budget && budget.remaining() <= 0 && !budget.signal.aborted)
+      return { success: false, error: { code: 'GIT_COMMAND_FAILED', message: 'Pinned repository materialization timed out' } };
+    return this.runGit(cwd, args, budget ? Math.max(1, Math.min(timeoutMs, budget.remaining())) : timeoutMs, budget?.signal, true);
   }
 
   // === Identity -> host workspace dir ===
@@ -1057,25 +1080,41 @@ export class RepoService {
     const validated = this.validateFilePath(filePath);
     if (!validated.success) return validated;
     try {
-      const target = path.resolve(realRoot, filePath.replace(/^[/\\]+/, ''));
+      const normalized = filePath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+      const target = path.resolve(realRoot, normalized);
       if (target === realRoot || !target.startsWith(realRoot + path.sep)) return { success: false, error: { code: 'INVALID_PATH', message: 'File path escapes repository root' } };
-        const parent = path.dirname(target);
-        // The lexical parent is known to be inside root. mkdir may traverse a
-        // symlink, so realpath afterwards is the authority.
-        await fs.mkdir(parent, { recursive: true });
-        const realParent = await fs.realpath(parent);
-        if (realParent !== realRoot && !realParent.startsWith(realRoot + path.sep)) return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'File parent resolves outside the repository (symlink escape)' } };
+        // Walk every existing ancestor with lstat before creating anything.
+        // Symlinked ancestors are rejected even when they happen to resolve
+        // back inside the repository: creation and publication must stay on
+        // the verified canonical directory chain.
+        let realParent = realRoot;
+        const parentSegments = normalized.split('/').slice(0, -1);
+        for (const segment of parentSegments) {
+          const candidate = path.join(realParent, segment);
+          let stats: import('node:fs').Stats;
+          try {
+            stats = await fs.lstat(candidate);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+            try { await fs.mkdir(candidate); }
+            catch (mkdirError) { if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') throw mkdirError; }
+            stats = await fs.lstat(candidate);
+          }
+          if (stats.isSymbolicLink() || !stats.isDirectory())
+            return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'File ancestors must be real directories' } };
+          const canonical = await fs.realpath(candidate);
+          if (canonical !== realRoot && !canonical.startsWith(realRoot + path.sep))
+            return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'File parent resolves outside the repository' } };
+          realParent = canonical;
+        }
+        const publishTarget = path.join(realParent, path.basename(target));
         let existing: import('node:fs').Stats | undefined;
-        try { existing = await fs.lstat(target); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        try { existing = await fs.lstat(publishTarget); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
         if (existing && (!existing.isFile() || existing.isSymbolicLink())) return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'Write target must be a regular file or absent' } };
         const temp = path.join(realParent, `.${path.basename(target)}.${process.pid}.${crypto.randomUUID()}.tmp`);
         try {
           await fs.writeFile(temp, contents, 'utf8');
-          // Recheck the parent immediately before publish. This narrows the
-          // unavoidable local symlink-swap race and catches ordinary changes.
-          const verifiedParent = await fs.realpath(parent);
-          if (verifiedParent !== realParent) return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'Write parent changed during operation' } };
-          await fs.rename(temp, target);
+          await fs.rename(temp, publishTarget);
           return { success: true, data: null };
         } finally { await fs.rm(temp, { force: true }).catch(() => {}); }
 

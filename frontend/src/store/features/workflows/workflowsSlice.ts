@@ -40,6 +40,7 @@ interface WorkflowOriginApproval {
   repoPathOrUrl: string;
   name: string;
   origins: string[];
+  retry?: 'resolve' | 'updates';
 }
 
 export interface WorkflowsState {

@@ -64,7 +64,7 @@ export function workflowDocumentFromDraft(
     ...(original.description !== undefined
       ? { description: original.description }
       : {}),
-    sources: cloneJson(original.sources),
+    sources: cloneJson(draft.workflowSources ?? original.sources),
     steps,
     ...(draft.chains.length ? { defaultChains: [...draft.chains] } : {}),
     requiredPlugins: cloneJson(

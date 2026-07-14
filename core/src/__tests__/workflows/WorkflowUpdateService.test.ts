@@ -15,7 +15,7 @@ describe('WorkflowUpdateService', () => {
       return remote({ branchHeads: { main: B } });
     });
     const pluginRows = vi.fn(async () => [{ id: 'foundry', requiredVersion: '1', status: 'installed' as const, installedVersion: '1', updateAvailable: false }]);
-    const service = new WorkflowUpdateService({ readWorkflow: async () => document(), inspectRemote, pluginRows });
+    const service = new WorkflowUpdateService({ readWorkflow: async () => document(), inspectRemote, pluginRows, getProfileId: async () => 'p1', isOriginApproved: async () => true });
     const result = await service.check({ repoPathOrUrl: '/repo', name: 'release' });
     expect(result.sources).toEqual([
       expect.objectContaining({ sourceId: 'upgrade', status: 'upgrade-available', upgrades: [{ ref: 'v2.0.0', commit: B, version: '2.0.0' }] }),
@@ -28,6 +28,17 @@ describe('WorkflowUpdateService', () => {
     expect(inspectRemote).toHaveBeenCalledTimes(5);
     expect(pluginRows).toHaveBeenCalledWith(document().requiredPlugins);
     expect(result.plugins).toEqual(await pluginRows());
+  });
+
+  it('returns approval rows without inspecting unapproved origins', async () => {
+    const inspectRemote = vi.fn();
+    const service = new WorkflowUpdateService({
+      readWorkflow: async () => document(), inspectRemote, pluginRows: async () => [],
+      getProfileId: async () => 'current-profile', isOriginApproved: async (_profile, url) => !url.includes('upgrade'),
+    });
+    const result = await service.check({ repoPathOrUrl: '/repo', name: 'release' });
+    expect(result.sources[0]).toEqual({ sourceId: 'upgrade', status: 'approval-required', currentCommit: A, origin: 'https://upgrade.test' });
+    expect(inspectRemote).not.toHaveBeenCalledWith('https://upgrade.test/repo');
   });
 
   it('reports installed, version-mismatch, and missing required plugins using the shared versions result', async () => {

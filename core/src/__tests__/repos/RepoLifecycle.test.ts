@@ -209,6 +209,19 @@ describe('RepoLifecycle', () => {
       expect(jobs.started).toHaveLength(0);
     } finally { await cleanupTestDirectory(dir); }
   });
+  it('keeps an awaitable pinned resolve visible to deletion until it settles', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, repoService } = makeLifecycle({ workspaceDir: dir, pinnedPath: dir, responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK } } });
+      let release!: () => void;
+      repoService.ensurePinnedClone.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ path: dir }); }));
+      const running = lifecycle.runPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1', { log: () => {}, signal: new AbortController().signal });
+      expect(lifecycle.activeJobFor(dir)).toMatch(/^direct:/);
+      release();
+      await running;
+      expect(lifecycle.activeJobFor(dir)).toBeUndefined();
+    } finally { await cleanupTestDirectory(dir); }
+  });
   it('sweep: init -> detect -> watchPaths -> persist, no install/compile', async () => {
     const dir = await createTestDirectory();
     try {

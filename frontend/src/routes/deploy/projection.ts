@@ -114,7 +114,7 @@ function projectStep(step: WorkflowStep, chains: number[], included: Record<stri
     }
     if (globalOrphan) {
       const first = targetPerChain[String(chains[0])];
-      if (first?.kind === 'address') result.target = first;
+      if (first && (first.kind === 'address' || included[first.stepId] !== false)) result.target = first;
     }
     if (Object.keys(targetPerChain).length) result.targetPerChain = targetPerChain;
   } else {

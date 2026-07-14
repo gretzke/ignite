@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import type { DeploymentHookInfo, JobRecord, RunRecord } from '@ignite/api';
+import type { DeploymentHookInfo, JobRecord, RunRecord, VerificationTask } from '@ignite/api';
 import { OnRunCompletedResultSchema } from '@ignite/api';
 import { SuggestAddressesResultSchema } from '@ignite/api';
 import { getAddress } from 'viem';
@@ -13,6 +13,7 @@ import { RunStore } from './RunStore.js';
 import { JobManager, type JobContext, type JobRunner } from '../jobs/JobManager.js';
 import { renderArtifact } from './artifact.js';
 import type { ExecuteOpts } from '../plugins/containers/PluginExecutor.js';
+import { VerificationQueue } from '../verifications/VerificationQueue.js';
 
 type Execute = (id: string, operation: string, options: Record<string, unknown>, opts: ExecuteOpts & { chainScope: 'none' }) => Promise<PluginResponse<unknown>>;
 type StartJob = (type: string, params: Record<string, unknown>, runner: JobRunner) => Pick<JobRecord, 'id'>;
@@ -23,6 +24,7 @@ export interface DeploymentHookServiceDeps {
   resolveWorkspace: (pathOrUrl: string) => Promise<string>;
   canonicalize: (workspace: string) => Promise<string>;
   startJob: StartJob;
+  listVerificationTasks: (profileId: string, runId: string) => Promise<VerificationTask[]>;
 }
 export interface HookAddressSuggestion {
   pluginId: string;
@@ -52,6 +54,7 @@ export class DeploymentHookService {
       resolveWorkspace: deps?.resolveWorkspace ?? ((pathOrUrl) => RepoService.getInstance().resolveWorkspacePath(pathOrUrl)),
       canonicalize: deps?.canonicalize ?? ((workspace) => fs.realpath(workspace)),
       startJob: deps?.startJob ?? ((type, params, runner) => JobManager.getInstance().start(type, params, runner)),
+      listVerificationTasks: deps?.listVerificationTasks ?? ((profileId, runId) => VerificationQueue.getInstance().store.list(profileId, { runId })),
     };
   }
 
@@ -98,10 +101,12 @@ export class DeploymentHookService {
     const requestedChains = new Set(request.chainIds);
     const batches = await Promise.all(pluginIds.map(async (pluginId): Promise<HookAddressSuggestion[]> => {
       if (!providers.has(pluginId)) return [];
+      const controller = new AbortController();
       try {
         const response = await withTimeout(
-          this.deps.execute(pluginId, 'suggestAddresses', request, { chainScope: 'none', workspacePath: workspace }),
+          this.deps.execute(pluginId, 'suggestAddresses', request, { chainScope: 'none', workspacePath: workspace, signal: controller.signal }),
           timeoutMs,
+          controller,
         );
         if (!response.success) return [];
         const parsed = SuggestAddressesResultSchema.parse(response.data);
@@ -131,6 +136,7 @@ export class DeploymentHookService {
     try {
       const run = await this.deps.runStore.get(profileId, runId);
       if (!run?.workflow) throw new Error('Workflow-bound run not found');
+      const verifications = await this.deps.listVerificationTasks(profileId, runId);
       const provider = (await this.deps.getProviders()).find((candidate) => candidate.metadata.id === pluginId);
       let notes: string[] | undefined;
       if (!provider) {
@@ -139,7 +145,7 @@ export class DeploymentHookService {
         const response = await this.deps.execute(
           pluginId,
           'onRunCompleted',
-          { artifact: renderArtifact(run), workflowName: run.workflow.name },
+          { artifact: renderArtifact(run, verifications), workflowName: run.workflow.name },
           { chainScope: 'none', workspacePath: workspace, signal: ctx.signal, onOutput: ctx.log }
         );
         if (!response.success) throw new Error(response.error.message);
@@ -188,12 +194,16 @@ export class DeploymentHookService {
   private failed(message: string): never { throw new IgniteError(message, 'DEPLOYMENT_HOOK_OP_FAILED'); }
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, controller: AbortController): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('deployment hook timed out')), timeoutMs); }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => {
+        const error = new Error('deployment hook timed out');
+        controller.abort(error);
+        reject(error);
+      }, timeoutMs); }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);

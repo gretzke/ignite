@@ -43,5 +43,39 @@
       "chains": [1, 2],
       "signers": {}
     }
+  },
+  {
+    "name": "included step override becomes the global call-target fallback",
+    "input": {
+      "repoPathOrUrl": "/workspace",
+      "chains": [1, 2],
+      "includedStepIds": { "excluded": false, "fallback": true, "call": true },
+      "document": {
+        "schemaVersion": 1,
+        "sources": [
+          { "id": "excluded-source", "repo": { "url": "https://example.com/excluded.git", "commit": "1111111111111111111111111111111111111111" }, "frameworkId": "foundry", "sourcePath": "src/Excluded.sol", "contractName": "Excluded", "artifactPath": "out/Excluded.json" },
+          { "id": "fallback-source", "repo": { "url": "https://example.com/fallback.git", "commit": "2222222222222222222222222222222222222222" }, "frameworkId": "foundry", "sourcePath": "src/Fallback.sol", "contractName": "Fallback", "artifactPath": "out/Fallback.json" }
+        ],
+        "steps": [
+          { "id": "excluded", "kind": "deploy", "contractId": "excluded-source" },
+          { "id": "fallback", "kind": "deploy", "contractId": "fallback-source" },
+          { "id": "call", "kind": "call", "target": { "kind": "step", "stepId": "excluded" }, "targetPerChain": { "1": { "kind": "step", "stepId": "fallback" }, "2": { "kind": "address", "address": "0x2222222222222222222222222222222222222222" } } }
+        ],
+        "defaultChains": [1, 2],
+        "requiredPlugins": [{ "id": "foundry", "version": "1" }],
+        "outputs": { "hooks": [] }
+      },
+      "resolutions": []
+    },
+    "expectedPlan": {
+      "schemaVersion": 1,
+      "contracts": [{ "id": "fallback-source", "repoPathOrUrl": "https://example.com/fallback.git", "frameworkId": "foundry", "sourcePath": "src/Fallback.sol", "contractName": "Fallback", "artifactPath": "out/Fallback.json", "pin": { "url": "https://example.com/fallback.git", "commit": "2222222222222222222222222222222222222222" } }],
+      "steps": [
+        { "id": "fallback", "kind": "deploy", "contractId": "fallback-source" },
+        { "id": "call", "kind": "call", "target": { "kind": "step", "stepId": "fallback" }, "targetPerChain": { "1": { "kind": "step", "stepId": "fallback" }, "2": { "kind": "address", "address": "0x2222222222222222222222222222222222222222" } } }
+      ],
+      "chains": [1, 2],
+      "signers": {}
+    }
   }
 ]

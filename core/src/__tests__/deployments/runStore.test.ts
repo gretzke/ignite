@@ -6,8 +6,10 @@ import type { RunRecord } from '@ignite/api';
 import { RunStore } from '../../deployments/RunStore.js';
 
 const HASH = 'a'.repeat(64);
+const RUN_ONE = '11111111-1111-4111-8111-111111111111';
+const RUN_TWO = '22222222-2222-4222-8222-222222222222';
 
-function run(id = 'run-1'): RunRecord {
+function run(id = RUN_ONE): RunRecord {
   return {
     schemaVersion: 1,
     id,
@@ -90,6 +92,11 @@ describe('RunStore', () => {
       })
     ).rejects.toThrow('no write');
     expect(await store.get('profile-1', record.id)).toEqual(record);
+  });
+
+  it('rejects non-UUID path segments before constructing a run path', async () => {
+    await expect(store.get('profile-1', '../../../other-profile/deployments/runs/secret')).rejects.toThrow(/Invalid deployment run id/);
+    await expect(store.mutate('profile-1', '../secret', () => {})).rejects.toThrow(/Invalid deployment run id/);
   });
 
   it('quarantines corrupt and unknown-version records and reports them as unreadable', async () => {
@@ -182,7 +189,7 @@ describe('RunStore', () => {
       await store.findByIdempotencyKey('profile-1', record.idempotencyKey)
     ).toEqual(record);
     await expect(
-      store.create({ ...run('run-2'), idempotencyKey: record.idempotencyKey })
+      store.create({ ...run(RUN_TWO), idempotencyKey: record.idempotencyKey })
     ).rejects.toThrow(/idempotency/i);
   });
 

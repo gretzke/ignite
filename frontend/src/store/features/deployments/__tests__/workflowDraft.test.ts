@@ -202,6 +202,9 @@ describe('workflow deploy drafts', () => {
       commit: '9'.repeat(40),
       ref: 'v2.0.0',
     });
+    expect(workflowDocumentFromDraft(state).sources[0]).not.toHaveProperty('artifactHash');
+    expect(state.workflowDocument?.sources[0]).toEqual(document.sources[0]);
+    expect(workflowDraftIsDirty(state)).toBe(true);
   });
 
   it('keeps per-run hook selection and drift acknowledgements out of the saved document', () => {

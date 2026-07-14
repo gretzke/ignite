@@ -7,6 +7,7 @@ import { createWorkflowHandlers } from '../../api/workflows.js';
 import { RepoService } from '../../repos/RepoService.js';
 import type { FileSystem } from '../../filesystem/FileSystem.js';
 import type { ProfileManager } from '../../filesystem/ProfileManager.js';
+import { registerApi } from '../../api/index.js';
 
 const dirs: string[] = [];
 let app: FastifyInstance;
@@ -60,6 +61,17 @@ describe('workflow discovery/read/save API', () => {
     expect(response.json().data.truncated).toBe(true);
   });
 
+  it('refuses a symlinked workflow directory without reading outside files', async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-workflows-outside-')); dirs.push(outside);
+    await fs.writeFile(path.join(outside, 'leak.json'), JSON.stringify(document()));
+    await fs.mkdir(path.join(root, 'ignite'), { recursive: true });
+    await fs.symlink(outside, path.join(root, 'ignite', 'workflows'));
+    const response = await app.inject({ method: 'GET', url: `/api/v1/repos/workflows?pathOrUrl=${encodeURIComponent(root)}` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({ truncated: false, workflows: [{ valid: false, error: expect.stringMatching(/real directory|outside/) }] });
+    expect(response.json().data.workflows).not.toContainEqual(expect.objectContaining({ name: 'leak' }));
+  });
+
   it('returns raw text, parsed document, and a stable sha256 docHash', async () => {
     const raw = `${JSON.stringify(document(), null, 2)}\n`; await write('valid', raw);
     const first = await app.inject({ method: 'GET', url: `/api/v1/repos/workflows/valid?pathOrUrl=${encodeURIComponent(root)}` });
@@ -101,5 +113,22 @@ describe('workflow discovery/read/save API', () => {
     const repos = new RepoService({ fileSystem: { getReposPath: () => '/unused' } as unknown as FileSystem, profiles: { getCurrentProfile: () => 'p1' } as unknown as ProfileManager });
     const handlers = createWorkflowHandlers({ repos, devMode: () => true }); app = fastify(); app.put('/api/v1/repos/workflows/:name', handlers.putWorkflow); await app.ready();
     expect((await put('file', document('file:///tmp/repo'))).statusCode).toBe(200);
+  });
+
+  it('serializes file pins from the fully registered GET route in development', async () => {
+    await write('dev-file', JSON.stringify(document('file:///tmp/source')));
+    const registered = fastify();
+    const prior = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    try {
+      await registerApi(registered);
+      const response = await registered.inject({ method: 'GET', url: `/api/v1/repos/workflows/dev-file?pathOrUrl=${encodeURIComponent(root)}` });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data.document.sources[0].repo.url).toBe('file:///tmp/source');
+    } finally {
+      if (prior === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prior;
+      await registered.close();
+    }
   });
 });

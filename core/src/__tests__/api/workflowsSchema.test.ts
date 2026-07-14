@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   makeWorkflowDocumentSchema,
+  WorkflowPromoteRequestSchema,
   validateWorkflowClosure,
 } from '@ignite/api';
 
@@ -97,5 +98,13 @@ describe('Workflow document schema', () => {
     const d = document();
     const parsed = makeWorkflowDocumentSchema().parse({ ...d, outputs: { hooks: ['hook'] }, requiredPlugins: [] });
     expect(validateWorkflowClosure(parsed)).toEqual(expect.arrayContaining(['foundry', 'deployer', 'hook']));
+  });
+
+  it('accepts only minted UUIDv4 run ids on promotion wires', () => {
+    const target = { repoPathOrUrl: '/repo', name: 'release' };
+    const runId = '11111111-1111-4111-8111-111111111111';
+    expect(WorkflowPromoteRequestSchema.safeParse({ mode: 'preview', target, runId }).success).toBe(true);
+    expect(WorkflowPromoteRequestSchema.safeParse({ mode: 'preview', target, runId: '../../../other-profile' }).success).toBe(false);
+    expect(WorkflowPromoteRequestSchema.safeParse({ mode: 'apply', previewId: 'p', target, runId, hooks: [], adoptRunIds: ['../escape'] }).success).toBe(false);
   });
 });

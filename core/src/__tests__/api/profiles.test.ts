@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { RepoRecord } from '@ignite/api';
 import { createProfileHandlers } from '../../api/profiles.js';
+import { RepoLifecycle } from '../../repos/RepoLifecycle.js';
 
 function makeReply() {
   const reply = {
@@ -245,6 +246,33 @@ describe('profile handlers', () => {
     expect(reply.body).toMatchObject({ code: 'REPO_BUSY' });
     expect(deps.deleteWorktree).not.toHaveBeenCalled();
     expect(deps.pinnedStore.remove).not.toHaveBeenCalled();
+  });
+
+  it('deletePinnedRepo returns 409 during an awaitable workflow-resolve lifecycle', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git'; const commit = 'a'.repeat(40);
+    const worktree = deps.pinnedStore.worktreePath('p1', url, commit);
+    let release!: () => void;
+    const lifecycle = new RepoLifecycle({
+      jobs: { start: vi.fn(), get: vi.fn() } as never,
+      executor: { execute: vi.fn() } as never,
+      registryLoader: { getPluginsByType: vi.fn(async () => []) } as never,
+      repos: {
+        init: vi.fn(), resolveWorkspacePath: vi.fn(async () => worktree),
+        ensurePinnedClone: vi.fn(() => new Promise((resolve) => { release = () => resolve({ path: worktree }); })),
+      } as never,
+      registry: { list: vi.fn(), updateRepoState: vi.fn() } as never,
+      sessionPath: () => null,
+      pinnedStore: { worktreePath: () => worktree, get: vi.fn(), upsert: vi.fn() } as never,
+    });
+    deps.lifecycle.activeJobFor = vi.fn(lifecycle.activeJobFor.bind(lifecycle));
+    const resolving = lifecycle.runPinnedLifecycle(url, commit, 'p1', { log: () => {}, signal: new AbortController().signal });
+    const reply = makeReply();
+    await createProfileHandlers(deps).deletePinnedRepo({ params: { id: 'p1' }, query: { url, commit } } as never, reply as never);
+    expect(reply.statusCode).toBe(409);
+    expect(deps.deleteWorktree).not.toHaveBeenCalled();
+    release();
+    await resolving.catch(() => undefined);
   });
 
   it('saveRepo starts an add-mode lifecycle job and returns { jobId }', async () => {

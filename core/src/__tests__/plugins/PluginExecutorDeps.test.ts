@@ -70,6 +70,23 @@ describe('PluginExecutor with injected deps', () => {
     expect(deps.containerOrchestrator.stopContainer).toHaveBeenCalledTimes(1);
   });
 
+  it('stops the container when an abort terminates a hanging operation', async () => {
+    const started = vi.fn();
+    const { executor, deps } = makeExecutor({
+      executeOperation: vi.fn(async (...args: unknown[]) => {
+        const signal = args[7] as AbortSignal;
+        started();
+        return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+      }),
+    });
+    const controller = new AbortController();
+    const execution = executor.execute('stub', 'detect', {}, { signal: controller.signal });
+    await vi.waitFor(() => expect(started).toHaveBeenCalled());
+    controller.abort(new Error('suggestion timed out'));
+    await expect(execution).resolves.toMatchObject({ success: false });
+    expect(deps.containerOrchestrator.stopContainer).toHaveBeenCalledTimes(1);
+  });
+
   it('threads opts.onOutput through to the injected executeOperation', async () => {
     const { executor, executeOperation } = makeExecutor();
     const onOutput = vi.fn();
@@ -387,16 +404,16 @@ describe('PluginExecutor with injected deps', () => {
     });
 
     it.each([
-      { repoRead: false, repoWrite: true, bind: true, writable: true },
-      { repoRead: true, repoWrite: false, bind: true, writable: false },
-      { repoRead: true, repoWrite: true, bind: true, writable: true },
-      { repoRead: false, repoWrite: false, bind: false, writable: false },
-    ])('enforces the workspace mount matrix: $repoRead/$repoWrite', async ({ repoRead, repoWrite, bind, writable }) => {
+      { repoRead: false, repoWrite: false, workspace: false, bind: false, writable: false },
+      { repoRead: true, repoWrite: false, workspace: false, bind: false, writable: false },
+      { repoRead: true, repoWrite: false, workspace: true, bind: true, writable: false },
+      { repoRead: false, repoWrite: true, workspace: true, bind: true, writable: true },
+    ])('enforces the operation-scoped workspace matrix: $repoRead/$repoWrite/$workspace', async ({ repoRead, repoWrite, workspace, bind, writable }) => {
       const { executor, deps } = makeExecutor({
-        registryLoader: { getPluginConfig: async () => ({ metadata: { id: 'hook', types: [PluginType.DEPLOYMENT_HOOK], baseImage: 'img:latest', ...(repoWrite ? { permissions: [{ id: 'repoWrite', description: 'Write workflow outputs' }] } : {}) }, repoRead, origin: 'builtin' }) },
+        registryLoader: { getPluginConfig: async () => ({ metadata: { id: 'hook', types: [PluginType.DEPLOYMENT_HOOK], baseImage: 'img:latest', ...(repoWrite ? { permissions: [{ id: 'repoWrite', description: 'Write workflow outputs' }], operationPermissions: { describeDeploymentHook: 'repoWrite' } } : {}) }, repoRead, origin: 'builtin' }) },
         trust: { getGrant: async () => ({ trust: 'trusted', repoWrite, net: false }) },
       });
-      await executor.execute('hook', 'describeDeploymentHook', {}, bind ? { workspacePath: '/workflow/repo' } : undefined);
+      await executor.execute('hook', 'describeDeploymentHook', {}, workspace ? { workspacePath: '/workflow/repo' } : undefined);
       const call = (deps.containerOrchestrator.createContainer as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(Boolean(call.workspaceBind)).toBe(bind);
       expect(Boolean(call.workspaceBind) && call.grant.repoWrite).toBe(writable);

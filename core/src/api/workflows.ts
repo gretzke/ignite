@@ -108,9 +108,18 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
     ): Promise<IApiResponse<{ workflows: WorkflowSummary[]; truncated: boolean }>> => {
       try {
         const root = await d.repos.resolveExistingWorkspacePath(request.query.pathOrUrl);
-        const directory = path.join(root, 'ignite', 'workflows');
+        const realRoot = await fs.realpath(path.resolve(root));
+        const directory = path.join(realRoot, 'ignite', 'workflows');
         let entries: import('node:fs').Dirent[];
-        try { entries = await fs.readdir(directory, { withFileTypes: true }); }
+        try {
+          const directoryStats = await fs.lstat(directory);
+          if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory())
+            return reply.status(200).send({ data: { workflows: [{ name: 'workflows', valid: false, error: 'ignite/workflows must be a real directory inside the repository' }], truncated: false } });
+          const realDirectory = await fs.realpath(directory);
+          if (!realDirectory.startsWith(realRoot + path.sep))
+            return reply.status(200).send({ data: { workflows: [{ name: 'workflows', valid: false, error: 'ignite/workflows resolves outside the repository' }], truncated: false } });
+          entries = await fs.readdir(realDirectory, { withFileTypes: true });
+        }
         catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return reply.status(200).send({ data: { workflows: [], truncated: false } }); throw error; }
         const candidates = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.json')).sort((a, b) => a.name.localeCompare(b.name));
         const truncated = candidates.length > MAX_LIST_ENTRIES;
@@ -119,10 +128,9 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
           const name = entry.name.slice(0, -5);
           try {
             validateName(name);
-            const file = path.join(directory, entry.name);
-            const stats = await fs.stat(file);
-            if (stats.size > MAX_WORKFLOW_BYTES) throw new WorkflowHttpError(422, 'WORKFLOW_TOO_LARGE', 'Workflow exceeds 512 KiB');
-            const document = parseDocument(await fs.readFile(file, 'utf8'), d.devMode());
+            const result = await d.repos.getFile(request.query.pathOrUrl, relPath(name));
+            if (!result.success) throw new WorkflowHttpError(422, result.error.code, result.error.message);
+            const document = parseDocument(result.data.content, d.devMode());
             workflows.push({ name, valid: true, ...(document.description ? { description: document.description } : {}), sourceCount: document.sources.length, stepCount: document.steps.length, ...(document.defaultChains ? { defaultChains: document.defaultChains } : {}), hooks: document.outputs.hooks });
           } catch (error) {
             workflows.push({ name, valid: false, error: error instanceof Error ? error.message : String(error) });

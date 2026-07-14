@@ -12,4 +12,3 @@ contract VersionedBox {
         return 2;
     }
 }
-

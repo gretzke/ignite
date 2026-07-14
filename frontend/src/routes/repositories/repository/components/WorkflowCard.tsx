@@ -8,6 +8,7 @@ import {
   selectWorkflowDocument,
   selectWorkflowResolve,
   selectWorkflowUpdates,
+  workflowOriginsApprovalRequested,
 } from '../../../../store/features/workflows/workflowsSlice';
 import { selectPluginRows, pluginsApi } from '../../../../store/features/plugins/pluginsSlice';
 import { acceptWorkflowPinUpdate, hydrateWorkflowDraft } from '../../../../store/features/deployments/deployDraftSlice';
@@ -87,7 +88,7 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
             const upgrade = row.upgrades?.at(-1);
             const commit = upgrade?.commit ?? row.latestCommit;
             const ref = upgrade?.ref ?? requiredSource?.repo.ref;
-            return <div key={row.sourceId} className="flex items-center justify-between gap-3"><span><span className="mono-data">{row.sourceId}</span>: {row.status === 'tag-retargeted' ? 'tag retargeted' : row.status === 'tag-deleted' ? 'tag vanished' : row.status === 'branch-moved' ? 'branch moved' : row.status === 'upgrade-available' ? `upgrade available (${row.upgrades?.map((item) => item.ref).join(', ')})` : row.status}</span>{commit && documentState && row.status !== 'up-to-date' && row.status !== 'error' && <button className="btn btn-secondary" onClick={() => { dispatch(hydrateWorkflowDraft({ repoPathOrUrl, name: workflow.name, docHash: documentState.docHash, document: documentState.document })); dispatch(acceptWorkflowPinUpdate({ sourceId: row.sourceId, commit, ...(ref ? { ref, refKind: upgrade ? 'tag' : requiredSource?.repo.refKind } : {}) })); navigate(`/deploy?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}&edit=true`); }}>Accept in editor</button>}</div>;
+            return <div key={row.sourceId} className="flex items-center justify-between gap-3"><span><span className="mono-data">{row.sourceId}</span>: {row.status === 'tag-retargeted' ? 'tag retargeted' : row.status === 'tag-deleted' ? 'tag vanished' : row.status === 'branch-moved' ? 'branch moved' : row.status === 'upgrade-available' ? `upgrade available (${row.upgrades?.map((item) => item.ref).join(', ')})` : row.status === 'approval-required' ? `approval required (${row.origin})` : row.status}</span>{row.status === 'approval-required' && row.origin ? <button className="btn btn-secondary" onClick={() => dispatch(workflowOriginsApprovalRequested({ repoPathOrUrl, name: workflow.name, origins: [row.origin!], retry: 'updates' }))}>Approve origin</button> : commit && documentState && row.status !== 'up-to-date' && row.status !== 'error' && <button className="btn btn-secondary" onClick={() => { dispatch(hydrateWorkflowDraft({ repoPathOrUrl, name: workflow.name, docHash: documentState.docHash, document: documentState.document })); dispatch(acceptWorkflowPinUpdate({ sourceId: row.sourceId, commit, ...(ref ? { ref, refKind: upgrade ? 'tag' : requiredSource?.repo.refKind } : {}) })); navigate(`/deploy?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}&edit=true`); }}>Accept in editor</button>}</div>;
           })}
           {updates.report.plugins.map((row) => (
             <div key={row.id} className="flex items-center justify-between gap-3">

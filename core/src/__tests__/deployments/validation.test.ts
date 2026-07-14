@@ -523,6 +523,20 @@ describe('validatePlan', () => {
     expect(result.report.chains['1'].inputs).toMatchObject({ ok: false, blocking: true, code: 'WORKFLOW_ARTIFACT_DRIFT', details: { drifts: [{ sourceId: 'token', expected, actual: HASH }] } });
   });
 
+  it('renders portable credential-free pin labels and drops hostless file pins', async () => {
+    const credentialed = 'https://user:secret@source.test/private/repo.git';
+    const remotePlan = plan({ contracts: [{ ...plan().contracts[0], repoPathOrUrl: credentialed, pin: { url: credentialed, commit: 'c'.repeat(40), ref: 'main', refKind: 'branch' } }] });
+    const remote = await validatePlan(remotePlan, { '1': 'rpc-1' }, deps());
+    expect(remote.report.chains['1'].inputs.details).toEqual({ pinned: [{ sourceId: 'token', pin: 'source.test/private/repo.git@main', commit: 'cccccccccccc' }] });
+    expect(JSON.stringify(remote.report)).not.toContain('user:secret');
+
+    const fileUrl = 'file:///Volumes/private/repo';
+    const filePlan = plan({ contracts: [{ ...plan().contracts[0], repoPathOrUrl: fileUrl, pin: { url: fileUrl, commit: 'd'.repeat(40) } }] });
+    const file = await validatePlan(filePlan, { '1': 'rpc-1' }, deps());
+    expect(file.report.chains['1'].inputs.details).toBeUndefined();
+    expect(JSON.stringify(file.report)).not.toContain('Volumes');
+  });
+
   it('honors only a fresh artifact-drift acknowledgement and re-blocks either stale side', async () => {
     const expected = 'a'.repeat(64);
     const pinned = plan({ contracts: [{ ...plan().contracts[0], repoPathOrUrl: 'https://source.test/repo.git', pin: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) } }] });

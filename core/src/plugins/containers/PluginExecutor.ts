@@ -260,9 +260,7 @@ export class PluginExecutor {
     // to an operation only when the manifest declares it or the host baseline
     // requires it. Clamp repoWrite before the mount decision so an unrelated
     // native signer does not acquire (or require) a workspace by accident.
-    const repoWriteApplies =
-      pluginConfig.metadata.permissions?.some((permission) => permission.id === 'repoWrite') === true ||
-      requiredPermissions(pluginConfig.metadata, operation).includes('repoWrite');
+    const repoWriteApplies = requiredPermissions(pluginConfig.metadata, operation).includes('repoWrite');
     const effectiveGrant = {
       ...grant,
       repoWrite: grant.repoWrite && repoWriteApplies,
@@ -316,6 +314,7 @@ export class PluginExecutor {
     try {
       ephemeralContainer = await this.createEphemeralContainer(
         pluginConfig,
+        operation,
         grant,
         opts?.workspacePath
       );
@@ -330,6 +329,7 @@ export class PluginExecutor {
         await this.rebuildImageOnce(pluginId);
         ephemeralContainer = await this.createEphemeralContainer(
           pluginConfig,
+          operation,
           grant,
           opts?.workspacePath
         );
@@ -429,6 +429,7 @@ export class PluginExecutor {
   // VolumesFrom rule this replaces).
   private async createEphemeralContainer(
     pluginConfig: PluginConfig,
+    operation: string,
     grant: PermissionGrant,
     workspacePath?: string
   ): Promise<string> {
@@ -458,15 +459,15 @@ export class PluginExecutor {
 
     let workspaceBind: { hostPath: string } | undefined;
 
-    // A declared reader needs a read-only bind; a granted writer needs a
-    // bind even when it did not separately declare repoRead. The
-    // orchestrator remains authoritative for the ro/rw suffix.
-    if (pluginConfig.repoRead || grant.repoWrite) {
-      if (!workspacePath) {
-        throw new Error(
-          `Workspace path required for ephemeral plugin: ${pluginId}`
-        );
-      }
+    const operationPermissions = requiredPermissions(pluginConfig.metadata, operation);
+    const operationRepoWrite = operationPermissions.includes('repoWrite') && grant.repoWrite;
+    const operationHasRepoAccess = pluginConfig.repoRead || operationRepoWrite;
+    // A write-scoped operation cannot run without its repository. Read-capable
+    // discovery operations may run without one (for example hook describe),
+    // and only receive a read-only bind when the caller supplies a workspace.
+    if (operationPermissions.includes('repoWrite') && !workspacePath)
+      throw new Error(`Workspace path required for ephemeral plugin: ${pluginId}`);
+    if (workspacePath && operationHasRepoAccess) {
       workspaceBind = { hostPath: workspacePath };
       labels['ignite.workspace'] = workspacePath;
       getLogger().info(

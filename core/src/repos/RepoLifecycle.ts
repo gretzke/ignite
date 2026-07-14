@@ -68,7 +68,7 @@ export class RepoLifecycle {
   // lifecycle job per repo; sessionRecords holds derived state for the
   // session workspace, which is not in any profile registry.
   private readonly sweptProfiles = new Set<string>();
-  private readonly activeJobs = new Map<string, string>();
+  private readonly activeJobs = new Map<string, { jobId?: string; directRefs: number }>();
   private readonly sessionRecords = new Map<string, RepoRecord>();
   private readonly lastRecompile = new Map<string, number>();
 
@@ -165,13 +165,13 @@ export class RepoLifecycle {
     profileId: string,
     mode: LifecycleMode
   ): JobRecord {
-    const existingId = this.activeJobs.get(pathOrUrl);
+    const existingId = this.activeJobs.get(pathOrUrl)?.jobId;
     if (existingId) {
       const existing = this.deps.jobs.get(existingId);
       if (existing && !isTerminal(existing.state)) {
         return existing;
       }
-      this.activeJobs.delete(pathOrUrl);
+      this.clearJob(pathOrUrl);
     }
 
     const job = this.deps.jobs.start(
@@ -181,13 +181,13 @@ export class RepoLifecycle {
         try {
           return await this.runLifecycle(pathOrUrl, profileId, mode, ctx);
         } finally {
-          this.activeJobs.delete(pathOrUrl);
+          this.clearJob(pathOrUrl);
         }
       }
     );
     // Safe: JobManager defers the runner to a microtask, so the map is
     // populated before the runner (and its finally) can execute.
-    this.activeJobs.set(pathOrUrl, job.id);
+    this.setJob(pathOrUrl, job.id);
     return job;
   }
 
@@ -195,21 +195,21 @@ export class RepoLifecycle {
   // de-duplication keys by the eventual worktree path rather than the URL.
   startPinnedLifecycle(url: string, commit: string, profileId: string): JobRecord {
     const worktree = this.deps.pinnedStore.worktreePath(profileId, url, commit);
-    const existingId = this.activeJobs.get(worktree);
+    const existingId = this.activeJobs.get(worktree)?.jobId;
     if (existingId) {
       const existing = this.deps.jobs.get(existingId);
       if (existing && !isTerminal(existing.state)) return existing;
-      this.activeJobs.delete(worktree);
+      this.clearJob(worktree);
     }
     const job = this.deps.jobs.start(
       LIFECYCLE_JOB_TYPE,
       { pathOrUrl: worktree, mode: 'pinned', profileId, url, commit },
       async (ctx) => {
         try { return await this.runPinnedLifecycle(url, commit, profileId, ctx); }
-        finally { this.activeJobs.delete(worktree); }
+        finally { this.clearJob(worktree); }
       }
     );
-    this.activeJobs.set(worktree, job.id);
+    this.setJob(worktree, job.id);
     return job;
   }
 
@@ -223,18 +223,46 @@ export class RepoLifecycle {
     ctx: JobContext
   ): Promise<LifecycleResult> {
     const worktree = this.deps.pinnedStore.worktreePath(profileId, url, commit);
-    return this.runLifecycle(worktree, profileId, 'pinned', ctx, { url, commit });
+    this.addDirect(worktree);
+    try { return await this.runLifecycle(worktree, profileId, 'pinned', ctx, { url, commit }); }
+    finally { this.removeDirect(worktree); }
   }
 
   activeJobFor(pathOrUrl: string): string | undefined {
-    const id = this.activeJobs.get(pathOrUrl);
-    if (!id) return undefined;
-    const record = this.deps.jobs.get(id);
-    if (!record || isTerminal(record.state)) {
-      this.activeJobs.delete(pathOrUrl);
-      return undefined;
+    const active = this.activeJobs.get(pathOrUrl);
+    if (!active) return undefined;
+    if (active.jobId) {
+      const record = this.deps.jobs.get(active.jobId);
+      if (record && !isTerminal(record.state)) return active.jobId;
+      this.clearJob(pathOrUrl);
     }
-    return id;
+    return this.activeJobs.get(pathOrUrl)?.directRefs ? `direct:${pathOrUrl}` : undefined;
+  }
+
+  private setJob(pathOrUrl: string, jobId: string): void {
+    const active = this.activeJobs.get(pathOrUrl) ?? { directRefs: 0 };
+    active.jobId = jobId;
+    this.activeJobs.set(pathOrUrl, active);
+  }
+
+  private clearJob(pathOrUrl: string): void {
+    const active = this.activeJobs.get(pathOrUrl);
+    if (!active) return;
+    delete active.jobId;
+    if (active.directRefs === 0) this.activeJobs.delete(pathOrUrl);
+  }
+
+  private addDirect(pathOrUrl: string): void {
+    const active = this.activeJobs.get(pathOrUrl) ?? { directRefs: 0 };
+    active.directRefs += 1;
+    this.activeJobs.set(pathOrUrl, active);
+  }
+
+  private removeDirect(pathOrUrl: string): void {
+    const active = this.activeJobs.get(pathOrUrl);
+    if (!active) return;
+    active.directRefs = Math.max(0, active.directRefs - 1);
+    if (active.directRefs === 0 && !active.jobId) this.activeJobs.delete(pathOrUrl);
   }
 
   // Derived state for the session workspace (kept in memory — the session
@@ -265,7 +293,7 @@ export class RepoLifecycle {
       : candidates;
 
     for (const record of filtered) {
-      if (this.activeJobs.has(record.pathOrUrl)) continue;
+      if (this.activeJobFor(record.pathOrUrl)) continue;
       const last = this.lastRecompile.get(record.pathOrUrl) ?? 0;
       if (Date.now() - last < RECOMPILE_COOLDOWN_MS) continue;
 

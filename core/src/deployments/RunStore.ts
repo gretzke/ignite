@@ -4,7 +4,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { RunRecord, RunSummary } from '@ignite/api';
-import { RunRecordSchema } from '@ignite/api';
+import { RUN_ID_PATTERN, RunRecordSchema } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
 
 export class RunStore {
@@ -192,6 +192,8 @@ export class RunStore {
   }
 
   private runPath(profileId: string, runId: string): string {
+    if (!RUN_ID_PATTERN.test(runId))
+      throw new Error(`Invalid deployment run id: ${runId}`);
     return path.join(this.runsDir(profileId), `${runId}.json`);
   }
 

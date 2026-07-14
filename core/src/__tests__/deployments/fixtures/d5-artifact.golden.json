@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 2,
+  "runId": "run-d3",
+  "profileId": "p1",
+  "name": "legacy run",
+  "status": "completed",
+  "createdAt": "2026-07-10T12:00:00.000Z",
+  "updatedAt": "2026-07-10T12:05:00.000Z",
+  "contracts": [
+    {
+      "id": "token",
+      "repoName": "repo",
+      "sourcePath": "src/Token.sol",
+      "contractName": "Token",
+      "artifactHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "compiler": {
+        "pluginId": "foundry",
+        "version": "1.0.0",
+        "settingsHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  ],
+  "validation": {
+    "chains": {
+      "31337": {
+        "rpc": {
+          "ok": true,
+          "blocking": false,
+          "message": "ok"
+        },
+        "signers": {
+          "ok": true,
+          "blocking": false,
+          "message": "ok"
+        },
+        "args": {
+          "ok": true,
+          "blocking": false,
+          "message": "ok"
+        },
+        "estimation": {
+          "ok": true,
+          "blocking": false,
+          "message": "ok"
+        },
+        "balance": {
+          "ok": true,
+          "blocking": false,
+          "message": "ok"
+        },
+        "inputs": {
+          "ok": true,
+          "blocking": false,
+          "message": "ok"
+        }
+      }
+    }
+  },
+  "lanes": {
+    "31337": {
+      "chainId": 31337,
+      "status": "completed",
+      "providerLabel": "Anvil",
+      "steps": [
+        {
+          "stepId": "s1",
+          "kind": "deploy",
+          "contractId": "token",
+          "status": "confirmed",
+          "args": {},
+          "value": "0",
+          "gasOverrides": {},
+          "signerAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "address": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+          "strategy": {
+            "kind": "create2",
+            "salt": "0x1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "attempts": [
+            {
+              "id": "att1",
+              "startedAt": "2026-07-10T12:01:00.000Z",
+              "endedAt": "2026-07-10T12:02:00.000Z",
+              "txHash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "nonce": 0,
+              "gasUsed": "100000",
+              "effectiveGasPrice": "1000000000",
+              "blockNumber": 1,
+              "txStatus": "success"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

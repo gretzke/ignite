@@ -15,6 +15,7 @@ import type {
   WorkflowDocument,
   WorkflowOutputs,
   WorkflowRequiredPlugin,
+  WorkflowSource,
   ArtifactDriftAcknowledgements,
 } from '@ignite/api';
 
@@ -93,6 +94,9 @@ export interface DeployDraftState {
   idempotencyKey?: string;
   workflowRef?: { repoPathOrUrl: string; name: string; baseDocHash: string };
   workflowDocument?: WorkflowDocument;
+  // Editable source pins are detached from workflowDocument, which remains
+  // the immutable loaded/saved baseline for dirty checks.
+  workflowSources?: WorkflowSource[];
   workflowIncludedStepIds?: Record<string, boolean>;
   externalResolutions?: ExternalResolution[];
   workflowOutputs?: WorkflowOutputs;

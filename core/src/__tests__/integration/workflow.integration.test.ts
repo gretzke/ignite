@@ -124,6 +124,10 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
     delete process.env.NODE_ENV;
   });
 
+  it('describes the repo-reading Chronicles hook through the real executor without a workspace bind', async () => {
+    await expect(DeploymentHookService.getInstance().list(true)).resolves.toContainEqual(expect.objectContaining({ pluginId: 'chronicles-logger' }));
+  }, 60_000);
+
   it('blocks unapproved origins, rejects ssh pins, and resolves both tags through real Foundry detect', async () => {
     const repos = RepoService.getInstance();
     const pins = new PinnedStore();

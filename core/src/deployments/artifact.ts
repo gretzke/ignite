@@ -264,12 +264,10 @@ function portableSourcePath(sourcePath: string): string {
 
 function sanitizeText(value: string): string {
   return value
-    .replace(/https?:\/\/[^\s"']+/gi, '[redacted endpoint]')
-    .replace(
-      /\/(?:Users|home|private|tmp|var|etc|opt|root)\/[\w.-]+(?:\/[^\s"']*)?/g,
-      '[redacted path]'
-    )
-    .replace(/[A-Za-z]:[\\/][^\s"']*/g, '[redacted path]');
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, '[redacted endpoint]')
+    .replace(/\\\\[^\s"'<>]+/g, '[redacted path]')
+    .replace(/[A-Za-z]:[\\/][^\s"'<>]*/g, '[redacted path]')
+    .replace(/(^|[\s"'(=:\[])\/(?!\/)[^\s"'<>),;\]]+/g, '$1[redacted path]');
 }
 
 function sanitizeValue<T>(value: T): T {

@@ -12,6 +12,10 @@ const config: PluginConfig = {
   origin: 'installed', repoRead: false,
   metadata: { id: 'chronicles', types: [PluginType.DEPLOYMENT_HOOK], name: 'Chronicles', version: '1', baseImage: 'ignite/chronicles', operations: ['describeDeploymentHook', 'onRunCompleted', 'suggestAddresses'] },
 };
+const RUN_RECOVERED = '11111111-1111-4111-8111-111111111111';
+const RUN_FIRST = '22222222-2222-4222-8222-222222222222';
+const RUN_SECOND = '33333333-3333-4333-8333-333333333333';
+const RUN_FAILED = '44444444-4444-4444-8444-444444444444';
 
 describe('DeploymentHookService', () => {
   let home: string;
@@ -42,7 +46,7 @@ describe('DeploymentHookService', () => {
 
   it.each(['pending', 'running'] as const)('startup reconciliation re-dispatches a %s durable outbox entry', async (status) => {
     const store = new RunStore({ baseDir: home });
-    const record = completedRun('run-recovered');
+    const record = completedRun(RUN_RECOVERED);
     record.hookRuns = { chronicles: { status, ...(status === 'running' ? { jobId: 'old-job' } : {}) } };
     await store.create(record);
     const jobs = fakeJobs();
@@ -65,7 +69,7 @@ describe('DeploymentHookService', () => {
 
   it('keeps the job runner in a canonical workflow-repo FIFO until hook completion', async () => {
     const store = new RunStore({ baseDir: home });
-    const first = completedRun('run-first'); const second = completedRun('run-second');
+    const first = completedRun(RUN_FIRST); const second = completedRun(RUN_SECOND);
     await store.create(first); await store.create(second);
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -93,7 +97,7 @@ describe('DeploymentHookService', () => {
 
   it('records hook failure without changing the terminal run outcome', async () => {
     const store = new RunStore({ baseDir: home });
-    const record = completedRun('run-failed-hook'); await store.create(record);
+    const record = completedRun(RUN_FAILED); await store.create(record);
     const jobs = fakeJobs();
     const service = new DeploymentHookService({
       getProviders: async () => [config],
@@ -109,10 +113,11 @@ describe('DeploymentHookService', () => {
   it('validates and checksums suggestion results while timeout and invalid plugins degrade to omission', async () => {
     const invalid = { ...config, metadata: { ...config.metadata, id: 'invalid' } };
     const slow = { ...config, metadata: { ...config.metadata, id: 'slow' } };
+    let slowSignal: AbortSignal | undefined;
     const service = new DeploymentHookService({
       getProviders: async () => [config, invalid, slow],
-      execute: async (id) => {
-        if (id === 'slow') return new Promise(() => undefined);
+      execute: async (id, _operation, _request, opts) => {
+        if (id === 'slow') { slowSignal = opts.signal; return new Promise(() => undefined); }
         if (id === 'invalid') return { success: true, data: { suggestions: [{ chainId: 1, address: 'not-an-address' }] } } as never;
         return { success: true, data: { suggestions: [{ chainId: 1, address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', label: 'known' }] } };
       },
@@ -120,6 +125,28 @@ describe('DeploymentHookService', () => {
     await expect(service.suggest(['chronicles', 'invalid', 'slow'], '/repo', { chainIds: [1], contractName: 'Token' }, 5)).resolves.toEqual([
       { pluginId: 'chronicles', chainId: 1, address: '0xABcdEFABcdEFabcdEfAbCdefabcdeFABcDEFabCD', label: 'known' },
     ]);
+    expect(slowSignal?.aborted).toBe(true);
+  });
+
+  it('includes verification tasks fetched at hook fire time in the payload artifact', async () => {
+    const store = new RunStore({ baseDir: home });
+    const record = completedRun('55555555-5555-4555-8555-555555555555'); await store.create(record);
+    const jobs = fakeJobs();
+    const execute = vi.fn(async (_id: string, _operation: string, options: Record<string, unknown>) => {
+      expect(options.artifact).toHaveProperty('verifications.c.0.status', 'verified');
+      return { success: true as const, data: {} };
+    });
+    const service = new DeploymentHookService({
+      getProviders: async () => [config], execute, runStore: store,
+      resolveWorkspace: async () => '/repo', canonicalize: async (value) => value, startJob: jobs.start,
+      listVerificationTasks: async () => [{
+        id: 'verification', chainId: 1, address: '0x1111111111111111111111111111111111111111', bundleHash: 'b'.repeat(64), encodedConstructorArgs: '0x',
+        explorer: { entryId: 'scan', url: 'https://scan.test', verifierPluginId: 'etherscan', label: 'Scan' },
+        origin: { runId: record.id, stepId: 's', contractId: 'c' }, status: 'verified', attempts: [], createdAt: record.createdAt, updatedAt: record.updatedAt,
+      } as never],
+    });
+    await service.dispatch(record); await jobs.drain();
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 });
 

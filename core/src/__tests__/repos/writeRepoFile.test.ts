@@ -32,7 +32,11 @@ describe('writeRepoFile', () => {
   it('rejects symlinked ancestors and leaf targets', async () => {
     const { root, repos } = await workspace(); const outside = await temp('ignite-write-outside-');
     await fs.symlink(outside, path.join(root, 'linked'));
-    await expect(repos.writeRepoFile(root, 'linked/escape.txt', 'no')).resolves.toMatchObject({ success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN' } });
+    await expect(repos.writeRepoFile(root, 'linked/new/escape.txt', 'no')).resolves.toMatchObject({ success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN' } });
+    await expect(fs.access(path.join(outside, 'new'))).rejects.toThrow();
+    await fs.mkdir(path.join(root, 'real'));
+    await fs.symlink(path.join(root, 'real'), path.join(root, 'inside-link'));
+    await expect(repos.writeRepoFile(root, 'inside-link/escape.txt', 'no')).resolves.toMatchObject({ success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN' } });
     await fs.writeFile(path.join(outside, 'secret.txt'), 'secret'); await fs.symlink(path.join(outside, 'secret.txt'), path.join(root, 'leaf'));
     await expect(repos.writeRepoFile(root, 'leaf', 'no')).resolves.toMatchObject({ success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN' } });
   });

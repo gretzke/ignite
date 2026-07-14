@@ -15,6 +15,9 @@ const COMMIT = /^[0-9a-fA-F]{40}$/;
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 export const WorkflowNamePattern = /^[a-z0-9][a-z0-9-_]{0,63}$/;
+// Deployment runs are minted with crypto.randomUUID(). Keep promotion and
+// storage paths on that exact, single-segment UUIDv4 shape.
+export const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAX_DOCUMENT_BYTES = 512 * 1024;
 const MAX_STEP_PAYLOAD_BYTES = 64 * 1024;
 const MAX_JSON_DEPTH = 12;
@@ -98,8 +101,9 @@ export type WorkflowPromoteData =
 export interface WorkflowCheckUpdatesRequest { repoPathOrUrl: string; name: string }
 export type WorkflowSourceUpdate = {
   sourceId: string;
-  status: 'up-to-date' | 'upgrade-available' | 'tag-retargeted' | 'tag-deleted' | 'branch-moved' | 'error';
+  status: 'up-to-date' | 'upgrade-available' | 'tag-retargeted' | 'tag-deleted' | 'branch-moved' | 'approval-required' | 'error';
   currentCommit: string;
+  origin?: string;
   latestCommit?: string;
   upgrades?: Array<{ ref: string; commit: string; version: string }>;
   error?: string;
@@ -209,7 +213,9 @@ export function validateWorkflowClosure(document: WorkflowDocument): string[] {
 
 export const WorkflowSummarySchema = z.object({ name: z.string().regex(WorkflowNamePattern), valid: z.boolean(), error: z.string().optional(), description: z.string().max(1024).optional(), sourceCount: z.number().int().nonnegative().optional(), stepCount: z.number().int().nonnegative().optional(), defaultChains: z.array(z.number().int().positive()).max(128).optional(), hooks: z.array(z.string().min(1)).max(16).optional() }).strict() satisfies z.ZodType<WorkflowSummary>;
 const WorkflowListResponseSchema = createApiResponseSchema<{ workflows: WorkflowSummary[]; truncated: boolean }>('WorkflowListResponseSchema')(z.object({ workflows: z.array(WorkflowSummarySchema), truncated: z.boolean() }).strict());
-const WorkflowGetResponseSchema = createApiResponseSchema<{ document: WorkflowDocument; raw: string; docHash: string }>('WorkflowGetResponseSchema')(z.object({ document: WorkflowDocumentSchema, raw: z.string(), docHash: z.string().regex(SHA256_HEX) }).strict());
+// Response schemas describe values already accepted by the environment-aware
+// handler; they must not reject a development file:// document at serialize.
+const WorkflowGetResponseSchema = createApiResponseSchema<{ document: WorkflowDocument; raw: string; docHash: string }>('WorkflowGetResponseSchema')(z.object({ document: makeWorkflowDocumentSchema({ allowFileUrls: true }), raw: z.string(), docHash: z.string().regex(SHA256_HEX) }).strict());
 const WorkflowPutResponseSchema = createApiResponseSchema<{ docHash: string }>('WorkflowPutResponseSchema')(z.object({ docHash: z.string().regex(SHA256_HEX) }).strict());
 const WorkflowPathQuerySchema = z.object({ pathOrUrl: z.string().min(1) }).strict();
 const WorkflowNameParamsSchema = z.object({ name: z.string().regex(WorkflowNamePattern) }).strict();
@@ -220,7 +226,8 @@ const WorkflowResolveBodySchema = z.object({ repoPathOrUrl: z.string().min(1), n
 const WorkflowApproveOriginsBodySchema = z.object({ origins: z.array(z.string().min(1)).min(1).max(64) }).strict();
 const WorkflowApproveOriginsResponseSchema = createApiResponseSchema<{ origins: string[] }>('WorkflowApproveOriginsResponseSchema')(z.object({ origins: z.array(z.string()) }).strict());
 const PromotionTargetSchema = z.object({ repoPathOrUrl: z.string().min(1), name: z.string().regex(WorkflowNamePattern) }).strict();
-const PromotionSelectionShape = { target: PromotionTargetSchema, plan: DeploymentPlanSchema.optional(), runId: z.string().min(1).optional() };
+const RunIdSchema = z.string().regex(RUN_ID_PATTERN);
+const PromotionSelectionShape = { target: PromotionTargetSchema, plan: DeploymentPlanSchema.optional(), runId: RunIdSchema.optional() };
 const exactlyOnePromotionInput = (value: { plan?: unknown; runId?: string }, ctx: z.RefinementCtx) => {
   if ((value.plan === undefined) === (value.runId === undefined)) ctx.addIssue({ code: 'custom', message: 'exactly one of plan or runId is required' });
 };
@@ -228,7 +235,7 @@ const PromotionPreviewRequestSchema = z.object({ mode: z.literal('preview'), ...
 const PromotionApplyRequestSchema = z.object({
   mode: z.literal('apply'), previewId: z.string().min(1), ...PromotionSelectionShape,
   tagChoiceBySourceId: z.record(z.string().min(1), z.string().min(1)).optional(), overwrite: z.boolean().optional(),
-  hooks: z.array(z.string().min(1)).max(16), adoptRunIds: z.array(z.string().min(1)).max(64).optional(),
+  hooks: z.array(z.string().min(1)).max(16), adoptRunIds: z.array(RunIdSchema).max(64).optional(),
 }).strict().superRefine(exactlyOnePromotionInput).superRefine((request, ctx) => {
   if (new Set(request.hooks).size !== request.hooks.length) ctx.addIssue({ code: 'custom', message: 'hooks must be unique', path: ['hooks'] });
 });
@@ -242,9 +249,9 @@ export const WorkflowPromoteResponseSchema = createApiResponseSchema<WorkflowPro
 );
 export const WorkflowCheckUpdatesRequestSchema = z.object({ repoPathOrUrl: z.string().min(1), name: z.string().regex(WorkflowNamePattern) }).strict();
 const WorkflowSourceUpdateSchema = z.object({
-  sourceId: z.string().min(1), status: z.enum(['up-to-date', 'upgrade-available', 'tag-retargeted', 'tag-deleted', 'branch-moved', 'error']),
+  sourceId: z.string().min(1), status: z.enum(['up-to-date', 'upgrade-available', 'tag-retargeted', 'tag-deleted', 'branch-moved', 'approval-required', 'error']),
   currentCommit: z.string().regex(COMMIT), latestCommit: z.string().regex(COMMIT).optional(),
-  upgrades: z.array(z.object({ ref: z.string().min(1), commit: z.string().regex(COMMIT), version: z.string().min(1) }).strict()).optional(), error: z.string().optional(),
+  origin: z.string().min(1).optional(), upgrades: z.array(z.object({ ref: z.string().min(1), commit: z.string().regex(COMMIT), version: z.string().min(1) }).strict()).optional(), error: z.string().optional(),
 }).strict() satisfies z.ZodType<WorkflowSourceUpdate>;
 const WorkflowPluginUpdateSchema = z.object({
   id: z.string().min(1), requiredVersion: z.string().min(1), status: z.enum(['installed', 'version-mismatch', 'missing']),

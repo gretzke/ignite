@@ -63,9 +63,9 @@ export const workflowsApi = {
       return workflowResolveFailed({ repoPathOrUrl, name, error: formatApiError(error).description });
     },
   }),
-  approveOrigins: (repoPathOrUrl: string, name: string, origins: string[]) => apiClient.dispatch.approveWorkflowOrigins({
+  approveOrigins: (repoPathOrUrl: string, name: string, origins: string[], retry: 'resolve' | 'updates' = 'resolve') => apiClient.dispatch.approveWorkflowOrigins({
     body: { origins },
-    onSuccess: () => [workflowOriginsApprovalCleared(), workflowsApi.resolve(repoPathOrUrl, name)],
+    onSuccess: () => [workflowOriginsApprovalCleared(), ...(retry === 'updates' ? workflowsApi.checkUpdates(repoPathOrUrl, name) : [workflowsApi.resolve(repoPathOrUrl, name)])],
   }),
   checkUpdates: (repoPathOrUrl: string, name: string) => [
     workflowUpdatesRequested({ repoPathOrUrl, name }),

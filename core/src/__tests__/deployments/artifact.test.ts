@@ -124,6 +124,11 @@ describe('deployment artifact renderer', () => {
 
   it('renders a portable, sanitized artifact and writes it under the profile', async () => {
     const record = run();
+    record.validation.chains['1'].rpc.details = {
+      nested: ['file:///Volumes/private/contracts', { remote: 'ssh://user:secret@example.test/private/repo.git' }],
+      absolute: '/srv/company/internal/config.json',
+    };
+    record.lanes['1'].steps[0].attempts[0].error = 'file:///Volumes/private/key ssh://user:secret@example.test/repo /srv/private/key';
     const artifact = renderArtifact(record);
     const json = JSON.stringify(artifact);
 
@@ -131,6 +136,10 @@ describe('deployment artifact renderer', () => {
     expect(json).not.toContain(FINGERPRINT);
     expect(json).not.toContain('/Users/');
     expect(json.toLowerCase()).not.toContain('http');
+    expect(json).not.toContain('file://');
+    expect(json).not.toContain('ssh://');
+    expect(json).not.toContain('/srv/');
+    expect(json).not.toContain('secret@example');
     expect(artifact.contracts[0]).toMatchObject({
       repoName: 'token-repo',
       sourcePath: 'Token.sol',

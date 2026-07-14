@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -55,6 +55,25 @@ describe('PinnedStore', () => {
     const repos = new RepoService({ fileSystem, profiles: { getCurrentProfile: () => profileId } as unknown as ProfileManager, run: (async (...args: Parameters<typeof runCommand>) => { calls++; return runCommand(...args); }) as typeof runCommand });
     await expect(repos.ensurePinnedClone(profileId, 'file:///no/approval/repo', 'a'.repeat(40))).rejects.toMatchObject({ code: 'PINNED_ORIGIN_UNAPPROVED', origins: ['file://'] });
     expect(calls).toBe(0);
+  });
+
+  it('enforces one materialization deadline and removes the temporary worktree on abort', async () => {
+    const home = await temp('ignite-pinned-home-'); FileSystem.resetInstance(); const fileSystem = FileSystem.getInstance(home); const store = new PinnedStore(fileSystem);
+    const url = 'file:///deadline/repo'; await store.approveOrigins(profileId, [url]);
+    const run = vi.fn(async (_cmd: string, args: string[], opts?: { signal?: AbortSignal }) => {
+      if (args.includes('rev-parse')) return { code: 1, stdout: '', stderr: 'missing' };
+      if (args.includes('fetch')) return new Promise<never>((_resolve, reject) => {
+        if (opts?.signal?.aborted) reject(opts.signal.reason);
+        else opts?.signal?.addEventListener('abort', () => reject(opts.signal?.reason), { once: true });
+      });
+      return { code: 0, stdout: '', stderr: '' };
+    });
+    const repos = new RepoService({ fileSystem, profiles: { getCurrentProfile: () => profileId } as unknown as ProfileManager, run: run as typeof runCommand, materializationTimeoutMs: 5 });
+    await expect(repos.ensurePinnedClone(profileId, url, 'a'.repeat(40))).rejects.toThrow(/timed out/i);
+    const parent = path.dirname(store.worktreePath(profileId, url, 'a'.repeat(40)));
+    const entries = await fs.readdir(parent).catch(() => []);
+    expect(entries.filter((entry) => entry.endsWith('.tmp'))).toEqual([]);
+    expect(run.mock.calls.some((call) => (call[2] as { signal?: AbortSignal } | undefined)?.signal)).toBe(true);
   });
 
   it('materializes a non-tip commit and auto-resets tracked mutations while keeping untracked output', async () => {

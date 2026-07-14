@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DeploymentPlanSchema, FrozenInputSchema, PrepareStepRequestSchema, RunRecordSchema, RunSummarySchema, ValidateDeploymentRequestSchema, allowedActions } from '@ignite/api';
 import { renderArtifact } from '../../deployments/artifact.js';
+import fs from 'node:fs';
 
 const address = '0x0000000000000000000000000000000000000001';
 const salt = `0x${'11'.repeat(32)}`;
@@ -137,8 +138,8 @@ describe('D5 record compatibility and D6 workflow widening', () => {
     expect(step).not.toHaveProperty('call');
     expect(step).not.toHaveProperty('libraries');
     expect(artifact.lanes['31337']).not.toHaveProperty('simulationTier');
-    // No timestamps/randomness enter rendering: byte-identical regeneration.
-    expect(JSON.stringify(renderArtifact(structuredClone(record)))).toBe(JSON.stringify(artifact));
+    const golden = fs.readFileSync(new URL('./fixtures/d5-artifact.golden.json', import.meta.url), 'utf8');
+    expect(`${JSON.stringify(artifact, null, 2)}\n`).toBe(golden);
   });
 
   it('round-trips a D6 workflow-bound record and renders additive provenance', () => {

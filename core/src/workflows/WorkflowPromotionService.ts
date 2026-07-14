@@ -153,14 +153,23 @@ export class WorkflowPromotionService {
     const raw = `${JSON.stringify(document, null, 2)}\n`;
     const docHash = crypto.createHash('sha256').update(raw).digest('hex');
     const uniqueAdoptions = [...new Set(request.adoptRunIds ?? [])];
+    // Resolve every adopted run against the current profile and render every
+    // artifact before entering the write transaction. A bad adoption can
+    // therefore never leave the workflow file applied on its own.
+    const adoptedArtifacts = new Map<string, string>();
+    for (const runId of uniqueAdoptions) {
+      if (!(await this.deps.getRun(profileId, runId)))
+        throw new WorkflowPromotionError(404, 'DEPLOYMENT_RUN_NOT_FOUND', `Deployment run not found: ${runId}`);
+      const artifact = await this.deps.renderRunArtifact(profileId, runId);
+      adoptedArtifacts.set(runId, `${JSON.stringify(artifact, null, 2)}\n`);
+    }
     await this.deps.withWorkflowWriteLock(request.target.repoPathOrUrl, async (files) => {
       const existing = await files.readFile(workflowPath(request.target.name));
       if (existing !== null && !request.overwrite)
         throw new WorkflowPromotionError(409, 'WORKFLOW_NAME_CONFLICT', `Workflow ${request.target.name} already exists`);
       await files.writeFile(workflowPath(request.target.name), raw);
       for (const runId of uniqueAdoptions) {
-        const artifact = await this.deps.renderRunArtifact(profileId, runId);
-        await files.writeFile(`ignite/deployments/${request.target.name}/${runId}.json`, `${JSON.stringify(artifact, null, 2)}\n`);
+        await files.writeFile(`ignite/deployments/${request.target.name}/${runId}.json`, adoptedArtifacts.get(runId)!);
       }
     });
     this.previews.delete(request.previewId);

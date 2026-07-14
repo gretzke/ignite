@@ -127,6 +127,7 @@ const PersistedDraftSchema = z.object({
   workflowDocument: makeWorkflowDocumentSchema({
     allowFileUrls: true,
   }).optional(),
+  workflowSources: z.array(z.unknown()).optional(),
   workflowIncludedStepIds: z.record(z.string(), z.boolean()).optional(),
   externalResolutions: z.array(ExternalResolutionSchema).optional(),
   workflowOutputs: z.object({ hooks: z.array(z.string()) }).optional(),
@@ -188,9 +189,10 @@ export function loadDraft(
       storage.removeItem?.(LEGACY_DEPLOY_DRAFT_STORAGE_KEY);
     const raw = storage?.getItem(DEPLOY_DRAFT_STORAGE_KEY);
     if (!raw) return undefined;
-    const parsed = PersistedDraftSchema.parse(
-      JSON.parse(raw)
-    ) as DeployDraftState;
+    const value = PersistedDraftSchema.parse(JSON.parse(raw));
+    if (value.workflowSources && value.workflowDocument)
+      makeWorkflowDocumentSchema({ allowFileUrls: true }).parse({ ...value.workflowDocument, sources: value.workflowSources });
+    const parsed = value as DeployDraftState;
     if (!invariantsHold(parsed)) return undefined;
     // Prepared plugin initcode is intentionally not trusted across reloads.
     for (const extras of Object.values(parsed.deployExtras)) {

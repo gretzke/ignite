@@ -16,11 +16,15 @@ import { pluginVersionInfo } from '../api/plugins/versions.js';
 import type { PluginConfig } from '../assets/PluginRegistryLoader.js';
 import type { PluginInstallSource } from '../plugins/install/types.js';
 import type { PluginVersionInfoData } from '@ignite/api';
+import { PinnedStore, pinnedOrigin } from '../repos/PinnedStore.js';
+import { ProfileManager } from '../filesystem/ProfileManager.js';
 
 export interface WorkflowUpdateServiceDeps {
   readWorkflow: (request: WorkflowCheckUpdatesRequest) => Promise<WorkflowDocument>;
   inspectRemote: (url: string) => Promise<InspectGitRemoteData>;
   pluginRows: (plugins: WorkflowRequiredPlugin[]) => Promise<WorkflowPluginUpdate[]>;
+  getProfileId: () => Promise<string>;
+  isOriginApproved: (profileId: string, url: string) => Promise<boolean>;
 }
 
 export class WorkflowUpdateService {
@@ -30,14 +34,21 @@ export class WorkflowUpdateService {
       readWorkflow: deps?.readWorkflow ?? readWorkflow,
       inspectRemote: deps?.inspectRemote ?? inspectGitRemote,
       pluginRows: deps?.pluginRows ?? requiredPluginRows,
+      getProfileId: deps?.getProfileId ?? (async () => (await ProfileManager.getInstance()).getCurrentProfile()),
+      isOriginApproved: deps?.isOriginApproved ?? ((profileId, url) => new PinnedStore().isOriginApproved(profileId, url)),
     };
   }
 
   async check(request: WorkflowCheckUpdatesRequest): Promise<WorkflowCheckUpdatesData> {
     const document = await this.deps.readWorkflow(request);
+    const profileId = await this.deps.getProfileId();
     const sources: WorkflowSourceUpdate[] = [];
     for (const source of document.sources) {
       const pin = source.repo;
+      if (!(await this.deps.isOriginApproved(profileId, pin.url))) {
+        sources.push({ sourceId: source.id, status: 'approval-required', currentCommit: pin.commit, origin: pinnedOrigin(pin.url) });
+        continue;
+      }
       if (!pin.ref || !pin.refKind) {
         sources.push({ sourceId: source.id, status: 'up-to-date', currentCommit: pin.commit });
         continue;

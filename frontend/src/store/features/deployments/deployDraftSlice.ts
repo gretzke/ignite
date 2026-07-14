@@ -296,6 +296,7 @@ const deployDraftSlice = createSlice({
         deployExtras,
         workflowRef: { repoPathOrUrl, name, baseDocHash: docHash },
         workflowDocument: cloneJson(document),
+        workflowSources: cloneJson(document.sources),
         workflowIncludedStepIds: Object.fromEntries(
           document.steps.map((step) => [step.id, true])
         ),
@@ -337,6 +338,7 @@ const deployDraftSlice = createSlice({
       if (!state.workflowRef) return;
       state.workflowRef.baseDocHash = action.payload.docHash;
       state.workflowDocument = cloneJson(action.payload.document);
+      state.workflowSources = cloneJson(action.payload.document.sources);
     },
     acceptWorkflowPinUpdate(
       state,
@@ -347,7 +349,7 @@ const deployDraftSlice = createSlice({
         refKind?: 'tag' | 'branch';
       }>
     ) {
-      const source = state.workflowDocument?.sources.find(
+      const source = state.workflowSources?.find(
         (item) => item.id === action.payload.sourceId
       );
       const contract = state.contracts.find(
@@ -361,6 +363,7 @@ const deployDraftSlice = createSlice({
           ? { ref: action.payload.ref, refKind: action.payload.refKind }
           : {}),
       };
+      delete source.artifactHash;
       contract.pin = { ...source.repo };
     },
     setWorkflowRunHooks(state, action: PayloadAction<string[]>) {

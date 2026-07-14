@@ -85,6 +85,22 @@ describe('WorkflowPromotionService', () => {
     expect((JSON.parse(files.get('ignite/workflows/release.json')!) as WorkflowDocument).sources[0].artifactHash).toBe(HASH);
   });
 
+  it('renders and revalidates every adoption before the first workflow write', async () => {
+    const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+    const getRun = vi.fn(async (_profile: string, id: string) => ({ id }) as RunRecord);
+    const service = makeService({
+      getRun,
+      renderRunArtifact: async (_profile, id) => {
+        if (id === ids[1]) throw new Error('artifact missing');
+        return { runId: id };
+      },
+    });
+    const preview = await service.promote({ mode: 'preview', target: { repoPathOrUrl: '/target', name: 'release' }, plan: oneSourcePlan() }, 'p1');
+    await expect(service.promote({ mode: 'apply', previewId: preview.previewId, target: { repoPathOrUrl: '/target', name: 'release' }, plan: oneSourcePlan(), hooks: [], adoptRunIds: ids }, 'p1')).rejects.toThrow('artifact missing');
+    expect(writes).toEqual([]);
+    expect(getRun).toHaveBeenCalledWith('p1', ids[1]);
+  });
+
   function makeService(overrides: Partial<WorkflowPromotionServiceDeps> = {}) {
     return new WorkflowPromotionService({
       inspectSource: async () => ({ origin: 'https://example.test/repo.git', commit: SHA, tags: ['v1.0.0'], branch: 'main', dirty: false }),

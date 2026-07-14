@@ -336,7 +336,8 @@ export default function RepositoryPage() {
               workflowsApi.approveOrigins(
                 originApproval.repoPathOrUrl,
                 originApproval.name,
-                originApproval.origins
+                originApproval.origins,
+                originApproval.retry
               )
             );
         }}

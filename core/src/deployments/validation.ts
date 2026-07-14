@@ -403,9 +403,21 @@ function validateFrozenInputs(
     }
   }
   if (drifts.length > 0) return failure('WORKFLOW_ARTIFACT_DRIFT', 'Frozen artifact hashes differ from the workflow document', { drifts });
-  const pinned = plan.contracts.filter((contract) => contract.pin).map((contract) => ({ sourceId: contract.id, pin: `${contract.pin!.url}@${contract.pin!.ref ?? contract.pin!.commit.slice(0, 12)}`, commit: contract.pin!.commit.slice(0, 12) }));
+  const pinned = plan.contracts.filter((contract) => contract.pin).flatMap((contract) => {
+    const pin = portablePinLabel(contract.pin!.url, contract.pin!.ref ?? contract.pin!.commit.slice(0, 12));
+    return pin ? [{ sourceId: contract.id, pin, commit: contract.pin!.commit.slice(0, 12) }] : [];
+  });
   const dirty = Object.values(frozen).some((input) => input.repoDirty);
   return success(dirty ? 'Inputs frozen; repository changes were detected' : 'Inputs frozen', pinned.length ? { pinned } : undefined);
+}
+
+function portablePinLabel(rawUrl: string, ref: string): string | undefined {
+  try {
+    const url = new URL(rawUrl);
+    if (!url.host) return undefined;
+    const pathname = url.pathname.replace(/^\/+/, '').replace(/\/+$/, '');
+    return `${url.host}${pathname ? `/${pathname}` : ''}@${ref}`;
+  } catch { return undefined; }
 }
 
 async function validateWorkflowRun(

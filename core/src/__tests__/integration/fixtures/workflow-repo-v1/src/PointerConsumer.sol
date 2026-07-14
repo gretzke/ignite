@@ -8,4 +8,3 @@ contract PointerConsumer {
         target = target_;
     }
 }
-
