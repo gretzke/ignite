@@ -330,12 +330,30 @@ export interface RpcBinding {
   urlFingerprint: string;
 }
 
+// Known payloads inside ValidationItem.details. details stays an open record
+// on the wire (z.record passes unknown keys through — no stripping risk);
+// typing it as an intersection + catchall schema blew tsc's heap on the
+// frontend, so consumers narrow with these shapes instead.
+export interface ProvisionalStepInfo {
+  stepId: string;
+  predictedAddress?: Hex;
+  note?: string;
+  degraded?: string;
+}
+export interface PredictedEntryInfo {
+  predictedAddress: Hex;
+  initcodeHash?: Hex32;
+  salt?: Hex32;
+  provisional?: boolean;
+  notes?: string[];
+}
+
 export interface ValidationItem {
   ok: boolean;
   blocking: boolean;
   code?: string;
   message: string;
-  details?: Record<string, unknown> & { provisionalSteps?: Array<{ stepId: string; predictedAddress?: Hex; note?: string; degraded?: string }>; predicted?: Record<string, { predictedAddress: Hex; initcodeHash?: Hex32; salt?: Hex32; provisional?: boolean; notes?: string[] }> };
+  details?: Record<string, unknown>;
 }
 
 export interface ChainChecklist {
@@ -580,10 +598,7 @@ export const ValidationItemSchema = z.object({
   blocking: z.boolean(),
   code: z.string().optional(),
   message: z.string(),
-  details: z.object({
-    provisionalSteps: z.array(z.object({ stepId: z.string().min(1), predictedAddress: HexSchema.optional(), note: z.string().optional(), degraded: z.string().optional() })).optional(),
-    predicted: z.record(z.string(), z.object({ predictedAddress: AddressSchema, initcodeHash: Hex32Schema.optional(), salt: Hex32Schema.optional(), provisional: z.boolean().optional(), notes: z.array(z.string()).optional() })).optional(),
-  }).catchall(z.unknown()).optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
 }) satisfies z.ZodType<ValidationItem>;
 
 export const ChainChecklistSchema = z.object({
