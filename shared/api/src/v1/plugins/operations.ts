@@ -11,9 +11,11 @@ export interface InvokePluginOperationData {
   result: unknown;
 }
 
+// Shared package: browser consumers have no Buffer, so UTF-8 byte accounting
+// comes from TextEncoder.
 const serializedByteLength = (value: unknown): number | undefined => {
   try {
-    return Buffer.byteLength(JSON.stringify(value), 'utf8');
+    return new TextEncoder().encode(JSON.stringify(value)).length;
   } catch {
     return undefined;
   }

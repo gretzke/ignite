@@ -124,10 +124,16 @@ function jsonDepth(value: unknown, depth = 0): number {
   return Object.values(value as Record<string, unknown>).reduce<number>((max, entry) => Math.max(max, jsonDepth(entry, depth + 1)), depth + 1);
 }
 
+// Shared package: browser consumers have no Buffer, so byte sizes come from
+// TextEncoder (identical UTF-8 accounting).
+function jsonByteLength(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
+
 function payloadIssue(value: unknown, ctx: z.RefinementCtx, path: (string | number)[]): void {
   if (value === undefined) return;
   let bytes: number;
-  try { bytes = Buffer.byteLength(JSON.stringify(value)); } catch { ctx.addIssue({ code: 'custom', message: 'payload must be JSON-serializable', path }); return; }
+  try { bytes = jsonByteLength(value); } catch { ctx.addIssue({ code: 'custom', message: 'payload must be JSON-serializable', path }); return; }
   if (bytes > MAX_STEP_PAYLOAD_BYTES) ctx.addIssue({ code: 'custom', message: `payload exceeds ${MAX_STEP_PAYLOAD_BYTES} bytes`, path });
   if (jsonDepth(value) > MAX_JSON_DEPTH) ctx.addIssue({ code: 'custom', message: `payload exceeds JSON depth ${MAX_JSON_DEPTH}`, path });
 }
@@ -198,7 +204,7 @@ export function makeWorkflowDocumentSchema(options: { allowFileUrls?: boolean } 
     const assertDeploy = (stepId: string, path: (string | number)[]) => { if (!deployIds.has(stepId)) ctx.addIssue({ code: 'custom', message: 'pointer, target, and library stepIds must name deploy steps', path }); };
     const visitRefs = (value: unknown, path: (string | number)[]) => { if (!value || typeof value !== 'object') return; if (!Array.isArray(value) && '$ref' in (value as Record<string, unknown>)) { const ref = value as WorkflowValueRef; if (ref.$ref?.kind === 'step') assertDeploy(ref.$ref.stepId, path); return; } Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => visitRefs(entry, [...path, key])); };
     doc.steps.forEach((entry, index) => { if (entry.kind === 'deploy') { if (!contractIds.has(entry.contractId)) ctx.addIssue({ code: 'custom', message: 'step contractId must reference a source', path: ['steps', index, 'contractId'] }); visitRefs(entry.args, ['steps', index, 'args']); visitRefs(entry.argsPerChain, ['steps', index, 'argsPerChain']); Object.entries(entry.libraries ?? {}).forEach(([key, binding]) => { if (binding.kind === 'step') assertDeploy(binding.stepId, ['steps', index, 'libraries', key]); }); Object.entries(entry.librariesPerChain ?? {}).forEach(([chain, bindings]) => Object.entries(bindings).forEach(([key, binding]) => { if (binding.kind === 'step') assertDeploy(binding.stepId, ['steps', index, 'librariesPerChain', chain, key]); })); } else { if (entry.target.kind === 'step') assertDeploy(entry.target.stepId, ['steps', index, 'target']); Object.entries(entry.targetPerChain ?? {}).forEach(([chain, target]) => { if (target.kind === 'step') assertDeploy(target.stepId, ['steps', index, 'targetPerChain', chain]); }); visitRefs(entry.args, ['steps', index, 'args']); visitRefs(entry.argsPerChain, ['steps', index, 'argsPerChain']); } });
-    if (Buffer.byteLength(JSON.stringify(doc)) > MAX_DOCUMENT_BYTES) ctx.addIssue({ code: 'custom', message: `workflow document exceeds ${MAX_DOCUMENT_BYTES} bytes` });
+    if (jsonByteLength(doc) > MAX_DOCUMENT_BYTES) ctx.addIssue({ code: 'custom', message: `workflow document exceeds ${MAX_DOCUMENT_BYTES} bytes` });
   }) as z.ZodType<WorkflowDocument>;
 }
 
