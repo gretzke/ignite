@@ -22,6 +22,7 @@ export * from "./deployments.js";
 export * from "./deploymentTypes.js";
 export * from "./explorers.js";
 export * from "./verifications.js";
+export * from "./workflows.js";
 
 import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
