@@ -441,7 +441,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
         <section className="card-milky p-4 grid gap-2">
           <h3 className="font-semibold">Predicted addresses</h3>
           {reviewPredictedAddresses(report).map(
-            ({ chainId, stepId, address, provisional }) => {
+            ({ chainId, stepId, address, provisional, provisionalLabel }) => {
               const contractId = draft.steps.find(
                 (step) => step.id === stepId && step.kind === 'deploy'
               )?.contractId;
@@ -459,7 +459,9 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
                       ?.name ?? `Chain ${chainId}`}
                   </span>
                   {provisional && (
-                    <span className="chip">provisional — mined during run</span>
+                    <span className="chip">
+                      {provisionalLabel ?? 'provisional'}
+                    </span>
                   )}
                   <span className="mono-data ml-auto">{address}</span>
                 </div>

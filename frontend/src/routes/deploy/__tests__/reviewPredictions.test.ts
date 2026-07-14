@@ -20,6 +20,12 @@ describe('reviewPredictedAddresses', () => {
                     '0x0000000000000000000000000000000000000002',
                   provisional: true,
                 },
+                plain: {
+                  predictedAddress:
+                    '0x0000000000000000000000000000000000000003',
+                  provisional: true,
+                  kind: 'create',
+                },
               },
               provisionalSteps: [{ stepId: 'dynamic' }],
             },
@@ -40,6 +46,14 @@ describe('reviewPredictedAddresses', () => {
         stepId: 'dynamic',
         address: '0x0000000000000000000000000000000000000002',
         provisional: true,
+        provisionalLabel: 'provisional — mined during run',
+      },
+      {
+        chainId: '1',
+        stepId: 'plain',
+        address: '0x0000000000000000000000000000000000000003',
+        provisional: true,
+        provisionalLabel: 'provisional — depends on signer nonce',
       },
     ]);
   });

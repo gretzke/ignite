@@ -195,6 +195,11 @@ describe('validatePlan', () => {
     }));
     const checklist = result.report.chains['1'];
     expect(checklist.create2).toMatchObject({ ok: true, blocking: false, details: { provisionalSteps: [{ stepId: 'hook', degraded: 'bad flags' }] } });
+    // Review shows the whole picture: the plain-create dependency appears as
+    // a nonce-derived provisional entry alongside deterministic ones.
+    const predicted = (checklist.create2?.details as { predicted: Record<string, { predictedAddress: string; provisional?: boolean; kind?: string }> }).predicted;
+    expect(predicted['plain']).toMatchObject({ provisional: true, kind: 'create' });
+    expect(predicted['plain'].predictedAddress).toMatch(/^0x[0-9a-f]{40}$/i);
     expect(checklist.estimation).toMatchObject({ ok: false, blocking: false });
     expect(checklist.simulation).toMatchObject({ ok: false, blocking: false });
     expect(checklist.balance).toMatchObject({ ok: false, blocking: false });

@@ -9,6 +9,9 @@ export interface ReviewPredictedAddress {
   stepId: string;
   address: string;
   provisional: boolean;
+  // What the provisional chip should say: plain creates are nonce previews,
+  // dynamic deterministic steps are mined during the run.
+  provisionalLabel?: string;
 }
 
 /** Narrows the open validation details record at the UI boundary. */
@@ -38,13 +41,22 @@ export function reviewPredictedAddresses(
             return [];
           const entry = value as PredictedEntryInfo;
           if (typeof entry.predictedAddress !== 'string') return [];
+          const provisional =
+            entry.provisional === true || provisionalSteps.has(stepId);
           return [
             {
               chainId,
               stepId,
               address: entry.predictedAddress,
-              provisional:
-                entry.provisional === true || provisionalSteps.has(stepId),
+              provisional,
+              ...(provisional
+                ? {
+                    provisionalLabel:
+                      entry.kind === 'create'
+                        ? 'provisional — depends on signer nonce'
+                        : 'provisional — mined during run',
+                  }
+                : {}),
             },
           ];
         }

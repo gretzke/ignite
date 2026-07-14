@@ -11,6 +11,7 @@ import type {
   DeploymentPlan,
   FrozenInputs,
   RpcBinding,
+  PredictedEntryInfo,
   RpcSelection,
   ValidationItem,
   ValidationReport,
@@ -944,7 +945,13 @@ async function validateCreate2(
         ? { stepId: step.id, predictedAddress: entry.predictedAddress, ...(entry.notes?.length ? { note: entry.notes.join('; ') } : {}) }
         : { stepId: step.id, degraded: entry && 'reason' in entry ? entry.reason : 'prediction unavailable' };
     });
-    const reviewPredicted = Object.fromEntries(Object.entries(snapshot.entries).flatMap(([id, entry]) => hasPredicted(entry) ? [[id, { ...entry, ...(entry.provisional ? { provisional: true } : {}) }]] : []));
+    const reviewPredicted: Record<string, PredictedEntryInfo> = Object.fromEntries(Object.entries(snapshot.entries).flatMap(([id, entry]) => hasPredicted(entry) ? [[id, { ...entry, ...(entry.provisional ? { provisional: true } : {}) }]] : []));
+    // Review shows the whole address picture: plain creates are nonce-derived
+    // facts-to-be, so they carry the provisional marker with a create kind
+    // (distinct label frontend-side — nothing is "mined" for them).
+    for (const [id, predictedAddress] of snapshot.createAddresses) {
+      if (!reviewPredicted[id]) reviewPredicted[id] = { predictedAddress, provisional: true, kind: 'create' };
+    }
     return {
       item: success('CREATE2 proxy and predicted addresses are ready', {
         predicted: reviewPredicted,

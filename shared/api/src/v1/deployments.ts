@@ -345,6 +345,9 @@ export interface PredictedEntryInfo {
   initcodeHash?: Hex32;
   salt?: Hex32;
   provisional?: boolean;
+  // 'create' = nonce-derived plain-create preview (nothing mined); absent for
+  // deterministic entries.
+  kind?: 'create';
   notes?: string[];
 }
 
