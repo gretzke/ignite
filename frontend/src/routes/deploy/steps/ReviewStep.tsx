@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { DeploymentPlan, ValidationReport } from '@ignite/api';
+import type {
+  DeploymentHookInfo,
+  DeploymentPlan,
+  ValidationReport,
+} from '@ignite/api';
 import { Loader2, RefreshCw, Rocket } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../../../store/api/client';
@@ -10,18 +14,26 @@ import {
   mintIdempotencyKey,
   setName,
   acknowledgeDeployed,
+  acknowledgeArtifactDrift,
+  setWorkflowRunHooks,
 } from '../../../store/features/deployments/deployDraftSlice';
 import { runSnapshotReceived } from '../../../store/features/deployments/deploymentsSlice';
 import ValidationChecklist from '../components/ValidationChecklist';
 import { explorersApi } from '../../../store/api/explorersApi';
 import { replaceIdsForDisplay } from '../../../utils/displayText';
+import { workflowRunRequestFromDraft } from '../../../store/features/deployments/workflowDraft';
+import {
+  openPermissionsModal,
+  pluginsApi,
+} from '../../../store/features/plugins/pluginsSlice';
 
 function validationGreen(report: ValidationReport | null): boolean {
   return Boolean(
     report &&
     Object.values(report.chains).every((checklist) =>
       Object.values(checklist).every((item) => !item.blocking || item.ok)
-    )
+    ) &&
+    Object.values(report.run ?? {}).every((item) => !item?.blocking || item.ok)
   );
 }
 
@@ -40,6 +52,10 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
   const [loading, setLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deploymentHooks, setDeploymentHooks] = useState<DeploymentHookInfo[]>(
+    []
+  );
+  const [hooksLoaded, setHooksLoaded] = useState(false);
   const defaultName = `Deploy ${draft.contracts
     .map((item) => item.contractName)
     .join(', ')}`;
@@ -49,9 +65,9 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
         plan.steps.map((step, index) => [
           step.id,
           step.kind === 'deploy'
-            ? draft.contracts.find(
+            ? (draft.contracts.find(
                 (contract) => contract.id === step.contractId
-              )?.contractName ?? step.id
+              )?.contractName ?? step.id)
             : step.signature
               ? `Call ${step.signature}`
               : `Call #${index + 1}`,
@@ -73,6 +89,36 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
   useEffect(() => {
     if (!draft.idempotencyKey) dispatch(mintIdempotencyKey());
   }, [dispatch, draft.idempotencyKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiClient
+      .request('listDeploymentHooks', {})
+      .then((response) => {
+        if ('data' in response && !cancelled)
+          setDeploymentHooks(response.data.deploymentHooks);
+      })
+      .catch(() => {
+        // Validation remains authoritative and will surface selected hook
+        // warnings; a transient discovery failure must not strand Review.
+      })
+      .finally(() => {
+        if (!cancelled) setHooksLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const installedHookIds = useMemo(
+    () => deploymentHooks.map((hook) => hook.pluginId),
+    [deploymentHooks]
+  );
+  const workflowRequest = useMemo(
+    () => workflowRunRequestFromDraft(draft, installedHookIds),
+    [draft, installedHookIds]
+  );
+  const selectedHooks = workflowRequest?.hooks ?? [];
 
   // Explorer entries are normally loaded in the preceding step. Fetch any
   // missing chain here too, so the review always has each selected URL rather
@@ -96,17 +142,21 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           plan,
           rpcSelection,
           explorerSelection: draft.explorerSelection,
+          ...(workflowRequest ? { workflow: workflowRequest } : {}),
         },
       });
       if (!('data' in response)) throw new Error(response.message);
-      setReport({ chains: response.data.chains });
+      setReport({
+        chains: response.data.chains,
+        ...(response.data.run ? { run: response.data.run } : {}),
+      });
     } catch (cause) {
       setReport(null);
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(false);
     }
-  }, [draft.explorerSelection, plan, rpcSelection]);
+  }, [draft.explorerSelection, plan, rpcSelection, workflowRequest]);
 
   useEffect(() => {
     void validate();
@@ -125,6 +175,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           explorerSelection: draft.explorerSelection,
           idempotencyKey: launchedKey,
           name: draft.name?.trim() || defaultName,
+          ...(workflowRequest ? { workflow: workflowRequest } : {}),
         },
       });
       if (!('data' in response)) throw new Error(response.message);
@@ -138,16 +189,35 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
     }
   };
 
-  const acknowledge = (chainId: number, item: { details?: Record<string, unknown> }) => {
+  const acknowledge = (
+    chainId: number,
+    item: { details?: Record<string, unknown> }
+  ) => {
     const details = item.details ?? {};
-    const stepId = typeof details.stepId === 'string' ? details.stepId : undefined;
-    const predictedAddress = typeof details.predictedAddress === 'string' ? details.predictedAddress : undefined;
-    const initcodeHash = typeof details.initcodeHash === 'string' ? details.initcodeHash : undefined;
+    const stepId =
+      typeof details.stepId === 'string' ? details.stepId : undefined;
+    const predictedAddress =
+      typeof details.predictedAddress === 'string'
+        ? details.predictedAddress
+        : undefined;
+    const initcodeHash =
+      typeof details.initcodeHash === 'string'
+        ? details.initcodeHash
+        : undefined;
     if (!stepId || !predictedAddress || !initcodeHash) {
-      setError('The validation result did not include the deployment acknowledgement details.');
+      setError(
+        'The validation result did not include the deployment acknowledgement details.'
+      );
       return;
     }
-    dispatch(acknowledgeDeployed({ stepId, chainId, predictedAddress: predictedAddress as `0x${string}`, initcodeHash: initcodeHash as `0x${string}` }));
+    dispatch(
+      acknowledgeDeployed({
+        stepId,
+        chainId,
+        predictedAddress: predictedAddress as `0x${string}`,
+        initcodeHash: initcodeHash as `0x${string}`,
+      })
+    );
     // `plan` is rebuilt from the draft by the parent. Its change triggers the
     // validation effect with the acknowledgement included in the payload.
   };
@@ -182,6 +252,125 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           }
         />
       </label>
+      {draft.workflowRef && (
+        <section className="card-milky p-4 grid gap-3">
+          <div>
+            <span className="eyebrow">Outputs</span>
+            <p className="text-sm text-muted mt-1">
+              Choose deployment hooks for this run. The workflow file is
+              unchanged.
+            </p>
+          </div>
+          {!hooksLoaded && (
+            <div className="text-sm text-muted flex items-center gap-2">
+              <Loader2 size={13} className="animate-spin" /> Loading hooks…
+            </div>
+          )}
+          <div className="glass-list">
+            {deploymentHooks.map((hook) => {
+              const selected = selectedHooks.includes(hook.pluginId);
+              const plugin = pluginRows[hook.pluginId];
+              return (
+                <div
+                  key={hook.pluginId}
+                  className="list-row flex items-center gap-3"
+                >
+                  <label className="flex items-center gap-3 flex-1">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() =>
+                        dispatch(
+                          setWorkflowRunHooks(
+                            selected
+                              ? selectedHooks.filter(
+                                  (id) => id !== hook.pluginId
+                                )
+                              : [...selectedHooks, hook.pluginId]
+                          )
+                        )
+                      }
+                    />
+                    <span>
+                      <span className="font-medium">{hook.label}</span>
+                      <span className="text-xs text-muted block">
+                        {hook.description}
+                      </span>
+                    </span>
+                  </label>
+                  {plugin?.trust === 'untrusted' && (
+                    <>
+                      <span className="chip chip-warn">untrusted</span>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-secondary"
+                        onClick={() =>
+                          dispatch(
+                            openPermissionsModal({
+                              pluginId: hook.pluginId,
+                              newPermissionIds: [],
+                            })
+                          )
+                        }
+                      >
+                        Review trust
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+            {(draft.workflowOutputs?.hooks ?? [])
+              .filter((id) => !installedHookIds.includes(id))
+              .map((id) => {
+                const required = draft.workflowRequiredPlugins?.find(
+                  (plugin) => plugin.id === id
+                );
+                return (
+                  <div key={id} className="list-row flex items-center gap-3">
+                    <div className="flex-1">
+                      <span className="font-medium mono-data">{id}</span>
+                      <span className="text-xs text-warn block">
+                        Required by the workflow but not installed; it will not
+                        run.
+                      </span>
+                    </div>
+                    {required?.source ? (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-secondary"
+                        onClick={() =>
+                          dispatch(
+                            required.source!.kind === 'git'
+                              ? pluginsApi.installGit({
+                                  url: required.source!.url,
+                                  ...(required.source!.ref
+                                    ? { ref: required.source!.ref }
+                                    : {}),
+                                  ...(required.source!.track
+                                    ? { track: required.source!.track }
+                                    : {}),
+                                })
+                              : pluginsApi.install(
+                                  required.source!.contextDir,
+                                  required.source!.dockerfile
+                                )
+                          )
+                        }
+                      >
+                        Install
+                      </button>
+                    ) : (
+                      <span className="text-xs text-muted">
+                        Install manually in Plugins
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        </section>
+      )}
       {Object.entries(draft.explorerSelection).some(
         ([, ids]) => ids.length > 0
       ) && (
@@ -229,33 +418,79 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           plan…
         </div>
       )}
-      {error && <div className="card-milky p-4 text-err">{replaceIdsForDisplay(error, stepLabels)}</div>}
+      {error && (
+        <div className="card-milky p-4 text-err">
+          {replaceIdsForDisplay(error, stepLabels)}
+        </div>
+      )}
       {report && (
-        <ValidationChecklist chains={report.chains} chainInfo={chains} stepLabels={stepLabels} onAcknowledge={acknowledge} />
+        <ValidationChecklist
+          chains={report.chains}
+          run={report.run}
+          chainInfo={chains}
+          stepLabels={stepLabels}
+          onAcknowledge={acknowledge}
+          onAcceptArtifactDrift={(drifts) => {
+            for (const drift of drifts)
+              dispatch(acknowledgeArtifactDrift(drift));
+          }}
+        />
       )}
       {Object.entries(report?.chains ?? {}).flatMap(([chainId, checklist]) => {
         const predicted = checklist.create2?.details?.predicted;
         if (!predicted || typeof predicted !== 'object') return [];
-        return Object.entries(predicted as Record<string, unknown>).flatMap(([stepId, value]) => {
-          const address = value && typeof value === 'object' && typeof (value as { predictedAddress?: unknown }).predictedAddress === 'string'
-            ? (value as { predictedAddress: string }).predictedAddress : undefined;
-          return address ? [[chainId, stepId, address] as const] : [];
-        });
+        return Object.entries(predicted as Record<string, unknown>).flatMap(
+          ([stepId, value]) => {
+            const address =
+              value &&
+              typeof value === 'object' &&
+              typeof (value as { predictedAddress?: unknown })
+                .predictedAddress === 'string'
+                ? (value as { predictedAddress: string }).predictedAddress
+                : undefined;
+            return address ? [[chainId, stepId, address] as const] : [];
+          }
+        );
       }).length > 0 && (
         <section className="card-milky p-4 grid gap-2">
           <h3 className="font-semibold">Predicted addresses</h3>
-          {Object.entries(report?.chains ?? {}).flatMap(([chainId, checklist]) => {
-            const predicted = checklist.create2?.details?.predicted;
-            if (!predicted || typeof predicted !== 'object') return [];
-            return Object.entries(predicted as Record<string, unknown>).flatMap(([stepId, value]) => {
-              const address = value && typeof value === 'object' && typeof (value as { predictedAddress?: unknown }).predictedAddress === 'string'
-                ? (value as { predictedAddress: string }).predictedAddress : undefined;
-              if (!address) return [];
-              const contractId = draft.steps.find((step) => step.id === stepId && step.kind === 'deploy')?.contractId;
-              const name = draft.contracts.find((contract) => contract.id === contractId)?.contractName ?? stepId;
-              return <div key={`${stepId}-${chainId}`} className="list-row flex gap-3"><span className="font-medium">{name}</span><span className="text-muted">{chains.find((chain) => String(chain.chainId) === chainId)?.name ?? `Chain ${chainId}`}</span><span className="mono-data ml-auto">{address}</span></div>;
-            });
-          })}
+          {Object.entries(report?.chains ?? {}).flatMap(
+            ([chainId, checklist]) => {
+              const predicted = checklist.create2?.details?.predicted;
+              if (!predicted || typeof predicted !== 'object') return [];
+              return Object.entries(
+                predicted as Record<string, unknown>
+              ).flatMap(([stepId, value]) => {
+                const address =
+                  value &&
+                  typeof value === 'object' &&
+                  typeof (value as { predictedAddress?: unknown })
+                    .predictedAddress === 'string'
+                    ? (value as { predictedAddress: string }).predictedAddress
+                    : undefined;
+                if (!address) return [];
+                const contractId = draft.steps.find(
+                  (step) => step.id === stepId && step.kind === 'deploy'
+                )?.contractId;
+                const name =
+                  draft.contracts.find((contract) => contract.id === contractId)
+                    ?.contractName ?? stepId;
+                return (
+                  <div
+                    key={`${stepId}-${chainId}`}
+                    className="list-row flex gap-3"
+                  >
+                    <span className="font-medium">{name}</span>
+                    <span className="text-muted">
+                      {chains.find((chain) => String(chain.chainId) === chainId)
+                        ?.name ?? `Chain ${chainId}`}
+                    </span>
+                    <span className="mono-data ml-auto">{address}</span>
+                  </div>
+                );
+              });
+            }
+          )}
         </section>
       )}
       <div className="flex justify-end">

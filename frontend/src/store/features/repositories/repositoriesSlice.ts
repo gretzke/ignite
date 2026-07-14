@@ -164,6 +164,17 @@ const repositoriesSlice = createSlice({
         (repo) => repo !== pathOrUrl
       );
     },
+    removePinnedRepository(
+      state,
+      action: PayloadAction<{ url: string; commit: string }>
+    ) {
+      if (!state.repositories) return;
+      state.repositories.pinned = state.repositories.pinned.filter(
+        (entry) =>
+          entry.url !== action.payload.url ||
+          entry.commit !== action.payload.commit
+      );
+    },
     setRepositoryInfo(
       state,
       action: PayloadAction<{ pathOrUrl: string; info: RepoInfoResult }>
@@ -217,6 +228,7 @@ export const {
   setRepositoryInitialized,
   addRepository,
   removeRepository: removeRepositoryAction,
+  removePinnedRepository,
   setRepositoryInfo,
   setRepositoryBranches,
   startFrameworkDetection,

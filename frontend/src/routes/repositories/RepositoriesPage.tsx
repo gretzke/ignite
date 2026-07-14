@@ -18,6 +18,8 @@ import {
 } from './components/RepoModals';
 import AddRepoDropdown from './components/AddRepoDropdown';
 import { useRepositoryLists } from './hooks/useRepositoryLists';
+import type { PinnedSummary } from '@ignite/api';
+import PinnedRepoCard from './components/PinnedRepoCard';
 
 export default function RepositoriesPage() {
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
@@ -36,6 +38,9 @@ export default function RepositoriesPage() {
   const [selectedRepoPath, setSelectedRepoPath] = useState<string>('');
   // Repo path pending a confirmed `git reset --hard`; '' = dialog closed
   const [resetRepoPath, setResetRepoPath] = useState<string>('');
+  const [pinnedToDelete, setPinnedToDelete] = useState<PinnedSummary | null>(
+    null
+  );
 
   // Store hooks
   const dispatch = useAppDispatch();
@@ -216,7 +221,10 @@ export default function RepositoriesPage() {
     <div className="text-[var(--text)]">
       <div className="flex items-center justify-between mb-4">
         <h2 className="page-title">Repositories</h2>
-        <AddRepoDropdown onAddLocal={handleLocalRepo} onClone={handleCloneRepo} />
+        <AddRepoDropdown
+          onAddLocal={handleLocalRepo}
+          onClone={handleCloneRepo}
+        />
       </div>
 
       {/* Current workspace row */}
@@ -226,7 +234,10 @@ export default function RepositoriesPage() {
           variant="current"
           onSave={handleSaveWorkspace}
           onPull={handlePull}
-          showPullButton={shouldShowPullButton(currentWorkspace.path, repositoriesData)}
+          showPullButton={shouldShowPullButton(
+            currentWorkspace.path,
+            repositoriesData
+          )}
           onCheckoutCommit={handleCheckoutCommit}
           onResetRepo={setResetRepoPath}
         />
@@ -251,7 +262,10 @@ export default function RepositoriesPage() {
                   variant="local"
                   onRemove={handleRemoveRepo}
                   onPull={handlePull}
-                  showPullButton={shouldShowPullButton(r.path, repositoriesData)}
+                  showPullButton={shouldShowPullButton(
+                    r.path,
+                    repositoriesData
+                  )}
                   onCheckoutCommit={handleCheckoutCommit}
                   onResetRepo={setResetRepoPath}
                 />
@@ -280,13 +294,33 @@ export default function RepositoriesPage() {
                   variant="cloned"
                   onRemove={handleRemoveRepo}
                   onPull={handlePull}
-                  showPullButton={shouldShowPullButton(r.path, repositoriesData)}
+                  showPullButton={shouldShowPullButton(
+                    r.path,
+                    repositoriesData
+                  )}
                   onCheckoutCommit={handleCheckoutCommit}
                   onResetRepo={setResetRepoPath}
                 />
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {(repositories?.pinned.length ?? 0) > 0 && (
+        <div className="mt-5">
+          <div className="eyebrow mb-2">
+            Pinned · {repositories!.pinned.length}
+          </div>
+          <div className="glass-list">
+            {repositories!.pinned.map((pinned) => (
+              <PinnedRepoCard
+                key={`${pinned.url}\0${pinned.commit}`}
+                pinned={pinned}
+                onRemove={setPinnedToDelete}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -324,6 +358,31 @@ export default function RepositoriesPage() {
         confirmText="Remove"
         variant="danger"
         onConfirm={confirmRemoveRepo}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pinnedToDelete)}
+        onOpenChange={(open) => {
+          if (!open) setPinnedToDelete(null);
+        }}
+        title="Remove pinned clone?"
+        description={
+          pinnedToDelete
+            ? `Remove ${pinnedToDelete.url}@${pinnedToDelete.refLabel ?? pinnedToDelete.commit.slice(0, 7)} from this profile and delete its local worktree?`
+            : ''
+        }
+        confirmText="Remove"
+        variant="danger"
+        onConfirm={() => {
+          if (currentId && pinnedToDelete)
+            dispatch(
+              repositoriesApi.removePinnedRepository(
+                currentId,
+                pinnedToDelete.url,
+                pinnedToDelete.commit
+              )
+            );
+        }}
       />
 
       {/* Local Repository Modal */}

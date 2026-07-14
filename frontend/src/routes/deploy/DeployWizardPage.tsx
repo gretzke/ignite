@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Save, Trash2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store';
 import {
@@ -21,9 +21,13 @@ import type { ExplorerEntry } from '@ignite/api';
 import { replaceIdsForDisplay } from '../../utils/displayText';
 import { workflowsApi } from '../../store/features/workflows/workflowsApi';
 import { selectWorkflowDocument } from '../../store/features/workflows/workflowsSlice';
-import { workflowDocumentFromDraft, workflowDraftIsDirty } from '../../store/features/deployments/workflowDraft';
+import {
+  workflowDocumentFromDraft,
+  workflowDraftIsDirty,
+} from '../../store/features/deployments/workflowDraft';
 import { collectUnboundWorkflowSlots, projectWorkflowPlan } from './projection';
 import { cloneJson } from '../../utils/cloneJson';
+import PromoteWorkflowDialog from '../../components/PromoteWorkflowDialog';
 
 const STEPS = [
   { id: 'contracts', label: 'Contracts' },
@@ -105,17 +109,22 @@ export default function DeployWizardPage() {
   const [step, setStep] = useState(0);
   const [contractsValid, setContractsValid] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const workflowRepo = searchParams.get('workflowRepo');
   const workflowName = searchParams.get('workflow');
-  const workflowState = useAppSelector((state) => workflowRepo && workflowName ? selectWorkflowDocument(state, workflowRepo, workflowName) : undefined);
+  const workflowState = useAppSelector((state) =>
+    workflowRepo && workflowName
+      ? selectWorkflowDocument(state, workflowRepo, workflowName)
+      : undefined
+  );
   const draftActive = draft.contracts.length > 0;
   const stepLabels = Object.fromEntries(
     draft.steps.map((draftStep, index) => [
       draftStep.id,
       draftStep.kind === 'deploy'
-        ? draft.contracts.find(
+        ? (draft.contracts.find(
             (contract) => contract.id === draftStep.contractId
-          )?.contractName ?? draftStep.id
+          )?.contractName ?? draftStep.id)
         : draftStep.signature
           ? `Call ${draftStep.signature}`
           : `Call #${index + 1}`,
@@ -128,13 +137,32 @@ export default function DeployWizardPage() {
     dispatch(markDraftSeen());
   }, [dispatch]);
   useEffect(() => {
-    if (workflowRepo && workflowName && !workflowState) dispatch(workflowsApi.get(workflowRepo, workflowName));
+    if (workflowRepo && workflowName && !workflowState)
+      dispatch(workflowsApi.get(workflowRepo, workflowName));
   }, [dispatch, workflowName, workflowRepo, workflowState]);
   useEffect(() => {
     if (!workflowRepo || !workflowName || !workflowState) return;
-    if (draft.workflowRef?.repoPathOrUrl === workflowRepo && draft.workflowRef.name === workflowName) return;
-    dispatch(hydrateWorkflowDraft({ repoPathOrUrl: workflowRepo, name: workflowName, docHash: workflowState.docHash, document: workflowState.document }));
-  }, [dispatch, draft.workflowRef?.name, draft.workflowRef?.repoPathOrUrl, workflowName, workflowRepo, workflowState]);
+    if (
+      draft.workflowRef?.repoPathOrUrl === workflowRepo &&
+      draft.workflowRef.name === workflowName
+    )
+      return;
+    dispatch(
+      hydrateWorkflowDraft({
+        repoPathOrUrl: workflowRepo,
+        name: workflowName,
+        docHash: workflowState.docHash,
+        document: workflowState.document,
+      })
+    );
+  }, [
+    dispatch,
+    draft.workflowRef?.name,
+    draft.workflowRef?.repoPathOrUrl,
+    workflowName,
+    workflowRepo,
+    workflowState,
+  ]);
   const { plan, planProblem } = useMemo(() => {
     try {
       if (draft.workflowRef && draft.workflowDocument) {
@@ -145,7 +173,10 @@ export default function DeployWizardPage() {
           includedStepIds: draft.workflowIncludedStepIds ?? {},
           resolutions: draft.externalResolutions ?? [],
         });
-        return { plan: { ...projected, signers: cloneJson(draft.signers) }, planProblem: undefined };
+        return {
+          plan: { ...projected, signers: cloneJson(draft.signers) },
+          planProblem: undefined,
+        };
       }
       return { plan: planFromDraft(draft, chains), planProblem: undefined };
     } catch (error) {
@@ -192,8 +223,16 @@ export default function DeployWizardPage() {
     (() => {
       if (planProblem) return planProblem;
       if (!draft.workflowDocument) return undefined;
-      const slots = collectUnboundWorkflowSlots({ document: workflowDocumentFromDraft(draft), repoPathOrUrl: draft.workflowRef!.repoPathOrUrl, chains: draft.chains, includedStepIds: draft.workflowIncludedStepIds ?? {}, resolutions: draft.externalResolutions });
-      return slots.length ? `Resolve ${slots.length} per-chain pointer ${slots.length === 1 ? 'slot' : 'slots'}` : undefined;
+      const slots = collectUnboundWorkflowSlots({
+        document: workflowDocumentFromDraft(draft),
+        repoPathOrUrl: draft.workflowRef!.repoPathOrUrl,
+        chains: draft.chains,
+        includedStepIds: draft.workflowIncludedStepIds ?? {},
+        resolutions: draft.externalResolutions,
+      });
+      return slots.length
+        ? `Resolve ${slots.length} per-chain pointer ${slots.length === 1 ? 'slot' : 'slots'}`
+        : undefined;
     })(),
     undefined,
   ];
@@ -240,12 +279,46 @@ export default function DeployWizardPage() {
           </p>
         </div>
         {draft.workflowRef && (
-          <button type="button" className="btn btn-secondary" disabled={!workflowDraftIsDirty(draft)} onClick={() => dispatch(workflowsApi.put(draft.workflowRef!.repoPathOrUrl, draft.workflowRef!.name, workflowDocumentFromDraft(draft), draft.workflowRef!.baseDocHash))}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={!workflowDraftIsDirty(draft)}
+            onClick={() =>
+              dispatch(
+                workflowsApi.put(
+                  draft.workflowRef!.repoPathOrUrl,
+                  draft.workflowRef!.name,
+                  workflowDocumentFromDraft(draft),
+                  draft.workflowRef!.baseDocHash
+                )
+              )
+            }
+          >
             Save workflow{workflowDraftIsDirty(draft) ? ' · unsaved' : ''}
           </button>
         )}
+        {draftActive && !draft.workflowRef && plan && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setPromoteOpen(true)}
+          >
+            <Save size={15} /> Save as workflow
+          </button>
+        )}
       </div>
-      {draft.workflowRef && <div className="card-milky px-4 py-3 mb-4 text-sm flex items-center justify-between"><span>Workflow mode · <strong>{draft.workflowRef.name}</strong></span><span className={workflowDraftIsDirty(draft) ? 'text-warn' : 'text-muted'}>{workflowDraftIsDirty(draft) ? 'Unsaved changes' : 'Saved'}</span></div>}
+      {draft.workflowRef && (
+        <div className="card-milky px-4 py-3 mb-4 text-sm flex items-center justify-between">
+          <span>
+            Workflow mode · <strong>{draft.workflowRef.name}</strong>
+          </span>
+          <span
+            className={workflowDraftIsDirty(draft) ? 'text-warn' : 'text-muted'}
+          >
+            {workflowDraftIsDirty(draft) ? 'Unsaved changes' : 'Saved'}
+          </span>
+        </div>
+      )}
       <ConfirmDialog
         open={confirmDiscard}
         onOpenChange={setConfirmDiscard}
@@ -257,6 +330,19 @@ export default function DeployWizardPage() {
           navigate('/deployments', { replace: true });
         }}
       />
+      {plan && (
+        <PromoteWorkflowDialog
+          open={promoteOpen}
+          onOpenChange={setPromoteOpen}
+          input={{ plan }}
+          hooks={draft.workflowOutputs?.hooks ?? []}
+          onPromoted={(repoPathOrUrl) =>
+            navigate(
+              `/repositories/${encodeURIComponent(repoPathOrUrl)}#deployments`
+            )
+          }
+        />
+      )}
       <WizardStepper
         steps={STEPS}
         currentIndex={step}

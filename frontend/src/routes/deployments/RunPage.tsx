@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Ban, Loader2 } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { ArrowLeft, Ban, Loader2, Save } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import type {
   ResolveAction,
   ResolveLaneRequest,
@@ -23,6 +23,9 @@ import ResolveEditDialog from './components/ResolveEditDialog';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import VerificationPanel from './components/VerificationPanel';
 import { dependentPlanStepIds } from '../deploy/pointerEligibility';
+import HookRunsPanel from './components/HookRunsPanel';
+import { getRepoName } from '../../utils/repo';
+import PromoteWorkflowDialog from '../../components/PromoteWorkflowDialog';
 
 const TERMINAL_VERIFICATION_STATUSES = new Set([
   'verified',
@@ -66,6 +69,7 @@ function signerFor(
 
 export default function RunPage() {
   const { runId = '' } = useParams<{ runId: string }>();
+  const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const run = useAppSelector((state) => selectDeploymentRun(state, runId));
   const chains = useAppSelector((state) => state.chains);
@@ -78,6 +82,7 @@ export default function RunPage() {
   const [editChainId, setEditChainId] = useState<number | null>(null);
   const [abortOpen, setAbortOpen] = useState(false);
   const [skipChainId, setSkipChainId] = useState<number | null>(null);
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const autoOpenedPause = useRef<string | undefined>(undefined);
   const pluginRows = useAppSelector((state) => state.plugins.rows);
 
@@ -114,9 +119,11 @@ export default function RunPage() {
   }, [dispatch, run?.plan.chains]);
 
   useEffect(() => {
-    const pointerPause = run && Object.values(run.lanes).find(
-      (lane) => lane.pause?.reason === 'pointer-unresolved'
-    );
+    const pointerPause =
+      run &&
+      Object.values(run.lanes).find(
+        (lane) => lane.pause?.reason === 'pointer-unresolved'
+      );
     if (!pointerPause?.pause) return;
     const key = `${pointerPause.chainId}:${pointerPause.pause.attemptId}`;
     if (autoOpenedPause.current === key) return;
@@ -135,7 +142,13 @@ export default function RunPage() {
     [run?.plan.contracts]
   );
   const pluginLabels = useMemo(
-    () => Object.fromEntries(Object.entries(pluginRows).map(([id, plugin]) => [id, plugin.name ?? id])),
+    () =>
+      Object.fromEntries(
+        Object.entries(pluginRows).map(([id, plugin]) => [
+          id,
+          plugin.name ?? id,
+        ])
+      ),
     [pluginRows]
   );
   const headerStatus = run
@@ -193,7 +206,10 @@ export default function RunPage() {
     if (action === 'skip') {
       const lane = run.lanes[String(chainId)];
       const paused = lane.pause ? lane.steps[lane.pause.stepIndex] : undefined;
-      if (paused && dependentPlanStepIds(run.plan.steps, paused.stepId).length) {
+      if (
+        paused &&
+        dependentPlanStepIds(run.plan.steps, paused.stepId).length
+      ) {
         setSkipChainId(chainId);
         return;
       }
@@ -266,6 +282,13 @@ export default function RunPage() {
         <div className="min-w-0">
           <h1 className="page-title mb-0 truncate">{run.name}</h1>
           <span className="mono-data text-muted">{run.id}</span>
+          {run.workflow && (
+            <div>
+              <span className="chip chip-info mt-1">
+                {run.workflow.name} · {getRepoName(run.workflow.repoPathOrUrl)}
+              </span>
+            </div>
+          )}
         </div>
         <span
           className={`chip ml-auto ${headerStatus === 'verifying' ? 'chip-info' : headerStatus === 'completed' ? 'chip-ok' : headerStatus === 'paused' ? 'chip-warn' : ''}`}
@@ -273,6 +296,13 @@ export default function RunPage() {
           <span className="chip-dot" />
           {headerStatus}
         </span>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => setPromoteOpen(true)}
+        >
+          <Save size={15} /> Save as workflow
+        </button>
         {!['completed', 'failed', 'aborted'].includes(run.status) && (
           <button
             type="button"
@@ -320,6 +350,38 @@ export default function RunPage() {
         })}
       </div>
       <VerificationPanel run={run} />
+      {run.hookRuns && Object.keys(run.hookRuns).length > 0 && (
+        <HookRunsPanel hookRuns={run.hookRuns} />
+      )}
+      {run.repoArtifact && (
+        <div
+          className={`card-milky p-4 text-sm ${run.repoArtifact.status === 'failed' ? 'text-err' : ''}`}
+        >
+          {run.repoArtifact.status === 'written' ? (
+            <>
+              Artifact written to{' '}
+              <span className="mono-data">{run.repoArtifact.path}</span> —
+              commit when ready.
+            </>
+          ) : (
+            <>
+              Workflow repository artifact write failed:{' '}
+              {run.repoArtifact.error ?? 'Unknown error'}
+            </>
+          )}
+        </div>
+      )}
+      <PromoteWorkflowDialog
+        open={promoteOpen}
+        onOpenChange={setPromoteOpen}
+        input={{ runId: run.id }}
+        hooks={run.workflow?.hooks ?? []}
+        onPromoted={(repoPathOrUrl) =>
+          navigate(
+            `/repositories/${encodeURIComponent(repoPathOrUrl)}#deployments`
+          )
+        }
+      />
       {editChainId !== null &&
         (() => {
           const attempt = attemptFor(editChainId);
@@ -345,20 +407,33 @@ export default function RunPage() {
               initialRpcEndpointId={
                 run.rpcSelection[String(editChainId)]?.endpointId
               }
-              step={planStep && (planStep.kind === 'call'
-                ? {
-                    id: planStep.id,
-                    kind: 'call' as const,
-                    args: planStep.argsPerChain?.[String(editChainId)] ?? planStep.args,
-                    target: planStep.targetPerChain?.[String(editChainId)] ?? planStep.target,
-                  }
-                : {
-                    id: planStep.id,
-                    kind: 'deploy' as const,
-                    args: planStep.argsPerChain?.[String(editChainId)] ?? planStep.args,
-                    libraries: planStep.librariesPerChain?.[String(editChainId)] ?? planStep.libraries,
-                  })}
-              pointerDetails={(lane?.pause as { details?: unknown } | undefined)?.details}
+              step={
+                planStep &&
+                (planStep.kind === 'call'
+                  ? {
+                      id: planStep.id,
+                      kind: 'call' as const,
+                      args:
+                        planStep.argsPerChain?.[String(editChainId)] ??
+                        planStep.args,
+                      target:
+                        planStep.targetPerChain?.[String(editChainId)] ??
+                        planStep.target,
+                    }
+                  : {
+                      id: planStep.id,
+                      kind: 'deploy' as const,
+                      args:
+                        planStep.argsPerChain?.[String(editChainId)] ??
+                        planStep.args,
+                      libraries:
+                        planStep.librariesPerChain?.[String(editChainId)] ??
+                        planStep.libraries,
+                    })
+              }
+              pointerDetails={
+                (lane?.pause as { details?: unknown } | undefined)?.details
+              }
               onSubmit={(edits) => {
                 if (attempt)
                   void sendResolution(editChainId, {
@@ -379,16 +454,35 @@ export default function RunPage() {
         confirmText="Abort run"
         onConfirm={() => void abort()}
       />
-      {skipChainId !== null && (() => {
-        const lane = run.lanes[String(skipChainId)];
-        const paused = lane?.pause ? lane.steps[lane.pause.stepIndex] : undefined;
-        const dependents = paused ? dependentPlanStepIds(run.plan.steps, paused.stepId) : [];
-        const labels = dependents.map((id) => {
-          const step = run.plan.steps.find((item) => item.id === id);
-          return step?.kind === 'deploy' ? contractNames[step.contractId] ?? id : step?.signature ?? id;
-        });
-        return <ConfirmDialog open onOpenChange={(open) => !open && setSkipChainId(null)} title="Skip this step?" description={<span>Steps depending on this one: {labels.join(', ')}</span>} confirmText="Skip step" variant="warning" onConfirm={submitSkip} />;
-      })()}
+      {skipChainId !== null &&
+        (() => {
+          const lane = run.lanes[String(skipChainId)];
+          const paused = lane?.pause
+            ? lane.steps[lane.pause.stepIndex]
+            : undefined;
+          const dependents = paused
+            ? dependentPlanStepIds(run.plan.steps, paused.stepId)
+            : [];
+          const labels = dependents.map((id) => {
+            const step = run.plan.steps.find((item) => item.id === id);
+            return step?.kind === 'deploy'
+              ? (contractNames[step.contractId] ?? id)
+              : (step?.signature ?? id);
+          });
+          return (
+            <ConfirmDialog
+              open
+              onOpenChange={(open) => !open && setSkipChainId(null)}
+              title="Skip this step?"
+              description={
+                <span>Steps depending on this one: {labels.join(', ')}</span>
+              }
+              confirmText="Skip step"
+              variant="warning"
+              onConfirm={submitSkip}
+            />
+          );
+        })()}
     </div>
   );
 }

@@ -38,9 +38,7 @@ export default function DeploymentsPage() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const summaries = useAppSelector((state) => state.deployments.summaries);
-  const draftActive = useAppSelector(
-    (s) => s.deployDraft.contracts.length > 0
-  );
+  const draftActive = useAppSelector((s) => s.deployDraft.contracts.length > 0);
   const [unreadable, setUnreadable] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +154,11 @@ export default function DeploymentsPage() {
           <div key={run.id} className="list-row flex items-center gap-3">
             <Link to={`/deployments/${run.id}`} className="min-w-0 flex-1">
               <div className="font-medium truncate">{run.name}</div>
+              {run.workflow && (
+                <span className="chip chip-info mt-1">
+                  Workflow · {run.workflow.name}
+                </span>
+              )}
               <div className="mono-data text-muted">
                 {run.chains.join(', ')} ·{' '}
                 {new Date(run.updatedAt).toLocaleString()}

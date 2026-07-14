@@ -64,40 +64,54 @@ function extrasFor(
   return (state.deployExtras[stepId] ??= { strategy: { kind: 'create' } });
 }
 
-function isValueRef(value: unknown): value is { $ref: { kind: 'step'; stepId: string } } {
+function isValueRef(
+  value: unknown
+): value is { $ref: { kind: 'step'; stepId: string } } {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      '$ref' in value &&
-      (value as { $ref?: { kind?: string; stepId?: unknown } }).$ref?.kind ===
-        'step' &&
-      typeof (value as { $ref: { stepId?: unknown } }).$ref.stepId === 'string'
+    typeof value === 'object' &&
+    '$ref' in value &&
+    (value as { $ref?: { kind?: string; stepId?: unknown } }).$ref?.kind ===
+      'step' &&
+    typeof (value as { $ref: { stepId?: unknown } }).$ref.stepId === 'string'
   );
 }
 
 function containsReference(value: unknown, stepId: string): boolean {
   if (isValueRef(value)) return value.$ref.stepId === stepId;
-  if (Array.isArray(value)) return value.some((item) => containsReference(item, stepId));
+  if (Array.isArray(value))
+    return value.some((item) => containsReference(item, stepId));
   if (value && typeof value === 'object')
     return Object.values(value).some((item) => containsReference(item, stepId));
   return false;
 }
 
-function stepDependsOn(step: DraftStep, extras: DraftDeployExtras | undefined, stepId: string): boolean {
-  if (containsReference(step.args, stepId) || containsReference(step.argsPerChain, stepId)) return true;
+function stepDependsOn(
+  step: DraftStep,
+  extras: DraftDeployExtras | undefined,
+  stepId: string
+): boolean {
+  if (
+    containsReference(step.args, stepId) ||
+    containsReference(step.argsPerChain, stepId)
+  )
+    return true;
   if (step.kind === 'call') {
     return (
-      step.target?.kind === 'step' && step.target.stepId === stepId ||
+      (step.target?.kind === 'step' && step.target.stepId === stepId) ||
       Object.values(step.targetPerChain ?? {}).some(
         (target) => target.kind === 'step' && target.stepId === stepId
       )
     );
   }
-  return Object.values(extras?.libraries ?? {}).some(
-    (binding) => binding.kind === 'step' && binding.stepId === stepId
-  ) || Object.values(extras?.librariesPerChain ?? {}).some((bindings) =>
-    Object.values(bindings).some(
+  return (
+    Object.values(extras?.libraries ?? {}).some(
       (binding) => binding.kind === 'step' && binding.stepId === stepId
+    ) ||
+    Object.values(extras?.librariesPerChain ?? {}).some((bindings) =>
+      Object.values(bindings).some(
+        (binding) => binding.kind === 'step' && binding.stepId === stepId
+      )
     )
   );
 }
@@ -145,25 +159,36 @@ function pruneChainPredictions(state: DeployDraftState, chainId: number): void {
   }
 }
 
-function clearDanglingValueRefs(value: unknown, removedStepId: string): unknown {
+function clearDanglingValueRefs(
+  value: unknown,
+  removedStepId: string
+): unknown {
   if (isValueRef(value))
     return value.$ref.stepId === removedStepId ? undefined : value;
   if (Array.isArray(value))
     return value.map((item) => clearDanglingValueRefs(item, removedStepId));
   if (value && typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => {
-        const next = clearDanglingValueRefs(item, removedStepId);
-        return next === undefined ? [] : [[key, next]];
-      })
+      Object.entries(value as Record<string, unknown>).flatMap(
+        ([key, item]) => {
+          const next = clearDanglingValueRefs(item, removedStepId);
+          return next === undefined ? [] : [[key, next]];
+        }
+      )
     );
   }
   return value;
 }
 
-function clearDanglingReferences(state: DeployDraftState, removedStepId: string): void {
+function clearDanglingReferences(
+  state: DeployDraftState,
+  removedStepId: string
+): void {
   for (const step of state.steps) {
-    step.args = clearDanglingValueRefs(step.args, removedStepId) as typeof step.args;
+    step.args = clearDanglingValueRefs(
+      step.args,
+      removedStepId
+    ) as typeof step.args;
     step.argsPerChain = clearDanglingValueRefs(
       step.argsPerChain,
       removedStepId
@@ -171,7 +196,9 @@ function clearDanglingReferences(state: DeployDraftState, removedStepId: string)
     if (step.kind === 'call') {
       if (step.target?.kind === 'step' && step.target.stepId === removedStepId)
         step.target = null;
-      for (const [chainId, target] of Object.entries(step.targetPerChain ?? {})) {
+      for (const [chainId, target] of Object.entries(
+        step.targetPerChain ?? {}
+      )) {
         if (target.kind === 'step' && target.stepId === removedStepId)
           delete step.targetPerChain?.[chainId];
       }
@@ -197,24 +224,59 @@ const deployDraftSlice = createSlice({
   name: 'deployDraft',
   initialState,
   reducers: {
-    hydrateWorkflowDraft(_state, action: PayloadAction<{ repoPathOrUrl: string; name: string; docHash: string; document: WorkflowDocument }>) {
+    hydrateWorkflowDraft(
+      _state,
+      action: PayloadAction<{
+        repoPathOrUrl: string;
+        name: string;
+        docHash: string;
+        document: WorkflowDocument;
+      }>
+    ) {
       const { repoPathOrUrl, name, docHash, document } = action.payload;
       const deployExtras: DeployDraftState['deployExtras'] = {};
       const steps: DraftStep[] = document.steps.map((step) => {
-        if (step.kind === 'call') return { ...step, target: { ...step.target }, targetPerChain: step.targetPerChain ? { ...step.targetPerChain } : undefined } as unknown as DraftStep;
+        if (step.kind === 'call')
+          return {
+            ...step,
+            target: { ...step.target },
+            targetPerChain: step.targetPerChain
+              ? { ...step.targetPerChain }
+              : undefined,
+          } as unknown as DraftStep;
         const { strategy, libraries, librariesPerChain, ...draftStep } = step;
         deployExtras[step.id] = {
-          strategy: strategy ? { ...strategy } as DraftDeployExtras['strategy'] : { kind: 'create' },
+          strategy: strategy
+            ? ({ ...strategy } as DraftDeployExtras['strategy'])
+            : { kind: 'create' },
           ...(libraries ? { libraries: { ...libraries } } : {}),
-          ...(librariesPerChain ? { librariesPerChain: cloneJson(librariesPerChain) } : {}),
-          ...(strategy && 'acknowledgeDeployed' in strategy && strategy.acknowledgeDeployed ? { acknowledged: { ...strategy.acknowledgeDeployed } } : {}),
-          ...(strategy?.kind === 'plugin' && strategy.prepared ? {
-            prepared: Object.fromEntries(Object.entries(strategy.prepared).map(([chainId, prepared]) => [chainId, {
-              ...prepared,
-              salt: strategy.saltPerChain?.[chainId] ?? strategy.salt ?? (`0x${'0'.repeat(64)}` as Hex32),
-              notes: [],
-            }]))
-          } : {}),
+          ...(librariesPerChain
+            ? { librariesPerChain: cloneJson(librariesPerChain) }
+            : {}),
+          ...(strategy &&
+          'acknowledgeDeployed' in strategy &&
+          strategy.acknowledgeDeployed
+            ? { acknowledged: { ...strategy.acknowledgeDeployed } }
+            : {}),
+          ...(strategy?.kind === 'plugin' && strategy.prepared
+            ? {
+                prepared: Object.fromEntries(
+                  Object.entries(strategy.prepared).map(
+                    ([chainId, prepared]) => [
+                      chainId,
+                      {
+                        ...prepared,
+                        salt:
+                          strategy.saltPerChain?.[chainId] ??
+                          strategy.salt ??
+                          (`0x${'0'.repeat(64)}` as Hex32),
+                        notes: [],
+                      },
+                    ]
+                  )
+                ),
+              }
+            : {}),
         } as unknown as DraftDeployExtras;
         return draftStep as DraftStep;
       });
@@ -234,38 +296,89 @@ const deployDraftSlice = createSlice({
         deployExtras,
         workflowRef: { repoPathOrUrl, name, baseDocHash: docHash },
         workflowDocument: cloneJson(document),
-        workflowIncludedStepIds: Object.fromEntries(document.steps.map((step) => [step.id, true])),
+        workflowIncludedStepIds: Object.fromEntries(
+          document.steps.map((step) => [step.id, true])
+        ),
         externalResolutions: [],
         workflowOutputs: cloneJson(document.outputs),
         workflowRequiredPlugins: cloneJson(document.requiredPlugins),
       };
     },
     toggleWorkflowStep(state, action: PayloadAction<string>) {
-      if (!state.workflowIncludedStepIds || !(action.payload in state.workflowIncludedStepIds)) return;
-      state.workflowIncludedStepIds[action.payload] = !state.workflowIncludedStepIds[action.payload];
-      state.externalResolutions = state.externalResolutions?.filter((resolution) => resolution.stepId !== action.payload);
+      if (
+        !state.workflowIncludedStepIds ||
+        !(action.payload in state.workflowIncludedStepIds)
+      )
+        return;
+      state.workflowIncludedStepIds[action.payload] =
+        !state.workflowIncludedStepIds[action.payload];
+      state.externalResolutions = state.externalResolutions?.filter(
+        (resolution) => resolution.stepId !== action.payload
+      );
     },
-    confirmExternalResolution(state, action: PayloadAction<ExternalResolution>) {
+    confirmExternalResolution(
+      state,
+      action: PayloadAction<ExternalResolution>
+    ) {
       state.externalResolutions ??= [];
-      const index = state.externalResolutions.findIndex((item) => item.stepId === action.payload.stepId && item.path === action.payload.path && item.chainId === action.payload.chainId);
+      const index = state.externalResolutions.findIndex(
+        (item) =>
+          item.stepId === action.payload.stepId &&
+          item.path === action.payload.path &&
+          item.chainId === action.payload.chainId
+      );
       if (index === -1) state.externalResolutions.push(action.payload);
       else state.externalResolutions[index] = action.payload;
     },
-    workflowDraftSaved(state, action: PayloadAction<{ document: WorkflowDocument; docHash: string }>) {
+    workflowDraftSaved(
+      state,
+      action: PayloadAction<{ document: WorkflowDocument; docHash: string }>
+    ) {
       if (!state.workflowRef) return;
       state.workflowRef.baseDocHash = action.payload.docHash;
       state.workflowDocument = cloneJson(action.payload.document);
     },
-    acceptWorkflowPinUpdate(state, action: PayloadAction<{ sourceId: string; commit: string; ref?: string; refKind?: 'tag' | 'branch' }>) {
-      const source = state.workflowDocument?.sources.find((item) => item.id === action.payload.sourceId);
-      const contract = state.contracts.find((item) => item.id === action.payload.sourceId);
+    acceptWorkflowPinUpdate(
+      state,
+      action: PayloadAction<{
+        sourceId: string;
+        commit: string;
+        ref?: string;
+        refKind?: 'tag' | 'branch';
+      }>
+    ) {
+      const source = state.workflowDocument?.sources.find(
+        (item) => item.id === action.payload.sourceId
+      );
+      const contract = state.contracts.find(
+        (item) => item.id === action.payload.sourceId
+      );
       if (!source || !contract) return;
       source.repo = {
         url: source.repo.url,
         commit: action.payload.commit,
-        ...(action.payload.ref ? { ref: action.payload.ref, refKind: action.payload.refKind } : {}),
+        ...(action.payload.ref
+          ? { ref: action.payload.ref, refKind: action.payload.refKind }
+          : {}),
       };
       contract.pin = { ...source.repo };
+    },
+    setWorkflowRunHooks(state, action: PayloadAction<string[]>) {
+      state.workflowRunHooks = [...new Set(action.payload)];
+    },
+    acknowledgeArtifactDrift(
+      state,
+      action: PayloadAction<{
+        sourceId: string;
+        expected: string;
+        actual: string;
+      }>
+    ) {
+      state.acknowledgeArtifactDrift ??= {};
+      state.acknowledgeArtifactDrift[action.payload.sourceId] = {
+        expected: action.payload.expected,
+        actual: action.payload.actual,
+      };
     },
     seedDraft(_state, action: PayloadAction<DraftContract[]>) {
       return {
@@ -321,7 +434,10 @@ const deployDraftSlice = createSlice({
       if (state.idempotencyKey !== action.payload) return state;
       return initialState;
     },
-    moveStep(state, action: PayloadAction<{ fromIndex: number; toIndex: number }>) {
+    moveStep(
+      state,
+      action: PayloadAction<{ fromIndex: number; toIndex: number }>
+    ) {
       const { fromIndex, toIndex } = action.payload;
       if (
         fromIndex < 0 ||
@@ -341,8 +457,14 @@ const deployDraftSlice = createSlice({
       }
     },
     addCallStep: {
-      reducer(state, action: PayloadAction<{ afterIndex: number; id: string }>) {
-        const at = Math.max(-1, Math.min(action.payload.afterIndex, state.steps.length - 1));
+      reducer(
+        state,
+        action: PayloadAction<{ afterIndex: number; id: string }>
+      ) {
+        const at = Math.max(
+          -1,
+          Math.min(action.payload.afterIndex, state.steps.length - 1)
+        );
         const step: DraftCallStep = {
           id: action.payload.id,
           kind: 'call',
@@ -351,7 +473,9 @@ const deployDraftSlice = createSlice({
         state.steps.splice(at + 1, 0, step);
       },
       prepare(afterIndex: number) {
-        return { payload: { afterIndex, id: `call-${globalThis.crypto.randomUUID()}` } };
+        return {
+          payload: { afterIndex, id: `call-${globalThis.crypto.randomUUID()}` },
+        };
       },
     },
     removeCallStep(state, action: PayloadAction<string>) {
@@ -472,7 +596,8 @@ const deployDraftSlice = createSlice({
       const key = String(action.payload.chainId);
       if (action.payload.value === undefined) {
         delete step.valuePerChain?.[key];
-        if (Object.keys(step.valuePerChain ?? {}).length === 0) delete step.valuePerChain;
+        if (Object.keys(step.valuePerChain ?? {}).length === 0)
+          delete step.valuePerChain;
         return;
       }
       step.valuePerChain ??= {};
@@ -525,17 +650,24 @@ const deployDraftSlice = createSlice({
     },
     setCallStepField(
       state,
-      action: PayloadAction<{ id: string; patch: Partial<Omit<DraftCallStep, 'id' | 'kind'>> }>
+      action: PayloadAction<{
+        id: string;
+        patch: Partial<Omit<DraftCallStep, 'id' | 'kind'>>;
+      }>
     ) {
       const step = state.steps.find(
-        (item): item is DraftCallStep => item.id === action.payload.id && item.kind === 'call'
+        (item): item is DraftCallStep =>
+          item.id === action.payload.id && item.kind === 'call'
       );
       if (!step) return;
       Object.assign(step, action.payload.patch);
     },
     setStrategy(
       state,
-      action: PayloadAction<{ stepId: string; strategy: DraftDeployExtras['strategy'] }>
+      action: PayloadAction<{
+        stepId: string;
+        strategy: DraftDeployExtras['strategy'];
+      }>
     ) {
       const extras = extrasFor(state, action.payload.stepId);
       if (!extras) return;
@@ -550,10 +682,7 @@ const deployDraftSlice = createSlice({
       if (extras.strategy.kind === 'plugin') extras.needsPrepare = true;
       invalidatePredictions(state, action.payload.stepId);
     },
-    setSalt(
-      state,
-      action: PayloadAction<{ stepId: string; salt?: Hex32 }>
-    ) {
+    setSalt(state, action: PayloadAction<{ stepId: string; salt?: Hex32 }>) {
       const extras = extrasFor(state, action.payload.stepId);
       if (!extras || extras.strategy.kind !== 'create2') return;
       extras.strategy.salt = action.payload.salt;
@@ -578,7 +707,10 @@ const deployDraftSlice = createSlice({
     },
     setLibraries(
       state,
-      action: PayloadAction<{ stepId: string; libraries?: Record<string, LibraryBinding> }>
+      action: PayloadAction<{
+        stepId: string;
+        libraries?: Record<string, LibraryBinding>;
+      }>
     ) {
       const extras = extrasFor(state, action.payload.stepId);
       if (!extras) return;
@@ -587,7 +719,10 @@ const deployDraftSlice = createSlice({
     },
     setLibrariesPerChain(
       state,
-      action: PayloadAction<{ stepId: string; librariesPerChain?: Record<string, Record<string, LibraryBinding>> }>
+      action: PayloadAction<{
+        stepId: string;
+        librariesPerChain?: Record<string, Record<string, LibraryBinding>>;
+      }>
     ) {
       const extras = extrasFor(state, action.payload.stepId);
       if (!extras) return;
@@ -596,7 +731,10 @@ const deployDraftSlice = createSlice({
     },
     setPluginParams(
       state,
-      action: PayloadAction<{ stepId: string; params?: Record<string, unknown> }>
+      action: PayloadAction<{
+        stepId: string;
+        params?: Record<string, unknown>;
+      }>
     ) {
       const extras = extrasFor(state, action.payload.stepId);
       if (!extras || extras.strategy.kind !== 'plugin') return;
@@ -607,7 +745,15 @@ const deployDraftSlice = createSlice({
       state,
       action: PayloadAction<{
         stepId: string;
-        chains: Record<string, { salt: Hex32; predictedAddress: Hex; initcodeHash: Hex32; notes: string[] }>;
+        chains: Record<
+          string,
+          {
+            salt: Hex32;
+            predictedAddress: Hex;
+            initcodeHash: Hex32;
+            notes: string[];
+          }
+        >;
       }>
     ) {
       const extras = extrasFor(state, action.payload.stepId);
@@ -617,7 +763,12 @@ const deployDraftSlice = createSlice({
     },
     acknowledgeDeployed(
       state,
-      action: PayloadAction<{ stepId: string; chainId: number; predictedAddress: Hex; initcodeHash: Hex32 }>
+      action: PayloadAction<{
+        stepId: string;
+        chainId: number;
+        predictedAddress: Hex;
+        initcodeHash: Hex32;
+      }>
     ) {
       const extras = extrasFor(state, action.payload.stepId);
       if (!extras) return;
@@ -657,6 +808,8 @@ export const {
   confirmExternalResolution,
   workflowDraftSaved,
   acceptWorkflowPinUpdate,
+  setWorkflowRunHooks,
+  acknowledgeArtifactDrift,
   seedDraft,
   addContracts,
   removeContract,
@@ -694,7 +847,10 @@ export const {
 export const deployDraftReducer = deployDraftSlice.reducer;
 export { initialState as deployDraftInitialState };
 
-export function workflowDependentsForExclusion(state: DeployDraftState, stepId: string): string[] {
+export function workflowDependentsForExclusion(
+  state: DeployDraftState,
+  stepId: string
+): string[] {
   const affected = new Set<string>();
   const pending = [stepId];
   while (pending.length) {
@@ -720,8 +876,8 @@ export function ackStale(
   const prepared = extras?.prepared?.[String(chainId)];
   return Boolean(
     acknowledgement &&
-      (!prepared ||
-        acknowledgement.predictedAddress !== prepared.predictedAddress ||
-        acknowledgement.initcodeHash !== prepared.initcodeHash)
+    (!prepared ||
+      acknowledgement.predictedAddress !== prepared.predictedAddress ||
+      acknowledgement.initcodeHash !== prepared.initcodeHash)
   );
 }

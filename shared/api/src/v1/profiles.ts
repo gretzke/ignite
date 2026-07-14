@@ -110,6 +110,17 @@ export interface RepoList {
   session: RepoListEntry | null;
   local: RepoListEntry[];
   cloned: RepoListEntry[];
+  pinned: PinnedSummary[];
+}
+
+export interface PinnedSummary {
+  url: string;
+  commit: string;
+  refLabel?: string;
+  refKind?: 'tag' | 'branch';
+  frameworks?: Array<{ id: string; name: string }>;
+  detectedAt?: string;
+  lastUsedAt?: string;
 }
 
 export const ProfileParamsSchema = createRequestSchema<ProfileParams>(
@@ -239,10 +250,23 @@ export const GetReposResponseSchema = createApiResponseSchema<RepoList>(
     session: RepoListEntrySchema.nullable(),
     local: z.array(RepoListEntrySchema),
     cloned: z.array(RepoListEntrySchema),
+    pinned: z.array(z.object({
+      url: z.string(),
+      commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
+      refLabel: z.string().optional(),
+      refKind: z.enum(['tag', 'branch']).optional(),
+      frameworks: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
+      detectedAt: z.string().optional(),
+      lastUsedAt: z.string().optional(),
+    })),
   }),
 );
 
 export const DeleteRepoQuerySchema = z.object({ pathOrUrl: z.string().min(1) });
+export const DeletePinnedRepoQuerySchema = z.object({
+  url: z.string().min(1),
+  commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
+});
 
 // Route definitions
 export const profileRoutes = {
@@ -379,6 +403,16 @@ export const profileRoutes = {
     path: `${V1_BASE_PATH}/profiles/:id/repos`,
     params: ProfileParamsSchema,
     querystring: DeleteRepoQuerySchema,
+    schema: {
+      tags: ["profiles"],
+      response: { 204: z.null() },
+    },
+  },
+  deletePinnedRepo: {
+    method: "DELETE" as const,
+    path: `${V1_BASE_PATH}/profiles/:id/repos/pinned`,
+    params: ProfileParamsSchema,
+    querystring: DeletePinnedRepoQuerySchema,
     schema: {
       tags: ["profiles"],
       response: { 204: z.null() },

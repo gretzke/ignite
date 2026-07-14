@@ -66,6 +66,12 @@ function makeDeps() {
       ensureProfileSwept: vi.fn(),
       sessionState: vi.fn((): RepoRecord | null => null),
     },
+    pinnedStore: {
+      list: vi.fn(async () => []),
+      remove: vi.fn(async () => {}),
+      worktreePath: vi.fn((_profileId: string, url: string, commit: string) => `/pinned/${encodeURIComponent(url)}/${commit.slice(0, 12)}`),
+    },
+    deleteWorktree: vi.fn(async () => {}),
     hasWorkspace: vi.fn(async () => true),
   };
 }
@@ -170,6 +176,7 @@ describe('profile handlers', () => {
           },
         ],
         cloned: [],
+        pinned: [],
       },
     });
     // initialized is computed against the ADDRESSED profile.
@@ -190,6 +197,54 @@ describe('profile handlers', () => {
       (reply.body as { data: { session: { pathOrUrl: string } } }).data.session
         .pathOrUrl
     ).toBe('/ws/session');
+  });
+
+  it('listRepos includes pinned clone summaries', async () => {
+    const deps = makeDeps();
+    deps.pinnedStore.list = vi.fn(async () => [{
+      url: 'https://example.com/contracts.git',
+      commit: 'a'.repeat(40),
+      refLabel: 'v1.2.3',
+      refKind: 'tag' as const,
+      frameworks: [{ id: 'foundry', name: 'Foundry', compiledAt: 'ignored' }],
+      detectedAt: '2026-07-10T00:00:00.000Z',
+      lastUsedAt: '2026-07-11T00:00:00.000Z',
+    }]);
+    const handlers = createProfileHandlers(deps);
+    const reply = makeReply();
+    await handlers.listRepos({ params: { id: 'p1' } } as never, reply as never);
+    expect((reply.body as { data: { pinned: unknown[] } }).data.pinned).toEqual([{
+      url: 'https://example.com/contracts.git',
+      commit: 'a'.repeat(40),
+      refLabel: 'v1.2.3',
+      refKind: 'tag',
+      frameworks: [{ id: 'foundry', name: 'Foundry' }],
+      detectedAt: '2026-07-10T00:00:00.000Z',
+      lastUsedAt: '2026-07-11T00:00:00.000Z',
+    }]);
+  });
+
+  it('deletePinnedRepo removes the worktree and registry entry', async () => {
+    const deps = makeDeps();
+    const handlers = createProfileHandlers(deps);
+    const reply = makeReply();
+    await handlers.deletePinnedRepo({ params: { id: 'p1' }, query: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } } as never, reply as never);
+    expect(reply.statusCode).toBe(204);
+    const worktree = `/pinned/${encodeURIComponent('https://example.com/contracts.git')}/${'a'.repeat(12)}`;
+    expect(deps.deleteWorktree).toHaveBeenCalledWith(worktree);
+    expect(deps.pinnedStore.remove).toHaveBeenCalledWith('p1', 'https://example.com/contracts.git', 'a'.repeat(40));
+  });
+
+  it('deletePinnedRepo returns REPO_BUSY while its lifecycle job is active', async () => {
+    const deps = makeDeps();
+    deps.lifecycle.activeJobFor = vi.fn(() => 'job-pinned');
+    const handlers = createProfileHandlers(deps);
+    const reply = makeReply();
+    await handlers.deletePinnedRepo({ params: { id: 'p1' }, query: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } } as never, reply as never);
+    expect(reply.statusCode).toBe(409);
+    expect(reply.body).toMatchObject({ code: 'REPO_BUSY' });
+    expect(deps.deleteWorktree).not.toHaveBeenCalled();
+    expect(deps.pinnedStore.remove).not.toHaveBeenCalled();
   });
 
   it('saveRepo starts an add-mode lifecycle job and returns { jobId }', async () => {

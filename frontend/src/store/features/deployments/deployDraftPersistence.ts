@@ -28,11 +28,15 @@ const DraftDeployStepSchema = z.object({
   kind: z.literal('deploy'),
   contractId: z.string().min(1),
   args: z.record(z.string(), z.unknown()).optional(),
-  argsPerChain: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+  argsPerChain: z
+    .record(z.string(), z.record(z.string(), z.unknown()))
+    .optional(),
   value: z.string().optional(),
   valuePerChain: z.record(z.string(), z.string()).optional(),
   gasOverrides: GasOverridesDraftSchema.optional(),
-  gasOverridesPerChain: z.record(z.string(), GasOverridesDraftSchema.partial()).optional(),
+  gasOverridesPerChain: z
+    .record(z.string(), GasOverridesDraftSchema.partial())
+    .optional(),
   signerOverride: SignerCascadeSchema.optional(),
 });
 
@@ -44,11 +48,15 @@ const DraftCallStepSchema = z.object({
   signature: z.string().optional(),
   payable: z.boolean().optional(),
   args: z.record(z.string(), z.unknown()).optional(),
-  argsPerChain: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+  argsPerChain: z
+    .record(z.string(), z.record(z.string(), z.unknown()))
+    .optional(),
   value: z.string().optional(),
   valuePerChain: z.record(z.string(), z.string()).optional(),
   gasOverrides: GasOverridesDraftSchema.optional(),
-  gasOverridesPerChain: z.record(z.string(), GasOverridesDraftSchema.partial()).optional(),
+  gasOverridesPerChain: z
+    .record(z.string(), GasOverridesDraftSchema.partial())
+    .optional(),
   signerOverride: SignerCascadeSchema.optional(),
 });
 
@@ -67,23 +75,29 @@ const DraftDeployExtrasSchema = z.object({
     }),
   ]),
   libraries: z.record(z.string(), LibraryBindingSchema).optional(),
-  librariesPerChain: z.record(z.string(), z.record(z.string(), LibraryBindingSchema)).optional(),
-  prepared: z.record(
-    z.string(),
-    z.object({
-      salt: Hex32Schema,
-      predictedAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-      initcodeHash: Hex32Schema,
-      notes: z.array(z.string()),
-    })
-  ).optional(),
-  acknowledged: z.record(
-    z.string(),
-    z.object({
-      predictedAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-      initcodeHash: Hex32Schema,
-    })
-  ).optional(),
+  librariesPerChain: z
+    .record(z.string(), z.record(z.string(), LibraryBindingSchema))
+    .optional(),
+  prepared: z
+    .record(
+      z.string(),
+      z.object({
+        salt: Hex32Schema,
+        predictedAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+        initcodeHash: Hex32Schema,
+        notes: z.array(z.string()),
+      })
+    )
+    .optional(),
+  acknowledged: z
+    .record(
+      z.string(),
+      z.object({
+        predictedAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+        initcodeHash: Hex32Schema,
+      })
+    )
+    .optional(),
   needsPrepare: z.boolean().optional(),
 });
 
@@ -96,17 +110,39 @@ const PersistedDraftSchema = z.object({
   ),
   explorerSelection: z.record(z.string(), z.array(z.string())),
   signers: SignerCascadeSchema,
-  steps: z.array(z.discriminatedUnion('kind', [DraftDeployStepSchema, DraftCallStepSchema])),
+  steps: z.array(
+    z.discriminatedUnion('kind', [DraftDeployStepSchema, DraftCallStepSchema])
+  ),
   deployExtras: z.record(z.string(), DraftDeployExtrasSchema),
   unseenIds: z.array(z.string()),
   name: z.string().optional(),
   idempotencyKey: z.string().optional(),
-  workflowRef: z.object({ repoPathOrUrl: z.string(), name: z.string(), baseDocHash: z.string() }).optional(),
-  workflowDocument: makeWorkflowDocumentSchema({ allowFileUrls: true }).optional(),
+  workflowRef: z
+    .object({
+      repoPathOrUrl: z.string(),
+      name: z.string(),
+      baseDocHash: z.string(),
+    })
+    .optional(),
+  workflowDocument: makeWorkflowDocumentSchema({
+    allowFileUrls: true,
+  }).optional(),
   workflowIncludedStepIds: z.record(z.string(), z.boolean()).optional(),
   externalResolutions: z.array(ExternalResolutionSchema).optional(),
   workflowOutputs: z.object({ hooks: z.array(z.string()) }).optional(),
-  workflowRequiredPlugins: z.array(z.object({ id: z.string(), version: z.string(), source: z.unknown().optional() })).optional(),
+  workflowRequiredPlugins: z
+    .array(
+      z.object({
+        id: z.string(),
+        version: z.string(),
+        source: z.unknown().optional(),
+      })
+    )
+    .optional(),
+  workflowRunHooks: z.array(z.string()).optional(),
+  acknowledgeArtifactDrift: z
+    .record(z.string(), z.object({ expected: z.string(), actual: z.string() }))
+    .optional(),
 });
 
 function invariantsHold(draft: DeployDraftState): boolean {
@@ -116,19 +152,23 @@ function invariantsHold(draft: DeployDraftState): boolean {
   const contractIds = new Set(draft.contracts.map((contract) => contract.id));
   if (contractIds.size !== draft.contracts.length) return false;
   const deploySteps = draft.steps.filter((step) => step.kind === 'deploy');
-  if (!draft.workflowRef && deploySteps.length !== draft.contracts.length) return false;
+  if (!draft.workflowRef && deploySteps.length !== draft.contracts.length)
+    return false;
   const stepContractIds = new Set(deploySteps.map((step) => step.contractId));
-  if (!draft.workflowRef && stepContractIds.size !== deploySteps.length) return false;
+  if (!draft.workflowRef && stepContractIds.size !== deploySteps.length)
+    return false;
   const stepIds = new Set(draft.steps.map((step) => step.id));
   if (stepIds.size !== draft.steps.length) return false;
-  for (const step of deploySteps) if (!contractIds.has(step.contractId)) return false;
+  for (const step of deploySteps)
+    if (!contractIds.has(step.contractId)) return false;
   if (!draft.unseenIds.every((id) => contractIds.has(id))) return false;
   return Object.keys(draft.deployExtras).every((id) =>
     deploySteps.some((step) => step.id === id)
   );
 }
 
-type DraftStorage = Pick<Storage, 'getItem' | 'setItem'> & Partial<Pick<Storage, 'removeItem'>>;
+type DraftStorage = Pick<Storage, 'getItem' | 'setItem'> &
+  Partial<Pick<Storage, 'removeItem'>>;
 
 function defaultStorage(): DraftStorage | undefined {
   try {

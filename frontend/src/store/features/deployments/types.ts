@@ -15,6 +15,7 @@ import type {
   WorkflowDocument,
   WorkflowOutputs,
   WorkflowRequiredPlugin,
+  ArtifactDriftAcknowledgements,
 } from '@ignite/api';
 
 export type DraftContract = ContractSource;
@@ -96,6 +97,8 @@ export interface DeployDraftState {
   externalResolutions?: ExternalResolution[];
   workflowOutputs?: WorkflowOutputs;
   workflowRequiredPlugins?: WorkflowRequiredPlugin[];
+  workflowRunHooks?: string[];
+  acknowledgeArtifactDrift?: ArtifactDriftAcknowledgements;
 }
 
 export type GasOverrideKey = keyof GasOverrides;

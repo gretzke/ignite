@@ -11,6 +11,7 @@ import {
   setRepositoryInitialized,
   addRepository,
   removeRepositoryAction,
+  removePinnedRepository,
   setRepositoryInfo,
   setRepositoryBranches,
   startFrameworkDetection,
@@ -403,6 +404,29 @@ export const repositoriesApi = {
       },
     });
   },
+
+  removePinnedRepository: (profileId: string, url: string, commit: string) =>
+    apiClient.dispatch.deletePinnedRepo({
+      params: { id: profileId },
+      query: { url, commit },
+      onSuccess: () => [
+        removePinnedRepository({ url, commit }),
+        triggerToast({
+          title: 'Pinned clone removed',
+          variant: 'success',
+          duration: 3000,
+        }),
+      ],
+      onError: (error) => {
+        const { title, description } = formatApiError(error);
+        return triggerToast({
+          title,
+          description,
+          variant: 'error',
+          duration: 5000,
+        });
+      },
+    }),
 
   // Initialize a single repository. Request success only means the
   // repo.init job was created; the actual init outcome (and the
