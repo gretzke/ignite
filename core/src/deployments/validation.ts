@@ -55,6 +55,28 @@ import {
 import type { PluginMetadata } from '@ignite/plugin-types/types';
 
 type Endpoint = { id: string; label?: string; url: string; stored?: boolean };
+
+function stepLabel(plan: DeploymentPlan, stepId: string): string {
+  const step = plan.steps.find((candidate) => candidate.id === stepId);
+  if (!step) return stepId;
+  if (step.kind === 'deploy') {
+    return (
+      plan.contracts.find((contract) => contract.id === step.contractId)
+        ?.contractName ?? stepId
+    );
+  }
+  return step.signature ? `Call ${step.signature}` : stepId;
+}
+
+function labelStepIds(plan: DeploymentPlan, message: string): string {
+  return [...plan.steps]
+    .sort((left, right) => right.id.length - left.id.length)
+    .reduce(
+      (result, step) => result.replaceAll(step.id, stepLabel(plan, step.id)),
+      message
+    );
+}
+
 type Client = {
   estimateGas(args: {
     account: Hex;
@@ -524,13 +546,9 @@ function validateSigners(
   const signers = new Map<string, Hex>();
   const failures: string[] = [];
   for (const step of plan.steps) {
-    // Checklist copy uses the contract name — step ids embed artifact paths
-    // and read as noise in the UI.
-    const stepName =
-      plan.contracts.find(
-        (contract) =>
-          contract.id === (step.kind === 'deploy' ? step.contractId : undefined)
-      )?.contractName ?? step.id;
+    // Checklist copy uses the contract/function name — step ids embed
+    // URI-escaped artifact paths and read as noise in the UI.
+    const stepName = stepLabel(plan, step.id);
     const signer = resolveSigner(plan, step, chainId);
     if (!signer) {
       failures.push(`No signer is configured for ${stepName}`);
@@ -622,7 +640,7 @@ function validateArgs(
           if (Object.keys(merged).length)
             return failure(
               'UNKNOWN_ARGUMENT',
-              `Call step ${step.id} has arguments but no function signature`,
+              `Call step ${stepLabel(plan, step.id)} has arguments but no function signature`,
               { fields: Object.keys(merged) }
             );
           continue;
@@ -630,10 +648,18 @@ function validateArgs(
         const knownCall = new Set(fn.inputs.map((entry, index) => entry.name || `arg${index}`));
         const unknownCall = Object.keys(merged).filter((key) => !knownCall.has(key));
         if (unknownCall.length)
-          return failure('UNKNOWN_ARGUMENT', `Unknown call arguments for step ${step.id}`, { fields: unknownCall });
+          return failure(
+            'UNKNOWN_ARGUMENT',
+            `Unknown call arguments for ${stepLabel(plan, step.id)}`,
+            { fields: unknownCall }
+          );
         const missingCall = missingArgKeys([...fn.inputs], merged);
         if (missingCall.length)
-          return failure('MISSING_ARGUMENT', `Call arguments are missing for step ${step.id}`, { fields: missingCall });
+          return failure(
+            'MISSING_ARGUMENT',
+            `Call arguments are missing for ${stepLabel(plan, step.id)}`,
+            { fields: missingCall }
+          );
         toConstructorArgs(fn.inputs, resolveStepValues(step, chainId, resolveRef, fn.inputs).args);
         continue;
       }
@@ -641,7 +667,7 @@ function validateArgs(
       if (!input)
         return failure(
           'CONTRACT_INPUT_NOT_FOUND',
-          `Frozen input for ${step.contractId} is missing`
+          `Frozen input for ${stepLabel(plan, step.id)} is missing`
         );
       const ctor = constructorInputs(input.abi);
       const merged = mergeArgs(step, chainId);
@@ -654,14 +680,14 @@ function validateArgs(
       if (unknown.length)
         return failure(
           'UNKNOWN_ARGUMENT',
-          `Unknown constructor arguments for step ${step.id}`,
+          `Unknown constructor arguments for ${stepLabel(plan, step.id)}`,
           { fields: unknown }
         );
       const missing = missingArgKeys(ctor, merged);
       if (missing.length)
         return failure(
           'MISSING_ARGUMENT',
-          `Constructor arguments are missing for step ${step.id}`,
+          `Constructor arguments are missing for ${stepLabel(plan, step.id)}`,
           { fields: missing }
         );
       // `toConstructorArgs` is the same ABI coercion used by execution.
@@ -676,7 +702,10 @@ function validateArgs(
   } catch (error) {
     return failure(
       codeOf(error, 'ARG_TYPE_MISMATCH'),
-      safeMessage(error, 'Constructor arguments are invalid')
+      labelStepIds(
+        plan,
+        safeMessage(error, 'Constructor arguments are invalid')
+      )
     );
   }
 }
@@ -769,7 +798,7 @@ async function validateCreate2(
           return {
             item: failure(
               'DEPLOYMENT_TYPE_COMMITMENT_STALE',
-              `Deployment-type commitment for ${step.id} is stale`
+              `Deployment-type commitment for ${stepLabel(plan, step.id)} is stale`
             ),
           };
         if (info.validateSupported) {
@@ -797,7 +826,8 @@ async function validateCreate2(
             return {
               item: failure(
                 'DEPLOYMENT_TYPE_VALIDATION_FAILED',
-                verdict.reason ?? `Deployment type rejected ${step.id}`
+                verdict.reason ??
+                  `Deployment type rejected ${stepLabel(plan, step.id)}`
               ),
             };
         }
@@ -829,7 +859,7 @@ async function validateCreate2(
         // unresolved pointer inside initcode) — never claim the proxy is
         // missing when it was not even checked.
         codeOf(error, 'CREATE2_PREDICTION_FAILED'),
-        safeMessage(error, 'Create2 validation failed')
+        labelStepIds(plan, safeMessage(error, 'Create2 validation failed'))
       ),
     };
   }
@@ -905,7 +935,10 @@ async function validateSimulation(
       item: reverted
         ? failure(
             'SIMULATION_REVERTED',
-            `Simulation reverted at ${reverted[0]}${reverted[1].reason ? `: ${reverted[1].reason}` : ''}`,
+            labelStepIds(
+              plan,
+              `Simulation reverted at ${reverted[0]}${reverted[1].reason ? `: ${reverted[1].reason}` : ''}`
+            ),
             details
           )
         : success(`Simulation completed using ${outcome.tier}`, details),
@@ -914,7 +947,10 @@ async function validateSimulation(
           ? reverted
             ? failure(
                 'ESTIMATION_FAILED',
-                `Estimation failed at ${reverted[0]}${reverted[1].reason ? `: ${reverted[1].reason}` : ''}`,
+                labelStepIds(
+                  plan,
+                  `Estimation failed at ${reverted[0]}${reverted[1].reason ? `: ${reverted[1].reason}` : ''}`
+                ),
                 details
               )
             : success('All transaction estimates completed', details)
@@ -928,11 +964,11 @@ async function validateSimulation(
     return {
       item: failure(
         codeOf(error, 'SIMULATION_UNAVAILABLE'),
-        safeMessage(error, 'Simulation failed')
+        labelStepIds(plan, safeMessage(error, 'Simulation failed'))
       ),
       estimation: failure(
         'ESTIMATION_FAILED',
-        safeMessage(error, 'Deployment estimation failed')
+        labelStepIds(plan, safeMessage(error, 'Deployment estimation failed'))
       ),
       outcome: undefined,
     };

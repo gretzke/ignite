@@ -1,3 +1,11 @@
+# MISC
+
+- gas overrides per chain/contract
+- upgradeable transparent/uups + initialization (alongside create/create2)
+  - initialization on the proxy itself
+- verifiers (initial ownership)
+- ignite AI agents interacting with binary directly + mcp servers
+
 # TODO / Deferred Work
 
 Tracking for work deliberately deferred out of the architecture migration (Phases 2–4).

@@ -1,5 +1,6 @@
 import type { ChainChecklist, ChainInfo, ValidationItem } from '@ignite/api';
 import { CheckCircle2, CircleAlert } from 'lucide-react';
+import { replaceIdsForDisplay } from '../../../utils/displayText';
 
 const ITEM_KEYS = [
   'rpc',
@@ -16,6 +17,7 @@ const ITEM_KEYS = [
 interface ValidationChecklistProps {
   chains: Record<string, ChainChecklist>;
   chainInfo: ChainInfo[];
+  stepLabels?: Record<string, string>;
   onAcknowledge?: (chainId: number, item: ValidationItem) => void;
 }
 
@@ -59,6 +61,7 @@ function simulationWarnings(details: Record<string, unknown> | undefined): strin
 export default function ValidationChecklist({
   chains,
   chainInfo,
+  stepLabels = {},
   onAcknowledge,
 }: ValidationChecklistProps) {
   return (
@@ -100,23 +103,23 @@ export default function ValidationChecklist({
                         className="text-xs text-muted"
                         style={{ overflowWrap: 'anywhere' }}
                       >
-                        {item.message}
+                        {replaceIdsForDisplay(item.message, stepLabels)}
                       </div>
                       {key === 'simulation' && (
                         <span className="chip chip-info mt-2">
-                          {simulationTierLabel(item.details?.tier ?? item.details?.simulationTier) ?? item.message}
+                          {simulationTierLabel(item.details?.tier ?? item.details?.simulationTier) ?? replaceIdsForDisplay(item.message, stepLabels)}
                         </span>
                       )}
                       {detailGas(item.details).length > 0 && (
                         <details className="text-xs text-muted mt-2">
                           <summary className="cursor-pointer">Per-step gas</summary>
                           {detailGas(item.details).map(([stepId, gas]) => (
-                            <div key={stepId} className="mono-data mt-1">{stepId}: {gas} gas</div>
+                            <div key={stepId} className="mono-data mt-1">{replaceIdsForDisplay(stepId, stepLabels)}: {gas} gas</div>
                           ))}
                         </details>
                       )}
                       {key === 'simulation' && simulationWarnings(item.details).map((warning) => (
-                        <div key={warning} className="text-xs text-warn mt-1">{warning}</div>
+                        <div key={warning} className="text-xs text-warn mt-1">{replaceIdsForDisplay(warning, stepLabels)}</div>
                       ))}
                     </div>
                     {!item.ok && (item.code === 'CREATE2_ALREADY_DEPLOYED' || item.code === 'CREATE2_ACK_STALE') && onAcknowledge && (

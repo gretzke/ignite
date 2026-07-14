@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Box, Loader2, X } from 'lucide-react';
 import type { DraftContract } from '../../../store/features/deployments/types';
 import { apiClient } from '../../../store/api/client';
+import { decodeUrlEncodingForDisplay } from '../../../utils/displayText';
 
 interface ContractsStepProps {
   contracts: DraftContract[];
@@ -90,7 +91,7 @@ export default function ContractsStep({
                   {contract.contractName}
                 </div>
                 <div className="mono-data text-muted truncate">
-                  {contract.sourcePath} · {contract.frameworkId}
+                  {decodeUrlEncodingForDisplay(contract.sourcePath)} · {contract.frameworkId}
                 </div>
                 {checks[contract.id] === 'loading' && (
                   <div className="text-xs text-muted flex items-center gap-1">

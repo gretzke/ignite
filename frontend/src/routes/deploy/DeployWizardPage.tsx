@@ -17,6 +17,7 @@ import StepsStep from './steps/StepsStep';
 import ReviewStep from './steps/ReviewStep';
 import { planFromDraft } from './planFromDraft';
 import type { ExplorerEntry } from '@ignite/api';
+import { replaceIdsForDisplay } from '../../utils/displayText';
 
 const STEPS = [
   { id: 'contracts', label: 'Contracts' },
@@ -98,6 +99,18 @@ export default function DeployWizardPage() {
   const [contractsValid, setContractsValid] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const draftActive = draft.contracts.length > 0;
+  const stepLabels = Object.fromEntries(
+    draft.steps.map((draftStep, index) => [
+      draftStep.id,
+      draftStep.kind === 'deploy'
+        ? draft.contracts.find(
+            (contract) => contract.id === draftStep.contractId
+          )?.contractName ?? draftStep.id
+        : draftStep.signature
+          ? `Call ${draftStep.signature}`
+          : `Call #${index + 1}`,
+    ])
+  );
 
   // Visiting the wizard is what "sees" pending additions: clear the sidebar
   // badge on mount.
@@ -155,7 +168,11 @@ export default function DeployWizardPage() {
   const nav = step < STEPS.length - 1 && (
     <WizardNav
       step={step}
-      blocker={blockers[step]}
+      blocker={
+        blockers[step]
+          ? replaceIdsForDisplay(blockers[step], stepLabels)
+          : undefined
+      }
       onBack={() => setStep((value) => value - 1)}
       onContinue={() => setStep((value) => value + 1)}
     />

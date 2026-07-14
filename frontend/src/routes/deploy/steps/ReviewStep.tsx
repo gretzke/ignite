@@ -14,6 +14,7 @@ import {
 import { runSnapshotReceived } from '../../../store/features/deployments/deploymentsSlice';
 import ValidationChecklist from '../components/ValidationChecklist';
 import { explorersApi } from '../../../store/api/explorersApi';
+import { replaceIdsForDisplay } from '../../../utils/displayText';
 
 function validationGreen(report: ValidationReport | null): boolean {
   return Boolean(
@@ -42,6 +43,22 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
   const defaultName = `Deploy ${draft.contracts
     .map((item) => item.contractName)
     .join(', ')}`;
+  const stepLabels = useMemo(
+    () =>
+      Object.fromEntries(
+        plan.steps.map((step, index) => [
+          step.id,
+          step.kind === 'deploy'
+            ? draft.contracts.find(
+                (contract) => contract.id === step.contractId
+              )?.contractName ?? step.id
+            : step.signature
+              ? `Call ${step.signature}`
+              : `Call #${index + 1}`,
+        ])
+      ),
+    [draft.contracts, plan.steps]
+  );
   const rpcSelection = useMemo(
     () =>
       Object.fromEntries(
@@ -212,9 +229,9 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           plan…
         </div>
       )}
-      {error && <div className="card-milky p-4 text-err">{error}</div>}
+      {error && <div className="card-milky p-4 text-err">{replaceIdsForDisplay(error, stepLabels)}</div>}
       {report && (
-        <ValidationChecklist chains={report.chains} chainInfo={chains} onAcknowledge={acknowledge} />
+        <ValidationChecklist chains={report.chains} chainInfo={chains} stepLabels={stepLabels} onAcknowledge={acknowledge} />
       )}
       {Object.entries(report?.chains ?? {}).flatMap(([chainId, checklist]) => {
         const predicted = checklist.create2?.details?.predicted;

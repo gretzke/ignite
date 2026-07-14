@@ -181,9 +181,11 @@ describe('validatePlan', () => {
   });
 
   it('names missing constructor args in details', async () => {
+    const encodedStepId =
+      'deploy-%2FUsers%2Fdaniel%2Fcontracts:foundry:out%2FToken.json:Token';
     const result = await validatePlan(
       plan({
-        steps: [{ id: 'deploy-token', kind: 'deploy', contractId: 'token' }],
+        steps: [{ id: encodedStepId, kind: 'deploy', contractId: 'token' }],
       }),
       { '1': 'rpc-1' },
       deps()
@@ -191,8 +193,10 @@ describe('validatePlan', () => {
     expect(result.report.chains['1'].args).toMatchObject({
       ok: false,
       code: 'MISSING_ARGUMENT',
+      message: 'Constructor arguments are missing for Token',
       details: { fields: ['supply'] },
     });
+    expect(result.report.chains['1'].args.message).not.toContain('%2F');
   });
 
   it('aggregates balance requirements for steps sharing a signer', async () => {
@@ -241,6 +245,8 @@ describe('validatePlan', () => {
   });
 
   it('still estimates a constructor when gasLimit is overridden', async () => {
+    const encodedStepId =
+      'deploy-%2FUsers%2Fdaniel%2Fcontracts:foundry:out%2FToken.json:Token';
     const estimateGas = vi.fn(async () => {
       throw new Error('constructor reverted');
     });
@@ -248,7 +254,7 @@ describe('validatePlan', () => {
       plan({
         steps: [
           {
-            id: 'deploy-token',
+            id: encodedStepId,
             kind: 'deploy',
             contractId: 'token',
             args: { supply: '1' },
@@ -264,7 +270,11 @@ describe('validatePlan', () => {
       ok: false,
       blocking: true,
       code: 'ESTIMATION_FAILED',
+      message: 'Estimation failed at Token: constructor reverted',
     });
+    expect(result.report.chains['1'].simulation?.message).toBe(
+      'Simulation reverted at Token: constructor reverted'
+    );
   });
 
   it('annotates stale blocks without blocking and persists stored-endpoint verification', async () => {

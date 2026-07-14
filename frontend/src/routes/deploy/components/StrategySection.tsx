@@ -12,12 +12,22 @@ import {
   storePrepared,
 } from '../../../store/features/deployments/deployDraftSlice';
 import { draftToPlanFragment } from '../planFromDraft';
+import { replaceIdsForDisplay } from '../../../utils/displayText';
 
 export default function StrategySection({ stepId }: { stepId: string }) {
   const dispatch = useAppDispatch();
   const draft = useAppSelector((state) => state.deployDraft);
   const chains = useAppSelector((state) => state.chains.chains);
   const extras = draft.deployExtras[stepId];
+  const planStep = draft.steps.find((step) => step.id === stepId);
+  const stepName =
+    planStep?.kind === 'deploy'
+      ? draft.contracts.find(
+          (contract) => contract.id === planStep.contractId
+        )?.contractName
+      : planStep?.signature
+        ? `Call ${planStep.signature}`
+        : undefined;
   const strategy = extras?.strategy ?? { kind: 'create' as const };
   const [types, setTypes] = useState<DeploymentTypeInfo[]>([]);
   const [error, setError] = useState<string>();
@@ -66,7 +76,7 @@ export default function StrategySection({ stepId }: { stepId: string }) {
         return <label key={field.key} className="grid gap-1"><span className="eyebrow">{field.label}</span>{field.type === 'boolean' ? <input type="checkbox" checked={value === true} onChange={(event) => change(event.target.checked)} /> : field.type === 'select' ? <Select value={typeof value === 'string' ? value : undefined} options={field.options ?? []} onValueChange={change} /> : <input className="input-glass" value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''} onChange={(event) => change(field.type === 'number' ? Number(event.target.value) : event.target.value)} />}</label>;
       })}
       {strategy.kind !== 'create' && <div className="flex gap-2 items-center"><button type="button" className="btn btn-secondary" disabled={loading} onClick={() => void prepare()}>{loading ? 'Preparing…' : extras?.prepared ? 'Re-mine' : strategy.kind === 'create2' ? 'Predict addresses' : 'Mine'}</button>{extras?.needsPrepare && <span className="chip chip-warn">needs re-mine</span>}</div>}
-      {error && <p className="text-sm text-err">{error}</p>}
+      {error && <p className="text-sm text-err">{replaceIdsForDisplay(error, stepName ? { [stepId]: stepName } : {})}</p>}
       {Object.entries(extras?.prepared ?? {}).map(([chainId, result]) => <p key={chainId} className="text-xs mono-data">{chainId}: {result.predictedAddress}</p>)}
     </section>
   );

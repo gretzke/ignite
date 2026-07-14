@@ -38,7 +38,7 @@ function validationMessage(type: string, value: string): string | undefined {
   if (/^bytes/.test(type)) {
     const fixed = type.match(/^bytes([0-9]+)$/)?.[1];
     if (fixed && value.length !== 2 + Number(fixed) * 2)
-      return `Enter exactly ${fixed} bytes (0x + ${Number(fixed) * 2} hex characters).`;
+      return `Enter exactly ${fixed} bytes.`;
     if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(value))
       return 'Enter even-length 0x-prefixed hex bytes.';
   }

@@ -6,6 +6,7 @@ import {
   setLibrariesPerChain,
 } from '../../../store/features/deployments/deployDraftSlice';
 import { eligiblePointerSteps } from '../pointerEligibility';
+import { decodeUrlEncodingForDisplay } from '../../../utils/displayText';
 
 export interface LibraryReference {
   /** The compiler/core canonical link-reference key: `<sourcePath>:<name>`. */
@@ -43,7 +44,7 @@ function BindingField({
     <div className="grid gap-2">
       <div>
         <span className="text-sm font-medium">{library.name}</span>
-        <p className="text-xs text-muted mono-data">{library.sourcePath}</p>
+        <p className="text-xs text-muted mono-data">{decodeUrlEncodingForDisplay(library.sourcePath)}</p>
       </div>
       <PointerValue value={value} eligibleSteps={eligible} onChange={onChange} />
       {binding?.kind !== 'step' && (
