@@ -31,6 +31,8 @@ import { pluginOperationHandlers } from './plugins/operations.js';
 import { deploymentTypeHandlers } from './deploymentTypes.js';
 import { deploymentHookHandlers } from './deploymentHooks.js';
 import { workflowHandlers } from './workflows.js';
+import { pointerSuggestionHandlers } from './pointerSuggestions.js';
+import { workflowPromotionHandlers } from './workflowPromotion.js';
 
 // Register API documentation and schemas with Fastify
 export async function registerApi(app: FastifyInstance) {
@@ -114,6 +116,8 @@ async function registerRoutes(app: FastifyInstance) {
     ...deploymentTypeHandlers,
     ...deploymentHookHandlers,
     ...workflowHandlers,
+    ...pointerSuggestionHandlers,
+    ...workflowPromotionHandlers,
   };
 
   checkHandlers(allHandlers);

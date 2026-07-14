@@ -941,6 +941,54 @@ export const PrepareStepResponseSchema = createApiResponseSchema<PrepareStepData
   z.object({ chains: z.record(ChainIdKeySchema, z.object({ salt: Hex32Schema, predictedAddress: AddressSchema, initcodeHash: Hex32Schema, notes: z.array(z.string()) })) }),
 );
 
+export interface PointerSuggestionRequest {
+  workflow?: { repoPathOrUrl: string; name: string };
+  sourceId?: string;
+  expectedArtifactHash?: string;
+  contractName: string;
+  chainIds: number[];
+}
+export type PointerSuggestionSource =
+  | { kind: 'artifact'; runId: string; at: string }
+  | { kind: 'plugin'; pluginId: string; label?: string };
+export interface PointerSuggestion {
+  address: Hex;
+  match: 'artifact-hash' | 'name';
+  versionLabel?: string;
+  sources: PointerSuggestionSource[];
+}
+export interface PointerSuggestionData {
+  suggestionsByChain: Record<string, PointerSuggestion[]>;
+  truncated: boolean;
+}
+export const PointerSuggestionRequestSchema = createRequestSchema<PointerSuggestionRequest>('PointerSuggestionRequestSchema')(
+  z.object({
+    workflow: z.object({ repoPathOrUrl: z.string().min(1), name: z.string().min(1) }).strict().optional(),
+    sourceId: z.string().min(1).optional(),
+    expectedArtifactHash: z.string().regex(SHA256_HEX).optional(),
+    contractName: z.string().min(1).max(256),
+    chainIds: z.array(z.number().int().positive()).min(1).max(128),
+  }).strict().superRefine((request, ctx) => {
+    if (new Set(request.chainIds).size !== request.chainIds.length)
+      ctx.addIssue({ code: 'custom', message: 'chainIds must be unique', path: ['chainIds'] });
+    if (request.sourceId && !request.workflow)
+      ctx.addIssue({ code: 'custom', message: 'sourceId requires workflow', path: ['sourceId'] });
+  }),
+);
+const PointerSuggestionSourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('artifact'), runId: z.string().min(1), at: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('plugin'), pluginId: z.string().min(1), label: z.string().max(256).optional() }).strict(),
+]);
+export const PointerSuggestionSchema = z.object({
+  address: AddressSchema,
+  match: z.enum(['artifact-hash', 'name']),
+  versionLabel: z.string().max(256).optional(),
+  sources: z.array(PointerSuggestionSourceSchema).min(1).max(576),
+}).strict() satisfies z.ZodType<PointerSuggestion>;
+export const PointerSuggestionResponseSchema = createApiResponseSchema<PointerSuggestionData>('PointerSuggestionResponseSchema')(
+  z.object({ suggestionsByChain: z.record(ChainIdKeySchema, z.array(PointerSuggestionSchema).max(8)), truncated: z.boolean() }).strict(),
+);
+
 export interface CreateRunRequest extends ValidateDeploymentRequest {
   name?: string;
   idempotencyKey: string;
@@ -1313,6 +1361,11 @@ export const deploymentRoutes = {
       tags: ["deployments"],
       response: { 200: GetDeploymentArtifactResponseSchema },
     },
+  },
+  pointerSuggestions: {
+    method: 'POST' as const,
+    path: `${V1_BASE_PATH}/deployments/pointer-suggestions`,
+    schema: { tags: ['deployments'], body: PointerSuggestionRequestSchema, response: { 200: PointerSuggestionResponseSchema } },
   },
 } as const;
 
