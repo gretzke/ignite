@@ -157,6 +157,7 @@ export function validateDependencies(plan: DeploymentPlan): void {
           if (!refTarget || refTarget.step.kind !== 'deploy') throw new IgniteError(`Pointer target ${ref.stepId} is not a deploy step`, 'POINTER_TARGET_NOT_DEPLOY', { stepId: ref.stepId });
           const refStrategy = refTarget.step.strategy ?? { kind: 'create' as const };
           if (refStrategy.kind === 'create' && refTarget.index >= current.index) throw new IgniteError(`Call argument ${ref.path} references later create step ${ref.stepId}`, 'POINTER_FORWARD_CREATE', { stepId: ref.stepId, path: ref.path });
+          if (dynamic.has(ref.stepId) && refTarget.index >= current.index) throw new IgniteError(`Call argument ${ref.path} references later dynamic step ${ref.stepId}`, 'POINTER_FORWARD_CREATE', { stepId: ref.stepId, path: ref.path });
         }
         continue;
       }
@@ -166,6 +167,8 @@ export function validateDependencies(plan: DeploymentPlan): void {
         const target = byId.get(ref.stepId);
         if (!target || target.step.kind !== 'deploy') throw new IgniteError(`Pointer target ${ref.stepId} is not a deploy step`, 'POINTER_TARGET_NOT_DEPLOY', { stepId: ref.stepId });
         const targetStrategy = target.step.strategy ?? { kind: 'create' as const };
+        if (strategy.kind === 'create' && dynamic.has(ref.stepId) && target.index >= current.index)
+          throw new IgniteError(`Create step references later dynamic step ${ref.stepId}`, 'POINTER_FORWARD_CREATE', { stepId: ref.stepId, path: ref.path });
         if (strategy.kind !== 'create' && targetStrategy.kind === 'create' && target.index >= current.index) throw new IgniteError(`Create2 input ${ref.path} references non-concrete create step ${ref.stepId} (later in this lane)`, 'CREATE2_POINTER_NOT_CONCRETE', { stepId: ref.stepId, path: ref.path });
         if (strategy.kind === 'create' && targetStrategy.kind === 'create' && target.index >= current.index) throw new IgniteError(`Create step references later create step ${ref.stepId}`, 'POINTER_FORWARD_CREATE', { stepId: ref.stepId, path: ref.path });
         if (strategy.kind !== 'create' && targetStrategy.kind !== 'create' && dynamic.has(id) && dynamic.has(ref.stepId) && target.index >= current.index)

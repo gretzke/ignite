@@ -166,8 +166,8 @@ export async function simulateChain(args: {
       [...args.signers.values()].map((address) => address.toLowerCase() as Hex)
     ),
   ];
-  const baseNonces = args.predictions?.baseNonces ?? new Map<Hex, number>();
-  if (!args.predictions) await Promise.all(
+  const baseNonces = new Map(args.predictions?.baseNonces);
+  if (!args.predictions || args.predictions.nonceError) await Promise.all(
     signerAddresses.map(async (address) => {
       baseNonces.set(address, asNumber(await args.client.getTransactionCount({ address, blockTag: 'latest' })));
     })
@@ -195,7 +195,9 @@ export async function simulateChain(args: {
       .catch(() => undefined);
     if (code && code !== '0x') skipTx.add(step.id);
   }
-  const createAddresses = args.predictions?.createAddresses ?? computeCreateAddresses(args.plan, args.frozen, args.chainId, args.signers, baseNonces, skipTx);
+  const createAddresses = args.predictions && !args.predictions.nonceError
+    ? args.predictions.createAddresses
+    : computeCreateAddresses(args.plan, args.frozen, args.chainId, args.signers, baseNonces, skipTx);
   const schedule = buildSchedule(args.plan, args.frozen, args.chainId, {
     signers: args.signers,
     createAddresses,
@@ -327,7 +329,9 @@ export async function simulateChain(args: {
       !entry.data ||
       entry.value === undefined ||
       sequenceDependent ||
-      dependsOnPlainCreate(args.plan, entry, args.chainId)
+      (args.predictions
+        ? args.predictions.dynamic.has(entry.stepId)
+        : dependsOnPlainCreate(args.plan, entry, args.chainId))
     ) {
       entries[entry.stepId] = {
         status: 'unestimable',

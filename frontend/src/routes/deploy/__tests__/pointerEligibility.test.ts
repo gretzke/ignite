@@ -157,7 +157,7 @@ describe('eligiblePointerSteps', () => {
     ).toEqual(['args', 'target', 'library']);
   });
 
-  it('limits call targets to earlier deploys but permits deterministic later argument pointers', () => {
+  it('explains why later call targets are unavailable but permits static deterministic argument pointers', () => {
     const state = draft();
     state.steps.splice(1, 0, { id: 'call', kind: 'call', target: null });
     state.deployExtras['deploy-C'] = {
@@ -166,6 +166,16 @@ describe('eligiblePointerSteps', () => {
 
     expect(callTargetPointerSteps(state, 'call')).toEqual([
       { stepId: 'deploy-A', label: 'A' },
+      {
+        stepId: 'deploy-B',
+        label: 'B',
+        disabledReason: 'Later plain-create step — lands after this call',
+      },
+      {
+        stepId: 'deploy-C',
+        label: 'C',
+        disabledReason: 'Later deterministic step — lands after this call',
+      },
     ]);
     expect(callArgumentPointerSteps(state, 'call')).toEqual([
       { stepId: 'deploy-A', label: 'A' },
@@ -177,5 +187,28 @@ describe('eligiblePointerSteps', () => {
       },
       { stepId: 'deploy-C', label: 'C' },
     ]);
+  });
+
+  it('blocks a plain-create or call from pointing forward to a dynamic deployment', () => {
+    const state = draft();
+    state.chains = [1];
+    state.deployExtras['deploy-C'] = {
+      strategy: { kind: 'plugin', pluginId: 'deterministic' },
+    };
+    state.steps[2].args = {
+      box: { $ref: { kind: 'step', stepId: 'deploy-A' } },
+    };
+    expect(eligiblePointerSteps(state, 'deploy-B').find((option) => option.stepId === 'deploy-C')).toMatchObject({
+      disabledReason:
+        'Later dynamic deterministic step — lands after this deployment',
+    });
+
+    state.steps.splice(1, 0, { id: 'call', kind: 'call', target: null });
+    expect(callTargetPointerSteps(state, 'call').find((option) => option.stepId === 'deploy-C')).toMatchObject({
+      disabledReason: 'Later dynamic deterministic step — lands after this call',
+    });
+    expect(callArgumentPointerSteps(state, 'call').find((option) => option.stepId === 'deploy-C')).toMatchObject({
+      disabledReason: 'Later dynamic deterministic step — lands after this call',
+    });
   });
 });

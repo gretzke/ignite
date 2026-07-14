@@ -479,7 +479,7 @@ describe('DeployEngine', () => {
     const run = await launchDefault(harness, plan);
     await eventually(async () => (await harness.engine.get('p1', run.id))?.status === 'completed', 'acknowledged dynamic skip');
     const current = (await harness.engine.get('p1', run.id))!;
-    expect(current.lanes['1'].steps[1]).toMatchObject({ status: 'skipped', address: predictedAddress });
+    expect(current.lanes['1'].steps[1]).toMatchObject({ status: 'skipped', address: predictedAddress, attempts: [{ resolution: 'accept-deployed', endedAt: expect.any(String) }] });
     expect(harness.executed).toHaveLength(1);
   });
 
@@ -516,12 +516,18 @@ describe('DeployEngine', () => {
       return step?.status === 'awaiting-signature' && step.attempts.length === 1;
     }, 'JIT attempt persisted');
     await first.engine.shutdown();
-    const second = makeEngine({ runStore: first.store });
+    let recoveryReads = 0;
+    const second = makeEngine({ runStore: first.store, deploymentTypes: { prepare, list: async () => [], validate: vi.fn() }, getCode: async () => ++recoveryReads === 1 ? '0x' : '0x01' });
     await second.engine.recoverOnStartup();
     const recovered = (await second.engine.get('p1', run.id))!;
     const step = recovered.lanes['1'].steps[1];
     expect(recovered.lanes['1'].pause).toMatchObject({ reason: 'interrupted', attemptId: step.attempts[0].id });
     expect(step).toMatchObject({ salt, notes: ['durable'], attempts: [{ expected: { pointers: { 'args.owner': RECEIPT.contractAddress } } }] });
+    await second.engine.resume('p1', run.id);
+    await eventually(async () => (await second.engine.get('p1', run.id))?.status === 'completed', 'restarted JIT retry completed');
+    const resumed = (await second.engine.get('p1', run.id))!.lanes['1'].steps[1].attempts;
+    expect(resumed).toHaveLength(2);
+    expect(resumed[0]).toMatchObject({ resolution: 'retry', endedAt: expect.any(String) });
   });
 
   it('clears seeded static facts when an edit flips the step dynamic', async () => {
@@ -1005,6 +1011,32 @@ describe('DeployEngine', () => {
     )!;
     expect(attempt.resolution).toBe('edit');
     expect(attempt.edits?.argsByStep).toBeDefined();
+  });
+
+  it('accepts a gas-only edit while a future dynamic deployment awaits the current receipt', async () => {
+    const harness = makeEngine();
+    const seeded = await seedPausedRun(harness, { reason: 'revert', submitted: true });
+    await harness.store.mutate('p1', seeded.run.id, (current) => {
+      current.plan = dynamicPlan({ kind: 'plugin', pluginId: 'hook' });
+      (current.inputs.c2 as { abi: unknown }).abi = [{ type: 'constructor', inputs: [{ name: 'owner', type: 'address' }] }];
+    });
+    const edited = await harness.engine.resolveLane('p1', seeded.run.id, seeded.chainId, {
+      action: 'edit', attemptId: seeded.attemptId, commandId: crypto.randomUUID(), edits: { gas: { gasLimit: '400000' } },
+    });
+    expect(edited.plan.steps[0].gasOverridesPerChain?.['1']).toEqual({ gasLimit: '400000' });
+  });
+
+  it('keeps eager pointer validation for future static steps during an edit', async () => {
+    const harness = makeEngine();
+    const seeded = await seedPausedRun(harness, { reason: 'revert', submitted: true });
+    await harness.store.mutate('p1', seeded.run.id, (current) => {
+      const step = current.plan.steps[1] as DeployStep;
+      step.args = { owner: { $ref: { kind: 'step', stepId: 'step-1' } } };
+      (current.inputs.c2 as { abi: unknown }).abi = [{ type: 'constructor', inputs: [{ name: 'owner', type: 'address' }] }];
+    });
+    await expect(harness.engine.resolveLane('p1', seeded.run.id, seeded.chainId, {
+      action: 'edit', attemptId: seeded.attemptId, commandId: crypto.randomUUID(), edits: { gas: { gasLimit: '400000' } },
+    })).rejects.toMatchObject({ code: ErrorCodes.ILLEGAL_RESOLVE });
   });
 
   it('atomically rebinds the edited RPC endpoint fingerprint and label', async () => {

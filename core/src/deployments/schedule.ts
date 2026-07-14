@@ -8,7 +8,7 @@ import type { DeploymentTypeService } from './DeploymentTypeService.js';
 export interface ScheduleEntry { stepId: string; kind: 'tx' | 'existing'; from?: Hex; to?: Hex | null; data?: Hex; value?: bigint; address?: Hex; predictedAddress?: Hex; }
 export type Predictions = Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>;
 export type ProvisionalPrediction = { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32; provisional?: true; notes?: string[] } | { absent: true; reason: string; provisional: true };
-export type ChainPredictions = { predictions: Predictions; entries: Record<string, ProvisionalPrediction>; createAddresses: Map<string, Hex>; baseNonces: Map<Hex, number>; confirmedExisting: Set<string>; dynamic: Set<string> };
+export type ChainPredictions = { predictions: Predictions; entries: Record<string, ProvisionalPrediction>; createAddresses: Map<string, Hex>; baseNonces: Map<Hex, number>; nonceError?: string; confirmedExisting: Set<string>; dynamic: Set<string> };
 type SnapshotClient = { getTransactionCount?(args: { address: Hex; blockTag?: 'latest' }): Promise<number | bigint>; getCode?(args: { address: Hex }): Promise<Hex | undefined> };
 export function hasPredicted(entry: ProvisionalPrediction | undefined): entry is Exclude<ProvisionalPrediction, { absent: true }> { return Boolean(entry && 'predictedAddress' in entry); }
 const provisionalCache = new Map<string, { expires: number; value: Promise<{ salt: Hex32; predictedAddress: Hex; notes: string[] }> }>();
@@ -132,10 +132,12 @@ export async function buildChainPredictions(plan: DeploymentPlan, frozen: Frozen
         if (provisionalCache.size > 50) provisionalCache.delete(provisionalCache.keys().next().value!);
       }
       const prepared = await cached.value;
+      if (predictCreate2Address(prepared.salt, hash).toLowerCase() !== prepared.predictedAddress.toLowerCase())
+        throw new Error('deployment type returned a mismatched predicted address');
       entries[step.id] = { salt: prepared.salt as Hex32, initcodeHash: hash, predictedAddress: prepared.predictedAddress as Hex, provisional: true, notes: prepared.notes };
     } catch (error) { absent(error instanceof Error ? error.message : String(error)); }
   }
-  return { predictions, entries, createAddresses, baseNonces, confirmedExisting, dynamic };
+  return { predictions, entries, createAddresses, baseNonces, ...(nonceError ? { nonceError } : {}), confirmedExisting, dynamic };
 }
 
 export function ackIsFresh(strategy: Exclude<NonNullable<DeployStep['strategy']>, { kind: 'create' }>, chainId: number, current: { predictedAddress: Hex; initcodeHash: Hex32 }): boolean {

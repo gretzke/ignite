@@ -5,6 +5,7 @@ import type { ChainPredictions } from '../../deployments/schedule.js';
 
 const A = '0x0000000000000000000000000000000000000001' as Hex;
 const B = '0x0000000000000000000000000000000000000002' as Hex;
+const C = '0x0000000000000000000000000000000000000003' as Hex;
 const plan = (steps: DeploymentPlan['steps']): DeploymentPlan => ({
   schemaVersion: 1,
   chains: [1],
@@ -195,5 +196,46 @@ describe('simulateChain', () => {
     });
     expect(outcome).toMatchObject({ tier: 'simulateV1', perStep: { one: { status: 'ok', gasUsed: '5' } } });
     expect(nonce).not.toHaveBeenCalled();
+  });
+
+  it('uses the snapshot dynamic closure in the estimate fallback', async () => {
+    const salt = `0x${'77'.repeat(32)}` as Hex;
+    const candidate = plan([
+      { id: 'plain', kind: 'deploy', contractId: 'c', args: { peer: A } },
+      { id: 'a', kind: 'deploy', contractId: 'c', args: { peer: { $ref: { kind: 'step', stepId: 'plain' } } }, strategy: { kind: 'create2', salt } },
+      { id: 'b', kind: 'deploy', contractId: 'c', args: { peer: { $ref: { kind: 'step', stepId: 'a' } } }, strategy: { kind: 'create2', salt } },
+    ]);
+    const snapshot: ChainPredictions = {
+      predictions: {},
+      entries: {
+        a: { salt, initcodeHash: `0x${'11'.repeat(32)}`, predictedAddress: B, provisional: true },
+        b: { salt, initcodeHash: `0x${'22'.repeat(32)}`, predictedAddress: C, provisional: true },
+      },
+      createAddresses: new Map([['plain', A]]), baseNonces: new Map([[A, 0]]), confirmedExisting: new Set(), dynamic: new Set(['a', 'b']),
+    };
+    const estimateGas = vi.fn(async () => 7n);
+    const outcome = await simulateChain({
+      chainId: 1, plan: candidate, frozen, signers: new Map([['plain', A], ['a', A], ['b', A]]), predictions: snapshot,
+      client: { estimateGas, getTransactionCount: vi.fn(), getBlockNumber: async () => 1, getCode: async () => undefined }, getFork: async () => undefined,
+    });
+    expect(outcome.perStep.b).toMatchObject({ status: 'unestimable', reason: 'SIMULATION_UNAVAILABLE_DEPENDENT' });
+    expect(estimateGas).toHaveBeenCalledOnce();
+  });
+
+  it('refetches nonces when the supplied snapshot recorded a nonce failure', async () => {
+    const snapshot: ChainPredictions = {
+      predictions: {}, entries: {}, createAddresses: new Map(), baseNonces: new Map(), nonceError: 'snapshot read failed', confirmedExisting: new Set(), dynamic: new Set(),
+    };
+    const nonce = vi.fn(async () => 9);
+    const simulated = vi.fn(async (_args: unknown) => ({ blocks: [{ calls: [{ status: 'success', gasUsed: '5' }, { status: 'success', gasUsed: '6' }] }] }));
+    await simulateChain({
+      chainId: 1, plan: plan([
+        { id: 'one', kind: 'deploy', contractId: 'c', args: { peer: A } },
+        { id: 'two', kind: 'deploy', contractId: 'c', args: { peer: { $ref: { kind: 'step', stepId: 'one' } } } },
+      ]), frozen, signers: new Map([['one', A], ['two', A]]), predictions: snapshot,
+      client: { simulateBlocks: simulated, estimateGas: vi.fn(), getTransactionCount: nonce, getBlockNumber: async () => 1, getCode: async () => undefined }, getFork: async () => undefined,
+    });
+    expect(nonce).toHaveBeenCalledWith({ address: A, blockTag: 'latest' });
+    expect((simulated.mock.calls[0]![0] as { blocks: Array<{ calls: Array<{ nonce: bigint }> }> }).blocks[0].calls.map((call) => call.nonce)).toEqual([9n, 10n]);
   });
 });

@@ -122,6 +122,27 @@ describe('validatePlan', () => {
     expect(snapshot.predictions.hook).toBeUndefined();
   });
 
+  it('degrades a provisional plugin result with a mismatched predicted address', async () => {
+    clearProvisionalPredictionCache();
+    const hookFrozen = { ...frozen, hook: { ...frozen.token, abi: [{ type: 'constructor', inputs: [{ name: 'owner', type: 'address' }] }] } };
+    const candidate = plan({ steps: [
+      { id: 'plain', kind: 'deploy', contractId: 'token', args: { supply: '1' } },
+      { id: 'hook', kind: 'deploy', contractId: 'hook', args: { owner: { $ref: { kind: 'step', stepId: 'plain' } } }, strategy: { kind: 'plugin', pluginId: 'hook' } },
+    ] });
+    const snapshot = await buildChainPredictions(candidate, hookFrozen, 1, {
+      client: { getTransactionCount: async () => 1 },
+      deploymentTypes: { prepare: async () => ({ salt: `0x${'33'.repeat(32)}`, predictedAddress: ADDRESS, notes: [] }) } as any,
+    });
+    expect(snapshot.entries.hook).toEqual({ absent: true, provisional: true, reason: 'deployment type returned a mismatched predicted address' });
+  });
+
+  it('records nonce snapshot failures for simulation to retry', async () => {
+    const snapshot = await buildChainPredictions(plan(), frozen, 1, {
+      client: { getTransactionCount: async () => { throw new Error('RPC nonce unavailable'); } },
+    });
+    expect(snapshot).toMatchObject({ nonceError: 'RPC nonce unavailable' });
+  });
+
   it('evicts rejected provisional prepares and clears successful entries on plugin invalidation', async () => {
     clearProvisionalPredictionCache();
     const salt = `0x${'66'.repeat(32)}` as const;

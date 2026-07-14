@@ -230,7 +230,6 @@ export function eligiblePointerSteps(
         },
       ];
     if (
-      sourceStrategy !== 'create' &&
       targetIndex >= sourceIndex &&
       chainIds.some((chainId) =>
         dynamicDeterministicDraftStepIds(draft, chainId).has(target.id)
@@ -272,7 +271,29 @@ export function callTargetPointerSteps(
   draft: DeployDraftState,
   stepId: string
 ): EligiblePointerStep[] {
-  return earlierDeploySteps(draft, stepId);
+  const sourceIndex = draft.steps.findIndex((step) => step.id === stepId);
+  if (sourceIndex === -1) return [];
+  const chainIds = draft.chains.length ? draft.chains : [1];
+  return draft.steps.flatMap((target, targetIndex) => {
+    if (target.kind !== 'deploy') return [];
+    const label =
+      draft.contracts.find((contract) => contract.id === target.contractId)
+        ?.contractName ?? target.id;
+    if (targetIndex < sourceIndex) return [{ stepId: target.id, label }];
+    const dynamic = chainIds.some((chainId) =>
+      dynamicDeterministicDraftStepIds(draft, chainId).has(target.id)
+    );
+    const strategy = draftStrategyKind(draft, target.id);
+    return [{
+      stepId: target.id,
+      label,
+      disabledReason: dynamic
+        ? 'Later dynamic deterministic step — lands after this call'
+        : strategy === 'create'
+          ? 'Later plain-create step — lands after this call'
+          : 'Later deterministic step — lands after this call',
+    }];
+  });
 }
 
 /** A call argument may point at any deterministic deployment. A later plain
@@ -290,11 +311,20 @@ export function callArgumentPointerSteps(
       draft.contracts.find((contract) => contract.id === target.contractId)
         ?.contractName ?? target.id;
     const strategy = draft.deployExtras[target.id]?.strategy.kind ?? 'create';
+    const dynamic = (draft.chains.length ? draft.chains : [1]).some(
+      (chainId) =>
+        dynamicDeterministicDraftStepIds(draft, chainId).has(target.id)
+    );
     return [
       {
         stepId: target.id,
         label,
-        ...(strategy === 'create' && targetIndex > sourceIndex
+        ...(dynamic && targetIndex > sourceIndex
+          ? {
+              disabledReason:
+                'Later dynamic deterministic step — lands after this call',
+            }
+          : strategy === 'create' && targetIndex > sourceIndex
           ? {
               disabledReason:
                 'Later plain-create step — address unknown at prediction time',

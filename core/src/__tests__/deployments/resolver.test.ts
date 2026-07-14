@@ -134,4 +134,19 @@ describe('call-arg and per-chain dependency validation', () => {
       { id: 'late', kind: 'deploy', contractId: 'c', strategy: { kind: 'create2', salt } },
     ] })).not.toThrow();
   });
+
+  it('rejects a plain-create or call that points forward to a dynamic deterministic deployment', () => {
+    const salt = `0x${'56'.repeat(32)}` as const;
+    const laterHook = { id: 'hook', kind: 'deploy' as const, contractId: 'c', strategy: { kind: 'create2' as const, salt }, args: { owner: { $ref: { kind: 'step' as const, stepId: 'seed' } } } };
+    expect(() => validateDependencies({ ...base, steps: [
+      { id: 'seed', kind: 'deploy' as const, contractId: 'c' },
+      { id: 'consumer', kind: 'deploy' as const, contractId: 'c', args: { owner: { $ref: { kind: 'step' as const, stepId: 'hook' } } } },
+      laterHook,
+    ] })).toThrowError(/Create step references later dynamic step/);
+    expect(() => validateDependencies({ ...base, steps: [
+      { id: 'seed', kind: 'deploy' as const, contractId: 'c' },
+      { id: 'consumer', kind: 'call' as const, target: { kind: 'address' as const, address }, signature: 'poke(address)', payable: false, args: { owner: { $ref: { kind: 'step' as const, stepId: 'hook' } } } },
+      laterHook,
+    ] })).toThrowError(/Call argument args.owner references later dynamic step/);
+  });
 });

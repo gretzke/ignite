@@ -665,6 +665,9 @@ export class DeployEngine {
           runId,
           (current) => {
             const target = current.lanes[String(lane.chainId)];
+            const interrupted = target.steps[target.pause!.stepIndex]?.attempts.find((entry) => entry.id === target.pause?.attemptId)
+              ?? target.steps[target.pause!.stepIndex]?.attempts.at(-1);
+            if (interrupted) { interrupted.resolution = 'retry'; interrupted.endedAt ??= iso(this.deps.now()); }
             target.status = 'running';
             target.pause = undefined;
           },
@@ -1126,6 +1129,8 @@ export class DeployEngine {
           await this.mutate(profileId, runId, (current) => {
             const target = current.lanes[String(chainId)]; const targetStep = target.steps[stepIndex];
             targetStep.status = 'skipped'; targetStep.address = jit.predictedAddress;
+            const attempt = targetStep.attempts.find((entry) => entry.id === attemptId);
+            if (attempt) { attempt.resolution = 'accept-deployed'; attempt.endedAt = iso(this.deps.now()); }
             target.currentStepIndex += 1;
             target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
           }, chainId);
@@ -1490,6 +1495,7 @@ export class DeployEngine {
     this.applyEdits(draft, draftLane, cmd, attempt);
     try {
       validateDependencies(draft.plan);
+      const dynamic = dynamicDeterministicStepIds(draft.plan, lane.chainId);
       const addresses = (id: string): Hex => {
         const item = draftLane.steps.find((candidate) => candidate.stepId === id);
         if (!item?.address && !item?.predictedAddress) throw coded('pointer-unresolved', `Pointer ${id} is unresolved after edit`);
@@ -1507,7 +1513,12 @@ export class DeployEngine {
         } else {
           const input = draft.inputs[step.contractId];
           if (!input) throw new Error(`Frozen input missing for ${step.contractId}`);
-          buildInitcode(step, input, lane.chainId, addresses);
+          try {
+            buildInitcode(step, input, lane.chainId, addresses);
+          } catch (error) {
+            if (dynamic.has(step.id) && ((error as { pauseReason?: string }).pauseReason === 'pointer-unresolved' || (error as { code?: string }).code === 'POINTER_UNRESOLVED')) continue;
+            throw error;
+          }
         }
       }
       const predictions = predictPlanAddresses(draft.plan, draft.inputs, lane.chainId);
