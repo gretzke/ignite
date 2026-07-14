@@ -2,7 +2,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ChainInfo } from '@ignite/api';
 import type { DeployDraftState } from '../../../store/features/deployments/types';
-import { parseUnitsDecimal, planFromDraft } from '../planFromDraft';
+import {
+  draftToPlanFragment,
+  parseUnitsDecimal,
+  planFromDraft,
+} from '../planFromDraft';
 
 const chains: ChainInfo[] = [
   {
@@ -92,6 +96,42 @@ describe('planFromDraft', () => {
     };
     expect(() => planFromDraft(draft, [])).toThrow(
       'Missing currency metadata for chain 999'
+    );
+  });
+
+  it('builds value-less plan fragments without currency metadata, but refuses value conversion', () => {
+    const draft: DeployDraftState = {
+      contracts: [
+        {
+          id: 'hook',
+          repoPathOrUrl: '/repo',
+          frameworkId: 'foundry',
+          artifactPath: 'out/Hook.json',
+          contractName: 'Hook',
+          sourcePath: 'src/Hook.sol',
+        },
+      ],
+      chains: [31337],
+      rpcSelection: {},
+      explorerSelection: {},
+      signers: {},
+      steps: [{ id: 'deploy-hook', kind: 'deploy', contractId: 'hook' }],
+      deployExtras: {},
+      unseenIds: [],
+    };
+    // Mining/prediction on a restored draft must work before the selected
+    // chains' metadata has loaded — no step carries a native value here.
+    const fragment = draftToPlanFragment(draft, []);
+    expect(fragment.steps).toHaveLength(1);
+
+    const withValue: DeployDraftState = {
+      ...draft,
+      steps: [
+        { id: 'deploy-hook', kind: 'deploy', contractId: 'hook', value: '1' },
+      ],
+    };
+    expect(() => draftToPlanFragment(withValue, [])).toThrow(
+      'Missing currency metadata for chain 31337'
     );
   });
 

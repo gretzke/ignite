@@ -49,17 +49,20 @@ function stepFromDraft(
   draft: DeployDraftState,
   currencies: Map<number, number>
 ): Step {
-  const decimalsByChain = draft.chains.map((chainId) => {
+  // Decimals are resolved lazily: only steps that carry a native value need
+  // currency metadata, so a value-less draft (e.g. mining a hook salt) works
+  // even before the selected chains' metadata has loaded.
+  const decimalsFor = (chainId: number): number => {
     const decimals = currencies.get(chainId);
     if (decimals === undefined)
       throw new Error(`Missing currency metadata for chain ${chainId}`);
     return decimals;
-  });
-  const sameDecimals = new Set(decimalsByChain).size <= 1;
+  };
   const valuePerChain: Record<string, string> = {};
   let value: string | undefined;
   if (step.value?.trim()) {
-    if (sameDecimals) {
+    const decimalsByChain = draft.chains.map(decimalsFor);
+    if (new Set(decimalsByChain).size <= 1) {
       value = parseUnitsDecimal(step.value, decimalsByChain[0] ?? 18);
     } else {
       draft.chains.forEach((chainId, index) => {
@@ -71,10 +74,10 @@ function stepFromDraft(
     }
   }
   for (const [chainId, humanValue] of Object.entries(step.valuePerChain ?? {})) {
-    const decimals = currencies.get(Number(chainId));
-    if (decimals === undefined)
-      throw new Error(`Missing currency metadata for chain ${chainId}`);
-    valuePerChain[chainId] = parseUnitsDecimal(humanValue, decimals);
+    valuePerChain[chainId] = parseUnitsDecimal(
+      humanValue,
+      decimalsFor(Number(chainId))
+    );
   }
   const gasOverridesPerChain = Object.fromEntries(
     Object.entries(step.gasOverridesPerChain ?? {})
@@ -204,10 +207,6 @@ export function draftToPlanFragment(
   const currencies = new Map(
     chainInfo.map((chain) => [chain.chainId, chain.nativeCurrency.decimals])
   );
-  for (const chainId of draft.chains) {
-    if (!currencies.has(chainId))
-      throw new Error(`Missing currency metadata for chain ${chainId}`);
-  }
   return {
     contracts: draft.contracts.map((contract) => ({ ...contract })),
     steps: draft.steps.map((step) => stepFromDraft(step, draft, currencies)),
@@ -218,6 +217,14 @@ export function planFromDraft(
   draft: DeployDraftState,
   chainInfo: ChainInfo[]
 ): DeploymentPlan {
+  // The full plan (validate/launch) keeps the fail-fast: refusing to guess
+  // decimals for any selected chain. The fragment path above stays lax so
+  // value-less prepares work before chain metadata loads.
+  const known = new Set(chainInfo.map((chain) => chain.chainId));
+  for (const chainId of draft.chains) {
+    if (!known.has(chainId))
+      throw new Error(`Missing currency metadata for chain ${chainId}`);
+  }
   const fragment = draftToPlanFragment(draft, chainInfo);
   return {
     schemaVersion: 1,
