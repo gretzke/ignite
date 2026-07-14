@@ -80,6 +80,43 @@ describe('PinnedStore', () => {
     expect(rejected).toBe(true); expect(git(clone.path, ['rev-parse', 'HEAD'])).toBe(remote.first);
   });
 
+  it('fallback fetch includes tag-only commits unreachable from branch heads', async () => {
+    const source = await temp('ignite-pinned-tag-source-');
+    git(source, ['init', '-q', '-b', 'main']);
+    git(source, ['config', 'user.email', 'test@example.com']);
+    git(source, ['config', 'user.name', 'Test']);
+    await fs.writeFile(path.join(source, 'main.txt'), 'main\n');
+    git(source, ['add', '.']); git(source, ['commit', '-q', '-m', 'main']);
+    git(source, ['checkout', '-q', '--orphan', 'tag-side']);
+    git(source, ['rm', '-q', '-rf', '.']);
+    await fs.writeFile(path.join(source, 'tag-only.txt'), 'tag only\n');
+    git(source, ['add', '.']); git(source, ['commit', '-q', '-m', 'tag only']);
+    const tagOnlyCommit = git(source, ['rev-parse', 'HEAD']);
+    git(source, ['tag', 'v-tag-only']);
+    git(source, ['checkout', '-q', 'main']);
+    git(source, ['branch', '-D', 'tag-side']);
+    const bare = await temp('ignite-pinned-tag-remote-');
+    git(bare, ['init', '-q', '--bare']);
+    git(source, ['remote', 'add', 'origin', `file://${bare}`]);
+    git(source, ['push', '-q', 'origin', 'main']);
+    git(source, ['push', '-q', 'origin', 'refs/tags/v-tag-only']);
+
+    const home = await temp('ignite-pinned-home-'); FileSystem.resetInstance();
+    const fileSystem = FileSystem.getInstance(home); const store = new PinnedStore(fileSystem);
+    const url = `file://${bare}`; await store.approveOrigins(profileId, [url]);
+    let rejected = false; let sawTagsFallback = false;
+    const repos = new RepoService({ fileSystem, profiles: { getCurrentProfile: () => profileId } as unknown as ProfileManager, run: (async (cmd, args, opts) => {
+      if (!rejected && args.includes('fetch') && args.includes('--depth') && args.includes(tagOnlyCommit)) {
+        rejected = true; return { code: 1, stdout: '', stderr: 'simulated SHA fetch refusal' };
+      }
+      if (args.includes('fetch') && args.includes('--tags')) sawTagsFallback = true;
+      return runCommand(cmd, args, opts);
+    }) as typeof runCommand });
+    const clone = await repos.ensurePinnedClone(profileId, url, tagOnlyCommit);
+    expect(sawTagsFallback).toBe(true);
+    expect(git(clone.path, ['rev-parse', 'HEAD'])).toBe(tagOnlyCommit);
+  });
+
   it('rejects mutating repo verbs for pinned worktrees', async () => {
     const home = await temp('ignite-pinned-home-'); const { store, repos } = await service(home); const remote = await fixture(); await store.approveOrigins(profileId, [remote.remote]);
     const clone = await repos.ensurePinnedClone(profileId, remote.remote, remote.second);

@@ -43,6 +43,7 @@ import { deploymentRoutes, prepareDeploymentStepRoute } from "./deployments.js";
 import { deploymentTypeRoutes } from "./deploymentTypes.js";
 import { explorerRoutes } from "./explorers.js";
 import { verificationRoutes } from "./verifications.js";
+import { workflowRoutes } from "./workflows.js";
 
 export interface IApiError {
   statusCode: 400 | 401 | 403 | 404 | 409 | 422 | 499 | 500 | 503;
@@ -90,6 +91,7 @@ const allRoutes = {
   ...deploymentTypeRoutes,
   ...explorerRoutes,
   ...verificationRoutes,
+  ...workflowRoutes,
 } as const;
 
 export const v1Routes = allRoutes satisfies ValidateRoutes<typeof allRoutes>;

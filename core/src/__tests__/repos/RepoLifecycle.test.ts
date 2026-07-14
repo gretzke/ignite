@@ -199,6 +199,16 @@ describe('RepoLifecycle', () => {
       expect(pinnedStore.upsert).toHaveBeenCalledWith('p1', expect.objectContaining({ url: 'https://example.test/repo.git', commit: 'a'.repeat(40), frameworks: [expect.objectContaining({ id: 'foundry' })] }));
     } finally { await cleanupTestDirectory(dir); }
   });
+
+  it('exposes an awaitable pinned runner without creating a nested job', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir, responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK } } });
+      const result = await lifecycle.runPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1', { log: () => {}, signal: new AbortController().signal });
+      expect(result.frameworks).toEqual([expect.objectContaining({ id: 'foundry' })]);
+      expect(jobs.started).toHaveLength(0);
+    } finally { await cleanupTestDirectory(dir); }
+  });
   it('sweep: init -> detect -> watchPaths -> persist, no install/compile', async () => {
     const dir = await createTestDirectory();
     try {

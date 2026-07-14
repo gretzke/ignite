@@ -44,4 +44,14 @@ describe('writeRepoFile', () => {
     const entries = await fs.readdir(path.join(root, 'ignite'));
     expect(entries.filter((entry) => entry.includes('.tmp'))).toEqual([]);
   });
+
+  it('supports a read/write transaction without re-entering the root lock', async () => {
+    const { root, repos } = await workspace();
+    await repos.writeRepoFile(root, 'ignite/workflow.json', 'before');
+    await expect(repos.withWorkflowWriteLock(root, async ({ readFile, writeFile }) => {
+      expect(await readFile('ignite/workflow.json')).toBe('before');
+      await writeFile('ignite/workflow.json', 'after');
+    })).resolves.toBeUndefined();
+    await expect(fs.readFile(path.join(root, 'ignite/workflow.json'), 'utf8')).resolves.toBe('after');
+  });
 });

@@ -193,7 +193,9 @@ export class RepoService {
       const init = await this.runPinnedGit(temp, ['init'], TIMEOUT_LOCAL_MS); if (!init.success) throw Object.assign(new Error(init.error.message), { code: init.error.code });
       const remote = await this.runPinnedGit(temp, ['remote', 'add', 'origin', url], TIMEOUT_LOCAL_MS); if (!remote.success) throw Object.assign(new Error(remote.error.message), { code: remote.error.code });
       const shallow = await this.runPinnedGit(temp, ['fetch', '--depth', '1', 'origin', commit], TIMEOUT_FETCH_MS);
-      const fetched = shallow.success ? shallow : await this.runPinnedGit(temp, ['fetch', 'origin'], TIMEOUT_FETCH_MS);
+      // Fetch tags explicitly: a requested commit may be reachable only from
+      // a tag and therefore absent from the remote's branch-head fetch.
+      const fetched = shallow.success ? shallow : await this.runPinnedGit(temp, ['fetch', '--tags', 'origin'], TIMEOUT_FETCH_MS);
       if (!fetched.success) { await fs.rm(temp, { recursive: true, force: true }); throw Object.assign(new Error(fetched.error.message), { code: fetched.error.code }); }
       const checkoutRef = shallow.success ? 'FETCH_HEAD' : commit;
       const checkout = await this.runPinnedGit(temp, ['checkout', '--detach', checkoutRef], TIMEOUT_LOCAL_MS);
@@ -978,11 +980,44 @@ export class RepoService {
     if (!validated.success) return validated;
     try {
       const root = await this.resolveExistingWorkspacePath(pathOrUrl);
-      const resolvedRoot = path.resolve(root);
-      const target = path.resolve(resolvedRoot, filePath.replace(/^[/\\]+/, ''));
-      if (target === resolvedRoot || !target.startsWith(resolvedRoot + path.sep)) return { success: false, error: { code: 'INVALID_PATH', message: 'File path escapes repository root' } };
-      const realRoot = await fs.realpath(resolvedRoot);
-      return await withRepoWriteLock(realRoot, async () => {
+      const realRoot = await fs.realpath(path.resolve(root));
+      return await withRepoWriteLock(realRoot, () => this.writeRepoFileLocked(realRoot, filePath, contents));
+    } catch (error) {
+      return { success: false, error: { code: 'FILE_WRITE_ERROR', message: errMsg(error) } };
+    }
+  }
+
+  // Transaction seam for workflow CAS: the callback owns the canonical-root
+  // lock once, and its bound writer calls the unlocked body directly.
+  async withWorkflowWriteLock<T>(
+    pathOrUrl: string,
+    fn: (files: {
+      readFile: (relPath: string) => Promise<string | null>;
+      writeFile: (relPath: string, contents: string) => Promise<void>;
+    }) => Promise<T>
+  ): Promise<T> {
+    const root = await this.resolveExistingWorkspacePath(pathOrUrl);
+    const realRoot = await fs.realpath(path.resolve(root));
+    return withRepoWriteLock(realRoot, () => fn({
+      readFile: async (relPath) => {
+        const result = await this.getFile(realRoot, relPath);
+        if (result.success) return result.data.content;
+        if (result.error.code === 'FILE_NOT_FOUND') return null;
+        throw Object.assign(new Error(result.error.message), { code: result.error.code });
+      },
+      writeFile: async (relPath, contents) => {
+        const result = await this.writeRepoFileLocked(realRoot, relPath, contents);
+        if (!result.success) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+      },
+    }));
+  }
+
+  private async writeRepoFileLocked(realRoot: string, filePath: string, contents: string): Promise<RepoResult<null>> {
+    const validated = this.validateFilePath(filePath);
+    if (!validated.success) return validated;
+    try {
+      const target = path.resolve(realRoot, filePath.replace(/^[/\\]+/, ''));
+      if (target === realRoot || !target.startsWith(realRoot + path.sep)) return { success: false, error: { code: 'INVALID_PATH', message: 'File path escapes repository root' } };
         const parent = path.dirname(target);
         // The lexical parent is known to be inside root. mkdir may traverse a
         // symlink, so realpath afterwards is the authority.
@@ -1002,7 +1037,7 @@ export class RepoService {
           await fs.rename(temp, target);
           return { success: true, data: null };
         } finally { await fs.rm(temp, { force: true }).catch(() => {}); }
-      });
+
     } catch (error) {
       return { success: false, error: { code: 'FILE_WRITE_ERROR', message: errMsg(error) } };
     }

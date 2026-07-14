@@ -4,6 +4,7 @@
 import { z } from 'zod';
 import { V1_BASE_PATH } from './constants.js';
 import { createApiResponseSchema } from '../utils/schema.js';
+import { JobStartedResponseSchema } from './jobs.js';
 
 const CHAIN_ID_KEY = /^[1-9]\d*$/;
 const DECIMAL = /^\d+$/;
@@ -76,6 +77,14 @@ export interface WorkflowSummary {
   defaultChains?: number[];
   hooks?: string[];
 }
+
+export type WorkflowSourceReadiness = { id: string; status: 'ready' | 'cloning' | 'compiling' } | { id: string; status: 'failed'; reason: string };
+export type WorkflowPluginReadiness =
+  | { id: string; status: 'installed'; installedVersion: string }
+  | { id: string; status: 'version-mismatch'; installedVersion: string }
+  | { id: string; status: 'missing' }
+  | { id: string; status: 'untrusted'; installedVersion: string };
+export interface WorkflowResolveResult { sources: WorkflowSourceReadiness[]; plugins: WorkflowPluginReadiness[] }
 
 function jsonDepth(value: unknown, depth = 0): number {
   if (value === null || typeof value !== 'object') return depth;
@@ -176,10 +185,17 @@ const WorkflowGetResponseSchema = createApiResponseSchema<{ document: WorkflowDo
 const WorkflowPutResponseSchema = createApiResponseSchema<{ docHash: string }>('WorkflowPutResponseSchema')(z.object({ docHash: z.string().regex(SHA256_HEX) }).strict());
 const WorkflowPathQuerySchema = z.object({ pathOrUrl: z.string().min(1) }).strict();
 const WorkflowNameParamsSchema = z.object({ name: z.string().regex(WorkflowNamePattern) }).strict();
-const WorkflowPutBodySchema = z.object({ document: WorkflowDocumentSchema, baseDocHash: z.string().regex(SHA256_HEX).optional() }).strict();
+// Handler selects the schema factory at runtime so development mode can opt
+// into file:// pins without weakening committed production documents.
+const WorkflowPutBodySchema = z.object({ document: z.unknown(), baseDocHash: z.string().regex(SHA256_HEX).optional() }).strict();
+const WorkflowResolveBodySchema = z.object({ repoPathOrUrl: z.string().min(1), name: z.string().regex(WorkflowNamePattern) }).strict();
+const WorkflowApproveOriginsBodySchema = z.object({ origins: z.array(z.string().min(1)).min(1).max(64) }).strict();
+const WorkflowApproveOriginsResponseSchema = createApiResponseSchema<{ origins: string[] }>('WorkflowApproveOriginsResponseSchema')(z.object({ origins: z.array(z.string()) }).strict());
 
 export const workflowRoutes = {
   listWorkflows: { method: 'GET' as const, path: `${V1_BASE_PATH}/repos/workflows`, schema: { tags: ['repos'], querystring: WorkflowPathQuerySchema, response: { 200: WorkflowListResponseSchema } } },
   getWorkflow: { method: 'GET' as const, path: `${V1_BASE_PATH}/repos/workflows/:name`, schema: { tags: ['repos'], params: WorkflowNameParamsSchema, querystring: WorkflowPathQuerySchema, response: { 200: WorkflowGetResponseSchema } } },
   putWorkflow: { method: 'PUT' as const, path: `${V1_BASE_PATH}/repos/workflows/:name`, schema: { tags: ['repos'], params: WorkflowNameParamsSchema, querystring: WorkflowPathQuerySchema, body: WorkflowPutBodySchema, response: { 200: WorkflowPutResponseSchema } } },
+  resolveWorkflow: { method: 'POST' as const, path: `${V1_BASE_PATH}/workflows/resolve`, schema: { tags: ['workflows'], body: WorkflowResolveBodySchema, response: { 200: JobStartedResponseSchema } } },
+  approveWorkflowOrigins: { method: 'POST' as const, path: `${V1_BASE_PATH}/workflows/approve-origins`, schema: { tags: ['workflows'], body: WorkflowApproveOriginsBodySchema, response: { 200: WorkflowApproveOriginsResponseSchema } } },
 } as const;

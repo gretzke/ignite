@@ -205,12 +205,25 @@ export class RepoLifecycle {
       LIFECYCLE_JOB_TYPE,
       { pathOrUrl: worktree, mode: 'pinned', profileId, url, commit },
       async (ctx) => {
-        try { return await this.runLifecycle(worktree, profileId, 'pinned', ctx, { url, commit }); }
+        try { return await this.runPinnedLifecycle(url, commit, profileId, ctx); }
         finally { this.activeJobs.delete(worktree); }
       }
     );
     this.activeJobs.set(worktree, job.id);
     return job;
+  }
+
+  // Resolve orchestration awaits this directly. It intentionally does not
+  // create or poll a nested repo.lifecycle job; the outer workflow.resolve
+  // job owns progress, cancellation, and the final readiness result.
+  async runPinnedLifecycle(
+    url: string,
+    commit: string,
+    profileId: string,
+    ctx: JobContext
+  ): Promise<LifecycleResult> {
+    const worktree = this.deps.pinnedStore.worktreePath(profileId, url, commit);
+    return this.runLifecycle(worktree, profileId, 'pinned', ctx, { url, commit });
   }
 
   activeJobFor(pathOrUrl: string): string | undefined {
