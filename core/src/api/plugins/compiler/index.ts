@@ -9,6 +9,7 @@ import type {
   ArtifactListResult,
   GetArtifactDataRequest,
   ArtifactData,
+  ContractSource,
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import type { VerificationBundleData } from '@ignite/plugin-types/base/compiler';
@@ -17,6 +18,9 @@ import { PluginExecutor } from '../../../plugins/containers/PluginExecutor.js';
 import { PluginRegistryLoader } from '../../../assets/PluginRegistryLoader.js';
 import { JobManager } from '../../../jobs/JobManager.js';
 import { RepoService } from '../../../repos/RepoService.js';
+import { resolveContractWorkspace } from '../../../repos/workspaceResolver.js';
+import { PinnedStore } from '../../../repos/PinnedStore.js';
+import { ProfileManager } from '../../../filesystem/ProfileManager.js';
 import { getLogger } from '../../../utils/logger.js';
 import { ErrorCodes } from '../../../types/errors.js';
 import {
@@ -42,6 +46,7 @@ export interface CompilerJobManagerLike {
 
 export interface CompilerRepoServiceLike {
   resolveExistingWorkspacePath: RepoService['resolveExistingWorkspacePath'];
+  assertPinnedIntegrity?: RepoService['assertPinnedIntegrity'];
 }
 
 export interface CompilerHandlerDeps {
@@ -56,31 +61,26 @@ export interface CompilerHandlerDeps {
 // launch path from subtly diverging from `/artifacts/data`.
 export async function getCompilerArtifactData(
   deps: Pick<CompilerHandlerDeps, 'executor' | 'registryLoader' | 'repos'>,
-  input: GetArtifactDataRequest & { profileId?: string }
+  input: { contract: ContractSource; profileId: string }
 ): Promise<ArtifactData> {
+  const { contract } = input;
   let config;
   try {
-    config = await deps.registryLoader.getPluginConfig(input.pluginId);
+    config = await deps.registryLoader.getPluginConfig(contract.frameworkId);
   } catch {
-    throw Object.assign(new Error(`Unknown plugin: ${input.pluginId}`), {
+    throw Object.assign(new Error(`Unknown plugin: ${contract.frameworkId}`), {
       code: ErrorCodes.UNKNOWN_PLUGIN,
     });
   }
   if (!config.metadata.types.includes(PluginType.COMPILER)) {
     throw Object.assign(
-      new Error(`Plugin ${input.pluginId} is not a compiler plugin`),
+      new Error(`Plugin ${contract.frameworkId} is not a compiler plugin`),
       { code: ErrorCodes.NOT_A_COMPILER_PLUGIN }
     );
   }
   let workspacePath: string;
   try {
-    workspacePath =
-      input.profileId === undefined
-        ? await deps.repos.resolveExistingWorkspacePath(input.pathOrUrl)
-        : await deps.repos.resolveExistingWorkspacePath(
-            input.pathOrUrl,
-            input.profileId
-          );
+    workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, pinnedStore: new PinnedStore() });
   } catch (error) {
     throw Object.assign(
       new Error(
@@ -90,9 +90,9 @@ export async function getCompilerArtifactData(
     );
   }
   const result = await deps.executor.execute(
-    input.pluginId,
+    contract.frameworkId,
     'getArtifactData',
-    { pathOrUrl: input.pathOrUrl, artifactPath: input.artifactPath },
+    { pathOrUrl: contract.repoPathOrUrl, artifactPath: contract.artifactPath },
     { workspacePath }
   );
   if (!result.success) {
@@ -109,31 +109,26 @@ export async function getCompilerArtifactData(
 // plugin boundary.
 export async function getCompilerVerificationBundle(
   deps: Pick<CompilerHandlerDeps, 'executor' | 'registryLoader' | 'repos'>,
-  input: GetArtifactDataRequest & { profileId?: string }
+  input: { contract: ContractSource; profileId: string }
 ): Promise<VerificationBundleData> {
+  const { contract } = input;
   let config;
   try {
-    config = await deps.registryLoader.getPluginConfig(input.pluginId);
+    config = await deps.registryLoader.getPluginConfig(contract.frameworkId);
   } catch {
-    throw Object.assign(new Error(`Unknown plugin: ${input.pluginId}`), {
+    throw Object.assign(new Error(`Unknown plugin: ${contract.frameworkId}`), {
       code: ErrorCodes.UNKNOWN_PLUGIN,
     });
   }
   if (!config.metadata.types.includes(PluginType.COMPILER)) {
     throw Object.assign(
-      new Error(`Plugin ${input.pluginId} is not a compiler plugin`),
+      new Error(`Plugin ${contract.frameworkId} is not a compiler plugin`),
       { code: ErrorCodes.NOT_A_COMPILER_PLUGIN }
     );
   }
   let workspacePath: string;
   try {
-    workspacePath =
-      input.profileId === undefined
-        ? await deps.repos.resolveExistingWorkspacePath(input.pathOrUrl)
-        : await deps.repos.resolveExistingWorkspacePath(
-            input.pathOrUrl,
-            input.profileId
-          );
+    workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, pinnedStore: new PinnedStore() });
   } catch (error) {
     throw Object.assign(
       new Error(
@@ -143,9 +138,9 @@ export async function getCompilerVerificationBundle(
     );
   }
   const result = await deps.executor.execute(
-    input.pluginId,
+    contract.frameworkId,
     'getVerificationBundle',
-    { pathOrUrl: input.pathOrUrl, artifactPath: input.artifactPath },
+    { pathOrUrl: contract.repoPathOrUrl, artifactPath: contract.artifactPath },
     { workspacePath }
   );
   if (!result.success) {
@@ -464,13 +459,16 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<ArtifactData>> => {
       try {
-        const { pluginId, pathOrUrl, artifactPath } = request.body;
+        const { pluginId, pathOrUrl, artifactPath, pin } = request.body;
         const hostPath =
           pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
+        const profileId = (await ProfileManager.getInstance()).getCurrentProfile();
         const data = await getCompilerArtifactData(d, {
-          pluginId,
-          pathOrUrl: hostPath,
-          artifactPath,
+          profileId,
+          contract: {
+            id: 'artifact-data', repoPathOrUrl: hostPath, frameworkId: pluginId,
+            artifactPath, contractName: '', sourcePath: '', ...(pin ? { pin } : {}),
+          },
         });
 
         const body: IApiResponse<ArtifactData> = {

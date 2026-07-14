@@ -6,7 +6,7 @@ import {
   createApiResponseSchema,
   createRequestSchema,
 } from "../utils/schema.js";
-import type { ArgValues, ContractSource, Hex } from "./deployments.js";
+import { ContractSourceSchema, type ArgValues, type ContractSource, type Hex } from "./deployments.js";
 
 const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -112,14 +112,9 @@ export interface VerificationTaskParams {
   id: string;
 }
 
-const ContractSourceWireSchema = z.object({
-  id: z.string().min(1),
-  repoPathOrUrl: z.string().min(1),
-  frameworkId: z.string().min(1),
-  artifactPath: z.string().min(1),
-  contractName: z.string().min(1),
-  sourcePath: z.string().min(1),
-}) satisfies z.ZodType<ContractSource>;
+// z.lazy avoids the deployments↔verifications initialization cycle while
+// keeping one authoritative ContractSource wire schema.
+const ContractSourceWireSchema = z.lazy(() => ContractSourceSchema) satisfies z.ZodType<ContractSource>;
 
 export const VerificationStatusSchema = z.enum([
   "queued",

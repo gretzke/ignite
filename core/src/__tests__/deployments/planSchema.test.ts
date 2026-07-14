@@ -7,6 +7,12 @@ const salt = `0x${'11'.repeat(32)}`;
 const contract = { id: 'c', repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: 'out/C.json', contractName: 'C', sourcePath: 'src/C.sol' };
 
 describe('D5 plan wire schema', () => {
+  it('accepts matching source pins and rejects ambiguous repo identities', () => {
+    const pin = { url: 'https://example.test/repo.git', commit: 'a'.repeat(40), ref: 'v1', refKind: 'tag' as const };
+    const pinned = { ...contract, repoPathOrUrl: pin.url, pin };
+    expect(() => DeploymentPlanSchema.parse({ schemaVersion: 1, contracts: [pinned], steps: [{ id: 'deploy', kind: 'deploy', contractId: 'c' }], chains: [1], signers: {} })).not.toThrow();
+    expect(() => DeploymentPlanSchema.parse({ schemaVersion: 1, contracts: [{ ...pinned, repoPathOrUrl: 'https://other.test/repo.git' }], steps: [{ id: 'deploy', kind: 'deploy', contractId: 'c' }], chains: [1], signers: {} })).toThrow(/pin/i);
+  });
   it('keeps D3 deploy plans parseable and accepts calls, refs, and strategies', () => {
     const d3 = { schemaVersion: 1, contracts: [contract], steps: [{ id: 'deploy', kind: 'deploy', contractId: 'c' }], chains: [1], signers: {} };
     expect(DeploymentPlanSchema.parse(d3)).toEqual(d3);

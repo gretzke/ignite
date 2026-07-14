@@ -568,7 +568,7 @@ describe('compiler API handlers (jobs)', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(repos.resolveExistingWorkspacePath).toHaveBeenCalledWith('/repo');
+      expect(repos.resolveExistingWorkspacePath).toHaveBeenCalledWith('/repo', 'default');
       expect(executor.execute).toHaveBeenCalledWith(
         'waffle',
         'getArtifactData',

@@ -13,4 +13,5 @@ export interface GetArtifactDataRequest {
   pathOrUrl: string;
   pluginId: string;
   artifactPath: string;
+  pin?: import('../../deployments.js').ContractSourcePin;
 }

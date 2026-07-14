@@ -17,6 +17,20 @@ async function freeze(artifact: Record<string, unknown>) {
 }
 
 describe('ArtifactFreezeService runtime bytecode', () => {
+  it('passes the full pinned source to artifact reads and structurally forces repoDirty false', async () => {
+    const pinned: ContractSource = { ...contract, repoPathOrUrl: 'https://example.test/repo.git', pin: { url: 'https://example.test/repo.git', commit: 'a'.repeat(40) } };
+    const getArtifactData = vi.fn(async () => base as never);
+    const repoDirty = vi.fn(async () => true);
+    const frozen = await new ArtifactFreezeService({
+      getArtifactData,
+      getPluginConfig: async () => ({ metadata: { version: '1.0.0' } }) as never,
+      repoDirty,
+    }).freezeInputs('p1', [pinned]);
+    expect(getArtifactData).toHaveBeenCalledWith({ contract: pinned, profileId: 'p1' });
+    expect(repoDirty).not.toHaveBeenCalled();
+    expect(frozen.token.repoDirty).toBe(false);
+    expect(frozen.token.artifactHash).toMatch(/^[0-9a-f]{64}$/);
+  });
   it('captures valid runtime code and binds it into the artifact hash', async () => {
     const captured = await freeze(base);
     expect(captured.token).toMatchObject({ runtimeBytecode: '0x6001' });

@@ -19,15 +19,13 @@ import { getLogger } from '../utils/logger.js';
 
 export interface ArtifactFreezeDeps {
   getArtifactData: (input: {
-    pluginId: string;
-    pathOrUrl: string;
-    artifactPath: string;
+    contract: ContractSource;
     profileId: string;
   }) => Promise<ArtifactData>;
   getPluginConfig: PluginRegistryLoader['getPluginConfig'];
   repoDirty: (profileId: string, contract: ContractSource) => Promise<boolean>;
   getVerificationBundle: (input: {
-    pluginId: string; pathOrUrl: string; artifactPath: string; profileId: string;
+    contract: ContractSource; profileId: string;
   }) => Promise<import('@ignite/plugin-types/base/compiler').VerificationBundleData>;
   bundleStore: Pick<BundleStore, 'write'>;
 }
@@ -42,14 +40,14 @@ export class ArtifactFreezeService {
     this.deps = {
       getArtifactData:
         deps?.getArtifactData ??
-        (async ({ pluginId, pathOrUrl, artifactPath, profileId }) =>
+        (async ({ contract, profileId }) =>
           getCompilerArtifactData(
             {
               executor: PluginExecutor.getInstance(),
               registryLoader: registry,
               repos,
             },
-            { pluginId, pathOrUrl, artifactPath, profileId }
+            { contract, profileId }
           )),
       getPluginConfig:
         deps?.getPluginConfig ?? registry.getPluginConfig.bind(registry),
@@ -88,10 +86,10 @@ export class ArtifactFreezeService {
           }
         }),
       getVerificationBundle: deps?.getVerificationBundle ??
-        (async ({ pluginId, pathOrUrl, artifactPath, profileId }) =>
+        (async ({ contract, profileId }) =>
           getCompilerVerificationBundle(
             { executor: PluginExecutor.getInstance(), registryLoader: registry, repos },
-            { pluginId, pathOrUrl, artifactPath, profileId }
+            { contract, profileId }
           )),
       bundleStore: deps?.bundleStore ?? new BundleStore(),
     };
@@ -105,13 +103,11 @@ export class ArtifactFreezeService {
       contracts.map(async (contract) => {
         const [artifact, config, repoDirty] = await Promise.all([
           this.deps.getArtifactData({
-            pluginId: contract.frameworkId,
-            pathOrUrl: contract.repoPathOrUrl,
-            artifactPath: contract.artifactPath,
+            contract,
             profileId,
           }),
           this.deps.getPluginConfig(contract.frameworkId),
-          this.deps.repoDirty(profileId, contract),
+          contract.pin ? Promise.resolve(false) : this.deps.repoDirty(profileId, contract),
         ]);
         const hasLinks = hasLinkReferences(artifact.creationCodeLinkReferences);
         try {
@@ -191,9 +187,7 @@ export class ArtifactFreezeService {
         const input = frozen[contract.id];
         if (!input) throw new Error('Frozen input is missing');
         const data = await this.deps.getVerificationBundle({
-          pluginId: contract.frameworkId,
-          pathOrUrl: contract.repoPathOrUrl,
-          artifactPath: contract.artifactPath,
+          contract,
           profileId,
         });
         if (data.creationCode.toLowerCase() !== input.creationBytecode.toLowerCase()) {

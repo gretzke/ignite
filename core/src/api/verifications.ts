@@ -90,15 +90,11 @@ export function createVerificationHandlers(
         const { contract } = request.body;
         const [artifact, bundleData] = await Promise.all([
           getCompilerArtifactData(d.compiler, {
-            pluginId: contract.frameworkId,
-            pathOrUrl: contract.repoPathOrUrl,
-            artifactPath: contract.artifactPath,
+            contract,
             profileId,
           }),
           getCompilerVerificationBundle(d.compiler, {
-            pluginId: contract.frameworkId,
-            pathOrUrl: contract.repoPathOrUrl,
-            artifactPath: contract.artifactPath,
+            contract,
             profileId,
           }),
         ]);
@@ -199,15 +195,11 @@ export function createVerificationHandlers(
         const c = request.body.contract;
         const [artifact, bundle] = await Promise.all([
           getCompilerArtifactData(d.compiler, {
-            pluginId: c.frameworkId,
-            pathOrUrl: c.repoPathOrUrl,
-            artifactPath: c.artifactPath,
+            contract: c,
             profileId,
           }),
           getCompilerVerificationBundle(d.compiler, {
-            pluginId: c.frameworkId,
-            pathOrUrl: c.repoPathOrUrl,
-            artifactPath: c.artifactPath,
+            contract: c,
             profileId,
           }),
         ]);

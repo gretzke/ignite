@@ -60,6 +60,14 @@ export interface ContractSource {
   artifactPath: string;
   contractName: string;
   sourcePath: string;
+  pin?: ContractSourcePin;
+}
+
+export interface ContractSourcePin {
+  url: string;
+  commit: string;
+  ref?: string;
+  refKind?: 'tag' | 'branch';
 }
 
 export interface DeployStep {
@@ -134,6 +142,15 @@ export const GasOverridesSchema = z.object({
   maxPriorityFeePerGas: DecimalStringSchema.optional(),
 }) satisfies z.ZodType<GasOverrides>;
 
+export const ContractSourcePinSchema = z.object({
+  url: z.string().min(1),
+  commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
+  ref: z.string().min(1).optional(),
+  refKind: z.enum(['tag', 'branch']).optional(),
+}).superRefine((pin, ctx) => {
+  if (pin.ref !== undefined && pin.refKind === undefined) ctx.addIssue({ code: 'custom', message: 'refKind is required when ref is present', path: ['refKind'] });
+}) satisfies z.ZodType<ContractSourcePin>;
+
 export const ContractSourceSchema = z.object({
   id: z.string().min(1),
   repoPathOrUrl: z.string().min(1),
@@ -141,6 +158,9 @@ export const ContractSourceSchema = z.object({
   artifactPath: z.string().min(1),
   contractName: z.string().min(1),
   sourcePath: z.string().min(1),
+  pin: ContractSourcePinSchema.optional(),
+}).superRefine((source, ctx) => {
+  if (source.pin && source.repoPathOrUrl !== source.pin.url) ctx.addIssue({ code: 'custom', message: 'repoPathOrUrl must equal pin.url', path: ['pin', 'url'] });
 }) satisfies z.ZodType<ContractSource>;
 
 export const LinkReferencesWireSchema = z.record(

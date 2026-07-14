@@ -13,6 +13,7 @@ import type {
   ArtifactData,
   GetArtifactDataRequest,
 } from "./types.js";
+import { ContractSourcePinSchema } from "../../deployments.js";
 
 export * from "./types.js";
 
@@ -55,6 +56,7 @@ export const GetArtifactDataRequestSchema =
     PathShape.extend({
       pluginId: z.string(),
       artifactPath: z.string(),
+      pin: ContractSourcePinSchema.optional(),
     }),
   );
 
