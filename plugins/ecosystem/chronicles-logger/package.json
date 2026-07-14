@@ -1,0 +1,11 @@
+{
+  "name": "@ignite/chronicles-logger-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "npm run build && node --test test/*.test.mjs && node scripts/protocol-test.mjs"
+  }
+}
