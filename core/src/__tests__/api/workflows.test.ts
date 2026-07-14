@@ -68,6 +68,15 @@ describe('workflow discovery/read/save API', () => {
     expect(first.json().data.docHash).toMatch(/^[0-9a-f]{64}$/); expect(second.json().data.docHash).toBe(first.json().data.docHash);
   });
 
+  it('returns 404 for a missing workflow and 422 for an existing invalid document', async () => {
+    const base = `/api/v1/repos/workflows`;
+    expect((await app.inject({ method: 'GET', url: `${base}/missing?pathOrUrl=${encodeURIComponent(root)}` })).statusCode).toBe(404);
+    await write('invalid', JSON.stringify({ schemaVersion: 1 }));
+    const invalid = await app.inject({ method: 'GET', url: `${base}/invalid?pathOrUrl=${encodeURIComponent(root)}` });
+    expect(invalid.statusCode).toBe(422);
+    expect(invalid.json()).toMatchObject({ code: 'WORKFLOW_INVALID' });
+  });
+
   it('creates without CAS, requires CAS for updates, and rejects one of two concurrent stale-base writers', async () => {
     const url = `/api/v1/repos/workflows/valid?pathOrUrl=${encodeURIComponent(root)}`;
     const created = await app.inject({ method: 'PUT', url, payload: { document: document() } });

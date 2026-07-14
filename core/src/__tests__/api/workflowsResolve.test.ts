@@ -28,6 +28,7 @@ describe('workflow resolve and origin approval', () => {
       repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify(workflow) } })) } as never,
       jobs: { start: vi.fn((_type, _params, value) => { runner = value; return { id: 'job-1' }; }) } as never,
       lifecycle: lifecycle as never,
+      pinnedStore: { isOriginApproved: async () => true, approveOrigins: async () => {} } as never,
       getProfileId: async () => 'p1',
       pluginStatus: async (id) => id === 'missing' ? { id, status: 'missing' } : id === 'wrong-version' ? { id, status: 'version-mismatch', installedVersion: '1.0.0' } : id === 'untrusted' ? { id, status: 'untrusted', installedVersion: '1.0.0' } : { id, status: 'installed', installedVersion: '1.0.0' },
       artifactReadable: async () => true,
@@ -52,7 +53,7 @@ describe('workflow resolve and origin approval', () => {
       if (!approved) throw Object.assign(new Error('approval required'), { code: 'PINNED_ORIGIN_UNAPPROVED', origins: ['https://example.test'] });
       return { pathOrUrl: '/pin', frameworks: [{ id: 'foundry', name: 'Foundry' }] };
     });
-    const store = { approveOrigins: vi.fn(async () => { approved = true; }) };
+    const store = { isOriginApproved: vi.fn(async () => approved), approveOrigins: vi.fn(async () => { approved = true; }) };
     const handlers = createWorkflowHandlers({
       repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify({ ...workflow, requiredPlugins: [{ id: 'foundry', version: '1.0.0' }] }) } })) } as never,
       jobs: { start: vi.fn((_type, _params, value) => { runner = value; return { id: 'job-1' }; }) } as never,
@@ -60,11 +61,36 @@ describe('workflow resolve and origin approval', () => {
       pinnedStore: store as never,
       getProfileId: async () => 'p1', pluginStatus: async (id) => ({ id, status: 'installed', installedVersion: '1.0.0' }), artifactReadable: async () => true,
     });
-    await handlers.resolveWorkflow({ body: { repoPathOrUrl: '/workflow', name: 'test' } } as never, reply());
-    await expect(runner({ log: () => {}, signal: new AbortController().signal })).rejects.toMatchObject({ code: 'PINNED_ORIGIN_UNAPPROVED', details: { origins: ['https://example.test'] } });
+    const blocked = reply();
+    await handlers.resolveWorkflow({ body: { repoPathOrUrl: '/workflow', name: 'test' } } as never, blocked);
+    expect(blocked.body).toMatchObject({ code: 'PINNED_ORIGIN_UNAPPROVED', details: { origins: ['https://example.test'] } });
+    expect(runPinnedLifecycle).not.toHaveBeenCalled();
     const approveReply = reply();
     await handlers.approveWorkflowOrigins({ body: { origins: ['https://example.test'] } } as never, approveReply);
     expect(approveReply.statusCode).toBe(200); expect(store.approveOrigins).toHaveBeenCalledWith('p1', ['https://example.test']);
+    await handlers.resolveWorkflow({ body: { repoPathOrUrl: '/workflow', name: 'test' } } as never, reply());
     await expect(runner({ log: () => {}, signal: new AbortController().signal })).resolves.toMatchObject({ sources: [{ status: 'ready' }] });
+  });
+
+  it('fails before job start with every deduplicated unapproved source origin', async () => {
+    const jobs = { start: vi.fn() };
+    const document = {
+      ...workflow,
+      sources: [
+        workflow.sources[0],
+        { ...workflow.sources[0], id: 'd', repo: { url: 'https://second.test/other.git', commit: 'b'.repeat(40) }, contractName: 'D', sourcePath: 'src/D.sol', artifactPath: 'out/D.json' },
+      ],
+      steps: [{ id: 'deploy', kind: 'deploy', contractId: 'c' }, { id: 'deploy-d', kind: 'deploy', contractId: 'd' }],
+    };
+    const handlers = createWorkflowHandlers({
+      repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify(document) } })) } as never,
+      jobs: jobs as never,
+      pinnedStore: { isOriginApproved: vi.fn(async () => false), approveOrigins: vi.fn() } as never,
+      getProfileId: async () => 'p1',
+    });
+    const res = reply();
+    await handlers.resolveWorkflow({ body: { repoPathOrUrl: '/workflow', name: 'test' } } as never, res);
+    expect(res.body).toMatchObject({ code: 'PINNED_ORIGIN_UNAPPROVED', details: { origins: ['https://example.test', 'https://second.test'] } });
+    expect(jobs.start).not.toHaveBeenCalled();
   });
 });

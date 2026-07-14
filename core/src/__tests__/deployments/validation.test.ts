@@ -501,4 +501,45 @@ describe('validatePlan', () => {
     );
     expect(result.report.chains['1'].verification).toMatchObject({ ok: true });
   });
+
+  it('adds run-level workflow/output items and blocks pinned artifact drift', async () => {
+    const expected = 'a'.repeat(64);
+    const pinned = plan({ contracts: [{ ...plan().contracts[0], repoPathOrUrl: 'https://source.test/repo.git', pin: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) } }] });
+    const workflow = {
+      document: {
+        schemaVersion: 1, description: undefined,
+        sources: [{ id: 'token', repo: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) }, frameworkId: 'foundry', sourcePath: 'src/Token.sol', contractName: 'Token', artifactPath: 'out/Token.json', artifactHash: expected }],
+        steps: [{ id: 'deploy-token', kind: 'deploy', contractId: 'token' }],
+        defaultChains: undefined, requiredPlugins: [], outputs: { hooks: ['chronicles', 'missing'] },
+      },
+      binding: { repoPathOrUrl: '/workflow', name: 'release', docHash: 'e'.repeat(64), hooks: ['chronicles', 'missing'] },
+    };
+    const result = await validatePlan(pinned, { '1': 'rpc-1' }, deps({
+      workflow,
+      resolveHookStatus: vi.fn(async (id: string) => id === 'chronicles' ? 'ready' : 'missing'),
+    }));
+    expect(result.report.run?.workflow).toMatchObject({ ok: true, blocking: false });
+    expect(result.report.run?.outputs).toMatchObject({ ok: false, blocking: false, code: 'WORKFLOW_HOOKS_UNAVAILABLE', details: { pluginIds: ['missing'] } });
+    expect(result.report.chains['1'].inputs).toMatchObject({ ok: false, blocking: true, code: 'WORKFLOW_ARTIFACT_DRIFT', details: { drifts: [{ sourceId: 'token', expected, actual: HASH }] } });
+  });
+
+  it('honors only a fresh artifact-drift acknowledgement and re-blocks either stale side', async () => {
+    const expected = 'a'.repeat(64);
+    const pinned = plan({ contracts: [{ ...plan().contracts[0], repoPathOrUrl: 'https://source.test/repo.git', pin: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) } }] });
+    const document = {
+      schemaVersion: 1, sources: [{ id: 'token', repo: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) }, frameworkId: 'foundry', sourcePath: 'src/Token.sol', contractName: 'Token', artifactPath: 'out/Token.json', artifactHash: expected }],
+      steps: [{ id: 'deploy-token', kind: 'deploy', contractId: 'token' }], requiredPlugins: [], outputs: { hooks: [] },
+    };
+    const validate = (acknowledgeArtifactDrift: Record<string, { expected: string; actual: string }>) => validatePlan(pinned, { '1': 'rpc-1' }, deps({
+      workflow: { document, binding: { repoPathOrUrl: '/workflow', name: 'release', docHash: 'e'.repeat(64), hooks: [], acknowledgeArtifactDrift } },
+    }));
+    await expect(validate({ token: { expected, actual: HASH } })).resolves.toMatchObject({ report: { chains: { '1': { inputs: { ok: true } } } } });
+    for (const ack of [
+      { token: { expected: 'f'.repeat(64), actual: HASH } },
+      { token: { expected, actual: 'f'.repeat(64) } },
+    ]) {
+      const result = await validate(ack);
+      expect(result.report.chains['1'].inputs).toMatchObject({ ok: false, blocking: true, code: 'WORKFLOW_ARTIFACT_DRIFT' });
+    }
+  });
 });

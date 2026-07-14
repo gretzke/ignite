@@ -17,7 +17,7 @@ import {
 import { RepoService } from '../repos/RepoService.js';
 import { JobManager, type JobContext } from '../jobs/JobManager.js';
 import { RepoLifecycle } from '../repos/RepoLifecycle.js';
-import { PinnedStore } from '../repos/PinnedStore.js';
+import { PinnedStore, pinnedOrigin } from '../repos/PinnedStore.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { TrustManager } from '../plugins/trust/TrustManager.js';
@@ -32,14 +32,14 @@ export interface WorkflowHandlerDeps {
   devMode: () => boolean;
   jobs: Pick<JobManager, 'start'>;
   lifecycle: Pick<RepoLifecycle, 'runPinnedLifecycle'>;
-  pinnedStore: Pick<PinnedStore, 'approveOrigins'>;
+  pinnedStore: Pick<PinnedStore, 'approveOrigins' | 'isOriginApproved'>;
   getProfileId: () => Promise<string>;
   pluginStatus: (id: string, requiredVersion: string) => Promise<WorkflowPluginReadiness>;
   artifactReadable: (source: WorkflowSource, profileId: string) => Promise<boolean>;
 }
 
-class WorkflowHttpError extends Error {
-  constructor(readonly statusCode: 400 | 404 | 409 | 422, readonly code: string, message: string) { super(message); }
+export class WorkflowHttpError extends Error {
+  constructor(readonly statusCode: 400 | 404 | 409 | 422, readonly code: string, message: string, readonly details?: Record<string, unknown>) { super(message); }
 }
 
 function hash(raw: string): string { return crypto.createHash('sha256').update(raw).digest('hex'); }
@@ -49,17 +49,32 @@ function parseDocument(raw: string, allowFileUrls: boolean): WorkflowDocument {
   let value: unknown;
   try { value = JSON.parse(raw); }
   catch (error) { throw new WorkflowHttpError(422, 'WORKFLOW_JSON_INVALID', error instanceof Error ? error.message : String(error)); }
-  const document = makeWorkflowDocumentSchema({ allowFileUrls }).parse(value);
+  const parsed = makeWorkflowDocumentSchema({ allowFileUrls }).safeParse(value);
+  if (!parsed.success) throw new WorkflowHttpError(422, 'WORKFLOW_INVALID', parsed.error.message);
+  const document = parsed.data;
   const missing = validateWorkflowClosure(document);
   if (missing.length > 0) throw new WorkflowHttpError(422, 'WORKFLOW_CLOSURE_INVALID', `Missing required plugin ids: ${missing.join(', ')}`);
   return document;
 }
 function fail(reply: FastifyReply, error: unknown) {
   const known = error instanceof WorkflowHttpError ? error : new WorkflowHttpError(404, 'REPO_NOT_FOUND', error instanceof Error ? error.message : String(error));
-  return reply.status(known.statusCode).send({ statusCode: known.statusCode, error: known.statusCode === 404 ? 'Not Found' : known.statusCode === 409 ? 'Conflict' : known.statusCode === 422 ? 'Unprocessable Entity' : 'Bad Request', code: known.code, message: known.message });
+  return reply.status(known.statusCode).send({ statusCode: known.statusCode, error: known.statusCode === 404 ? 'Not Found' : known.statusCode === 409 ? 'Conflict' : known.statusCode === 422 ? 'Unprocessable Entity' : 'Bad Request', code: known.code, message: known.message, ...(known.details ? { details: known.details } : {}) });
 }
 function validateName(name: string): void {
   if (!WorkflowNamePattern.test(name)) throw new WorkflowHttpError(400, 'WORKFLOW_NAME_INVALID', 'Workflow name is invalid');
+}
+
+export async function readWorkflowDocument(
+  repos: Pick<RepoService, 'getFile'>,
+  pathOrUrl: string,
+  name: string,
+  allowFileUrls: boolean,
+): Promise<{ document: WorkflowDocument; raw: string; docHash: string }> {
+  validateName(name);
+  const result = await repos.getFile(pathOrUrl, relPath(name));
+  if (!result.success) throw new WorkflowHttpError(result.error.code === 'FILE_NOT_FOUND' ? 404 : 400, result.error.code, result.error.message);
+  const raw = result.data.content;
+  return { document: parseDocument(raw, allowFileUrls), raw, docHash: hash(raw) };
 }
 
 export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
@@ -122,11 +137,7 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<{ document: WorkflowDocument; raw: string; docHash: string }>> => {
       try {
-        validateName(request.params.name);
-        const result = await d.repos.getFile(request.query.pathOrUrl, relPath(request.params.name));
-        if (!result.success) throw new WorkflowHttpError(result.error.code === 'FILE_NOT_FOUND' ? 404 : 400, result.error.code, result.error.message);
-        const raw = result.data.content;
-        return reply.status(200).send({ data: { document: parseDocument(raw, d.devMode()), raw, docHash: hash(raw) } });
+        return reply.status(200).send({ data: await readWorkflowDocument(d.repos, request.query.pathOrUrl, request.params.name, d.devMode()) });
       } catch (error) { return fail(reply, error); }
     },
 
@@ -162,11 +173,14 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<JobStartedData>> => {
       try {
-        validateName(request.body.name);
-        const file = await d.repos.getFile(request.body.repoPathOrUrl, relPath(request.body.name));
-        if (!file.success) throw new WorkflowHttpError(file.error.code === 'FILE_NOT_FOUND' ? 404 : 400, file.error.code, file.error.message);
-        const document = parseDocument(file.data.content, d.devMode());
+        const { document } = await readWorkflowDocument(d.repos, request.body.repoPathOrUrl, request.body.name, d.devMode());
         const profileId = await d.getProfileId();
+        const origins = new Map<string, string>();
+        for (const source of document.sources) origins.set(pinnedOrigin(source.repo.url), source.repo.url);
+        const unapproved = (await Promise.all([...origins].map(async ([origin, url]) => ({ origin, approved: await d.pinnedStore.isOriginApproved(profileId, url) }))))
+          .filter((entry) => !entry.approved)
+          .map((entry) => entry.origin);
+        if (unapproved.length > 0) throw new WorkflowHttpError(409, 'PINNED_ORIGIN_UNAPPROVED', 'Pinned origin approval required', { origins: unapproved });
         const job = d.jobs.start('workflow.resolve', { repoPathOrUrl: request.body.repoPathOrUrl, name: request.body.name }, async (ctx): Promise<WorkflowResolveResult> => {
           const sources: WorkflowResolveResult['sources'] = [];
           for (const source of document.sources) {

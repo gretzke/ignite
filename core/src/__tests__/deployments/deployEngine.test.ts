@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -427,6 +427,17 @@ describe('DeployEngine', () => {
     ]);
     expect(a.id).toBe(b.id);
     expect((await harness.store.list('p1')).runs).toHaveLength(1);
+  });
+
+  it('persists the server-resolved workflow binding and passes its document to validation', async () => {
+    const validate = vi.fn(async (plan: DeploymentPlan) => validated(plan));
+    const harness = makeEngine({ validate });
+    const plan = makePlan({ chains: [1] });
+    const workflow = { repoPathOrUrl: '/workflow', name: 'release', docHash: HASH, hooks: ['chronicles'] };
+    const workflowDocument = { schemaVersion: 1, sources: [], steps: [], requiredPlugins: [], outputs: { hooks: ['chronicles'] } };
+    const run = await harness.engine.launch({ profileId: 'p1', plan, rpcSelection: { '1': 'rpc' }, idempotencyKey: 'workflow', workflow, workflowDocument } as never);
+    expect(run.workflow).toEqual(workflow);
+    expect(validate).toHaveBeenCalledWith(plan, { '1': 'rpc' }, expect.objectContaining({ workflow: { binding: workflow, document: workflowDocument } }));
   });
 
   it('pauses with write-failure and never broadcasts when the intent write fails', async () => {
@@ -948,6 +959,18 @@ describe('DeployEngine', () => {
     await expect(
       launchDefault(harness, makePlan({ chains: [1] }))
     ).rejects.toMatchObject({ code: ErrorCodes.DEPLOYMENT_VALIDATION_FAILED });
+    expect((await harness.store.list('p1')).runs).toHaveLength(0);
+  });
+
+  it('rejects a launch whose run-level validation has a blocking failure', async () => {
+    const harness = makeEngine({
+      validate: async (plan) => {
+        const result = validated(plan);
+        (result.report as typeof result.report & { run: object }).run = { workflow: { ok: false, blocking: true, message: 'binding failed' } };
+        return result;
+      },
+    });
+    await expect(launchDefault(harness, makePlan({ chains: [1] }))).rejects.toMatchObject({ code: ErrorCodes.DEPLOYMENT_VALIDATION_FAILED });
     expect((await harness.store.list('p1')).runs).toHaveLength(0);
   });
 });

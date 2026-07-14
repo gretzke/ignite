@@ -13,6 +13,10 @@ import type {
   RunRecord,
   ValidateDeploymentData,
   ValidateDeploymentRequest,
+  WorkflowDocument,
+  WorkflowRunBinding,
+  WorkflowRunRequest,
+  ExternalResolution,
 } from '@ignite/api';
 import {
   effectiveSalt,
@@ -24,7 +28,7 @@ import {
   buildRuntimeCode,
   predictPlanAddresses,
 } from '../deployments/schedule.js';
-import { validateDependencies } from '../deployments/resolver.js';
+import { mergeArgs, mergeCallTarget, mergeLibraries, validateDependencies } from '../deployments/resolver.js';
 import { ArtifactFreezeService } from '../deployments/ArtifactFreezeService.js';
 import { DeploymentTypeService } from '../deployments/DeploymentTypeService.js';
 import { renderArtifact } from '../deployments/artifact.js';
@@ -33,6 +37,8 @@ import { DeployEngine } from '../deployments/DeployEngine.js';
 import { ErrorCodes, IgniteError } from '../types/errors.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { sendCaughtError } from './utils/errors.js';
+import { RepoService } from '../repos/RepoService.js';
+import { WorkflowHttpError, readWorkflowDocument } from './workflows.js';
 
 type ProfileSource = { getCurrentProfile(): string };
 type RunIdParams = { runId: string };
@@ -48,6 +54,7 @@ export interface DeploymentHandlerDeps {
         opts?: {
           profileId?: string;
           explorerSelection?: Record<string, string[]>;
+          workflow?: { document: WorkflowDocument; binding: WorkflowRunBinding };
         }
       ) => Promise<{ report: ValidateDeploymentData; frozen: unknown }>;
   getRun: (profileId: string, runId: string) => Promise<RunRecord | undefined>;
@@ -63,6 +70,7 @@ export interface DeploymentHandlerDeps {
     contracts: PrepareStepRequest['contracts']
   ) => Promise<import('@ignite/api').FrozenInputs>;
   deploymentTypes: Pick<DeploymentTypeService, 'prepare'>;
+  readWorkflow: (repoPathOrUrl: string, name: string) => Promise<{ document: WorkflowDocument; raw: string; docHash: string }>;
 }
 
 export function createDeploymentHandlers(
@@ -97,6 +105,8 @@ export function createDeploymentHandlers(
         new ArtifactFreezeService().freezeInputs(profile, contracts)),
     deploymentTypes:
       deps?.deploymentTypes ?? DeploymentTypeService.getInstance(),
+    readWorkflow:
+      deps?.readWorkflow ?? ((repoPathOrUrl, name) => readWorkflowDocument(RepoService.getInstance(), repoPathOrUrl, name, process.env.NODE_ENV === 'development')),
   };
   const profileId = async () =>
     (await d.getProfileManager()).getCurrentProfile();
@@ -110,6 +120,9 @@ export function createDeploymentHandlers(
         message,
       });
   const deploymentError = (reply: FastifyReply, error: unknown): any => {
+    if (error instanceof WorkflowHttpError) {
+      return reply.status(error.statusCode).send({ statusCode: error.statusCode, error: error.statusCode === 404 ? 'Not Found' : error.statusCode === 422 ? 'Unprocessable Entity' : error.statusCode === 409 ? 'Conflict' : 'Bad Request', code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) });
+    }
     if (error instanceof IgniteError) {
       const status =
         error.code === ErrorCodes.PLUGIN_PREPARE_MISMATCH
@@ -141,18 +154,28 @@ export function createDeploymentHandlers(
       'Deployment request failed'
     );
   };
+  const workflowContext = async (workflow: WorkflowRunRequest | undefined, plan: ValidateDeploymentRequest['plan']) => {
+    if (!workflow) return undefined;
+    const read = await d.readWorkflow(workflow.repoPathOrUrl, workflow.name);
+    const undeclared = workflow.hooks.filter((hook) => !read.document.outputs.hooks.includes(hook));
+    if (undeclared.length > 0) throw new IgniteError('Selected hooks are not declared by the workflow', 'WORKFLOW_HOOK_NOT_DECLARED', { pluginIds: undeclared });
+    validateExternalResolutions(plan, workflow.resolutions ?? []);
+    return { document: read.document, binding: { ...workflow, docHash: read.docHash } };
+  };
   return {
     validateDeployment: async (
       request: FastifyRequest<{ Body: ValidateDeploymentRequest }>,
       reply: FastifyReply
     ): Promise<IApiResponse<ValidateDeploymentData>> => {
       try {
+        const workflow = await workflowContext(request.body.workflow, request.body.plan);
         const result = await d.validate(
           request.body.plan,
           request.body.rpcSelection,
           {
             profileId: await profileId(),
             explorerSelection: request.body.explorerSelection,
+            ...(workflow ? { workflow } : {}),
           }
         );
         return reply
@@ -162,6 +185,7 @@ export function createDeploymentHandlers(
               chains: result.report.chains,
               frozenCandidates:
                 result.frozen as ValidateDeploymentData['frozenCandidates'],
+              ...(result.report.run ? { run: result.report.run } : {}),
             },
           });
       } catch (error) {
@@ -297,9 +321,15 @@ export function createDeploymentHandlers(
       reply: FastifyReply
     ): Promise<IApiResponse<CreateRunData>> => {
       try {
+        const workflow = await workflowContext(request.body.workflow, request.body.plan);
         const run = await engine().launch({
           profileId: await profileId(),
-          ...request.body,
+          plan: request.body.plan,
+          rpcSelection: request.body.rpcSelection,
+          explorerSelection: request.body.explorerSelection,
+          name: request.body.name,
+          idempotencyKey: request.body.idempotencyKey,
+          ...(workflow ? { workflow: workflow.binding, workflowDocument: workflow.document } : {}),
         });
         return reply.status(200).send({ data: { run } });
       } catch (error) {
@@ -424,6 +454,33 @@ export function createDeploymentHandlers(
 }
 
 export const deploymentHandlers = createDeploymentHandlers();
+
+function validateExternalResolutions(plan: ValidateDeploymentRequest['plan'], resolutions: ExternalResolution[]): void {
+  for (const resolution of resolutions) {
+    const step = plan.steps.find((candidate) => candidate.id === resolution.stepId);
+    let value: unknown;
+    if (!step || !plan.chains.includes(resolution.chainId)) {
+      throw new IgniteError('Workflow resolution does not name a submitted step and chain', 'WORKFLOW_RESOLUTION_MISMATCH', { stepId: resolution.stepId, chainId: resolution.chainId, path: resolution.path });
+    }
+    const tokens = resolution.path.slice(1).split('/').map((token) => token.replaceAll('~1', '/').replaceAll('~0', '~'));
+    if (tokens[0] === 'target' && tokens.length === 1 && step.kind === 'call') {
+      const target = mergeCallTarget(step, resolution.chainId);
+      value = target.kind === 'address' ? target.address : undefined;
+    } else if (tokens[0] === 'libraries' && tokens.length === 2 && step.kind === 'deploy') {
+      const binding = mergeLibraries(step, resolution.chainId)[tokens[1]];
+      value = binding?.kind === 'address' ? binding.address : undefined;
+    } else if (tokens[0] === 'args' && tokens.length > 1) {
+      value = mergeArgs(step, resolution.chainId);
+      for (const token of tokens.slice(1)) {
+        if (value === null || typeof value !== 'object' || !Object.prototype.hasOwnProperty.call(value, token)) { value = undefined; break; }
+        value = (value as Record<string, unknown>)[token];
+      }
+    }
+    if (typeof value !== 'string' || value.toLowerCase() !== resolution.address.toLowerCase()) {
+      throw new IgniteError('Workflow resolution does not match the submitted per-chain plan value', 'WORKFLOW_RESOLUTION_MISMATCH', { stepId: resolution.stepId, chainId: resolution.chainId, path: resolution.path });
+    }
+  }
+}
 
 function mapPreparePointerError(
   error: unknown,

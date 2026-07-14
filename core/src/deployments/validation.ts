@@ -16,6 +16,8 @@ import type {
   ValidationReport,
   ExplorerTargetSnapshot,
   Hex32,
+  WorkflowDocument,
+  WorkflowRunBinding,
 } from '@ignite/api';
 import { CREATE2_PROXY_ADDRESS, CREATE2_PROXY_RUNTIME_HASH } from '@ignite/api';
 import { ArtifactFreezeService } from './ArtifactFreezeService.js';
@@ -52,7 +54,7 @@ import {
   TrustManager,
   type PermissionGrant,
 } from '../plugins/trust/TrustManager.js';
-import type { PluginMetadata } from '@ignite/plugin-types/types';
+import { PluginType, type PluginMetadata } from '@ignite/plugin-types/types';
 
 type Endpoint = { id: string; label?: string; url: string; stored?: boolean };
 
@@ -148,6 +150,8 @@ export interface ValidationDeps {
     rpcUrl: string;
     chainId: number;
   }) => Promise<ForkRunner | undefined>;
+  workflow?: { document: WorkflowDocument; binding: WorkflowRunBinding };
+  resolveHookStatus: (pluginId: string) => Promise<'ready' | 'missing' | 'untrusted'>;
 }
 
 export async function validatePlan(
@@ -175,6 +179,7 @@ export async function validatePlan(
         plan,
         rpcSelection,
         explorerSelection: overrides?.explorerSelection ?? {},
+        workflow: overrides?.workflow,
       })
     )
     .digest('hex');
@@ -246,6 +251,7 @@ async function validatePlanOnce(
     string,
     Record<string, { predictedAddress: Hex; initcodeHash: Hex32; salt: Hex32 }>
   > = {};
+  const run = deps.workflow ? await validateWorkflowRun(deps.workflow.binding, deps.resolveHookStatus) : undefined;
   for (const chainId of plan.chains) {
     const key = String(chainId);
     const endpointId = rpcSelection[key];
@@ -253,16 +259,7 @@ async function validatePlanOnce(
       ? await deps.resolveRpcEndpoint(chainId, endpointId)
       : undefined;
     const rpc = await validateRpc(chainId, endpoint, deps, bindings);
-    const inputs = freezeError
-      ? failure(
-          codeOf(freezeError, 'ARTIFACT_DATA_ERROR'),
-          safeMessage(freezeError, 'Contract inputs could not be frozen')
-        )
-      : success(
-          Object.values(frozen).some((input) => input.repoDirty)
-            ? 'Inputs frozen; repository changes were detected'
-            : 'Inputs frozen'
-        );
+    const inputs = validateFrozenInputs(plan, frozen, freezeError, deps.workflow);
     const signerResults = validateSigners(
       plan,
       chainId,
@@ -321,7 +318,7 @@ async function validatePlanOnce(
     };
   }
   return {
-    report: { chains },
+    report: { chains, ...(run ? { run } : {}) },
     frozen,
     rpcBindings: bindings,
     explorerTargets,
@@ -375,7 +372,61 @@ function defaultDeps(): ValidationDeps {
     }),
     deploymentTypes: DeploymentTypeService.getInstance(),
     makeForkRunner,
+    resolveHookStatus: async (pluginId) => {
+      let config;
+      try { config = await registry.getPluginConfig(pluginId); }
+      catch { return 'missing'; }
+      if (!config.metadata.types.includes(PluginType.DEPLOYMENT_HOOK)) return 'missing';
+      return (await trust.getGrant(pluginId)).trust === 'untrusted' ? 'untrusted' : 'ready';
+    },
   };
+}
+
+function validateFrozenInputs(
+  plan: DeploymentPlan,
+  frozen: FrozenInputs,
+  freezeError: unknown,
+  workflow: ValidationDeps['workflow'],
+): ValidationItem {
+  if (freezeError) return failure(codeOf(freezeError, 'ARTIFACT_DATA_ERROR'), safeMessage(freezeError, 'Contract inputs could not be frozen'));
+  const drifts: Array<{ sourceId: string; expected: string; actual: string }> = [];
+  if (workflow) {
+    const sources = new Map(workflow.document.sources.map((source) => [source.id, source]));
+    for (const contract of plan.contracts) {
+      if (!contract.pin) continue;
+      const expected = sources.get(contract.id)?.artifactHash;
+      const actual = frozen[contract.id]?.artifactHash;
+      if (!expected || !actual || expected === actual) continue;
+      const acknowledgement = workflow.binding.acknowledgeArtifactDrift?.[contract.id];
+      if (acknowledgement?.expected === expected && acknowledgement.actual === actual) continue;
+      drifts.push({ sourceId: contract.id, expected, actual });
+    }
+  }
+  if (drifts.length > 0) return failure('WORKFLOW_ARTIFACT_DRIFT', 'Frozen artifact hashes differ from the workflow document', { drifts });
+  const pinned = plan.contracts.filter((contract) => contract.pin).map((contract) => ({ sourceId: contract.id, pin: `${contract.pin!.url}@${contract.pin!.ref ?? contract.pin!.commit.slice(0, 12)}`, commit: contract.pin!.commit.slice(0, 12) }));
+  const dirty = Object.values(frozen).some((input) => input.repoDirty);
+  return success(dirty ? 'Inputs frozen; repository changes were detected' : 'Inputs frozen', pinned.length ? { pinned } : undefined);
+}
+
+async function validateWorkflowRun(
+  binding: WorkflowRunBinding,
+  resolveHookStatus: ValidationDeps['resolveHookStatus'],
+): Promise<NonNullable<ValidationReport['run']>> {
+  const run: NonNullable<ValidationReport['run']> = {
+    workflow: success('Workflow binding validated', { name: binding.name, docHash: binding.docHash }),
+  };
+  if (binding.hooks.length === 0) return run;
+  const unavailable: string[] = [];
+  for (const pluginId of binding.hooks) {
+    let status: 'ready' | 'missing' | 'untrusted';
+    try { status = await resolveHookStatus(pluginId); }
+    catch { status = 'missing'; }
+    if (status !== 'ready') unavailable.push(pluginId);
+  }
+  run.outputs = unavailable.length
+    ? warning('WORKFLOW_HOOKS_UNAVAILABLE', 'Some selected deployment hooks are missing or untrusted', { pluginIds: unavailable })
+    : success('Selected deployment hooks are installed and trusted');
+  return run;
 }
 
 async function validateVerification(

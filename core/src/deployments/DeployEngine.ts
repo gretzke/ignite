@@ -8,6 +8,8 @@ import type {
   RpcSelection,
   RunEvent,
   RunRecord,
+  WorkflowDocument,
+  WorkflowRunBinding,
 } from '@ignite/api';
 import { allowedActions, CREATE2_PROXY_ADDRESS } from '@ignite/api';
 import { RpcProviderService } from '../chains/RpcProviderService.js';
@@ -88,7 +90,7 @@ export interface DeployEngineDeps {
   validate: (
     plan: DeploymentPlan,
     rpc: RpcSelection,
-    deps?: { profileId?: string; explorerSelection?: Record<string, string[]> }
+    deps?: { profileId?: string; explorerSelection?: Record<string, string[]>; workflow?: { document: WorkflowDocument; binding: WorkflowRunBinding } }
   ) => ReturnType<typeof validatePlan>;
   writeArtifact: (run: RunRecord) => Promise<unknown>;
   getReceipt: (url: string, hash: Hex) => Promise<Receipt | undefined>;
@@ -200,6 +202,8 @@ export class DeployEngine {
     explorerSelection?: Record<string, string[]>;
     name?: string;
     idempotencyKey: string;
+    workflow?: WorkflowRunBinding;
+    workflowDocument?: WorkflowDocument;
   }): Promise<RunRecord> {
     return this.queued(this.launches, args.profileId, async () => {
       const existing = await this.deps.runStore.findByIdempotencyKey(
@@ -210,11 +214,12 @@ export class DeployEngine {
       const validated = await this.deps.validate(args.plan, args.rpcSelection, {
         profileId: args.profileId,
         explorerSelection: args.explorerSelection,
+        ...(args.workflow && args.workflowDocument ? { workflow: { binding: args.workflow, document: args.workflowDocument } } : {}),
       });
       if (
         Object.values(validated.report.chains).some((checklist) =>
           Object.values(checklist).some((item) => item.blocking && !item.ok)
-        )
+        ) || Object.values(validated.report.run ?? {}).some((item) => item?.blocking && !item.ok)
       ) {
         throw new IgniteError(
           'Deployment validation contains blocking failures',
@@ -237,6 +242,7 @@ export class DeployEngine {
           ? { explorerTargets: validated.explorerTargets }
           : {}),
         validation: validated.report,
+        ...(args.workflow ? { workflow: globalThis.structuredClone(args.workflow) } : {}),
         ...(Object.keys(validated.report.chains).length
           ? { simulationTiers: Object.fromEntries(Object.entries(validated.report.chains).flatMap(([key, checklist]) => {
               const tier = (checklist.simulation?.details as { tier?: 'simulateV1' | 'fork' | 'estimate' } | undefined)?.tier;
@@ -760,7 +766,7 @@ export class DeployEngine {
   async validatePlan(
     plan: DeploymentPlan,
     rpc: RpcSelection,
-    opts?: { profileId?: string }
+    opts?: { profileId?: string; explorerSelection?: Record<string, string[]>; workflow?: { document: WorkflowDocument; binding: WorkflowRunBinding } }
   ) {
     return this.deps.validate(plan, rpc, opts);
   }
