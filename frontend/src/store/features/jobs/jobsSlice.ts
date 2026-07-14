@@ -9,6 +9,7 @@ const MAX_LOG_LINES = 500;
 export interface IJobError {
   code: string;
   message: string;
+  details?: unknown;
 }
 
 // Client-side view of a job. Note: JobRecord.result/error are only ever
@@ -59,7 +60,7 @@ function jobRecordToView(job: JobRecord): JobView {
     logTail: cappedLogTail,
     result: job.result,
     error: job.error
-      ? { code: job.error.code, message: job.error.message }
+      ? { code: job.error.code, message: job.error.message, details: job.error.details }
       : undefined,
   };
 }

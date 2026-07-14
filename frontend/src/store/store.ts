@@ -27,6 +27,7 @@ import { jobsEffects } from './middleware/jobsEffects';
 import { deploymentsEffects } from './middleware/deploymentsEffects';
 import { explorersReducer } from './features/explorers/explorersSlice';
 import { verificationsReducer } from './features/verifications/verificationsSlice';
+import { workflowsReducer } from './features/workflows/workflowsSlice';
 import { verificationsEffects } from './middleware/verificationsEffects';
 import {
   loadDraft,
@@ -53,6 +54,7 @@ export const store = configureStore({
     deployments: deploymentsReducer,
     explorers: explorersReducer,
     verifications: verificationsReducer,
+    workflows: workflowsReducer,
   },
   preloadedState: persistedDraft ? { deployDraft: persistedDraft } : undefined,
   middleware: (getDefaultMiddleware) =>

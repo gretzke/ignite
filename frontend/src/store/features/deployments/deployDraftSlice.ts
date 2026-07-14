@@ -5,6 +5,8 @@ import type {
   LibraryBinding,
   SignerCascade,
   SignerRef,
+  ExternalResolution,
+  WorkflowDocument,
 } from '@ignite/api';
 import type {
   DraftCallStep,
@@ -16,6 +18,7 @@ import type {
   SetArgPayload,
   SetChainArgOverridePayload,
 } from './types';
+import { cloneJson } from '../../../utils/cloneJson';
 
 const initialState: DeployDraftState = {
   contracts: [],
@@ -194,6 +197,76 @@ const deployDraftSlice = createSlice({
   name: 'deployDraft',
   initialState,
   reducers: {
+    hydrateWorkflowDraft(_state, action: PayloadAction<{ repoPathOrUrl: string; name: string; docHash: string; document: WorkflowDocument }>) {
+      const { repoPathOrUrl, name, docHash, document } = action.payload;
+      const deployExtras: DeployDraftState['deployExtras'] = {};
+      const steps: DraftStep[] = document.steps.map((step) => {
+        if (step.kind === 'call') return { ...step, target: { ...step.target }, targetPerChain: step.targetPerChain ? { ...step.targetPerChain } : undefined } as unknown as DraftStep;
+        const { strategy, libraries, librariesPerChain, ...draftStep } = step;
+        deployExtras[step.id] = {
+          strategy: strategy ? { ...strategy } as DraftDeployExtras['strategy'] : { kind: 'create' },
+          ...(libraries ? { libraries: { ...libraries } } : {}),
+          ...(librariesPerChain ? { librariesPerChain: cloneJson(librariesPerChain) } : {}),
+          ...(strategy && 'acknowledgeDeployed' in strategy && strategy.acknowledgeDeployed ? { acknowledged: { ...strategy.acknowledgeDeployed } } : {}),
+          ...(strategy?.kind === 'plugin' && strategy.prepared ? {
+            prepared: Object.fromEntries(Object.entries(strategy.prepared).map(([chainId, prepared]) => [chainId, {
+              ...prepared,
+              salt: strategy.saltPerChain?.[chainId] ?? strategy.salt ?? (`0x${'0'.repeat(64)}` as Hex32),
+              notes: [],
+            }]))
+          } : {}),
+        } as unknown as DraftDeployExtras;
+        return draftStep as DraftStep;
+      });
+      return {
+        ...initialState,
+        contracts: document.sources.map((source) => ({
+          id: source.id,
+          repoPathOrUrl: source.repo.url,
+          frameworkId: source.frameworkId,
+          artifactPath: source.artifactPath,
+          contractName: source.contractName,
+          sourcePath: source.sourcePath,
+          pin: { ...source.repo },
+        })),
+        chains: [...(document.defaultChains ?? [])],
+        steps,
+        deployExtras,
+        workflowRef: { repoPathOrUrl, name, baseDocHash: docHash },
+        workflowDocument: cloneJson(document),
+        workflowIncludedStepIds: Object.fromEntries(document.steps.map((step) => [step.id, true])),
+        externalResolutions: [],
+        workflowOutputs: cloneJson(document.outputs),
+        workflowRequiredPlugins: cloneJson(document.requiredPlugins),
+      };
+    },
+    toggleWorkflowStep(state, action: PayloadAction<string>) {
+      if (!state.workflowIncludedStepIds || !(action.payload in state.workflowIncludedStepIds)) return;
+      state.workflowIncludedStepIds[action.payload] = !state.workflowIncludedStepIds[action.payload];
+      state.externalResolutions = state.externalResolutions?.filter((resolution) => resolution.stepId !== action.payload);
+    },
+    confirmExternalResolution(state, action: PayloadAction<ExternalResolution>) {
+      state.externalResolutions ??= [];
+      const index = state.externalResolutions.findIndex((item) => item.stepId === action.payload.stepId && item.path === action.payload.path && item.chainId === action.payload.chainId);
+      if (index === -1) state.externalResolutions.push(action.payload);
+      else state.externalResolutions[index] = action.payload;
+    },
+    workflowDraftSaved(state, action: PayloadAction<{ document: WorkflowDocument; docHash: string }>) {
+      if (!state.workflowRef) return;
+      state.workflowRef.baseDocHash = action.payload.docHash;
+      state.workflowDocument = cloneJson(action.payload.document);
+    },
+    acceptWorkflowPinUpdate(state, action: PayloadAction<{ sourceId: string; commit: string; ref?: string; refKind?: 'tag' | 'branch' }>) {
+      const source = state.workflowDocument?.sources.find((item) => item.id === action.payload.sourceId);
+      const contract = state.contracts.find((item) => item.id === action.payload.sourceId);
+      if (!source || !contract) return;
+      source.repo = {
+        url: source.repo.url,
+        commit: action.payload.commit,
+        ...(action.payload.ref ? { ref: action.payload.ref, refKind: action.payload.refKind } : {}),
+      };
+      contract.pin = { ...source.repo };
+    },
     seedDraft(_state, action: PayloadAction<DraftContract[]>) {
       return {
         ...initialState,
@@ -579,6 +652,11 @@ const deployDraftSlice = createSlice({
 });
 
 export const {
+  hydrateWorkflowDraft,
+  toggleWorkflowStep,
+  confirmExternalResolution,
+  workflowDraftSaved,
+  acceptWorkflowPinUpdate,
   seedDraft,
   addContracts,
   removeContract,
@@ -615,6 +693,22 @@ export const {
 
 export const deployDraftReducer = deployDraftSlice.reducer;
 export { initialState as deployDraftInitialState };
+
+export function workflowDependentsForExclusion(state: DeployDraftState, stepId: string): string[] {
+  const affected = new Set<string>();
+  const pending = [stepId];
+  while (pending.length) {
+    const current = pending.pop()!;
+    for (const step of state.steps) {
+      if (step.id === stepId || affected.has(step.id)) continue;
+      if (stepDependsOn(step, state.deployExtras[step.id], current)) {
+        affected.add(step.id);
+        pending.push(step.id);
+      }
+    }
+  }
+  return [...affected];
+}
 
 export function ackStale(
   state: DeployDraftState,

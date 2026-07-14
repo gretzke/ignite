@@ -53,6 +53,12 @@ describe('deployDraftPersistence', () => {
     expect(loadDraft(storage)).toEqual(draft);
   });
 
+  it('restores a pre-D6 v2 draft unchanged when additive workflow fields are absent', () => {
+    const draft = draftWithContracts();
+    const storage = fakeStorage({ [DEPLOY_DRAFT_STORAGE_KEY]: JSON.stringify(draft) });
+    expect(loadDraft(storage)).toEqual(draft);
+  });
+
   it('returns undefined when nothing is stored', () => {
     expect(loadDraft(fakeStorage())).toBeUndefined();
   });

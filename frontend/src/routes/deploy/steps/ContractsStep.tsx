@@ -3,18 +3,26 @@ import { Box, Loader2, X } from 'lucide-react';
 import type { DraftContract } from '../../../store/features/deployments/types';
 import { apiClient } from '../../../store/api/client';
 import { decodeUrlEncodingForDisplay } from '../../../utils/displayText';
+import { useAppDispatch, useAppSelector } from '../../../store';
+import { toggleWorkflowStep, workflowDependentsForExclusion } from '../../../store/features/deployments/deployDraftSlice';
+import ConfirmDialog from '../../../components/ConfirmDialog';
 
 interface ContractsStepProps {
   contracts: DraftContract[];
   onRemove: (contractId: string) => void;
   onValidityChange: (valid: boolean) => void;
+  workflowMode?: boolean;
 }
 
 export default function ContractsStep({
   contracts,
   onRemove,
   onValidityChange,
+  workflowMode = false,
 }: ContractsStepProps) {
+  const dispatch = useAppDispatch();
+  const draft = useAppSelector((state) => state.deployDraft);
+  const [pendingToggle, setPendingToggle] = useState<string>();
   const [checks, setChecks] = useState<
     Record<string, 'loading' | 'ok' | 'error'>
   >({});
@@ -32,6 +40,7 @@ export default function ContractsStep({
             pathOrUrl: contract.repoPathOrUrl,
             pluginId: contract.frameworkId,
             artifactPath: contract.artifactPath,
+            ...(contract.pin ? { pin: contract.pin } : {}),
           },
         })
         .then((response) => {
@@ -108,7 +117,7 @@ export default function ContractsStep({
                   </div>
                 )}
               </div>
-              <button
+              {!workflowMode && <button
                 type="button"
                 className="btn btn-sm btn-secondary"
                 aria-label={`Remove ${contract.contractName} from deployment`}
@@ -116,11 +125,26 @@ export default function ContractsStep({
                 onClick={() => onRemove(contract.id)}
               >
                 <X size={14} />
-              </button>
+              </button>}
+              {workflowMode && (
+                <div className="grid gap-2 min-w-56">
+                  {draft.steps.filter((step) => step.kind === 'deploy' && step.contractId === contract.id).map((step) => (
+                    <label key={step.id} className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={draft.workflowIncludedStepIds?.[step.id] !== false} onChange={() => {
+                        const dependents = workflowDependentsForExclusion(draft, step.id);
+                        if (draft.workflowIncludedStepIds?.[step.id] !== false && dependents.length) setPendingToggle(step.id);
+                        else dispatch(toggleWorkflowStep(step.id));
+                      }} />
+                      <span className="mono-data truncate">{step.id}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
+      <ConfirmDialog open={Boolean(pendingToggle)} onOpenChange={(open) => { if (!open) setPendingToggle(undefined); }} title="Exclude a depended-on step?" description={pendingToggle ? `These steps depend on it: ${workflowDependentsForExclusion(draft, pendingToggle).join(', ')}. Their pointers must be resolved per chain before continuing.` : ''} confirmText="Exclude step" variant="warning" onConfirm={() => { if (pendingToggle) dispatch(toggleWorkflowStep(pendingToggle)); }} />
     </section>
   );
 }

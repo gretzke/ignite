@@ -6,8 +6,16 @@ import { z } from 'zod';
 
 // Type utilities (same as before)
 type InferBodySchema<T> = T extends { schema: { body: infer B } } ? B : never;
-type InferQuerySchema<T> = T extends { querystring: infer Q } ? Q : never;
-type InferParamsSchema<T> = T extends { params: infer P } ? P : never;
+type InferQuerySchema<T> = T extends { querystring: infer Q }
+  ? Q
+  : T extends { schema: { querystring: infer Q } }
+    ? Q
+    : never;
+type InferParamsSchema<T> = T extends { params: infer P }
+  ? P
+  : T extends { schema: { params: infer P } }
+    ? P
+    : never;
 type InferResponseSchema<T> = T extends {
   schema: { response: { 200: infer R } };
 }

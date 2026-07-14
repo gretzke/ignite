@@ -40,6 +40,11 @@ import {
 import { discoverActiveJobs } from '../features/jobs/discoverJobs';
 import { getRepoName } from '../../utils/repo';
 import type { AppDispatch, RootState } from '../store';
+import {
+  workflowOriginsApprovalRequested,
+  workflowResolveFailed,
+  workflowResolveSucceeded,
+} from '../features/workflows/workflowsSlice';
 
 // Job-driven compiler/plugin/repo flow. This is the sole place that turns a
 // terminal job (repo.init/detect/install/compile/plugin.install) into the
@@ -116,6 +121,24 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
     job.error?.message ?? 'Operation did not complete successfully';
 
   switch (job.type) {
+    case 'workflow.resolve': {
+      const repoPathOrUrl = job.params.repoPathOrUrl as string;
+      const name = job.params.name as string;
+      if (succeeded) {
+        dispatch(workflowResolveSucceeded({ repoPathOrUrl, name, result: job.result as import('@ignite/api').WorkflowResolveResult }));
+      } else {
+        const origins = (job.error?.details as { origins?: unknown } | undefined)?.origins;
+        if (
+          job.error?.code === 'PINNED_ORIGIN_UNAPPROVED' &&
+          Array.isArray(origins) && origins.every((origin) => typeof origin === 'string')
+        ) {
+          dispatch(workflowOriginsApprovalRequested({ repoPathOrUrl, name, origins }));
+        } else {
+          dispatch(workflowResolveFailed({ repoPathOrUrl, name, error: errorMessage }));
+        }
+      }
+      break;
+    }
     case 'repo.init': {
       const pathOrUrl = job.params.pathOrUrl as string;
       const repoName = getRepoName(pathOrUrl);

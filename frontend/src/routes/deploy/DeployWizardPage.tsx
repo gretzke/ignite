@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store';
 import {
   markDraftSeen,
   clearDraft,
   removeContract,
+  hydrateWorkflowDraft,
 } from '../../store/features/deployments/deployDraftSlice';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import WizardStepper from './components/WizardStepper';
@@ -18,6 +19,11 @@ import ReviewStep from './steps/ReviewStep';
 import { planFromDraft } from './planFromDraft';
 import type { ExplorerEntry } from '@ignite/api';
 import { replaceIdsForDisplay } from '../../utils/displayText';
+import { workflowsApi } from '../../store/features/workflows/workflowsApi';
+import { selectWorkflowDocument } from '../../store/features/workflows/workflowsSlice';
+import { workflowDocumentFromDraft, workflowDraftIsDirty } from '../../store/features/deployments/workflowDraft';
+import { collectUnboundWorkflowSlots, projectWorkflowPlan } from './projection';
+import { cloneJson } from '../../utils/cloneJson';
 
 const STEPS = [
   { id: 'contracts', label: 'Contracts' },
@@ -92,12 +98,16 @@ function WizardNav({
 export default function DeployWizardPage() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const draft = useAppSelector((state) => state.deployDraft);
   const chains = useAppSelector((state) => state.chains.chains);
   const stateExplorers = useAppSelector((state) => state.explorers.byChain);
   const [step, setStep] = useState(0);
   const [contractsValid, setContractsValid] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const workflowRepo = searchParams.get('workflowRepo');
+  const workflowName = searchParams.get('workflow');
+  const workflowState = useAppSelector((state) => workflowRepo && workflowName ? selectWorkflowDocument(state, workflowRepo, workflowName) : undefined);
   const draftActive = draft.contracts.length > 0;
   const stepLabels = Object.fromEntries(
     draft.steps.map((draftStep, index) => [
@@ -117,8 +127,26 @@ export default function DeployWizardPage() {
   useEffect(() => {
     dispatch(markDraftSeen());
   }, [dispatch]);
+  useEffect(() => {
+    if (workflowRepo && workflowName && !workflowState) dispatch(workflowsApi.get(workflowRepo, workflowName));
+  }, [dispatch, workflowName, workflowRepo, workflowState]);
+  useEffect(() => {
+    if (!workflowRepo || !workflowName || !workflowState) return;
+    if (draft.workflowRef?.repoPathOrUrl === workflowRepo && draft.workflowRef.name === workflowName) return;
+    dispatch(hydrateWorkflowDraft({ repoPathOrUrl: workflowRepo, name: workflowName, docHash: workflowState.docHash, document: workflowState.document }));
+  }, [dispatch, draft.workflowRef?.name, draft.workflowRef?.repoPathOrUrl, workflowName, workflowRepo, workflowState]);
   const { plan, planProblem } = useMemo(() => {
     try {
+      if (draft.workflowRef && draft.workflowDocument) {
+        const projected = projectWorkflowPlan({
+          document: workflowDocumentFromDraft(draft),
+          repoPathOrUrl: draft.workflowRef.repoPathOrUrl,
+          chains: draft.chains,
+          includedStepIds: draft.workflowIncludedStepIds ?? {},
+          resolutions: draft.externalResolutions ?? [],
+        });
+        return { plan: { ...projected, signers: cloneJson(draft.signers) }, planProblem: undefined };
+      }
       return { plan: planFromDraft(draft, chains), planProblem: undefined };
     } catch (error) {
       return {
@@ -161,7 +189,12 @@ export default function DeployWizardPage() {
         ? undefined
         : `${chainName(unresolved)} has no signer`;
     })(),
-    planProblem,
+    (() => {
+      if (planProblem) return planProblem;
+      if (!draft.workflowDocument) return undefined;
+      const slots = collectUnboundWorkflowSlots({ document: workflowDocumentFromDraft(draft), repoPathOrUrl: draft.workflowRef!.repoPathOrUrl, chains: draft.chains, includedStepIds: draft.workflowIncludedStepIds ?? {}, resolutions: draft.externalResolutions });
+      return slots.length ? `Resolve ${slots.length} per-chain pointer ${slots.length === 1 ? 'slot' : 'slots'}` : undefined;
+    })(),
     undefined,
   ];
 
@@ -200,13 +233,19 @@ export default function DeployWizardPage() {
             <Trash2 size={18} />
           </button>
         )}
-        <div>
+        <div className="flex-1">
           <h1 className="page-title mb-0">Deploy contracts</h1>
           <p className="text-sm text-muted">
             Create a frozen, recoverable deployment run.
           </p>
         </div>
+        {draft.workflowRef && (
+          <button type="button" className="btn btn-secondary" disabled={!workflowDraftIsDirty(draft)} onClick={() => dispatch(workflowsApi.put(draft.workflowRef!.repoPathOrUrl, draft.workflowRef!.name, workflowDocumentFromDraft(draft), draft.workflowRef!.baseDocHash))}>
+            Save workflow{workflowDraftIsDirty(draft) ? ' · unsaved' : ''}
+          </button>
+        )}
       </div>
+      {draft.workflowRef && <div className="card-milky px-4 py-3 mb-4 text-sm flex items-center justify-between"><span>Workflow mode · <strong>{draft.workflowRef.name}</strong></span><span className={workflowDraftIsDirty(draft) ? 'text-warn' : 'text-muted'}>{workflowDraftIsDirty(draft) ? 'Unsaved changes' : 'Saved'}</span></div>}
       <ConfirmDialog
         open={confirmDiscard}
         onOpenChange={setConfirmDiscard}
@@ -232,6 +271,7 @@ export default function DeployWizardPage() {
             contracts={draft.contracts}
             onValidityChange={setContractsValid}
             onRemove={(contractId) => dispatch(removeContract(contractId))}
+            workflowMode={Boolean(draft.workflowRef)}
           />
         )}
         {step === 1 && <ChainsStep />}

@@ -455,7 +455,7 @@ export function createDeploymentHandlers(
 
 export const deploymentHandlers = createDeploymentHandlers();
 
-function validateExternalResolutions(plan: ValidateDeploymentRequest['plan'], resolutions: ExternalResolution[]): void {
+export function validateExternalResolutions(plan: ValidateDeploymentRequest['plan'], resolutions: ExternalResolution[]): void {
   for (const resolution of resolutions) {
     const step = plan.steps.find((candidate) => candidate.id === resolution.stepId);
     let value: unknown;

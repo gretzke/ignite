@@ -5,6 +5,8 @@ import {
   Hex32Schema,
   LibraryBindingSchema,
   SignerCascadeSchema,
+  ExternalResolutionSchema,
+  makeWorkflowDocumentSchema,
 } from '@ignite/api';
 import type { DeployDraftState } from './types';
 
@@ -99,6 +101,12 @@ const PersistedDraftSchema = z.object({
   unseenIds: z.array(z.string()),
   name: z.string().optional(),
   idempotencyKey: z.string().optional(),
+  workflowRef: z.object({ repoPathOrUrl: z.string(), name: z.string(), baseDocHash: z.string() }).optional(),
+  workflowDocument: makeWorkflowDocumentSchema({ allowFileUrls: true }).optional(),
+  workflowIncludedStepIds: z.record(z.string(), z.boolean()).optional(),
+  externalResolutions: z.array(ExternalResolutionSchema).optional(),
+  workflowOutputs: z.object({ hooks: z.array(z.string()) }).optional(),
+  workflowRequiredPlugins: z.array(z.object({ id: z.string(), version: z.string(), source: z.unknown().optional() })).optional(),
 });
 
 function invariantsHold(draft: DeployDraftState): boolean {
@@ -108,9 +116,9 @@ function invariantsHold(draft: DeployDraftState): boolean {
   const contractIds = new Set(draft.contracts.map((contract) => contract.id));
   if (contractIds.size !== draft.contracts.length) return false;
   const deploySteps = draft.steps.filter((step) => step.kind === 'deploy');
-  if (deploySteps.length !== draft.contracts.length) return false;
+  if (!draft.workflowRef && deploySteps.length !== draft.contracts.length) return false;
   const stepContractIds = new Set(deploySteps.map((step) => step.contractId));
-  if (stepContractIds.size !== deploySteps.length) return false;
+  if (!draft.workflowRef && stepContractIds.size !== deploySteps.length) return false;
   const stepIds = new Set(draft.steps.map((step) => step.id));
   if (stepIds.size !== draft.steps.length) return false;
   for (const step of deploySteps) if (!contractIds.has(step.contractId)) return false;

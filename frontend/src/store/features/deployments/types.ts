@@ -11,6 +11,10 @@ import type {
   RunRecord,
   RunSummary,
   SignerCascade,
+  ExternalResolution,
+  WorkflowDocument,
+  WorkflowOutputs,
+  WorkflowRequiredPlugin,
 } from '@ignite/api';
 
 export type DraftContract = ContractSource;
@@ -86,6 +90,12 @@ export interface DeployDraftState {
   unseenIds: string[];
   name?: string;
   idempotencyKey?: string;
+  workflowRef?: { repoPathOrUrl: string; name: string; baseDocHash: string };
+  workflowDocument?: WorkflowDocument;
+  workflowIncludedStepIds?: Record<string, boolean>;
+  externalResolutions?: ExternalResolution[];
+  workflowOutputs?: WorkflowOutputs;
+  workflowRequiredPlugins?: WorkflowRequiredPlugin[];
 }
 
 export type GasOverrideKey = keyof GasOverrides;

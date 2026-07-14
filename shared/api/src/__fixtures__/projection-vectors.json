@@ -1,0 +1,47 @@
+[
+  {
+    "name": "excluded producer is replaced in nested args, target, and escaped library keys",
+    "input": {
+      "repoPathOrUrl": "/workspace",
+      "chains": [1, 2],
+      "includedStepIds": { "producer": false, "consumer": true, "call": true },
+      "document": {
+        "schemaVersion": 1,
+        "sources": [
+          { "id": "produced", "repo": { "url": "https://example.com/produced.git", "commit": "1111111111111111111111111111111111111111" }, "frameworkId": "foundry", "sourcePath": "src/Produced.sol", "contractName": "Produced", "artifactPath": "out/Produced.sol/Produced.json" },
+          { "id": "consumer-source", "repo": { "url": "https://example.com/consumer.git", "commit": "2222222222222222222222222222222222222222" }, "frameworkId": "foundry", "sourcePath": "src/Consumer.sol", "contractName": "Consumer", "artifactPath": "out/Consumer.sol/Consumer.json" }
+        ],
+        "steps": [
+          { "id": "producer", "kind": "deploy", "contractId": "produced" },
+          { "id": "consumer", "kind": "deploy", "contractId": "consumer-source", "args": { "owner": { "$ref": { "kind": "step", "stepId": "producer" } }, "config": { "nested": { "$ref": { "kind": "step", "stepId": "producer" } }, "keep": "yes" }, "untouched": "value" }, "argsPerChain": { "2": { "owner": { "$ref": { "kind": "step", "stepId": "producer" } } } }, "libraries": { "Lib/One": { "kind": "step", "stepId": "producer" } } },
+          { "id": "call", "kind": "call", "target": { "kind": "step", "stepId": "producer" }, "signature": "configure(address[])", "args": { "recipients": [{ "$ref": { "kind": "step", "stepId": "producer" } }, "0x9999999999999999999999999999999999999999"] }, "argsPerChain": { "2": { "recipients": [{ "$ref": { "kind": "step", "stepId": "producer" } }] } } }
+        ],
+        "defaultChains": [1, 2],
+        "requiredPlugins": [{ "id": "foundry", "version": "1" }],
+        "outputs": { "hooks": [] }
+      },
+      "resolutions": [
+        { "stepId": "consumer", "path": "/args/owner", "chainId": 1, "address": "0x1111111111111111111111111111111111111111", "source": "manual" },
+        { "stepId": "consumer", "path": "/args/owner", "chainId": 2, "address": "0x2222222222222222222222222222222222222222", "source": "manual" },
+        { "stepId": "consumer", "path": "/args/config/nested", "chainId": 1, "address": "0x3333333333333333333333333333333333333333", "source": "manual" },
+        { "stepId": "consumer", "path": "/args/config/nested", "chainId": 2, "address": "0x4444444444444444444444444444444444444444", "source": "manual" },
+        { "stepId": "consumer", "path": "/libraries/Lib~1One", "chainId": 1, "address": "0x5555555555555555555555555555555555555555", "source": "manual" },
+        { "stepId": "consumer", "path": "/libraries/Lib~1One", "chainId": 2, "address": "0x6666666666666666666666666666666666666666", "source": "manual" },
+        { "stepId": "call", "path": "/target", "chainId": 1, "address": "0x7777777777777777777777777777777777777777", "source": "manual" },
+        { "stepId": "call", "path": "/target", "chainId": 2, "address": "0x8888888888888888888888888888888888888888", "source": "manual" },
+        { "stepId": "call", "path": "/args/recipients/0", "chainId": 1, "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "source": "manual" },
+        { "stepId": "call", "path": "/args/recipients/0", "chainId": 2, "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "source": "manual" }
+      ]
+    },
+    "expectedPlan": {
+      "schemaVersion": 1,
+      "contracts": [{ "id": "consumer-source", "repoPathOrUrl": "https://example.com/consumer.git", "frameworkId": "foundry", "sourcePath": "src/Consumer.sol", "contractName": "Consumer", "artifactPath": "out/Consumer.sol/Consumer.json", "pin": { "url": "https://example.com/consumer.git", "commit": "2222222222222222222222222222222222222222" } }],
+      "steps": [
+        { "id": "consumer", "kind": "deploy", "contractId": "consumer-source", "args": { "untouched": "value" }, "argsPerChain": { "1": { "owner": "0x1111111111111111111111111111111111111111", "config": { "nested": "0x3333333333333333333333333333333333333333", "keep": "yes" } }, "2": { "owner": "0x2222222222222222222222222222222222222222", "config": { "nested": "0x4444444444444444444444444444444444444444", "keep": "yes" } } }, "librariesPerChain": { "1": { "Lib/One": { "kind": "address", "address": "0x5555555555555555555555555555555555555555" } }, "2": { "Lib/One": { "kind": "address", "address": "0x6666666666666666666666666666666666666666" } } } },
+        { "id": "call", "kind": "call", "target": { "kind": "address", "address": "0x7777777777777777777777777777777777777777" }, "targetPerChain": { "1": { "kind": "address", "address": "0x7777777777777777777777777777777777777777" }, "2": { "kind": "address", "address": "0x8888888888888888888888888888888888888888" } }, "signature": "configure(address[])", "argsPerChain": { "1": { "recipients": ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "0x9999999999999999999999999999999999999999"] }, "2": { "recipients": ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] } } }
+      ],
+      "chains": [1, 2],
+      "signers": {}
+    }
+  }
+]
