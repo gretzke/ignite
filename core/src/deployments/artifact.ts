@@ -55,7 +55,7 @@ export function renderArtifact(
           const expected = laneStep.attempts.findLast((attempt) => attempt.expected)?.expected;
           const refs = step ? collectRefs(step, lane.chainId) : [];
           const pointerEntries: NonNullable<DeploymentArtifact['lanes'][string]['steps'][number]['pointers']> = expected?.pointers
-            ? refs.flatMap((ref) => expected.pointers?.[ref.path] ? [{ path: ref.path, stepId: ref.stepId, address: expected.pointers[ref.path]!, source: 'step' as const }] : [])
+            ? refs.flatMap((ref) => expected.pointers?.[ref.path] ? [{ path: ref.path, stepId: ref.stepId, address: expected.pointers[ref.path]! }] : [])
             : [];
           for (const resolution of run.workflow?.resolutions ?? []) {
             if (resolution.stepId !== laneStep.stepId || resolution.chainId !== lane.chainId) continue;
