@@ -23,6 +23,9 @@ export interface InspectGitRemoteData {
   // Branch names are retained for existing clients; this additive map carries
   // their ls-remote SHAs for pinned-workflow update checks.
   branchHeads?: Record<string, string>;
+  // All tag heads (including non-semver labels) support retarget/delete
+  // detection; releases remains the semver-upgrade surface.
+  tagHeads?: Record<string, string>;
   // Semver tags, newest first. Present for any git host (releases metadata
   // only when GitHub is reachable).
   releases: GitReleaseData[];
@@ -51,6 +54,7 @@ export const InspectGitRemoteResponseSchema =
       defaultBranch: z.string().nullable(),
       branches: z.array(z.string()),
       branchHeads: z.record(z.string(), z.string()),
+      tagHeads: z.record(z.string(), z.string()).optional(),
       releases: z.array(GitReleaseSchema),
       github: z
         .object({

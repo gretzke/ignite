@@ -311,6 +311,7 @@ export async function inspectGitRemote(
     defaultBranch: refs.defaultBranch,
     branches: Object.keys(refs.branches).sort(),
     branchHeads: refs.branches,
+    tagHeads: refs.tags,
     releases,
     ...(github
       ? {

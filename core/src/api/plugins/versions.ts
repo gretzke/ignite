@@ -28,6 +28,36 @@ export interface VersionsHandlerDeps {
   fetchRemoteRefs: (url: string) => Promise<RemoteRefs>;
 }
 
+export async function pluginVersionInfo(
+  pluginId: string,
+  installedVersion: string,
+  source: PluginInstallSource | undefined,
+  loadRemoteRefs: (url: string) => Promise<RemoteRefs> = fetchRemoteRefs,
+): Promise<PluginVersionInfoData> {
+  if (!source || source.kind === 'local') return { pluginId, source: 'local', updateAvailable: false };
+  const base: PluginVersionInfoData = {
+    pluginId, source: 'git', repoUrl: source.url,
+    ...(source.description ? { description: source.description } : {}),
+    ...(source.track ? { track: source.track.mode } : {}),
+    ...(source.commit ? { currentCommit: source.commit } : {}), updateAvailable: false,
+  };
+  const track = source.track;
+  if (!track || track.mode === 'commit') return base;
+  try {
+    const refs = await loadRemoteRefs(source.url);
+    if (track.mode === 'branch') {
+      const latestCommit = refs.branches[track.branch];
+      return { ...base, trackRef: track.branch, ...(latestCommit ? { latestCommit } : {}), updateAvailable: !!latestCommit && !!source.commit && latestCommit !== source.commit };
+    }
+    const releases = releasesFromTags(refs.tags).filter((release) => !release.prerelease);
+    const latest = releases[0]; const currentVersion = track.version.replace(/^v/, '');
+    const cmp = latest ? compareVersionStrings(latest.version, currentVersion) : null;
+    return { ...base, trackRef: track.version, currentVersion, ...(latest ? { latestVersion: latest.version, latestCommit: latest.sha } : {}), updateAvailable: cmp !== null && cmp > 0 };
+  } catch (error) {
+    return { ...base, ...(track.mode === 'branch' ? { trackRef: track.branch } : { trackRef: track.version, currentVersion: track.version }), checkError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export function createVersionsHandlers(deps?: Partial<VersionsHandlerDeps>) {
   const d: VersionsHandlerDeps = {
     listPlugins:
@@ -43,66 +73,7 @@ export function createVersionsHandlers(deps?: Partial<VersionsHandlerDeps>) {
     installedVersion: string,
     source: PluginInstallSource | undefined
   ): Promise<PluginVersionInfoData> {
-    if (!source || source.kind === 'local') {
-      return { pluginId, source: 'local', updateAvailable: false };
-    }
-
-    const base: PluginVersionInfoData = {
-      pluginId,
-      source: 'git',
-      repoUrl: source.url,
-      ...(source.description ? { description: source.description } : {}),
-      ...(source.track ? { track: source.track.mode } : {}),
-      ...(source.commit ? { currentCommit: source.commit } : {}),
-      updateAvailable: false,
-    };
-
-    const track = source.track;
-    if (!track || track.mode === 'commit') {
-      // Pinned (or legacy pre-track install): never prompts to update.
-      return base;
-    }
-
-    try {
-      const refs = await d.fetchRemoteRefs(source.url);
-      if (track.mode === 'branch') {
-        const latestCommit = refs.branches[track.branch];
-        return {
-          ...base,
-          trackRef: track.branch,
-          ...(latestCommit ? { latestCommit } : {}),
-          updateAvailable:
-            !!latestCommit && !!source.commit && latestCommit !== source.commit,
-        };
-      }
-      // release tracking: compare installed tag against the newest stable
-      // semver tag on the remote.
-      const releases = releasesFromTags(refs.tags).filter(
-        (release) => !release.prerelease
-      );
-      const latest = releases[0];
-      const currentVersion = track.version.replace(/^v/, '');
-      const cmp = latest
-        ? compareVersionStrings(latest.version, currentVersion)
-        : null;
-      return {
-        ...base,
-        trackRef: track.version,
-        currentVersion,
-        ...(latest
-          ? { latestVersion: latest.version, latestCommit: latest.sha }
-          : {}),
-        updateAvailable: cmp !== null && cmp > 0,
-      };
-    } catch (error) {
-      return {
-        ...base,
-        ...(track.mode === 'branch'
-          ? { trackRef: track.branch }
-          : { trackRef: track.version, currentVersion: track.version }),
-        checkError: error instanceof Error ? error.message : String(error),
-      };
-    }
+    return pluginVersionInfo(pluginId, installedVersion, source, d.fetchRemoteRefs);
   }
 
   return {

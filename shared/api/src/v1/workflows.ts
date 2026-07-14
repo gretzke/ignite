@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { V1_BASE_PATH } from './constants.js';
 import { createApiResponseSchema } from '../utils/schema.js';
 import { JobStartedResponseSchema } from './jobs.js';
+import { DeploymentPlanSchema, type DeploymentPlan } from './deployments.js';
+import { PluginVersionInfoSchema, type PluginVersionInfoData } from './plugins/versions.js';
 
 const CHAIN_ID_KEY = /^[1-9]\d*$/;
 const DECIMAL = /^\d+$/;
@@ -85,6 +87,32 @@ export type WorkflowPluginReadiness =
   | { id: string; status: 'missing' }
   | { id: string; status: 'untrusted'; installedVersion: string };
 export interface WorkflowResolveResult { sources: WorkflowSourceReadiness[]; plugins: WorkflowPluginReadiness[] }
+
+export interface WorkflowPromotionSourcePreview { sourceId: string; origin: string; commit: string; tagChoices: string[]; dirty: boolean; error?: string }
+export type WorkflowPromoteRequest =
+  | { mode: 'preview'; target: { repoPathOrUrl: string; name: string }; plan?: DeploymentPlan; runId?: string }
+  | { mode: 'apply'; previewId: string; target: { repoPathOrUrl: string; name: string }; plan?: DeploymentPlan; runId?: string; tagChoiceBySourceId?: Record<string, string>; overwrite?: boolean; hooks: string[]; adoptRunIds?: string[] };
+export type WorkflowPromoteData =
+  | { mode: 'preview'; previewId: string; sources: WorkflowPromotionSourcePreview[]; nameCollision: boolean }
+  | { mode: 'apply'; workflow: WorkflowSummary; docHash: string };
+export interface WorkflowCheckUpdatesRequest { repoPathOrUrl: string; name: string }
+export type WorkflowSourceUpdate = {
+  sourceId: string;
+  status: 'up-to-date' | 'upgrade-available' | 'tag-retargeted' | 'tag-deleted' | 'branch-moved' | 'error';
+  currentCommit: string;
+  latestCommit?: string;
+  upgrades?: Array<{ ref: string; commit: string; version: string }>;
+  error?: string;
+};
+export interface WorkflowPluginUpdate {
+  id: string;
+  requiredVersion: string;
+  status: 'installed' | 'version-mismatch' | 'missing';
+  installedVersion?: string;
+  updateAvailable: boolean;
+  update?: PluginVersionInfoData;
+}
+export interface WorkflowCheckUpdatesData { sources: WorkflowSourceUpdate[]; plugins: WorkflowPluginUpdate[] }
 
 function jsonDepth(value: unknown, depth = 0): number {
   if (value === null || typeof value !== 'object') return depth;
@@ -191,6 +219,40 @@ const WorkflowPutBodySchema = z.object({ document: z.unknown(), baseDocHash: z.s
 const WorkflowResolveBodySchema = z.object({ repoPathOrUrl: z.string().min(1), name: z.string().regex(WorkflowNamePattern) }).strict();
 const WorkflowApproveOriginsBodySchema = z.object({ origins: z.array(z.string().min(1)).min(1).max(64) }).strict();
 const WorkflowApproveOriginsResponseSchema = createApiResponseSchema<{ origins: string[] }>('WorkflowApproveOriginsResponseSchema')(z.object({ origins: z.array(z.string()) }).strict());
+const PromotionTargetSchema = z.object({ repoPathOrUrl: z.string().min(1), name: z.string().regex(WorkflowNamePattern) }).strict();
+const PromotionSelectionShape = { target: PromotionTargetSchema, plan: DeploymentPlanSchema.optional(), runId: z.string().min(1).optional() };
+const exactlyOnePromotionInput = (value: { plan?: unknown; runId?: string }, ctx: z.RefinementCtx) => {
+  if ((value.plan === undefined) === (value.runId === undefined)) ctx.addIssue({ code: 'custom', message: 'exactly one of plan or runId is required' });
+};
+const PromotionPreviewRequestSchema = z.object({ mode: z.literal('preview'), ...PromotionSelectionShape }).strict().superRefine(exactlyOnePromotionInput);
+const PromotionApplyRequestSchema = z.object({
+  mode: z.literal('apply'), previewId: z.string().min(1), ...PromotionSelectionShape,
+  tagChoiceBySourceId: z.record(z.string().min(1), z.string().min(1)).optional(), overwrite: z.boolean().optional(),
+  hooks: z.array(z.string().min(1)).max(16), adoptRunIds: z.array(z.string().min(1)).max(64).optional(),
+}).strict().superRefine(exactlyOnePromotionInput).superRefine((request, ctx) => {
+  if (new Set(request.hooks).size !== request.hooks.length) ctx.addIssue({ code: 'custom', message: 'hooks must be unique', path: ['hooks'] });
+});
+export const WorkflowPromoteRequestSchema = z.discriminatedUnion('mode', [PromotionPreviewRequestSchema, PromotionApplyRequestSchema]) as z.ZodType<WorkflowPromoteRequest>;
+const PromotionSourcePreviewSchema = z.object({ sourceId: z.string().min(1), origin: z.string(), commit: z.string(), tagChoices: z.array(z.string()), dirty: z.boolean(), error: z.string().optional() }).strict();
+export const WorkflowPromoteResponseSchema = createApiResponseSchema<WorkflowPromoteData>('WorkflowPromoteResponseSchema')(
+  z.discriminatedUnion('mode', [
+    z.object({ mode: z.literal('preview'), previewId: z.string().min(1), sources: z.array(PromotionSourcePreviewSchema), nameCollision: z.boolean() }).strict(),
+    z.object({ mode: z.literal('apply'), workflow: WorkflowSummarySchema, docHash: z.string().regex(SHA256_HEX) }).strict(),
+  ]),
+);
+export const WorkflowCheckUpdatesRequestSchema = z.object({ repoPathOrUrl: z.string().min(1), name: z.string().regex(WorkflowNamePattern) }).strict();
+const WorkflowSourceUpdateSchema = z.object({
+  sourceId: z.string().min(1), status: z.enum(['up-to-date', 'upgrade-available', 'tag-retargeted', 'tag-deleted', 'branch-moved', 'error']),
+  currentCommit: z.string().regex(COMMIT), latestCommit: z.string().regex(COMMIT).optional(),
+  upgrades: z.array(z.object({ ref: z.string().min(1), commit: z.string().regex(COMMIT), version: z.string().min(1) }).strict()).optional(), error: z.string().optional(),
+}).strict() satisfies z.ZodType<WorkflowSourceUpdate>;
+const WorkflowPluginUpdateSchema = z.object({
+  id: z.string().min(1), requiredVersion: z.string().min(1), status: z.enum(['installed', 'version-mismatch', 'missing']),
+  installedVersion: z.string().optional(), updateAvailable: z.boolean(), update: PluginVersionInfoSchema.optional(),
+}).strict() satisfies z.ZodType<WorkflowPluginUpdate>;
+export const WorkflowCheckUpdatesResponseSchema = createApiResponseSchema<WorkflowCheckUpdatesData>('WorkflowCheckUpdatesResponseSchema')(
+  z.object({ sources: z.array(WorkflowSourceUpdateSchema), plugins: z.array(WorkflowPluginUpdateSchema) }).strict(),
+);
 
 export const workflowRoutes = {
   listWorkflows: { method: 'GET' as const, path: `${V1_BASE_PATH}/repos/workflows`, schema: { tags: ['repos'], querystring: WorkflowPathQuerySchema, response: { 200: WorkflowListResponseSchema } } },
@@ -198,4 +260,6 @@ export const workflowRoutes = {
   putWorkflow: { method: 'PUT' as const, path: `${V1_BASE_PATH}/repos/workflows/:name`, schema: { tags: ['repos'], params: WorkflowNameParamsSchema, querystring: WorkflowPathQuerySchema, body: WorkflowPutBodySchema, response: { 200: WorkflowPutResponseSchema } } },
   resolveWorkflow: { method: 'POST' as const, path: `${V1_BASE_PATH}/workflows/resolve`, schema: { tags: ['workflows'], body: WorkflowResolveBodySchema, response: { 200: JobStartedResponseSchema } } },
   approveWorkflowOrigins: { method: 'POST' as const, path: `${V1_BASE_PATH}/workflows/approve-origins`, schema: { tags: ['workflows'], body: WorkflowApproveOriginsBodySchema, response: { 200: WorkflowApproveOriginsResponseSchema } } },
+  promoteWorkflow: { method: 'POST' as const, path: `${V1_BASE_PATH}/workflows/promote`, schema: { tags: ['workflows'], body: WorkflowPromoteRequestSchema, response: { 200: WorkflowPromoteResponseSchema } } },
+  checkWorkflowUpdates: { method: 'POST' as const, path: `${V1_BASE_PATH}/workflows/check-updates`, schema: { tags: ['workflows'], body: WorkflowCheckUpdatesRequestSchema, response: { 200: WorkflowCheckUpdatesResponseSchema } } },
 } as const;

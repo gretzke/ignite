@@ -57,6 +57,13 @@ export interface RepoServiceDeps {
   profiles?: ProfileManager;
   run?: typeof runCommand;
 }
+export interface PromotionSourceInspection {
+  origin: string;
+  commit: string;
+  tags: string[];
+  branch: string | null;
+  dirty: boolean;
+}
 
 // Mirrors the old PluginResponse contract so handlers built on top of this
 // service stay thin (map straight to IApiResponse/IApiError).
@@ -842,6 +849,40 @@ export class RepoService {
         error: { code: 'INFO_ERROR', message: errMsg(error) },
       };
     }
+  }
+
+  /** Read-only git facts used by workflow-promotion preview/apply. */
+  async inspectPromotionSource(pathOrUrl: string): Promise<PromotionSourceInspection> {
+    const cwd = await this.resolveExistingWorkspacePath(pathOrUrl);
+    const ensured = await this.ensureGitRepo(cwd);
+    if (!ensured.success) throw Object.assign(new Error(ensured.error.message), { code: ensured.error.code });
+    const [origin, commit, tags, branch, status] = await Promise.all([
+      this.runGit(cwd, ['remote', 'get-url', 'origin'], TIMEOUT_LOCAL_MS),
+      this.runGit(cwd, ['rev-parse', 'HEAD'], TIMEOUT_LOCAL_MS),
+      this.runGit(cwd, ['tag', '--points-at', 'HEAD'], TIMEOUT_LOCAL_MS),
+      this.runGit(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'], TIMEOUT_LOCAL_MS),
+      this.runGit(cwd, ['status', '--porcelain'], TIMEOUT_LOCAL_MS),
+    ]);
+    if (!origin.success || !origin.data.stdout.trim())
+      throw Object.assign(new Error('origin remote is required for workflow promotion'), { code: 'PROMOTION_ORIGIN_REQUIRED' });
+    if (!commit.success) throw Object.assign(new Error(commit.error.message), { code: commit.error.code });
+    if (!tags.success) throw Object.assign(new Error(tags.error.message), { code: tags.error.code });
+    if (!status.success) throw Object.assign(new Error(status.error.message), { code: status.error.code });
+    return {
+      origin: origin.data.stdout.trim(),
+      commit: commit.data.stdout.trim(),
+      tags: tags.data.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean).sort(),
+      branch: branch.success ? branch.data.stdout.trim() || null : null,
+      dirty: status.data.stdout.trim().length > 0,
+    };
+  }
+
+  async isExistingGitRepository(pathOrUrl: string): Promise<boolean> {
+    try {
+      const cwd = await this.resolveExistingWorkspacePath(pathOrUrl);
+      const result = await this.runGit(cwd, ['rev-parse', '--is-inside-work-tree'], TIMEOUT_LOCAL_MS);
+      return result.success && result.data.stdout.trim() === 'true';
+    } catch { return false; }
   }
 
   async getFile(
