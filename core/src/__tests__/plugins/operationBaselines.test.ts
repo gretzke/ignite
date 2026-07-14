@@ -55,4 +55,17 @@ describe('operation baselines', () => {
       effectiveRepoRead(metadata({ types: [PluginType.VERIFIER] })),
     ).toBe(false);
   });
+
+  it('defines the three deployment-hook operations without compiler repoRead inference', () => {
+    const hook = metadata({ types: [PluginType.DEPLOYMENT_HOOK] });
+    expect(effectiveOperations(hook)).toEqual([
+      'describeDeploymentHook',
+      'onRunCompleted',
+      'suggestAddresses',
+    ]);
+    expect(effectiveRepoRead(hook)).toBe(false);
+    expect(requiredPermissions(hook, 'describeDeploymentHook')).toEqual([]);
+    expect(requiredPermissions(hook, 'onRunCompleted')).toEqual([]);
+    expect(requiredPermissions(hook, 'suggestAddresses')).toEqual([]);
+  });
 });

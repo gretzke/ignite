@@ -7,3 +7,4 @@ export * from "./rpc-provider/index.js";
 export * from "./signer-provider/index.js";
 export * from "./verifier/index.js";
 export * from "./deployment-type/index.js";
+export * from "./deployment-hook/index.js";

@@ -35,6 +35,11 @@ export const BASELINE_OPERATIONS: Readonly<
     'prepareDeployment',
     'validateDeployment',
   ],
+  [PluginType.DEPLOYMENT_HOOK]: [
+    'describeDeploymentHook',
+    'onRunCompleted',
+    'suggestAddresses',
+  ],
 };
 
 export const HOST_PERMISSION_MINIMUMS: Readonly<

@@ -91,4 +91,21 @@ describe('generic plugin operation dispatch', () => {
     );
     expect(config.body).toMatchObject({ code: 'RESERVED_OPTION_KEY' });
   });
+
+  it.each(['onRunCompleted', 'suggestAddresses'])('reserves deployment-hook operation %s while leaving describe generic-callable', async (operation) => {
+    const hookMetadata = { ...metadata, types: [PluginType.DEPLOYMENT_HOOK], operations: ['describeDeploymentHook', 'onRunCompleted', 'suggestAddresses'] };
+    const execute = vi.fn(async () => ({ success: true as const, data: {} }));
+    const handlers = createPluginOperationHandlers({
+      getPluginConfig: vi.fn(async () => ({ metadata: hookMetadata, repoRead: false, origin: 'installed' as const })),
+      execute,
+    });
+    const blocked = reply();
+    await handlers.invokePluginOperation({ params: { pluginId: 'example', operation }, body: {} } as never, blocked);
+    expect(blocked.body).toMatchObject({ code: 'OPERATION_RESERVED' });
+
+    const described = reply();
+    await handlers.invokePluginOperation({ params: { pluginId: 'example', operation: 'describeDeploymentHook' }, body: {} } as never, described);
+    expect(described.statusCode).toBe(200);
+    expect(execute).toHaveBeenCalledWith('example', 'describeDeploymentHook', {}, { chainScope: 'none' });
+  });
 });

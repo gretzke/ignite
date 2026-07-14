@@ -43,6 +43,7 @@ export enum PluginType {
   SIGNER_PROVIDER = "signer-provider",
   VERIFIER = "verifier",
   DEPLOYMENT_TYPE = "deployment-type",
+  DEPLOYMENT_HOOK = "deployment-hook",
 }
 
 // Where a plugin's code executes. "container" (default when absent) runs in

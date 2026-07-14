@@ -31,6 +31,7 @@ import { RpcProviderService } from '../../chains/RpcProviderService.js';
 import { SignerProviderService } from '../../signers/SignerProviderService.js';
 import { ErrorCodes, type ErrorCode } from '../../types/errors.js';
 import { DeploymentTypeService } from '../../deployments/DeploymentTypeService.js';
+import { DeploymentHookService } from '../../deployments/DeploymentHookService.js';
 import { sendCaughtError, sendBadRequest } from '../utils/errors.js';
 
 export interface PluginConfigHandlerDeps {
@@ -44,6 +45,7 @@ export interface PluginConfigHandlerDeps {
   providers: Pick<RpcProviderService, 'invalidate'>;
   signers: Pick<SignerProviderService, 'invalidate'>;
   deploymentTypes?: Pick<DeploymentTypeService, 'invalidate'>;
+  deploymentHooks?: Pick<DeploymentHookService, 'invalidate'>;
 }
 
 // Domain services throw Errors tagged with a `code`; map the known ones to
@@ -153,6 +155,7 @@ export function createPluginConfigHandlers(
     providers: deps?.providers ?? RpcProviderService.getInstance(),
     signers: deps?.signers ?? SignerProviderService.getInstance(),
     deploymentTypes: deps?.deploymentTypes ?? DeploymentTypeService.getInstance(),
+    deploymentHooks: deps?.deploymentHooks ?? DeploymentHookService.getInstance(),
   };
 
   return {
@@ -230,6 +233,7 @@ export function createPluginConfigHandlers(
         d.providers.invalidate(pluginId);
         d.signers.invalidate(pluginId);
         d.deploymentTypes?.invalidate();
+        d.deploymentHooks?.invalidate();
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -270,6 +274,7 @@ export function createPluginConfigHandlers(
         d.providers.invalidate(pluginId);
         d.signers.invalidate(pluginId);
         d.deploymentTypes?.invalidate();
+        d.deploymentHooks?.invalidate();
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -375,6 +380,7 @@ export function createPluginConfigHandlers(
         d.providers.invalidate(pluginId);
         d.signers.invalidate(pluginId);
         d.deploymentTypes?.invalidate();
+        d.deploymentHooks?.invalidate();
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -437,6 +443,7 @@ export function createPluginConfigHandlers(
         d.providers.invalidate(pluginId);
         d.signers.invalidate(pluginId);
         d.deploymentTypes?.invalidate();
+        d.deploymentHooks?.invalidate();
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {
@@ -481,6 +488,7 @@ export function createPluginConfigHandlers(
         d.providers.invalidate(pluginId);
         d.signers.invalidate(pluginId);
         d.deploymentTypes?.invalidate();
+        d.deploymentHooks?.invalidate();
         const data = await buildConfigPayload(d, pluginId, metadata);
         return reply.status(200).send({ data });
       } catch (error) {

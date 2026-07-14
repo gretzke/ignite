@@ -4,7 +4,7 @@ import { PluginType } from '@ignite/plugin-types/types';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
 
 const GRANT_NONE = { trust: 'untrusted', repoWrite: false, net: false };
-const GRANT_ALL = { trust: 'native', repoWrite: true, net: true };
+const DEFAULT_GRANT = { trust: 'native', repoWrite: false, net: true };
 
 function makeExecutor(overrides: Record<string, unknown> = {}) {
   const executeOperation = vi.fn(async () => ({ success: true, data: {} }));
@@ -20,7 +20,7 @@ function makeExecutor(overrides: Record<string, unknown> = {}) {
         origin: 'builtin',
       }),
     },
-    trust: { getGrant: async () => GRANT_ALL },
+    trust: { getGrant: async () => DEFAULT_GRANT },
     containerOrchestrator: {
       createContainer: vi.fn(async (opts: { name: string }) => opts.name),
       stopContainer: vi.fn(async () => {}),
@@ -363,6 +363,7 @@ describe('PluginExecutor with injected deps', () => {
             origin: 'builtin',
           }),
         },
+        trust: { getGrant: async () => ({ trust: 'native', repoWrite: true, net: true }) },
         ...overrides,
       });
     }
@@ -383,6 +384,22 @@ describe('PluginExecutor with injected deps', () => {
       const call = createContainer.mock.calls[0][0];
       expect(call.workspaceBind).toEqual({ hostPath: '/host/workspace' });
       expect(call.volumesFrom).toBeUndefined();
+    });
+
+    it.each([
+      { repoRead: false, repoWrite: true, bind: true, writable: true },
+      { repoRead: true, repoWrite: false, bind: true, writable: false },
+      { repoRead: true, repoWrite: true, bind: true, writable: true },
+      { repoRead: false, repoWrite: false, bind: false, writable: false },
+    ])('enforces the workspace mount matrix: $repoRead/$repoWrite', async ({ repoRead, repoWrite, bind, writable }) => {
+      const { executor, deps } = makeExecutor({
+        registryLoader: { getPluginConfig: async () => ({ metadata: { id: 'hook', types: [PluginType.DEPLOYMENT_HOOK], baseImage: 'img:latest', ...(repoWrite ? { permissions: [{ id: 'repoWrite', description: 'Write workflow outputs' }] } : {}) }, repoRead, origin: 'builtin' }) },
+        trust: { getGrant: async () => ({ trust: 'trusted', repoWrite, net: false }) },
+      });
+      await executor.execute('hook', 'describeDeploymentHook', {}, bind ? { workspacePath: '/workflow/repo' } : undefined);
+      const call = (deps.containerOrchestrator.createContainer as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(Boolean(call.workspaceBind)).toBe(bind);
+      expect(Boolean(call.workspaceBind) && call.grant.repoWrite).toBe(writable);
     });
 
     it('rejects execute() when repoRead is true but no workspacePath is provided', async () => {

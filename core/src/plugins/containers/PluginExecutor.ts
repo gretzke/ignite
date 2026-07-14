@@ -256,11 +256,18 @@ export class PluginExecutor {
     // multi-surface plugin's non-signer ops too (e.g. chainz
     // getSupportedChains): a signer-typed plugin that needs network anywhere
     // but sendTransaction is unsupported by design.
-    const effectiveGrant =
-      pluginConfig.metadata.types.includes(PluginType.SIGNER_PROVIDER) &&
-      operation !== 'sendTransaction'
-        ? { ...grant, net: false }
-        : grant;
+    // Native grants are intentionally broad, but a permission is applicable
+    // to an operation only when the manifest declares it or the host baseline
+    // requires it. Clamp repoWrite before the mount decision so an unrelated
+    // native signer does not acquire (or require) a workspace by accident.
+    const repoWriteApplies =
+      pluginConfig.metadata.permissions?.some((permission) => permission.id === 'repoWrite') === true ||
+      requiredPermissions(pluginConfig.metadata, operation).includes('repoWrite');
+    const effectiveGrant = {
+      ...grant,
+      repoWrite: grant.repoWrite && repoWriteApplies,
+      ...(pluginConfig.metadata.types.includes(PluginType.SIGNER_PROVIDER) && operation !== 'sendTransaction' ? { net: false } : {}),
+    };
 
     return await this.executeEphemeralPlugin(
       pluginConfig,
@@ -451,8 +458,10 @@ export class PluginExecutor {
 
     let workspaceBind: { hostPath: string } | undefined;
 
-    // repoRead means "needs the host workspace bind-mounted".
-    if (pluginConfig.repoRead) {
+    // A declared reader needs a read-only bind; a granted writer needs a
+    // bind even when it did not separately declare repoRead. The
+    // orchestrator remains authoritative for the ro/rw suffix.
+    if (pluginConfig.repoRead || grant.repoWrite) {
       if (!workspacePath) {
         throw new Error(
           `Workspace path required for ephemeral plugin: ${pluginId}`

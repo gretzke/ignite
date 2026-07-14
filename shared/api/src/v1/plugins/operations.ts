@@ -56,6 +56,7 @@ export const RESERVED_OPERATIONS: readonly string[] = [
   'getVerificationBundle', 'getWatchPaths', 'getSupportedChains',
   'getAccounts', 'signTransaction', 'sendTransaction',
   'getSupportedExplorers', 'verify', 'checkVerification', 'getCreationTx',
+  'onRunCompleted', 'suggestAddresses',
 ];
 
 export const pluginOperationRoutes = {

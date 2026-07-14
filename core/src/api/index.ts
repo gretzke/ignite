@@ -29,6 +29,7 @@ import { explorerHandlers } from './explorers.js';
 import { verificationHandlers } from './verifications.js';
 import { pluginOperationHandlers } from './plugins/operations.js';
 import { deploymentTypeHandlers } from './deploymentTypes.js';
+import { deploymentHookHandlers } from './deploymentHooks.js';
 import { workflowHandlers } from './workflows.js';
 
 // Register API documentation and schemas with Fastify
@@ -111,6 +112,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...verificationHandlers,
     ...pluginOperationHandlers,
     ...deploymentTypeHandlers,
+    ...deploymentHookHandlers,
     ...workflowHandlers,
   };
 

@@ -20,6 +20,7 @@ export * from "./chains.js";
 export * from "./signers.js";
 export * from "./deployments.js";
 export * from "./deploymentTypes.js";
+export * from "./deploymentHooks.js";
 export * from "./explorers.js";
 export * from "./verifications.js";
 export * from "./workflows.js";
@@ -41,6 +42,7 @@ import { chainRoutes } from "./chains.js";
 import { signerRoutes } from "./signers.js";
 import { deploymentRoutes, prepareDeploymentStepRoute } from "./deployments.js";
 import { deploymentTypeRoutes } from "./deploymentTypes.js";
+import { deploymentHookRoutes } from "./deploymentHooks.js";
 import { explorerRoutes } from "./explorers.js";
 import { verificationRoutes } from "./verifications.js";
 import { workflowRoutes } from "./workflows.js";
@@ -89,6 +91,7 @@ const allRoutes = {
   ...deploymentRoutes,
   prepareDeploymentStep: prepareDeploymentStepRoute,
   ...deploymentTypeRoutes,
+  ...deploymentHookRoutes,
   ...explorerRoutes,
   ...verificationRoutes,
   ...workflowRoutes,

@@ -5,6 +5,7 @@ import type { RpcProviderOperations } from "./base/rpc-provider/types.js";
 import type { SignerProviderOperations } from "./base/signer-provider/types.js";
 import type { VerifierOperations } from "./base/verifier/types.js";
 import type { DeploymentTypeOperations } from "./base/deployment-type/types.js";
+import type { DeploymentHookOperations } from "./base/deployment-hook/types.js";
 import { frameResult } from "./utils/protocol.js";
 
 // Built-in plugins are compiler or rpc-provider plugins (the repo-manager
@@ -13,7 +14,8 @@ export type AllOperations = CompilerOperations &
   RpcProviderOperations &
   SignerProviderOperations &
   VerifierOperations &
-  DeploymentTypeOperations;
+  DeploymentTypeOperations &
+  DeploymentHookOperations;
 
 // Generic plugin execution interface
 export type IPluginExecutor<T extends keyof AllOperations> = {

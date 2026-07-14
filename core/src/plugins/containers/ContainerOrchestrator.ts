@@ -81,7 +81,8 @@ export class ContainerOrchestrator {
       ...ownerLabels(),
     };
 
-    // Without repoWrite, the workspace bind is mounted read-only.
+    // Mount matrix: executor supplies a bind for repoRead OR granted
+    // repoWrite; this boundary makes it rw iff repoWrite is actually granted.
     const allBinds = [...(binds ?? [])];
     if (workspaceBind) {
       const suffix = grant.repoWrite ? '' : ':ro';
