@@ -66,8 +66,8 @@ describe('ContainerOrchestrator.cleanupDetached', () => {
     // persists across CLI sessions anymore.
     expect(script).toContain('ignite-ephemeral-foo-abc');
     expect(script).toContain('ignite-ephemeral-bar-def');
-    expect(script).toMatch(/rm[^;]*ignite-ephemeral-foo-abc/);
-    expect(script).toMatch(/rm[^;]*ignite-ephemeral-bar-def/);
+    expect(script).toMatch(/rm -f -v[^;]*ignite-ephemeral-foo-abc/);
+    expect(script).toMatch(/rm -f -v[^;]*ignite-ephemeral-bar-def/);
 
     expect(managed.size).toBe(0);
   });

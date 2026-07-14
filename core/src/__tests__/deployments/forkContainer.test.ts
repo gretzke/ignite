@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  makeForkRunner,
-  sweepForkContainers,
-} from '../../deployments/forkContainer.js';
+import os from 'node:os';
+import { makeForkRunner } from '../../deployments/forkContainer.js';
 
 describe('fork container lifecycle', () => {
   it('does not pull a missing foundry image', async () => {
@@ -26,21 +24,37 @@ describe('fork container lifecycle', () => {
     expect(createContainer).not.toHaveBeenCalled();
   });
 
-  it('sweeps only containers carrying the simulation label', async () => {
+  it('labels fork containers with their owner and removes a created husk when start fails', async () => {
     const remove = vi.fn(async () => undefined);
-    const listContainers = vi.fn(async () => [{ Id: 'leftover' }]);
-    await sweepForkContainers({
-      docker: {
-        inspectImage: vi.fn(),
-        createContainer: vi.fn(),
-        getContainer: vi.fn(() => ({ remove })),
-        listContainers,
-      } as never,
-    });
-    expect(listContainers).toHaveBeenCalledWith({
-      all: true,
-      filters: { label: ['ignite-simfork=1'] },
-    });
-    expect(remove).toHaveBeenCalledWith({ force: true });
+    const createContainer = vi.fn(async () => ({
+      start: vi.fn(async () => {
+        throw new Error('start failed');
+      }),
+      stop: vi.fn(async () => undefined),
+      remove,
+    }));
+
+    await makeForkRunner(
+      { rpcUrl: 'https://secret.example', chainId: 1 },
+      {
+        docker: {
+          inspectImage: vi.fn(async () => undefined),
+          createContainer,
+          getContainer: vi.fn(),
+        } as never,
+      }
+    );
+
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Labels: expect.objectContaining({
+          'ignite-simfork': '1',
+          'ignite.managed': 'true',
+          'ignite.pid': String(process.pid),
+          'ignite.host': os.hostname(),
+        }),
+      })
+    );
+    expect(remove).toHaveBeenCalledWith({ force: true, v: true });
   });
 });

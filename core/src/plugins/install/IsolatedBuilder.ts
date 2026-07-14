@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { getLogger } from '../../utils/logger.js';
 import { runCommand } from '../../utils/runCommand.js';
+import { ownerLabels } from '../../system/orphanSweep.js';
 
 // Squid egress ACL: deny loopback + RFC1918 + link-local (IPv4 and IPv6)
 // BEFORE allowing the rest of the internet (squid evaluates rules
@@ -66,6 +67,9 @@ export class IsolatedBuilder {
     const proxy = `ignite-build-proxy-${id}`;
     const builder = `ignite-buildkitd-${id}`;
     const tempTag = `ignite/installing_git_${id}:build`;
+    const ownerLabelArgs = Object.entries(ownerLabels()).flatMap(
+      ([key, value]) => ['--label', `${key}=${value}`]
+    );
     // NOTE: proxyUrl is resolved to the proxy's internal-network IP, not its
     // container name, further down (see the comment at that assignment).
     let proxyUrl = '';
@@ -74,8 +78,14 @@ export class IsolatedBuilder {
 
     try {
       // 1. Networks: internal (no route out) + egress (normal bridge).
-      await dockerCli(['network', 'create', '--internal', internalNet]);
-      await dockerCli(['network', 'create', egressNet]);
+      await dockerCli([
+        'network',
+        'create',
+        '--internal',
+        ...ownerLabelArgs,
+        internalNet,
+      ]);
+      await dockerCli(['network', 'create', ...ownerLabelArgs, egressNet]);
 
       // 2. Egress proxy: start on the internal net, write its config, then
       //    dual-home it onto the egress net (the ONLY container with a route out).
@@ -86,6 +96,7 @@ export class IsolatedBuilder {
         proxy,
         '--network',
         internalNet,
+        ...ownerLabelArgs,
         SQUID_IMAGE,
       ]);
       // RUN-step processes execute inside buildkitd's rootless (rootlesskit
@@ -129,6 +140,7 @@ export class IsolatedBuilder {
         builder,
         '--network',
         internalNet,
+        ...ownerLabelArgs,
         '--security-opt',
         'seccomp=unconfined',
         '--security-opt',
@@ -207,7 +219,7 @@ export class IsolatedBuilder {
     } finally {
       // Best-effort teardown of everything created, in reverse order.
       for (const c of [builder, proxy]) {
-        await dockerCli(['rm', '-f', c]).catch((err) => {
+        await dockerCli(['rm', '-f', '-v', c]).catch((err) => {
           getLogger().warn(`Isolated build cleanup: failed to remove ${c}: ${err}`);
         });
       }

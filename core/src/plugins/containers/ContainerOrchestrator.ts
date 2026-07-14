@@ -3,6 +3,7 @@ import Docker from 'dockerode';
 import { getLogger } from '../../utils/logger.js';
 import type { PermissionGrant } from '../trust/TrustManager.js';
 import { PluginError, ErrorCodes } from '../../types/errors.js';
+import { ownerLabels } from '../../system/orphanSweep.js';
 
 // Container lifecycle types. Phase 3 deleted the persistent/session repo-
 // container tier: every container is now EPHEMERAL, created once for a
@@ -76,8 +77,8 @@ export class ContainerOrchestrator {
     const allLabels = {
       ...labels,
       'ignite.lifecycle': lifecycle,
-      'ignite.managed': 'true',
       'ignite.created': new Date().toISOString(),
+      ...ownerLabels(),
     };
 
     // Without repoWrite, the workspace bind is mounted read-only.
@@ -103,8 +104,9 @@ export class ContainerOrchestrator {
       },
     };
 
+    let container: Docker.Container | undefined;
     try {
-      const container = await this.docker.createContainer(createOptions);
+      container = await this.docker.createContainer(createOptions);
       await container.start();
 
       // Track the container for lifecycle management
@@ -113,6 +115,16 @@ export class ContainerOrchestrator {
       getLogger().info(`✅ ${lifecycle} container started: ${name}`);
       return name;
     } catch (error) {
+      if (container) {
+        try {
+          await container.remove({ force: true, v: true });
+        } catch (removeError) {
+          getLogger().warn(
+            `⚠️ Failed to remove unstarted container ${name}:`,
+            removeError
+          );
+        }
+      }
       const statusCode = (error as { statusCode?: number })?.statusCode;
       if (statusCode === 404) {
         // Typed so PluginExecutor can recognize a missing image and rebuild
@@ -229,7 +241,7 @@ export class ContainerOrchestrator {
     // space-joining is shell-safe here.
     const script = [
       `docker stop -t ${STOP_GRACE_SECONDS} ${names.join(' ')} >/dev/null 2>&1`,
-      `docker rm -f ${names.join(' ')} >/dev/null 2>&1`,
+      `docker rm -f -v ${names.join(' ')} >/dev/null 2>&1`,
     ].join('; ');
 
     try {
@@ -286,7 +298,7 @@ export class ContainerOrchestrator {
       }
 
       try {
-        await container.remove({ force: true });
+        await container.remove({ force: true, v: true });
         getLogger().info(`🧽 Removed container: ${containerName}`);
       } catch {
         // Ephemeral containers might already be auto-removed

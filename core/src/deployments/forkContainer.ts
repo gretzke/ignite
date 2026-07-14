@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createPublicClient, http, type Hex } from 'viem';
 import type { ScheduleEntry } from './schedule.js';
+import { ownerLabels } from '../system/orphanSweep.js';
 
 const IMAGE = 'ghcr.io/foundry-rs/foundry:latest';
 const LABEL = 'ignite-simfork';
@@ -31,9 +32,6 @@ export interface ForkDocker {
     options: Docker.ContainerCreateOptions
   ): Promise<Docker.Container>;
   getContainer(id: string): Docker.Container;
-  listContainers(
-    options: Docker.ContainerListOptions
-  ): Promise<Array<{ Id: string }>>;
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -85,8 +83,6 @@ export async function makeForkRunner(
     inspectImage: (name) => rawDocker.getImage(name).inspect(),
     createContainer: (options) => rawDocker.createContainer(options),
     getContainer: (id) => rawDocker.getContainer(id),
-    listContainers: (options) =>
-      rawDocker.listContainers(options) as Promise<Array<{ Id: string }>>,
   };
   try {
     await docker.inspectImage(IMAGE);
@@ -107,7 +103,7 @@ export async function makeForkRunner(
     await fs.writeFile(urlFile, forkUrl, { mode: 0o600 });
     container = await docker.createContainer({
       Image: IMAGE,
-      Labels: { [LABEL]: '1' },
+      Labels: { [LABEL]: '1', ...ownerLabels() },
       // The foundry image's default entrypoint wraps Cmd; override it or the
       // shell invocation never runs (container exits, RPC never comes up).
       Entrypoint: ['sh', '-c'],
@@ -201,39 +197,14 @@ export async function makeForkRunner(
       } catch {
         /* AutoRemove may already have removed it. */
       }
+      try {
+        await container.remove({ force: true, v: true });
+      } catch {
+        /* AutoRemove may already have removed it. */
+      }
     }
     release();
     if (urlFile) await fs.rm(urlFile, { force: true }).catch(() => {});
     return undefined;
-  }
-}
-
-export async function sweepForkContainers(deps?: {
-  docker?: ForkDocker;
-}): Promise<void> {
-  const rawDocker = new Docker();
-  const docker: ForkDocker = deps?.docker ?? {
-    inspectImage: (name) => rawDocker.getImage(name).inspect(),
-    createContainer: (options) => rawDocker.createContainer(options),
-    getContainer: (id) => rawDocker.getContainer(id),
-    listContainers: (options) =>
-      rawDocker.listContainers(options) as Promise<Array<{ Id: string }>>,
-  };
-  try {
-    const containers = await docker.listContainers({
-      all: true,
-      filters: { label: [`${LABEL}=1`] },
-    });
-    await Promise.all(
-      containers.map(async ({ Id }) => {
-        try {
-          await docker.getContainer(Id).remove({ force: true });
-        } catch {
-          /* sweep is best-effort */
-        }
-      })
-    );
-  } catch {
-    // Docker being unavailable must never prevent core startup.
   }
 }

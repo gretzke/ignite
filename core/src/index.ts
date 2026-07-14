@@ -28,7 +28,7 @@ import { FrontendRuntimeBridge } from './plugins/invoke/FrontendRuntimeBridge.js
 import { DeployEngine } from './deployments/DeployEngine.js';
 import { VerificationQueue } from './verifications/VerificationQueue.js';
 import { wireVerificationReconciliation } from './deployments/verificationIntegration.js';
-import { sweepForkContainers } from './deployments/forkContainer.js';
+import { sweepOrphanedDockerResources } from './system/orphanSweep.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -58,7 +58,17 @@ async function ignite(workspacePath: string): Promise<{
   const pluginManager = PluginManager.getInstance();
   const pluginExecutor = PluginExecutor.getInstance();
   await JobManager.getInstance().recover();
-  await sweepForkContainers();
+  let sweepDeadline: NodeJS.Timeout | undefined;
+  const sweepResult = await Promise.race([
+    sweepOrphanedDockerResources().then(() => 'complete' as const),
+    new Promise<'deadline'>((resolve) => {
+      sweepDeadline = setTimeout(() => resolve('deadline'), 15_000);
+    }),
+  ]);
+  if (sweepDeadline) clearTimeout(sweepDeadline);
+  if (sweepResult === 'deadline') {
+    app.log.warn('Orphan Docker resource sweep exceeded 15 seconds; continuing startup');
+  }
   await DeployEngine.getInstance().recoverOnStartup();
   const verificationQueue = VerificationQueue.getInstance();
   wireVerificationReconciliation(verificationQueue);

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import os from 'node:os';
 import {
   NATIVE_GRANT,
   UNTRUSTED_GRANT,
@@ -32,6 +33,7 @@ describe('ContainerOrchestrator grant enforcement', () => {
       HostConfig: {
         NetworkMode?: string;
       };
+      Labels: Record<string, string>;
     };
   }
 
@@ -43,6 +45,40 @@ describe('ContainerOrchestrator grant enforcement', () => {
   it('grants bridge network to native plugins', async () => {
     const opts = await createWith(NATIVE_GRANT);
     expect(opts.HostConfig.NetworkMode).toBe('bridge');
+  });
+
+  it('adds owner labels to managed containers', async () => {
+    const opts = await createWith(NATIVE_GRANT);
+    expect(opts.Labels).toMatchObject({
+      'ignite.managed': 'true',
+      'ignite.pid': String(process.pid),
+      'ignite.host': os.hostname(),
+    });
+  });
+
+  it('removes a created container when start fails before rethrowing', async () => {
+    const startError = new Error('start failed');
+    const remove = vi.fn(async () => undefined);
+    createContainerMock.mockImplementationOnce(async () => ({
+      start: vi.fn(async () => {
+        throw startError;
+      }),
+      remove,
+    }));
+    const { ContainerOrchestrator, ContainerLifecycle } = await import(
+      '../../plugins/containers/ContainerOrchestrator.js'
+    );
+
+    await expect(
+      ContainerOrchestrator.getInstance().createContainer({
+        image: 'ignite/test:latest',
+        name: 'ignite-start-failure-test',
+        lifecycle: ContainerLifecycle.EPHEMERAL,
+        grant: NATIVE_GRANT,
+      })
+    ).rejects.toThrow(startError);
+
+    expect(remove).toHaveBeenCalledWith({ force: true, v: true });
   });
 });
 
