@@ -217,7 +217,7 @@ export default function VerifyContractPage() {
   };
 
   return (
-    <div className="text-[var(--text)] max-w-3xl mx-auto grid gap-4">
+    <div className="text-[var(--text)] grid gap-4">
       <header>
         <h1 className="page-title mb-0">Verify a contract</h1>
         <p className="text-sm text-muted">
