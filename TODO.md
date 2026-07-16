@@ -1,6 +1,6 @@
 # MISC
 
-- gas overrides per chain/contract
+- when multiple compiler profile, which one picked to deploy? and investigate 2 UR versions
 - upgradeable transparent/uups + initialization (alongside create/create2)
   - initialization on the proxy itself
 - verifiers (initial ownership)
@@ -270,6 +270,11 @@ dispatch, `operationPermissions` hints unioned with host minimums, and the
 
 ## Workflow follow-ups (D6, 2026-07-14)
 
+- **Workflows are chain-agnostic** — decided 2026-07-16 during D6 review:
+  `defaultChains` is no longer written, returned, or prefilled anywhere;
+  chains are chosen at run time. The document schema retains the field as
+  deprecated so pre-existing workflow files still validate.
+
 - **Bytecode-vs-log validation of suggested pointer addresses + explorer
   links on suggestions** (promoted from the DEPLOYMENTS §5 later-TODO;
   suggestions are confirm-only untrusted history today).
@@ -281,8 +286,14 @@ dispatch, `operationPermissions` hints unioned with host minimums, and the
   could serve ephemeral runs.
 - **Pinned-clone GC** — records carry lastUsedAt; no eviction. Manual remove
   only.
-- **Global workflows browser** across repos (per-repo Deployments section
-  only today).
+- **Pinned materialization recovery coverage** (Sol, 2026-07-16): only the
+  status-probe failure path of assertPinnedIntegrity has a direct test;
+  rev-parse/submodule/post-reset probe failures and the existing-clone
+  rm+rebuild path are untested.
+- **Global workflows browser** — DONE (2026-07-15): dedicated Workflows
+  sidebar tab lists persisted workflows across all registered repos; the
+  per-repo Deployments section on the repository page was removed and
+  post-promotion navigation now lands on /workflows.
 - **Blank-slate workflow editor** (creation = promotion or hand-written JSON).
 - **Signer roles in workflow files** — revisit if a consumer appears
   (deliberately excluded; spec §0.1.1).
