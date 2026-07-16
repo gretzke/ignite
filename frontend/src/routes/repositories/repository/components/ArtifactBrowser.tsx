@@ -4,6 +4,7 @@ import { Loader2, Folder, FileCode, ChevronRight, Rocket } from 'lucide-react';
 import {
   buildPathTree,
   getDirectoryContents,
+  getFileNodes,
   type DirectoryNode,
   type FileNode,
 } from '../../../../utils/pathTree';
@@ -71,6 +72,29 @@ export default function ArtifactBrowser({
     }
     return buildPathTree(artifacts);
   }, [artifacts]);
+
+  const eligibleIdentities = useMemo(() => {
+    const identities = new Set<string>();
+    if (!pathTree) return identities;
+
+    getFileNodes(pathTree).forEach((file) => {
+      if (file.variantCount === 1) identities.add(file.identity);
+    });
+    return identities;
+  }, [pathTree]);
+
+  useEffect(() => {
+    setSelected((current) => {
+      let next = current;
+      Object.keys(current).forEach((identity) => {
+        if (!eligibleIdentities.has(identity)) {
+          if (next === current) next = { ...current };
+          delete next[identity];
+        }
+      });
+      return next;
+    });
+  }, [eligibleIdentities]);
 
   // Get current directory contents
   const directoryContents = useMemo(() => {
@@ -253,6 +277,16 @@ export default function ArtifactBrowser({
                 >
                   Added ✓
                 </button>
+              ) : file.variantCount > 1 ? (
+                <span title="Multiple compiler profiles available. Open the contract to pick one.">
+                  <input
+                    type="checkbox"
+                    checked={false}
+                    disabled
+                    title="Multiple compiler profiles available. Open the contract to pick one."
+                    aria-label={`Select ${file.artifact.contractName} (unavailable: multiple compiler profiles, open the contract to pick one)`}
+                  />
+                </span>
               ) : (
                 <input
                   type="checkbox"
@@ -280,6 +314,14 @@ export default function ArtifactBrowser({
                 </div>
                 <div className="mono-data text-muted truncate">{file.name}</div>
               </button>
+              {file.variantCount > 1 && (
+                <span
+                  className="chip chip-info flex-shrink-0"
+                  title="Multiple compiler profiles available. Open the contract to pick one."
+                >
+                  {file.variantCount} profiles
+                </span>
+              )}
             </div>
           );
         })}
