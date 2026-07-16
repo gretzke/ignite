@@ -9,6 +9,7 @@ import type {
 } from '@ignite/api';
 import { apiClient } from '../../../store/api/client';
 import type { UnboundWorkflowSlot } from '../projection';
+import { decodeUrlEncodingForDisplay } from '../../../utils/displayText';
 
 export function suggestionResolution(stepId: string, path: string, chainId: number, suggestion: PointerSuggestion): ExternalResolution {
   const first = suggestion.sources[0];
@@ -72,11 +73,11 @@ export default function UnboundSlotPicker({
   return (
     <div className="card-milky p-4 grid gap-4">
       <div>
-        <div className="font-medium">Resolve {slots[0]?.stepId} <span className="mono-data">{slots[0]?.path}</span></div>
+        <div className="font-medium">Resolve {slots[0]?.stepId && decodeUrlEncodingForDisplay(slots[0].stepId)} <span className="mono-data">{slots[0]?.path}</span></div>
         <div className="text-sm text-muted">The excluded {source.contractName} deployment needs a confirmed address on each chain.</div>
       </div>
       {loading && <div className="text-sm text-muted flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading pointer suggestions…</div>}
-      {error && <div className="text-sm text-err">{error}</div>}
+      {error && <div className="text-sm text-err">{decodeUrlEncodingForDisplay(error)}</div>}
       {slots.map((slot) => {
         const candidates = data?.suggestionsByChain[String(slot.chainId)] ?? [];
         const manualValue = manual[String(slot.chainId)] ?? '';

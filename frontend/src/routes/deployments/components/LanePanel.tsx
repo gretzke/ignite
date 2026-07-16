@@ -2,6 +2,7 @@ import type { ChainInfo, Lane, ResolveAction, Step } from '@ignite/api';
 import { Check, Circle, Copy, Loader2, X } from 'lucide-react';
 import ChainIcon from '../../settings/tabs/chains/ChainIcon';
 import PauseBanner from './PauseBanner';
+import { decodeUrlEncodingForDisplay } from '../../../utils/displayText';
 
 function statusIcon(status: string) {
   if (status === 'confirmed' || status === 'completed')
@@ -96,7 +97,7 @@ export default function LanePanel({
           const strategy = planStep?.kind === 'deploy' ? planStep.strategy : undefined;
           const title = planStep?.kind === 'deploy'
             ? contractNames[planStep.contractId]
-            : planStep?.signature ?? step.stepId;
+            : planStep?.signature ?? decodeUrlEncodingForDisplay(step.stepId);
           const kindLabel = planStep?.kind === 'call'
             ? 'call'
             : strategy?.kind === 'create2'

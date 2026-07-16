@@ -135,7 +135,7 @@ export default function ContractsStep({
                         if (draft.workflowIncludedStepIds?.[step.id] !== false && dependents.length) setPendingToggle(step.id);
                         else dispatch(toggleWorkflowStep(step.id));
                       }} />
-                      <span className="mono-data truncate">{step.id}</span>
+                      <span className="mono-data truncate">{decodeUrlEncodingForDisplay(step.id)}</span>
                     </label>
                   ))}
                 </div>
@@ -144,7 +144,7 @@ export default function ContractsStep({
           ))}
         </div>
       )}
-      <ConfirmDialog open={Boolean(pendingToggle)} onOpenChange={(open) => { if (!open) setPendingToggle(undefined); }} title="Exclude a depended-on step?" description={pendingToggle ? `These steps depend on it: ${workflowDependentsForExclusion(draft, pendingToggle).join(', ')}. Their pointers must be resolved per chain before continuing.` : ''} confirmText="Exclude step" variant="warning" onConfirm={() => { if (pendingToggle) dispatch(toggleWorkflowStep(pendingToggle)); }} />
+      <ConfirmDialog open={Boolean(pendingToggle)} onOpenChange={(open) => { if (!open) setPendingToggle(undefined); }} title="Exclude a depended-on step?" description={pendingToggle ? `These steps depend on it: ${workflowDependentsForExclusion(draft, pendingToggle).map(decodeUrlEncodingForDisplay).join(', ')}. Their pointers must be resolved per chain before continuing.` : ''} confirmText="Exclude step" variant="warning" onConfirm={() => { if (pendingToggle) dispatch(toggleWorkflowStep(pendingToggle)); }} />
     </section>
   );
 }

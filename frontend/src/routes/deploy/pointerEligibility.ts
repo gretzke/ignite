@@ -3,6 +3,7 @@ import type {
   DraftStep,
   DeployDraftState,
 } from '../../store/features/deployments/types';
+import { decodeUrlEncodingForDisplay } from '../../utils/displayText';
 
 export interface EligiblePointerStep {
   stepId: string;
@@ -194,7 +195,7 @@ export function eligiblePointerSteps(
     const targetStrategy = draftStrategyKind(draft, target.id);
     const label =
       draft.contracts.find((contract) => contract.id === target.contractId)
-        ?.contractName ?? target.id;
+        ?.contractName ?? decodeUrlEncodingForDisplay(target.id);
     if (targetStrategy === 'create') {
       if (sourceStrategy !== 'create')
         return targetIndex < sourceIndex
@@ -259,7 +260,7 @@ export function earlierDeploySteps(
         stepId: step.id,
         label:
           draft.contracts.find((contract) => contract.id === step.contractId)
-            ?.contractName ?? step.id,
+            ?.contractName ?? decodeUrlEncodingForDisplay(step.id),
       },
     ];
   });
@@ -278,7 +279,7 @@ export function callTargetPointerSteps(
     if (target.kind !== 'deploy') return [];
     const label =
       draft.contracts.find((contract) => contract.id === target.contractId)
-        ?.contractName ?? target.id;
+        ?.contractName ?? decodeUrlEncodingForDisplay(target.id);
     if (targetIndex < sourceIndex) return [{ stepId: target.id, label }];
     const dynamic = chainIds.some((chainId) =>
       dynamicDeterministicDraftStepIds(draft, chainId).has(target.id)
@@ -309,7 +310,7 @@ export function callArgumentPointerSteps(
     if (target.kind !== 'deploy') return [];
     const label =
       draft.contracts.find((contract) => contract.id === target.contractId)
-        ?.contractName ?? target.id;
+        ?.contractName ?? decodeUrlEncodingForDisplay(target.id);
     const strategy = draft.deployExtras[target.id]?.strategy.kind ?? 'create';
     const dynamic = (draft.chains.length ? draft.chains : [1]).some(
       (chainId) =>

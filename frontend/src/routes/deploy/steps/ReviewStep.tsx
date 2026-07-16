@@ -20,7 +20,7 @@ import {
 import { runSnapshotReceived } from '../../../store/features/deployments/deploymentsSlice';
 import ValidationChecklist from '../components/ValidationChecklist';
 import { explorersApi } from '../../../store/api/explorersApi';
-import { replaceIdsForDisplay } from '../../../utils/displayText';
+import { decodeUrlEncodingForDisplay, replaceIdsForDisplay } from '../../../utils/displayText';
 import { workflowRunRequestFromDraft } from '../../../store/features/deployments/workflowDraft';
 import {
   openPermissionsModal,
@@ -68,7 +68,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           step.kind === 'deploy'
             ? (draft.contracts.find(
                 (contract) => contract.id === step.contractId
-              )?.contractName ?? step.id)
+              )?.contractName ?? decodeUrlEncodingForDisplay(step.id))
             : step.signature
               ? `Call ${step.signature}`
               : `Call #${index + 1}`,
@@ -447,7 +447,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
               )?.contractId;
               const name =
                 draft.contracts.find((contract) => contract.id === contractId)
-                  ?.contractName ?? stepId;
+                  ?.contractName ?? decodeUrlEncodingForDisplay(stepId);
               return (
                 <div
                   key={`${stepId}-${chainId}`}
