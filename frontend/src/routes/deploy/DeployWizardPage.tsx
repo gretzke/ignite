@@ -126,7 +126,7 @@ export default function DeployWizardPage() {
       draftStep.kind === 'deploy'
         ? (draft.contracts.find(
             (contract) => contract.id === draftStep.contractId
-          )?.contractName ?? draftStep.id)
+          )?.contractName ?? replaceIdsForDisplay(draftStep.id))
         : draftStep.signature
           ? `Call ${draftStep.signature}`
           : `Call #${index + 1}`,
@@ -283,13 +283,13 @@ export default function DeployWizardPage() {
   );
 
   return (
-    <div className="text-[var(--text)] max-w-5xl mx-auto">
+    <div className="text-[var(--text)]">
       <div className="flex items-center gap-3 mb-4">
         <button
           type="button"
           className="btn btn-secondary btn-icon"
           aria-label="Back"
-          onClick={() => navigate('/deployments')}
+          onClick={() => navigate(draft.workflowRef ? '/workflows' : '/deployments')}
         >
           <ArrowLeft size={18} />
         </button>
@@ -368,11 +368,7 @@ export default function DeployWizardPage() {
           onOpenChange={setPromoteOpen}
           input={{ plan }}
           hooks={draft.workflowOutputs?.hooks ?? []}
-          onPromoted={(repoPathOrUrl) =>
-            navigate(
-              `/repositories/${encodeURIComponent(repoPathOrUrl)}#deployments`
-            )
-          }
+          onPromoted={() => navigate('/workflows')}
         />
       )}
       <WizardStepper

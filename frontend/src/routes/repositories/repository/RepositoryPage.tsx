@@ -15,13 +15,6 @@ import {
   listArtifacts,
   setCompilationStatus,
 } from '../../../store/features/compiler/compilerSlice';
-import { workflowsApi } from '../../../store/features/workflows/workflowsApi';
-import {
-  selectWorkflowList,
-  workflowOriginsApprovalCleared,
-} from '../../../store/features/workflows/workflowsSlice';
-import WorkflowCard from './components/WorkflowCard';
-import ConfirmDialog from '../../../components/ConfirmDialog';
 
 export default function RepositoryPage() {
   const { repoPath } = useParams<{ repoPath: string }>();
@@ -43,18 +36,6 @@ export default function RepositoryPage() {
     () => compilations[decodedPath] || {},
     [compilations, decodedPath]
   );
-  const workflowList = useAppSelector((state) =>
-    selectWorkflowList(state, decodedPath)
-  );
-  const originApproval = useAppSelector(
-    (state) => state.workflows.originApproval
-  );
-
-  useEffect(() => {
-    if (decodedPath)
-      workflowsApi.list(decodedPath).forEach((action) => dispatch(action));
-  }, [decodedPath, dispatch]);
-
   // Load artifacts for each framework when component mounts
   useEffect(() => {
     if (repoData?.frameworks && repoData.frameworks.length > 0) {
@@ -211,44 +192,6 @@ export default function RepositoryPage() {
         />
       </div>
 
-      <section id="deployments" className="card-milky overflow-hidden mb-6">
-        <div className="p-6 pb-3 flex items-center justify-between">
-          <div>
-            <div className="eyebrow">Deployments</div>
-            <h2 className="text-lg font-semibold mt-1">Persisted workflows</h2>
-          </div>
-          {workflowList?.loading && (
-            <Loader2 size={18} className="animate-spin" />
-          )}
-        </div>
-        {workflowList?.truncated && (
-          <div className="mx-6 mb-3 text-sm pill-warning rounded-md px-3 py-2">
-            Showing the first 256 workflow files. Narrow or reorganize this
-            repository to see the remainder.
-          </div>
-        )}
-        {workflowList?.error ? (
-          <div className="px-6 pb-6 text-sm text-err">{workflowList.error}</div>
-        ) : (
-          <div className="glass-list">
-            {(workflowList?.workflows ?? []).length === 0 &&
-            !workflowList?.loading ? (
-              <div className="list-row text-sm text-muted">
-                No persisted workflows in this repository.
-              </div>
-            ) : (
-              (workflowList?.workflows ?? []).map((workflow) => (
-                <WorkflowCard
-                  key={workflow.name}
-                  repoPathOrUrl={decodedPath}
-                  workflow={workflow}
-                />
-              ))
-            )}
-          </div>
-        )}
-      </section>
-
       {/* Framework tabs */}
       <div className="card-milky overflow-visible">
         {frameworks.length === 1 ? (
@@ -306,42 +249,6 @@ export default function RepositoryPage() {
           </Tabs.Root>
         )}
       </div>
-      <ConfirmDialog
-        open={Boolean(
-          originApproval && originApproval.repoPathOrUrl === decodedPath
-        )}
-        onOpenChange={(open) => {
-          if (!open) dispatch(workflowOriginsApprovalCleared());
-        }}
-        title="Approve pinned origins?"
-        description={
-          <>
-            <p className="mb-2">
-              This workflow needs read access to these repository origins:
-            </p>
-            <ul className="list-disc pl-5 space-y-1">
-              {originApproval?.origins.map((origin) => (
-                <li key={origin} className="mono-data break-all">
-                  {origin}
-                </li>
-              ))}
-            </ul>
-          </>
-        }
-        confirmText="Approve and retry"
-        variant="warning"
-        onConfirm={() => {
-          if (originApproval)
-            dispatch(
-              workflowsApi.approveOrigins(
-                originApproval.repoPathOrUrl,
-                originApproval.name,
-                originApproval.origins,
-                originApproval.retry
-              )
-            );
-        }}
-      />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Rocket,
+  Workflow,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../store';
@@ -32,6 +33,13 @@ export default function Sidebar() {
       to: '/repositories',
       label: 'Repositories',
       Icon: Folder,
+      badge: 0,
+      forceActive: undefined as boolean | undefined,
+    },
+    {
+      to: '/workflows',
+      label: 'Workflows',
+      Icon: Workflow,
       badge: 0,
       forceActive: undefined as boolean | undefined,
     },

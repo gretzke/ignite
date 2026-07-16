@@ -15,6 +15,7 @@ import FilePage from './routes/repositories/repository/file/FilePage.tsx';
 import DeployWizardPage from './routes/deploy/DeployWizardPage.tsx';
 import DeploymentsPage from './routes/deployments/DeploymentsPage.tsx';
 import RunPage from './routes/deployments/RunPage.tsx';
+import WorkflowsPage from './routes/workflows/WorkflowsPage.tsx';
 import VerifyContractPage from './routes/verify/VerifyContractPage.tsx';
 import './index.css';
 import { ToastProvider } from './ui/toast/ToastProvider';
@@ -29,6 +30,7 @@ const router = createBrowserRouter([
       { path: 'repositories/:repoPath', element: <RepositoryPage /> },
       { path: 'repositories/:repoPath/file/*', element: <FilePage /> },
       { path: 'deploy', element: <DeployWizardPage /> },
+      { path: 'workflows', element: <WorkflowsPage /> },
       { path: 'deployments', element: <DeploymentsPage /> },
       { path: 'deployments/:runId', element: <RunPage /> },
       { path: 'verify', element: <VerifyContractPage /> },

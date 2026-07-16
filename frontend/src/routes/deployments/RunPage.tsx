@@ -26,6 +26,7 @@ import { dependentPlanStepIds } from '../deploy/pointerEligibility';
 import HookRunsPanel from './components/HookRunsPanel';
 import { getRepoName } from '../../utils/repo';
 import PromoteWorkflowDialog from '../../components/PromoteWorkflowDialog';
+import { decodeUrlEncodingForDisplay } from '../../utils/displayText';
 
 const TERMINAL_VERIFICATION_STATUSES = new Set([
   'verified',
@@ -376,11 +377,7 @@ export default function RunPage() {
         onOpenChange={setPromoteOpen}
         input={{ runId: run.id }}
         hooks={run.workflow?.hooks ?? []}
-        onPromoted={(repoPathOrUrl) =>
-          navigate(
-            `/repositories/${encodeURIComponent(repoPathOrUrl)}#deployments`
-          )
-        }
+        onPromoted={() => navigate('/workflows')}
       />
       {editChainId !== null &&
         (() => {
@@ -466,8 +463,8 @@ export default function RunPage() {
           const labels = dependents.map((id) => {
             const step = run.plan.steps.find((item) => item.id === id);
             return step?.kind === 'deploy'
-              ? (contractNames[step.contractId] ?? id)
-              : (step?.signature ?? id);
+              ? (contractNames[step.contractId] ?? decodeUrlEncodingForDisplay(id))
+              : (step?.signature ?? decodeUrlEncodingForDisplay(id));
           });
           return (
             <ConfirmDialog

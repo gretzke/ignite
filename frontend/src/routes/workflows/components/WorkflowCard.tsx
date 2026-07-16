@@ -2,16 +2,17 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, Loader2, Play, RefreshCw, Pencil } from 'lucide-react';
 import type { WorkflowSummary } from '@ignite/api';
-import { useAppDispatch, useAppSelector } from '../../../../store/hooks';
-import { workflowsApi } from '../../../../store/features/workflows/workflowsApi';
+import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { workflowsApi } from '../../../store/features/workflows/workflowsApi';
 import {
   selectWorkflowDocument,
   selectWorkflowResolve,
   selectWorkflowUpdates,
   workflowOriginsApprovalRequested,
-} from '../../../../store/features/workflows/workflowsSlice';
-import { selectPluginRows, pluginsApi } from '../../../../store/features/plugins/pluginsSlice';
-import { acceptWorkflowPinUpdate, hydrateWorkflowDraft } from '../../../../store/features/deployments/deployDraftSlice';
+} from '../../../store/features/workflows/workflowsSlice';
+import { selectPluginRows, pluginsApi } from '../../../store/features/plugins/pluginsSlice';
+import { acceptWorkflowPinUpdate, hydrateWorkflowDraft } from '../../../store/features/deployments/deployDraftSlice';
+import { decodeUrlEncodingForDisplay } from '../../../utils/displayText';
 
 export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUrl: string; workflow: WorkflowSummary }) {
   const dispatch = useAppDispatch();
@@ -51,7 +52,6 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
           <div className="flex flex-wrap gap-2 mt-3">
             <span className="pill rounded-full px-2 py-0.5">{workflow.sourceCount ?? 0} sources</span>
             <span className="pill rounded-full px-2 py-0.5">{workflow.stepCount ?? 0} steps</span>
-            {(workflow.defaultChains ?? []).map((chainId) => <span key={chainId} className="pill rounded-full px-2 py-0.5">chain {chainId}</span>)}
             {(workflow.hooks ?? []).map((hook) => <span key={hook} className="pill pill-primary rounded-full px-2 py-0.5">{hook}</span>)}
           </div>
           {documentState && (
@@ -77,9 +77,9 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
           <button className="btn btn-secondary" disabled={updates?.loading} onClick={() => workflowsApi.checkUpdates(repoPathOrUrl, workflow.name).forEach((action) => dispatch(action))}><RefreshCw size={15} className={updates?.loading ? 'animate-spin' : ''} /> Updates</button>
         </div>
       </div>
-      {resolve?.status === 'failed' && <div className="text-sm text-err mt-3">{resolve.error}</div>}
-      {busy && resolveJob?.logTail.at(-1) && <div className="text-sm text-muted mt-3 mono-data">{resolveJob.logTail.at(-1)}</div>}
-      {resolve?.status === 'succeeded' && !readinessReady && resolve.result && <div className="mt-3 text-sm text-warn space-y-1">{resolve.result.sources.filter((source) => source.status === 'failed').map((source) => <div key={source.id}>{source.id}: {source.reason}</div>)}{resolve.result.plugins.filter((plugin) => plugin.status !== 'installed').map((plugin) => <div key={plugin.id}>{plugin.id}: {plugin.status}</div>)}</div>}
+      {resolve?.status === 'failed' && <div className="text-sm text-err mt-3">{resolve.error && decodeUrlEncodingForDisplay(resolve.error)}</div>}
+      {busy && resolveJob?.logTail.at(-1) && <div className="text-sm text-muted mt-3 mono-data">{decodeUrlEncodingForDisplay(resolveJob.logTail.at(-1)!)}</div>}
+      {resolve?.status === 'succeeded' && !readinessReady && resolve.result && <div className="mt-3 text-sm text-warn space-y-1">{resolve.result.sources.filter((source) => source.status === 'failed').map((source) => <div key={source.id}>{decodeUrlEncodingForDisplay(source.id)}: {decodeUrlEncodingForDisplay(source.reason ?? '')}</div>)}{resolve.result.plugins.filter((plugin) => plugin.status !== 'installed').map((plugin) => <div key={plugin.id}>{decodeUrlEncodingForDisplay(plugin.id)}: {decodeUrlEncodingForDisplay(plugin.status)}</div>)}</div>}
       {updates?.report && (
         <div className="mt-4 card-milky p-3 text-sm space-y-2">
           {updates.report.sources.length === 0 && updates.report.plugins.length === 0 && <div className="text-muted">Everything is up to date.</div>}
@@ -88,7 +88,7 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
             const upgrade = row.upgrades?.at(-1);
             const commit = upgrade?.commit ?? row.latestCommit;
             const ref = upgrade?.ref ?? requiredSource?.repo.ref;
-            return <div key={row.sourceId} className="flex items-center justify-between gap-3"><span><span className="mono-data">{row.sourceId}</span>: {row.status === 'tag-retargeted' ? 'tag retargeted' : row.status === 'tag-deleted' ? 'tag vanished' : row.status === 'branch-moved' ? 'branch moved' : row.status === 'upgrade-available' ? `upgrade available (${row.upgrades?.map((item) => item.ref).join(', ')})` : row.status === 'approval-required' ? `approval required (${row.origin})` : row.status}</span>{row.status === 'approval-required' && row.origin ? <button className="btn btn-secondary" onClick={() => dispatch(workflowOriginsApprovalRequested({ repoPathOrUrl, name: workflow.name, origins: [row.origin!], retry: 'updates' }))}>Approve origin</button> : commit && documentState && row.status !== 'up-to-date' && row.status !== 'error' && <button className="btn btn-secondary" onClick={() => { dispatch(hydrateWorkflowDraft({ repoPathOrUrl, name: workflow.name, docHash: documentState.docHash, document: documentState.document })); dispatch(acceptWorkflowPinUpdate({ sourceId: row.sourceId, commit, ...(ref ? { ref, refKind: upgrade ? 'tag' : requiredSource?.repo.refKind } : {}) })); navigate(`/deploy?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}&edit=true`); }}>Accept in editor</button>}</div>;
+            return <div key={row.sourceId} className="flex items-center justify-between gap-3"><span><span className="mono-data">{decodeUrlEncodingForDisplay(row.sourceId)}</span>: {row.status === 'tag-retargeted' ? 'tag retargeted' : row.status === 'tag-deleted' ? 'tag vanished' : row.status === 'branch-moved' ? 'branch moved' : row.status === 'upgrade-available' ? `upgrade available (${row.upgrades?.map((item) => decodeUrlEncodingForDisplay(item.ref)).join(', ')})` : row.status === 'approval-required' ? `approval required (${decodeUrlEncodingForDisplay(row.origin ?? '')})` : decodeUrlEncodingForDisplay(row.error ?? row.status)}</span>{row.status === 'approval-required' && row.origin ? <button className="btn btn-secondary" onClick={() => dispatch(workflowOriginsApprovalRequested({ repoPathOrUrl, name: workflow.name, origins: [row.origin!], retry: 'updates' }))}>Approve origin</button> : commit && documentState && row.status !== 'up-to-date' && row.status !== 'error' && <button className="btn btn-secondary" onClick={() => { dispatch(hydrateWorkflowDraft({ repoPathOrUrl, name: workflow.name, docHash: documentState.docHash, document: documentState.document })); dispatch(acceptWorkflowPinUpdate({ sourceId: row.sourceId, commit, ...(ref ? { ref, refKind: upgrade ? 'tag' : requiredSource?.repo.refKind } : {}) })); navigate(`/deploy?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}&edit=true`); }}>Accept in editor</button>}</div>;
           })}
           {updates.report.plugins.map((row) => (
             <div key={row.id} className="flex items-center justify-between gap-3">
