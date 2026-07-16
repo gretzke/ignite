@@ -113,6 +113,7 @@ const GIT_AUTH_ERROR =
 // ops never leave disk.
 const TIMEOUT_CLONE_MS = 10 * 60 * 1000;
 const TIMEOUT_FETCH_MS = 2 * 60 * 1000;
+const TIMEOUT_SUBMODULES_MS = 8 * 60 * 1000;
 const TIMEOUT_LOCAL_MS = 30 * 1000;
 export const PINNED_MATERIALIZATION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -222,7 +223,7 @@ export class RepoService {
         // Approved top-level origins own their checked-out submodule content;
         // per-submodule approval is intentionally not required. The transport
         // allowlist and protocol.file.allow=never remain mandatory here.
-        const submodules = await git(['-c', 'protocol.file.allow=never', 'submodule', 'update', '--init', '--recursive', '--depth', '1'], TIMEOUT_FETCH_MS);
+        const submodules = await git(['-c', 'protocol.file.allow=never', 'submodule', 'update', '--init', '--recursive', '--depth', '1'], TIMEOUT_SUBMODULES_MS);
         if (!submodules.success) throw Object.assign(new Error(submodules.error.message), { code: submodules.error.code });
         await this.assertPinnedIntegrity(temp, commit, budget);
         if (controller.signal.aborted) throw controller.signal.reason;
@@ -244,9 +245,15 @@ export class RepoService {
     const head = await this.runPinnedGit(worktree, ['rev-parse', 'HEAD'], TIMEOUT_LOCAL_MS, budget);
     const status = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS, budget);
     const submoduleStatus = await this.runPinnedGit(worktree, ['submodule', 'foreach', '--recursive', 'git status --porcelain'], TIMEOUT_LOCAL_MS, budget);
-    const badHead = !head.success || head.data.stdout.trim().toLowerCase() !== commit.toLowerCase();
-    const badStatus = !status.success || status.data.stdout.trim() !== '';
-    const badSubmodule = !submoduleStatus.success || submoduleStatus.data.stdout.trim() !== '';
+    if (!head.success)
+      throw Object.assign(new Error(head.error.message), { code: head.error.code });
+    if (!status.success)
+      throw Object.assign(new Error(status.error.message), { code: status.error.code });
+    if (!submoduleStatus.success)
+      throw Object.assign(new Error(submoduleStatus.error.message), { code: submoduleStatus.error.code });
+    const badHead = head.data.stdout.trim().toLowerCase() !== commit.toLowerCase();
+    const badStatus = status.data.stdout.trim() !== '';
+    const badSubmodule = submoduleStatus.data.stdout.trim() !== '';
     if (!badHead) {
       if (badSubmodule) throw Object.assign(new Error('Pinned submodule integrity violation requires re-materialization'), { code: 'PINNED_INTEGRITY_VIOLATION' });
       if (badStatus) {
@@ -254,7 +261,8 @@ export class RepoService {
         const reset = await this.runPinnedGit(worktree, ['reset', '--hard', commit], TIMEOUT_LOCAL_MS, budget);
         if (!reset.success) throw Object.assign(new Error(reset.error.message), { code: reset.error.code });
         const clean = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS, budget);
-        if (!clean.success || clean.data.stdout.trim() !== '') throw Object.assign(new Error('Pinned worktree remained dirty after reset'), { code: 'PINNED_INTEGRITY_VIOLATION' });
+        if (!clean.success) throw Object.assign(new Error(clean.error.message), { code: clean.error.code });
+        if (clean.data.stdout.trim() !== '') throw Object.assign(new Error('Pinned worktree remained dirty after reset'), { code: 'PINNED_INTEGRITY_VIOLATION' });
       }
       return;
     }

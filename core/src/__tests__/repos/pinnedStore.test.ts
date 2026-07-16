@@ -57,6 +57,15 @@ describe('PinnedStore', () => {
     expect(calls).toBe(0);
   });
 
+  it('preserves probe failures instead of reporting an integrity violation', async () => {
+    const home = await temp('ignite-pinned-home-'); FileSystem.resetInstance(); const fileSystem = FileSystem.getInstance(home);
+    const repos = new RepoService({ fileSystem, profiles: { getCurrentProfile: () => profileId } as unknown as ProfileManager, run: (async (_cmd, args) => {
+      if (args.includes('status')) return { code: 1, stdout: '', stderr: 'probe timed out' };
+      return { code: 0, stdout: 'a'.repeat(40), stderr: '' };
+    }) as typeof runCommand });
+    await expect(repos.assertPinnedIntegrity('/pinned/repo', 'a'.repeat(40))).rejects.toMatchObject({ code: 'GIT_COMMAND_FAILED', message: expect.stringContaining('probe timed out') });
+  });
+
   it('enforces one materialization deadline and removes the temporary worktree on abort', async () => {
     const home = await temp('ignite-pinned-home-'); FileSystem.resetInstance(); const fileSystem = FileSystem.getInstance(home); const store = new PinnedStore(fileSystem);
     const url = 'file:///deadline/repo'; await store.approveOrigins(profileId, [url]);
