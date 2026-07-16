@@ -192,7 +192,7 @@ export class WorkflowPromotionService {
       delete copy.signerOverride;
       return copy;
     });
-    const candidate = { schemaVersion: 1 as const, sources, steps, defaultChains: [...plan.chains], requiredPlugins, outputs: { hooks: [...hooks] } };
+    const candidate = { schemaVersion: 1 as const, sources, steps, requiredPlugins, outputs: { hooks: [...hooks] } };
     return makeWorkflowDocumentSchema({ allowFileUrls: process.env.NODE_ENV === 'development' }).parse(candidate);
   }
 
@@ -224,7 +224,7 @@ function inputKey(request: Pick<WorkflowPromoteRequest, 'plan' | 'runId'>): stri
   return request.runId ? `run:${request.runId}` : `plan:${crypto.createHash('sha256').update(JSON.stringify(request.plan)).digest('hex')}`;
 }
 function summary(name: string, document: WorkflowDocument): WorkflowSummary {
-  return { name, valid: true, sourceCount: document.sources.length, stepCount: document.steps.length, ...(document.defaultChains ? { defaultChains: document.defaultChains } : {}), hooks: document.outputs.hooks };
+  return { name, valid: true, sourceCount: document.sources.length, stepCount: document.steps.length, hooks: document.outputs.hooks };
 }
 function promotionOrigin(origin: string): string {
   const normalized = normalizeRepoUrl(origin);

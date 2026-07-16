@@ -131,7 +131,7 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
             const result = await d.repos.getFile(request.query.pathOrUrl, relPath(name));
             if (!result.success) throw new WorkflowHttpError(422, result.error.code, result.error.message);
             const document = parseDocument(result.data.content, d.devMode());
-            workflows.push({ name, valid: true, ...(document.description ? { description: document.description } : {}), sourceCount: document.sources.length, stepCount: document.steps.length, ...(document.defaultChains ? { defaultChains: document.defaultChains } : {}), hooks: document.outputs.hooks });
+            workflows.push({ name, valid: true, ...(document.description ? { description: document.description } : {}), sourceCount: document.sources.length, stepCount: document.steps.length, hooks: document.outputs.hooks });
           } catch (error) {
             workflows.push({ name, valid: false, error: error instanceof Error ? error.message : String(error) });
           }

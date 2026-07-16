@@ -291,7 +291,7 @@ const deployDraftSlice = createSlice({
           sourcePath: source.sourcePath,
           pin: { ...source.repo },
         })),
-        chains: [...(document.defaultChains ?? [])],
+        chains: [],
         steps,
         deployExtras,
         workflowRef: { repoPathOrUrl, name, baseDocHash: docHash },

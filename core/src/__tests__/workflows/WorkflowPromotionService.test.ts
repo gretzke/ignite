@@ -68,6 +68,7 @@ describe('WorkflowPromotionService', () => {
     expect(document.sources.find((source) => source.id === 'unpinned')).toMatchObject({ repo: { url: 'https://example.test/unpinned', commit: SHA, ref: 'v2.0.0', refKind: 'tag' }, artifactHash: HASH });
     expect(document.steps.every((step) => !('signerOverride' in step))).toBe(true);
     expect(document).not.toHaveProperty('signers');
+    expect(document).not.toHaveProperty('defaultChains');
     expect(document.outputs.hooks).toEqual(['hook']);
     expect(document.requiredPlugins.map((plugin) => plugin.id).sort()).toEqual(['foundry', 'hook', 'strategy'].sort());
     expect(document.requiredPlugins.find((plugin) => plugin.id === 'hook')?.source).toMatchObject({ kind: 'git', url: 'https://example.test/hook.git' });

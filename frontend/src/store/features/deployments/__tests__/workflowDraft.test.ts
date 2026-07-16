@@ -97,7 +97,7 @@ describe('workflow deploy drafts', () => {
       'deploy-b': true,
       'call-a': true,
     });
-    expect(state.chains).toEqual([1, 10]);
+    expect(state.chains).toEqual([]);
     expect(state.workflowOutputs).toEqual({ hooks: ['chronicles-logger'] });
   });
 
@@ -144,7 +144,8 @@ describe('workflow deploy drafts', () => {
         document,
       })
     );
-    expect(workflowDraftIsDirty(state)).toBe(false);
+    expect(workflowDocumentFromDraft(state)).not.toHaveProperty('defaultChains');
+    expect(workflowDraftIsDirty(state)).toBe(true);
     state = deployDraftReducer(
       state,
       setStepSigner({

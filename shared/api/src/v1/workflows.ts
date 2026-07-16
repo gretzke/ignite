@@ -67,6 +67,7 @@ export interface WorkflowDocument {
   description?: string;
   sources: WorkflowSource[];
   steps: WorkflowStep[];
+  // deprecated: ignored, retained so existing documents validate
   defaultChains?: number[];
   requiredPlugins: WorkflowRequiredPlugin[];
   outputs: WorkflowOutputs;
@@ -79,7 +80,6 @@ export interface WorkflowSummary {
   description?: string;
   sourceCount?: number;
   stepCount?: number;
-  defaultChains?: number[];
   hooks?: string[];
 }
 
@@ -192,7 +192,8 @@ export function makeWorkflowDocumentSchema(options: { allowFileUrls?: boolean } 
   const PluginSourceSchema = z.discriminatedUnion('kind', [z.object({ kind: z.literal('local'), contextDir: z.string().min(1), dockerfile: z.string().min(1).optional() }).strict(), z.object({ kind: z.literal('git'), url: z.string().min(1), ref: z.string().min(1).optional(), track: TrackSchema.optional(), commit: z.string().min(1).optional() }).strict()]);
   const RequiredPluginSchema = z.object({ id: z.string().min(1), version: z.string().min(1), source: PluginSourceSchema.optional() }).strict();
   const OutputsSchema = z.object({ hooks: z.array(z.string().min(1)).max(16) }).strict();
-  return z.object({ schemaVersion: z.literal(1), description: z.string().max(1024).optional(), sources: z.array(SourceSchema).max(64), steps: z.array(WorkflowStepSchema).max(256), defaultChains: z.array(z.number().int().positive()).max(128).optional(), requiredPlugins: z.array(RequiredPluginSchema).max(32), outputs: OutputsSchema }).strict().superRefine((doc, ctx) => {
+  return z.object({ schemaVersion: z.literal(1), description: z.string().max(1024).optional(), sources: z.array(SourceSchema).max(64), steps: z.array(WorkflowStepSchema).max(256), // deprecated: ignored, retained so existing documents validate
+    defaultChains: z.array(z.number().int().positive()).max(128).optional(), requiredPlugins: z.array(RequiredPluginSchema).max(32), outputs: OutputsSchema }).strict().superRefine((doc, ctx) => {
     const duplicate = (values: string[]) => values.find((value, index) => values.indexOf(value) !== index);
     const source = duplicate(doc.sources.map((entry) => entry.id)); if (source) ctx.addIssue({ code: 'custom', message: `duplicate source id: ${source}`, path: ['sources'] });
     const step = duplicate(doc.steps.map((entry) => entry.id)); if (step) ctx.addIssue({ code: 'custom', message: `duplicate step id: ${step}`, path: ['steps'] });
@@ -217,7 +218,7 @@ export function validateWorkflowClosure(document: WorkflowDocument): string[] {
   return [...required].filter((id) => !plugins.has(id)).sort();
 }
 
-export const WorkflowSummarySchema = z.object({ name: z.string().regex(WorkflowNamePattern), valid: z.boolean(), error: z.string().optional(), description: z.string().max(1024).optional(), sourceCount: z.number().int().nonnegative().optional(), stepCount: z.number().int().nonnegative().optional(), defaultChains: z.array(z.number().int().positive()).max(128).optional(), hooks: z.array(z.string().min(1)).max(16).optional() }).strict() satisfies z.ZodType<WorkflowSummary>;
+export const WorkflowSummarySchema = z.object({ name: z.string().regex(WorkflowNamePattern), valid: z.boolean(), error: z.string().optional(), description: z.string().max(1024).optional(), sourceCount: z.number().int().nonnegative().optional(), stepCount: z.number().int().nonnegative().optional(), hooks: z.array(z.string().min(1)).max(16).optional() }).strict() satisfies z.ZodType<WorkflowSummary>;
 const WorkflowListResponseSchema = createApiResponseSchema<{ workflows: WorkflowSummary[]; truncated: boolean }>('WorkflowListResponseSchema')(z.object({ workflows: z.array(WorkflowSummarySchema), truncated: z.boolean() }).strict());
 // Response schemas describe values already accepted by the environment-aware
 // handler; they must not reject a development file:// document at serialize.

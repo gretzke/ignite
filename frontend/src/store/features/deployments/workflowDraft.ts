@@ -66,7 +66,6 @@ export function workflowDocumentFromDraft(
       : {}),
     sources: cloneJson(draft.workflowSources ?? original.sources),
     steps,
-    ...(draft.chains.length ? { defaultChains: [...draft.chains] } : {}),
     requiredPlugins: cloneJson(
       draft.workflowRequiredPlugins ?? original.requiredPlugins
     ),
