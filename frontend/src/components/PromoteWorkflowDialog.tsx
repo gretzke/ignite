@@ -15,6 +15,7 @@ import { formatApiError } from '../store/middleware/apiGate';
 import Select from './Select';
 import ConfirmDialog from './ConfirmDialog';
 import { getRepoName } from '../utils/repo';
+import { decodeUrlEncodingForDisplay } from '../utils/displayText';
 
 type PromotionInput = { plan: DeploymentPlan } | { runId: string };
 
@@ -224,7 +225,6 @@ export default function PromoteWorkflowDialog({
               <label className="grid gap-1">
                 <span className="eyebrow">Target repository</span>
                 <Select
-                  portal={false}
                   requireSelection
                   value={repoPathOrUrl}
                   options={repoOptions}
@@ -254,19 +254,32 @@ export default function PromoteWorkflowDialog({
                 )}
               </label>
               {!preview && (
-                <button
-                  type="button"
-                  className="btn btn-secondary justify-self-start"
-                  disabled={previewBlocked || loading}
-                  onClick={() => void requestPreview()}
-                >
-                  {loading ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <Save size={14} />
-                  )}{' '}
-                  Preview pins
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={previewBlocked || loading}
+                    onClick={() => void requestPreview()}
+                  >
+                    {loading ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Save size={14} />
+                    )}{' '}
+                    Preview pins
+                  </button>
+                  {/* A silently disabled button reads as a dead end — say
+                      what's missing (same posture as the wizard nav). */}
+                  {previewBlocked && (
+                    <span className="text-sm text-muted">
+                      {!repoPathOrUrl
+                        ? 'Choose a target repository first'
+                        : !name
+                          ? 'Enter a workflow name first'
+                          : 'Fix the workflow name first'}
+                    </span>
+                  )}
+                </div>
               )}
               {preview && (
                 <section className="grid gap-3">
@@ -286,7 +299,7 @@ export default function PromoteWorkflowDialog({
                       >
                         <div className="flex items-center gap-2">
                           <span className="font-medium mono-data flex-1">
-                            {source.sourceId}
+                            {decodeUrlEncodingForDisplay(source.sourceId)}
                           </span>
                           <span className="chip">
                             {source.commit.slice(0, 7)}
@@ -313,7 +326,6 @@ export default function PromoteWorkflowDialog({
                           <label className="grid gap-1">
                             <span className="eyebrow">Tag at HEAD</span>
                             <Select
-                              portal={false}
                               requireSelection
                               value={tagChoices[source.sourceId]}
                               options={source.tagChoices.map((tag) => ({
@@ -343,8 +355,9 @@ export default function PromoteWorkflowDialog({
                     onChange={(event) => setAdopt(event.target.checked)}
                   />
                   <span>
-                    Adopt this run’s rendered artifact into the workflow
-                    repository.
+                    Also record this run’s deployment (addresses, tx hashes) in
+                    the workflow repository, so future runs can suggest reusing
+                    the deployed contracts.
                   </span>
                 </label>
               )}

@@ -503,10 +503,17 @@ function SelectContent({
     // Clicks inside the dropdown (options, search, scroll buttons) must not
     // bubble to whatever hosts the Select — e.g. a repo card whose onClick
     // navigates. React synthetic events bubble through the component tree
-    // even when the dropdown is rendered in a portal.
+    // even when the dropdown is rendered in a portal. preventDefault matters
+    // for in-place menus (portal={false}) hosted inside a <label>: the
+    // label's activation behavior re-dispatches the click onto its form
+    // control — the Select trigger — which toggles the menu straight back
+    // open and leaves it covering the controls below.
     <div
       className="flex flex-1 flex-col min-h-0"
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      }}
     >
       {/* Search field for large lists */}
       {showSearch && (
