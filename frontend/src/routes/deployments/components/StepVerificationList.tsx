@@ -1,4 +1,4 @@
-import { Loader2, RotateCcw, XCircle } from 'lucide-react';
+import { ExternalLink, Loader2, RotateCcw, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type {
   ExplorerTargetSnapshot,
@@ -211,17 +211,17 @@ export function VerificationTaskRows({
             {task.explorer.url}
           </div>
         </div>
+        <StatusChip task={task} />
         {task.explorerPageUrl && (
           <a
             href={task.explorerPageUrl}
             target="_blank"
             rel="noreferrer"
-            className="text-sm underline"
+            className="btn btn-sm btn-secondary"
           >
-            Explorer
+            <ExternalLink size={14} /> Explorer
           </a>
         )}
-        <StatusChip task={task} />
         {action === 'cancel' ? (
           <button
             type="button"
