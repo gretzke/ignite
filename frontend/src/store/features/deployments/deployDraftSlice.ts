@@ -513,6 +513,13 @@ const deployDraftSlice = createSlice({
         delete step.argsPerChain?.[key];
         delete step.valuePerChain?.[key];
         delete step.gasOverridesPerChain?.[key];
+        delete step.signerOverride?.perChain?.[key];
+        if (Object.keys(step.signerOverride?.perChain ?? {}).length === 0) {
+          delete step.signerOverride?.perChain;
+        }
+        if (!step.signerOverride?.global && !step.signerOverride?.perChain) {
+          step.signerOverride = undefined;
+        }
       }
       for (const extras of Object.values(state.deployExtras)) {
         if (extras.strategy.kind === 'create2')
