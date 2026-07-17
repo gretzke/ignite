@@ -103,7 +103,7 @@ export async function makeForkRunner(
     await fs.writeFile(urlFile, forkUrl, { mode: 0o600 });
     container = await docker.createContainer({
       Image: IMAGE,
-      Labels: { [LABEL]: '1', ...ownerLabels() },
+      Labels: { [LABEL]: '1', ...ownerLabels('simfork') },
       // The foundry image's default entrypoint wraps Cmd; override it or the
       // shell invocation never runs (container exits, RPC never comes up).
       Entrypoint: ['sh', '-c'],

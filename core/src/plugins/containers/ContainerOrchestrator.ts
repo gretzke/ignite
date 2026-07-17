@@ -78,7 +78,7 @@ export class ContainerOrchestrator {
       ...labels,
       'ignite.lifecycle': lifecycle,
       'ignite.created': new Date().toISOString(),
-      ...ownerLabels(),
+      ...ownerLabels('plugins'),
     };
 
     // Mount matrix: executor supplies a bind for repoRead OR granted

@@ -4,6 +4,7 @@ import type { PluginMetadata } from '@ignite/plugin-types/types';
 import type { PluginBuildResult } from './types.js';
 import { INSTALLED_PLUGIN_ENTRYPOINT } from './types.js';
 import { parsePluginOutput } from '../utils/pluginTransport.js';
+import { ownerLabels } from '../../system/orphanSweep.js';
 import { normalizeLegacyType } from '../utils/permissionCompat.js';
 
 // A misbehaving/hung plugin entrypoint must not wedge the install (or leak the
@@ -56,6 +57,9 @@ export async function describeImage(
 ): Promise<PluginMetadata> {
   const container = await docker.createContainer({
     Image: imageTag,
+    // Labels were previously absent here, leaving a crashed-mid-describe
+    // container invisible to the orphan sweep.
+    Labels: ownerLabels('install'),
     Cmd: ['node', INSTALLED_PLUGIN_ENTRYPOINT, 'getInfo'],
     HostConfig: { AutoRemove: false, NetworkMode: 'none' },
   });

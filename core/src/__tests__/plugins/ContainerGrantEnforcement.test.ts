@@ -53,6 +53,9 @@ describe('ContainerOrchestrator grant enforcement', () => {
       'ignite.managed': 'true',
       'ignite.pid': String(process.pid),
       'ignite.host': os.hostname(),
+      // Groups all ignite containers under one stack in Docker Desktop.
+      'com.docker.compose.project': 'ignite',
+      'com.docker.compose.service': 'plugins',
     });
   });
 

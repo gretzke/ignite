@@ -67,7 +67,7 @@ export class IsolatedBuilder {
     const proxy = `ignite-build-proxy-${id}`;
     const builder = `ignite-buildkitd-${id}`;
     const tempTag = `ignite/installing_git_${id}:build`;
-    const ownerLabelArgs = Object.entries(ownerLabels()).flatMap(
+    const ownerLabelArgs = Object.entries(ownerLabels('build')).flatMap(
       ([key, value]) => ['--label', `${key}=${value}`]
     );
     // NOTE: proxyUrl is resolved to the proxy's internal-network IP, not its

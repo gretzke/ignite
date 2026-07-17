@@ -41,11 +41,16 @@ export interface OrphanSweepDeps {
   now?: () => number;
 }
 
-export function ownerLabels(): Record<string, string> {
+export function ownerLabels(service?: string): Record<string, string> {
   return {
     'ignite.managed': 'true',
     'ignite.pid': String(process.pid),
     'ignite.host': os.hostname(),
+    // Ignite creates containers programmatically, not via compose; the
+    // compose project label is what makes Docker Desktop group them all
+    // under one "ignite" stack.
+    'com.docker.compose.project': 'ignite',
+    ...(service ? { 'com.docker.compose.service': service } : {}),
   };
 }
 
