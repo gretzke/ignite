@@ -158,7 +158,11 @@ export function projectWorkflowPlan(input: WorkflowProjectionInput): DeploymentP
   return {
     schemaVersion: 1,
     contracts: input.document.sources.filter((source) => usedSources.has(source.id)).map((source) => {
-      if (source.origin === 'contract-type') throw new Error('contract-type sources are not supported here yet (contract-types plan phase 13)');
+      if (source.origin === 'contract-type') return {
+        id: source.id, origin: 'contract-type' as const, contractName: source.contractName,
+        pluginId: source.pluginId, artifactKey: source.artifactKey,
+        versionLabel: source.versionLabel, contentHash: source.contentHash,
+      };
       return {
         id: source.id, repoPathOrUrl: source.repo.url, frameworkId: source.frameworkId,
         sourcePath: source.sourcePath, contractName: source.contractName, artifactPath: source.artifactPath, pin: { ...source.repo },

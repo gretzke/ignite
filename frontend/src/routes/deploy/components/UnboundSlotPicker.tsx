@@ -51,7 +51,7 @@ export default function UnboundSlotPicker({
 
   useEffect(() => {
     let cancelled = false;
-    if (source.origin === 'contract-type') return () => { cancelled = true; }; // contract-types plan phase 13
+    if (source.origin === 'contract-type') { setLoading(false); return () => { cancelled = true; }; }
     const chainIds = chainKey.split(',').map(Number);
     setLoading(true);
     void apiClient.request('pointerSuggestions', {
@@ -72,7 +72,13 @@ export default function UnboundSlotPicker({
     return () => { cancelled = true; };
   }, [repoPathOrUrl, artifactHash, source, workflowName, chainKey]);
 
-  if (source.origin === 'contract-type') return null; // contract-types plan phase 13
+  if (source.origin === 'contract-type') return (
+    <div className="card-milky p-4 grid gap-3">
+      <div className="font-medium">Resolve {slots[0]?.stepId && decodeUrlEncodingForDisplay(slots[0].stepId)} <span className="mono-data">{slots[0]?.path}</span></div>
+      <div className="text-sm text-muted">Enter the already deployed contract-type address on each chain.</div>
+      {slots.map((slot) => { const manualValue = manual[String(slot.chainId)] ?? ''; return <div key={slot.chainId} className="flex items-center gap-2"><input className="input mono-data flex-1" aria-label={`Manual address for chain ${slot.chainId}`} placeholder="0x…" value={manualValue} onChange={(event) => setManual((current) => ({ ...current, [String(slot.chainId)]: event.target.value }))} /><button type="button" className="btn btn-sm btn-secondary" disabled={!manualResolution(slot.stepId, slot.path, slot.chainId, manualValue)} onClick={() => { const resolution = manualResolution(slot.stepId, slot.path, slot.chainId, manualValue); if (resolution) onConfirm(resolution); }}>Use manual</button></div>; })}
+    </div>
+  );
 
   return (
     <div className="card-milky p-4 grid gap-4">

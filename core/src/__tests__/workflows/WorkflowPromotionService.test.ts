@@ -107,6 +107,18 @@ describe('WorkflowPromotionService', () => {
     expect(getRun).toHaveBeenCalledWith('p1', ids[1]);
   });
 
+  it('promotes contract-type sources without inspecting git and pins their required plugin', async () => {
+    const plan: DeploymentPlan = { schemaVersion: 1, chains: [1], signers: {}, contracts: [{ id: 'proxy', origin: 'contract-type', contractName: 'Proxy', pluginId: 'proxy-plugin', artifactKey: 'proxy', versionLabel: '1.2.3', contentHash: 'a'.repeat(64) }], steps: [{ id: 'deploy-proxy', kind: 'deploy', contractId: 'proxy' }] };
+    const inspectSource = vi.fn();
+    const service = makeService({ inspectSource, getRequiredPlugin: async (id) => ({ id, version: id === 'proxy-plugin' ? '1.2.3' : '1' }) });
+    const preview = await service.promote({ mode: 'preview', target: { repoPathOrUrl: '/target', name: 'proxy' }, plan }, 'p1');
+    await service.promote({ mode: 'apply', previewId: preview.previewId, target: { repoPathOrUrl: '/target', name: 'proxy' }, plan, hooks: [] }, 'p1');
+    const document = JSON.parse(files.get('ignite/workflows/proxy.json')!) as WorkflowDocument;
+    expect(inspectSource).not.toHaveBeenCalled();
+    expect(document.sources[0]).toMatchObject({ origin: 'contract-type', pluginId: 'proxy-plugin', contentHash: 'a'.repeat(64) });
+    expect(document.requiredPlugins).toContainEqual({ id: 'proxy-plugin', version: '1.2.3' });
+  });
+
   function makeService(overrides: Partial<WorkflowPromotionServiceDeps> = {}) {
     return new WorkflowPromotionService({
       inspectSource: async () => ({ origin: 'https://example.test/repo.git', commit: SHA, tags: ['v1.0.0'], branch: 'main', dirty: false }),

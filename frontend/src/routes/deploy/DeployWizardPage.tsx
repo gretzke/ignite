@@ -236,7 +236,7 @@ export default function DeployWizardPage() {
         ? `Resolve ${slots.length} per-chain pointer ${slots.length === 1 ? 'slot' : 'slots'}`
         : undefined;
     })(),
-    undefined,
+    draft.contractTypeSelectionPending ? 'Contract type is still loading' : undefined,
   ];
 
   const nav = step < STEPS.length - 1 && (

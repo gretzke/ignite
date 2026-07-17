@@ -102,6 +102,23 @@ describe('planFromDraft', () => {
     });
   });
 
+  it('never merges initializer arguments across different per-chain functions', () => {
+    const draft: DeployDraftState = {
+      contracts: [{ id: 'impl', repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: 'out/Impl.json', contractName: 'Impl', sourcePath: 'src/Impl.sol' }, { id: 'proxy', origin: 'contract-type', pluginId: 'proxy', artifactKey: 'proxy', versionLabel: 'v1', contentHash: 'a'.repeat(64), contractName: 'Proxy' }],
+      chains: [1, 999], rpcSelection: {}, explorerSelection: {}, signers: {}, unseenIds: [], deployExtras: {},
+      steps: [{ id: 'impl-step', kind: 'deploy', contractId: 'impl' }, { id: 'proxy-step', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'impl-step', contractTypePluginId: 'proxy' }, args: { _data: { $encode: { contractId: 'impl', fn: 'initialize(address)', args: { owner: '0x1111111111111111111111111111111111111111' } } } }, argsPerChain: { '999': { _data: { $encode: { contractId: 'impl', fn: 'initialize(uint256)', args: { count: '7' } } } } } }],
+    };
+    expect(planFromDraft(draft, chains).steps[1]).toMatchObject({ argsPerChain: { '999': { _data: { $encode: { fn: 'initialize(uint256)', args: { count: '7' } } } } } });
+  });
+
+  it('does not replace a complete global initializer with a partial override', () => {
+    const draft: DeployDraftState = {
+      contracts: [{ id: 'impl', repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: 'out/Impl.json', contractName: 'Impl', sourcePath: 'src/Impl.sol' }, { id: 'proxy', origin: 'contract-type', pluginId: 'proxy', artifactKey: 'proxy', versionLabel: 'v1', contentHash: 'a'.repeat(64), contractName: 'Proxy' }], chains: [1, 999], rpcSelection: {}, explorerSelection: {}, signers: {}, unseenIds: [], deployExtras: {},
+      steps: [{ id: 'impl-step', kind: 'deploy', contractId: 'impl' }, { id: 'proxy-step', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'impl-step', contractTypePluginId: 'proxy' }, args: { _data: { $encode: { contractId: 'impl', fn: 'initialize()', args: {} } } }, argsPerChain: { '999': { _data: { $encode: { contractId: 'impl' } } } } }],
+    };
+    expect(planFromDraft(draft, chains).steps[1]).toMatchObject({ argsPerChain: { '999': { _data: { $encode: { fn: 'initialize()' } } } } });
+  });
+
   it('refuses to guess native currency decimals', () => {
     const draft: DeployDraftState = {
       contracts: [],

@@ -69,7 +69,7 @@ export type WorkflowDeployStrategy =
   | { kind: 'create2'; salt: string; saltPerChain?: Record<string, string>; acknowledgeDeployed?: Record<string, { predictedAddress: string; initcodeHash: string }> }
   | { kind: 'plugin'; pluginId: string; params?: Record<string, unknown>; salt?: string; saltPerChain?: Record<string, string>; prepared?: Record<string, { initcodeHash: string; predictedAddress: string }>; acknowledgeDeployed?: Record<string, { predictedAddress: string; initcodeHash: string }> };
 export type WorkflowStep =
-  | { id: string; kind: 'deploy'; contractId: string; args?: Record<string, unknown>; argsPerChain?: Record<string, Record<string, unknown>>; value?: string; valuePerChain?: Record<string, string>; gasOverrides?: WorkflowGasOverrides; gasOverridesPerChain?: Record<string, Partial<WorkflowGasOverrides>>; strategy?: WorkflowDeployStrategy; libraries?: Record<string, WorkflowLibraryBinding>; librariesPerChain?: Record<string, Record<string, WorkflowLibraryBinding>> }
+  | { id: string; kind: 'deploy'; contractId: string; args?: Record<string, unknown>; argsPerChain?: Record<string, Record<string, unknown>>; value?: string; valuePerChain?: Record<string, string>; gasOverrides?: WorkflowGasOverrides; gasOverridesPerChain?: Record<string, Partial<WorkflowGasOverrides>>; strategy?: WorkflowDeployStrategy; libraries?: Record<string, WorkflowLibraryBinding>; librariesPerChain?: Record<string, Record<string, WorkflowLibraryBinding>>; wraps?: { stepId: string; contractTypePluginId: string }; acknowledgeUninitialized?: true; acknowledgeUnverifiedBytecode?: true }
   | { id: string; kind: 'call'; target: WorkflowCallTarget; targetPerChain?: Record<string, WorkflowCallTarget>; signature?: string; payable?: boolean; args?: Record<string, unknown>; argsPerChain?: Record<string, Record<string, unknown>>; value?: string; valuePerChain?: Record<string, string>; gasOverrides?: WorkflowGasOverrides; gasOverridesPerChain?: Record<string, Partial<WorkflowGasOverrides>> };
 export interface WorkflowGasOverrides { gasLimit?: string; maxFeePerGas?: string; maxPriorityFeePerGas?: string }
 
@@ -112,8 +112,10 @@ export type WorkflowPromoteData =
 export interface WorkflowCheckUpdatesRequest { repoPathOrUrl: string; name: string }
 export type WorkflowSourceUpdate = {
   sourceId: string;
-  status: 'up-to-date' | 'upgrade-available' | 'tag-retargeted' | 'tag-deleted' | 'branch-moved' | 'approval-required' | 'error';
-  currentCommit: string;
+  status: 'up-to-date' | 'upgrade-available' | 'tag-retargeted' | 'tag-deleted' | 'branch-moved' | 'approval-required' | 'contract-type-drift' | 'error';
+  currentCommit?: string;
+  currentContentHash?: string;
+  latestContentHash?: string;
   origin?: string;
   latestCommit?: string;
   upgrades?: Array<{ ref: string; commit: string; version: string }>;
@@ -177,7 +179,7 @@ const WorkflowDeployStrategySchema = z.discriminatedUnion('kind', [
 ]) satisfies z.ZodType<WorkflowDeployStrategy>;
 
 const WorkflowStepSchema = z.discriminatedUnion('kind', [
-  z.object({ id: z.string().min(1), kind: z.literal('deploy'), contractId: z.string().min(1), args: z.record(z.string(), z.unknown()).optional(), argsPerChain: z.record(ChainKeySchema, z.record(z.string(), z.unknown())).optional(), value: DecimalSchema.optional(), valuePerChain: z.record(ChainKeySchema, DecimalSchema).optional(), gasOverrides: GasOverridesSchema.optional(), gasOverridesPerChain: z.record(ChainKeySchema, GasOverridesSchema.partial()).optional(), strategy: WorkflowDeployStrategySchema.optional(), libraries: z.record(z.string(), LibraryBindingSchema).optional(), librariesPerChain: z.record(ChainKeySchema, z.record(z.string(), LibraryBindingSchema)).optional() }).strict(),
+  z.object({ id: z.string().min(1), kind: z.literal('deploy'), contractId: z.string().min(1), args: z.record(z.string(), z.unknown()).optional(), argsPerChain: z.record(ChainKeySchema, z.record(z.string(), z.unknown())).optional(), value: DecimalSchema.optional(), valuePerChain: z.record(ChainKeySchema, DecimalSchema).optional(), gasOverrides: GasOverridesSchema.optional(), gasOverridesPerChain: z.record(ChainKeySchema, GasOverridesSchema.partial()).optional(), strategy: WorkflowDeployStrategySchema.optional(), libraries: z.record(z.string(), LibraryBindingSchema).optional(), librariesPerChain: z.record(ChainKeySchema, z.record(z.string(), LibraryBindingSchema)).optional(), wraps: z.object({ stepId: z.string().min(1), contractTypePluginId: z.string().min(1) }).strict().optional(), acknowledgeUninitialized: z.literal(true).optional(), acknowledgeUnverifiedBytecode: z.literal(true).optional() }).strict(),
   z.object({ id: z.string().min(1), kind: z.literal('call'), target: CallTargetSchema, targetPerChain: z.record(ChainKeySchema, CallTargetSchema).optional(), signature: z.string().min(1).optional(), payable: z.boolean().optional(), args: z.record(z.string(), z.unknown()).optional(), argsPerChain: z.record(ChainKeySchema, z.record(z.string(), z.unknown())).optional(), value: DecimalSchema.optional(), valuePerChain: z.record(ChainKeySchema, DecimalSchema).optional(), gasOverrides: GasOverridesSchema.optional(), gasOverridesPerChain: z.record(ChainKeySchema, GasOverridesSchema.partial()).optional() }).strict(),
 ]).superRefine((step, ctx) => {
   if (step.kind === 'call' && (step.value !== undefined || step.valuePerChain !== undefined) && step.signature !== undefined && step.payable !== true) ctx.addIssue({ code: 'custom', message: 'call value requires payable: true when signature is present', path: ['payable'] });
@@ -217,7 +219,7 @@ export function makeWorkflowDocumentSchema(options: { allowFileUrls?: boolean } 
     const deployIds = new Set(doc.steps.filter((entry) => entry.kind === 'deploy').map((entry) => entry.id));
     const assertDeploy = (stepId: string, path: (string | number)[]) => { if (!deployIds.has(stepId)) ctx.addIssue({ code: 'custom', message: 'pointer, target, and library stepIds must name deploy steps', path }); };
     const visitRefs = (value: unknown, path: (string | number)[]) => { if (!value || typeof value !== 'object') return; if (!Array.isArray(value) && '$ref' in (value as Record<string, unknown>)) { const ref = value as WorkflowValueRef; if (ref.$ref?.kind === 'step') assertDeploy(ref.$ref.stepId, path); return; } Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => visitRefs(entry, [...path, key])); };
-    doc.steps.forEach((entry, index) => { if (entry.kind === 'deploy') { if (!contractIds.has(entry.contractId)) ctx.addIssue({ code: 'custom', message: 'step contractId must reference a source', path: ['steps', index, 'contractId'] }); visitRefs(entry.args, ['steps', index, 'args']); visitRefs(entry.argsPerChain, ['steps', index, 'argsPerChain']); Object.entries(entry.libraries ?? {}).forEach(([key, binding]) => { if (binding.kind === 'step') assertDeploy(binding.stepId, ['steps', index, 'libraries', key]); }); Object.entries(entry.librariesPerChain ?? {}).forEach(([chain, bindings]) => Object.entries(bindings).forEach(([key, binding]) => { if (binding.kind === 'step') assertDeploy(binding.stepId, ['steps', index, 'librariesPerChain', chain, key]); })); } else { if (entry.target.kind === 'step') assertDeploy(entry.target.stepId, ['steps', index, 'target']); Object.entries(entry.targetPerChain ?? {}).forEach(([chain, target]) => { if (target.kind === 'step') assertDeploy(target.stepId, ['steps', index, 'targetPerChain', chain]); }); visitRefs(entry.args, ['steps', index, 'args']); visitRefs(entry.argsPerChain, ['steps', index, 'argsPerChain']); } });
+    doc.steps.forEach((entry, index) => { if (entry.kind === 'deploy') { if (!contractIds.has(entry.contractId)) ctx.addIssue({ code: 'custom', message: 'step contractId must reference a source', path: ['steps', index, 'contractId'] }); if (entry.wraps) assertDeploy(entry.wraps.stepId, ['steps', index, 'wraps', 'stepId']); visitRefs(entry.args, ['steps', index, 'args']); visitRefs(entry.argsPerChain, ['steps', index, 'argsPerChain']); Object.entries(entry.libraries ?? {}).forEach(([key, binding]) => { if (binding.kind === 'step') assertDeploy(binding.stepId, ['steps', index, 'libraries', key]); }); Object.entries(entry.librariesPerChain ?? {}).forEach(([chain, bindings]) => Object.entries(bindings).forEach(([key, binding]) => { if (binding.kind === 'step') assertDeploy(binding.stepId, ['steps', index, 'librariesPerChain', chain, key]); })); } else { if (entry.target.kind === 'step') assertDeploy(entry.target.stepId, ['steps', index, 'target']); Object.entries(entry.targetPerChain ?? {}).forEach(([chain, target]) => { if (target.kind === 'step') assertDeploy(target.stepId, ['steps', index, 'targetPerChain', chain]); }); visitRefs(entry.args, ['steps', index, 'args']); visitRefs(entry.argsPerChain, ['steps', index, 'argsPerChain']); } });
     if (jsonByteLength(doc) > MAX_DOCUMENT_BYTES) ctx.addIssue({ code: 'custom', message: `workflow document exceeds ${MAX_DOCUMENT_BYTES} bytes` });
   }) as z.ZodType<WorkflowDocument>;
 }
@@ -228,11 +230,9 @@ export function validateWorkflowClosure(document: WorkflowDocument): string[] {
   const plugins = new Set(document.requiredPlugins.map((plugin) => plugin.id));
   const required = new Set<string>([...document.sources.map((source) => source.origin === 'contract-type' ? source.pluginId : source.frameworkId), ...document.outputs.hooks]);
   const missing = new Set<string>();
-  for (const source of document.sources) {
-    if (source.origin !== 'contract-type') continue;
-    const plugin = document.requiredPlugins.find((entry) => entry.id === source.pluginId);
-    if (!plugin || plugin.version !== source.versionLabel) missing.add(source.pluginId);
-  }
+  // versionLabel identifies the frozen artifact bundle, not the installed
+  // plugin version. The requiredPlugins entry is pinned from the registry by
+  // promotion and closure only establishes that the plugin is present.
   for (const step of document.steps) if (step.kind === 'deploy' && step.strategy?.kind === 'plugin') required.add(step.strategy.pluginId);
   for (const id of required) if (!plugins.has(id)) missing.add(id);
   return [...missing].sort();
@@ -276,8 +276,8 @@ export const WorkflowPromoteResponseSchema = createApiResponseSchema<WorkflowPro
 );
 export const WorkflowCheckUpdatesRequestSchema = z.object({ repoPathOrUrl: z.string().min(1), name: z.string().regex(WorkflowNamePattern) }).strict();
 const WorkflowSourceUpdateSchema = z.object({
-  sourceId: z.string().min(1), status: z.enum(['up-to-date', 'upgrade-available', 'tag-retargeted', 'tag-deleted', 'branch-moved', 'approval-required', 'error']),
-  currentCommit: z.string().regex(COMMIT), latestCommit: z.string().regex(COMMIT).optional(),
+  sourceId: z.string().min(1), status: z.enum(['up-to-date', 'upgrade-available', 'tag-retargeted', 'tag-deleted', 'branch-moved', 'approval-required', 'contract-type-drift', 'error']),
+  currentCommit: z.string().regex(COMMIT).optional(), latestCommit: z.string().regex(COMMIT).optional(), currentContentHash: z.string().regex(SHA256_HEX).optional(), latestContentHash: z.string().regex(SHA256_HEX).optional(),
   origin: z.string().min(1).optional(), upgrades: z.array(z.object({ ref: z.string().min(1), commit: z.string().regex(COMMIT), version: z.string().min(1) }).strict()).optional(), error: z.string().optional(),
 }).strict() satisfies z.ZodType<WorkflowSourceUpdate>;
 const WorkflowPluginUpdateSchema = z.object({

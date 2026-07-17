@@ -57,6 +57,14 @@ describe('WorkflowUpdateService', () => {
       { id: 'missing', requiredVersion: '1', status: 'missing', updateAvailable: false },
     ]);
   });
+
+  it('reports a contract-type descriptor hash change without dereferencing a repository', async () => {
+    const document: WorkflowDocument = { schemaVersion: 1, sources: [{ id: 'proxy', origin: 'contract-type', contractName: 'Proxy', pluginId: 'proxy-plugin', artifactKey: 'proxy', versionLabel: '1', contentHash: 'a'.repeat(64) }], steps: [], requiredPlugins: [{ id: 'proxy-plugin', version: '1' }], outputs: { hooks: [] } };
+    const inspectRemote = vi.fn();
+    const result = await new WorkflowUpdateService({ readWorkflow: async () => document, inspectRemote, pluginRows: async () => [], getProfileId: async () => 'p1', isOriginApproved: async () => true, contractTypeHash: async () => 'b'.repeat(64) }).check({ repoPathOrUrl: '/repo', name: 'release' });
+    expect(result.sources).toEqual([{ sourceId: 'proxy', status: 'contract-type-drift', currentContentHash: 'a'.repeat(64), latestContentHash: 'b'.repeat(64) }]);
+    expect(inspectRemote).not.toHaveBeenCalled();
+  });
 });
 
 function remote(overrides: Record<string, unknown>) { return { defaultBranch: 'main', branches: ['main'], branchHeads: { main: A }, releases: [], ...overrides } as never; }

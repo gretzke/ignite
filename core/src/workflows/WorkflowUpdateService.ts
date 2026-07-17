@@ -18,7 +18,7 @@ import type { PluginInstallSource } from '../plugins/install/types.js';
 import type { PluginVersionInfoData } from '@ignite/api';
 import { PinnedStore, pinnedOrigin } from '../repos/PinnedStore.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
-import { IgniteError } from '../types/errors.js';
+import { ContractTypeService } from '../deployments/ContractTypeService.js';
 
 export interface WorkflowUpdateServiceDeps {
   readWorkflow: (request: WorkflowCheckUpdatesRequest) => Promise<WorkflowDocument>;
@@ -26,6 +26,7 @@ export interface WorkflowUpdateServiceDeps {
   pluginRows: (plugins: WorkflowRequiredPlugin[]) => Promise<WorkflowPluginUpdate[]>;
   getProfileId: () => Promise<string>;
   isOriginApproved: (profileId: string, url: string) => Promise<boolean>;
+  contractTypeHash: (pluginId: string) => Promise<string>;
 }
 
 export class WorkflowUpdateService {
@@ -37,6 +38,7 @@ export class WorkflowUpdateService {
       pluginRows: deps?.pluginRows ?? requiredPluginRows,
       getProfileId: deps?.getProfileId ?? (async () => (await ProfileManager.getInstance()).getCurrentProfile()),
       isOriginApproved: deps?.isOriginApproved ?? ((profileId, url) => new PinnedStore().isOriginApproved(profileId, url)),
+      contractTypeHash: deps?.contractTypeHash ?? (async (pluginId) => (await ContractTypeService.getInstance().frozenDescriptor(pluginId)).contentHash),
     };
   }
 
@@ -45,7 +47,17 @@ export class WorkflowUpdateService {
     const profileId = await this.deps.getProfileId();
     const sources: WorkflowSourceUpdate[] = [];
     for (const source of document.sources) {
-      if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
+      if (source.origin === 'contract-type') {
+        try {
+          const latestContentHash = await this.deps.contractTypeHash(source.pluginId);
+          sources.push(latestContentHash === source.contentHash
+            ? { sourceId: source.id, status: 'up-to-date', currentContentHash: source.contentHash }
+            : { sourceId: source.id, status: 'contract-type-drift', currentContentHash: source.contentHash, latestContentHash });
+        } catch (error) {
+          sources.push({ sourceId: source.id, status: 'error', currentContentHash: source.contentHash, error: error instanceof Error ? error.message : String(error) });
+        }
+        continue;
+      }
       const pin = source.repo;
       if (!(await this.deps.isOriginApproved(profileId, pin.url))) {
         sources.push({ sourceId: source.id, status: 'approval-required', currentCommit: pin.commit, origin: pinnedOrigin(pin.url) });

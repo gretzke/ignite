@@ -48,6 +48,10 @@ function isEncoded(value: unknown): value is { $encode: { contractId: string; fn
   return Boolean(value && typeof value === 'object' && '$encode' in value);
 }
 
+function isCompleteEncoded(value: unknown): value is { $encode: { contractId: string; fn: string; args?: Record<string, unknown> } } {
+  return isEncoded(value) && typeof value.$encode.contractId === 'string' && value.$encode.contractId.length > 0 && typeof value.$encode.fn === 'string' && value.$encode.fn.length > 0;
+}
+
 // Core deliberately treats wrapper argsPerChain atomically. The draft stays
 // sparse for pleasant per-chain editing, then this boundary emits every
 // constructor field and every encoded initializer argument for each override.
@@ -57,7 +61,12 @@ function materializedWrapperArgs(step: DraftDeployStep): Record<string, Record<s
     const args: Record<string, unknown> = { ...(step.args ?? {}), ...override };
     for (const [key, value] of Object.entries(override)) {
       const global = step.args?.[key];
-      if (isEncoded(global) && isEncoded(value)) {
+      // An argsPerChain override is atomic in the engine. Only combine an
+      // initializer's sparse draft args when both halves describe the same
+      // call; never put an old override's args on a new global function.
+      if (isEncoded(global) && isEncoded(value) && !isCompleteEncoded(value)) {
+        args[key] = global;
+      } else if (isCompleteEncoded(global) && isCompleteEncoded(value) && global.$encode.fn === value.$encode.fn) {
         args[key] = {
           $encode: {
             ...global.$encode,

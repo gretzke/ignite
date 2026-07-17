@@ -23,6 +23,7 @@ import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { TrustManager } from '../plugins/trust/TrustManager.js';
 import { getCompilerArtifactData } from './plugins/compiler/index.js';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
+import { ContractTypeService } from '../deployments/ContractTypeService.js';
 
 const MAX_WORKFLOW_BYTES = 512 * 1024;
 const MAX_LIST_ENTRIES = 256;
@@ -96,6 +97,12 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
       return installedVersion === requiredVersion ? { id, status: 'installed', installedVersion } : { id, status: 'version-mismatch', installedVersion };
     }),
     artifactReadable: deps?.artifactReadable ?? (async (source, profileId) => {
+      if (source.origin === 'contract-type') {
+        const frozen = await ContractTypeService.getInstance().frozenDescriptor(source.pluginId);
+        if (frozen.contentHash !== source.contentHash)
+          throw new WorkflowHttpError(422, 'CONTRACT_TYPE_DRIFT', `Contract type ${source.pluginId} no longer matches the workflow content hash`);
+        return true;
+      }
       const contract = workflowSourceToContract(source);
       await getCompilerArtifactData({ executor: PluginExecutor.getInstance(), registryLoader: registry, repos: repos as RepoService }, { contract, profileId });
       return true;
@@ -185,7 +192,7 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
         const profileId = await d.getProfileId();
         const origins = new Map<string, string>();
         for (const source of document.sources) {
-          if (source.origin === 'contract-type') throw new WorkflowHttpError(422, 'CONTRACT_TYPE_UNSUPPORTED', 'contract-type sources are not supported here yet (contract-types plan phase 13)');
+          if (source.origin === 'contract-type') continue;
           origins.set(pinnedOrigin(source.repo.url), source.repo.url);
         }
         const unapproved = (await Promise.all([...origins].map(async ([origin, url]) => ({ origin, approved: await d.pinnedStore.isOriginApproved(profileId, url) }))))
@@ -196,7 +203,12 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
           const sources: WorkflowResolveResult['sources'] = [];
           for (const source of document.sources) {
             try {
-              if (source.origin === 'contract-type') throw new WorkflowHttpError(422, 'CONTRACT_TYPE_UNSUPPORTED', 'contract-type sources are not supported here yet (contract-types plan phase 13)');
+              if (source.origin === 'contract-type') {
+                ctx.log(`source ${source.id}: checking contract type\n`);
+                if (!(await d.artifactReadable(source, profileId))) throw new Error('Contract-type artifact is not readable');
+                sources.push({ id: source.id, status: 'ready' });
+                continue;
+              }
               ctx.log(`source ${source.id}: cloning\n`);
               const lifecycle = await d.lifecycle.runPinnedLifecycle(source.repo.url, source.repo.commit, profileId, ctx);
               if (!lifecycle.frameworks.some((framework) => framework.id === source.frameworkId)) throw new Error(`Framework '${source.frameworkId}' was not detected`);
@@ -232,7 +244,11 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
 }
 
 function workflowSourceToContract(source: WorkflowSource) {
-  if (source.origin === 'contract-type') throw new WorkflowHttpError(422, 'CONTRACT_TYPE_UNSUPPORTED', 'contract-type sources are not supported here yet (contract-types plan phase 13)');
+  if (source.origin === 'contract-type') return {
+    id: source.id, origin: 'contract-type', contractName: source.contractName,
+    pluginId: source.pluginId, artifactKey: source.artifactKey,
+    versionLabel: source.versionLabel, contentHash: source.contentHash,
+  } as import('@ignite/api').ContractSource;
   return {
     id: source.id, repoPathOrUrl: source.repo.url, frameworkId: source.frameworkId,
     artifactPath: source.artifactPath, contractName: source.contractName, sourcePath: source.sourcePath,

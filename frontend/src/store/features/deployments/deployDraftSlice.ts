@@ -255,7 +255,6 @@ const deployDraftSlice = createSlice({
       }>
     ) {
       const { repoPathOrUrl, name, docHash, document } = action.payload;
-      if (document.sources.some((source) => source.origin === 'contract-type')) throw new Error('contract-type sources are not supported here yet (contract-types plan phase 13)');
       const deployExtras: DeployDraftState['deployExtras'] = {};
       const steps: DraftStep[] = document.steps.map((step) => {
         if (step.kind === 'call')
@@ -305,7 +304,11 @@ const deployDraftSlice = createSlice({
       return {
         ...initialState,
         contracts: document.sources.map((source) => {
-          if (source.origin === 'contract-type') throw new Error('contract-type sources are not supported here yet (contract-types plan phase 13)');
+          if (source.origin === 'contract-type') return {
+            id: source.id, origin: 'contract-type' as const, contractName: source.contractName,
+            pluginId: source.pluginId, artifactKey: source.artifactKey,
+            versionLabel: source.versionLabel, contentHash: source.contentHash,
+          };
           return {
             id: source.id, repoPathOrUrl: source.repo.url, frameworkId: source.frameworkId,
             artifactPath: source.artifactPath, contractName: source.contractName, sourcePath: source.sourcePath, pin: { ...source.repo },
@@ -376,7 +379,7 @@ const deployDraftSlice = createSlice({
         (item) => item.id === action.payload.sourceId
       );
       if (!source || !contract) return;
-      if (source.origin === 'contract-type' || contract.origin === 'contract-type') throw new Error('contract-type sources are not supported here yet (contract-types plan phase 13)');
+      if (source.origin === 'contract-type' || contract.origin === 'contract-type') return;
       source.repo = {
         url: source.repo.url,
         commit: action.payload.commit,
@@ -594,6 +597,22 @@ const deployDraftSlice = createSlice({
       step.args[action.payload.key] = action.payload.value;
       if (step.kind === 'deploy') invalidatePredictions(state, step.id);
     },
+    setContractTypeSelectionPending(state, action: PayloadAction<boolean>) {
+      state.contractTypeSelectionPending = action.payload || undefined;
+    },
+    refreshContractTypeSource(state, action: PayloadAction<{ sourceId: string; versionLabel: string; contentHash: string }>) {
+      const source = state.contracts.find((item) => item.id === action.payload.sourceId);
+      if (!source || source.origin !== 'contract-type') return;
+      source.versionLabel = action.payload.versionLabel;
+      source.contentHash = action.payload.contentHash;
+      const workflowSource = state.workflowSources?.find((item) => item.id === source.id);
+      if (workflowSource?.origin === 'contract-type') {
+        workflowSource.versionLabel = action.payload.versionLabel;
+        workflowSource.contentHash = action.payload.contentHash;
+      }
+      const wrapper = state.steps.find((item) => item.kind === 'deploy' && item.contractId === source.id);
+      if (wrapper) invalidatePredictions(state, wrapper.id);
+    },
     setChainArgOverride(
       state,
       action: PayloadAction<SetChainArgOverridePayload>
@@ -682,12 +701,23 @@ const deployDraftSlice = createSlice({
     },
     setWrapperInitializer(
       state,
-      action: PayloadAction<{ stepId: string; key: string; value: unknown; selection: string }>
+      action: PayloadAction<{ stepId: string; key: string; value: unknown; selection: string; payable?: boolean }>
     ) {
       const step = deployStep(state, action.payload.stepId);
       if (!step?.wraps) return;
       step.args ??= {};
       step.args[action.payload.key] = action.payload.value;
+      // Per-chain initializer overrides are complete, atomic values. A global
+      // function switch must not retain an override for the prior function.
+      for (const [chainId, args] of Object.entries(step.argsPerChain ?? {})) {
+        delete args[action.payload.key];
+        removeEmptyRecord(step.argsPerChain, chainId);
+      }
+      if (Object.keys(step.argsPerChain ?? {}).length === 0) delete step.argsPerChain;
+      if (!action.payload.payable) {
+        delete step.value;
+        delete step.valuePerChain;
+      }
       step.initializerSelection = action.payload.selection;
       invalidatePredictions(state, step.id);
     },
@@ -933,6 +963,8 @@ export const {
   setGlobalSigner,
   setChainSigner,
   setArg,
+  setContractTypeSelectionPending,
+  refreshContractTypeSource,
   setChainArgOverride,
   selectContractType,
   setAcknowledgeUninitialized,

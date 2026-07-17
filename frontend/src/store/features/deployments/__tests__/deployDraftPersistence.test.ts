@@ -72,6 +72,29 @@ describe('deployDraftPersistence', () => {
     expect(loadDraft(storage)).toEqual(draft);
   });
 
+  it('stores plugin parameter values under their synthesized constructor argument names', () => {
+    let draft = deployDraftReducer(undefined, seedDraft([contract('token', 'Token')]));
+    draft = deployDraftReducer(draft, selectContractType({ implementationStepId: 'deploy-token', contractType: { pluginId: 'custom', label: 'Custom', description: 'test', versionLabel: 'v1', contentHash: 'a'.repeat(64), params: [{ key: 'initialOwner', label: 'Owner', type: 'address', required: true }], artifacts: ['proxy'], synthesis: { artifact: 'proxy', constructorArgs: [{ name: 'owner_', from: 'param', param: 'initialOwner' }] }, validation: {}, capture: [] }, artifact: { sourceIdentifier: 'Proxy.sol:Proxy' } }));
+    const wrapper = draft.steps.find((step) => step.kind === 'deploy' && step.wraps)!;
+    draft = deployDraftReducer(draft, { type: 'deployDraft/setArg', payload: { stepId: wrapper.id, key: 'owner_', value: '0x1111111111111111111111111111111111111111' } });
+    expect(wrapper.args?.initialOwner).toBeUndefined();
+    expect(draft.steps.find((step) => step.id === wrapper.id)?.args).toMatchObject({ owner_: '0x1111111111111111111111111111111111111111' });
+  });
+
+  it('clears initializer overrides and native value when switching to a nonpayable initializer', () => {
+    let draft = deployDraftReducer(undefined, seedDraft([contract('token', 'Token')]));
+    draft = deployDraftReducer(draft, selectContractType({ implementationStepId: 'deploy-token', contractType: { pluginId: 'proxy', label: 'Proxy', description: 'test', versionLabel: 'v1', contentHash: 'a'.repeat(64), params: [], artifacts: ['proxy'], synthesis: { artifact: 'proxy', constructorArgs: [{ name: '_data', from: 'initializer' }] }, validation: {}, capture: [] }, artifact: {} }));
+    const wrapper = draft.steps.find((step) => step.kind === 'deploy' && step.wraps)!;
+    draft = deployDraftReducer(draft, { type: 'deployDraft/setChainArgOverride', payload: { stepId: wrapper.id, chainId: 1, key: '_data', value: { $encode: { contractId: 'token', fn: 'payableInit()', args: {} } } } });
+    draft = deployDraftReducer(draft, { type: 'deployDraft/setValue', payload: { stepId: wrapper.id, value: '1' } });
+    draft = deployDraftReducer(draft, { type: 'deployDraft/setValuePerChain', payload: { stepId: wrapper.id, chainId: 1, value: '2' } });
+    draft = deployDraftReducer(draft, { type: 'deployDraft/setWrapperInitializer', payload: { stepId: wrapper.id, key: '_data', selection: 'initialize()', payable: false, value: { $encode: { contractId: 'token', fn: 'initialize()', args: {} } } } });
+    const changed = draft.steps.find((step) => step.id === wrapper.id)!;
+    expect(changed).not.toHaveProperty('argsPerChain');
+    expect(changed).not.toHaveProperty('value');
+    expect(changed).not.toHaveProperty('valuePerChain');
+  });
+
   it('restores a pre-D6 v2 draft unchanged when additive workflow fields are absent', () => {
     const draft = draftWithContracts();
     const storage = fakeStorage({ [DEPLOY_DRAFT_STORAGE_KEY]: JSON.stringify(draft) });

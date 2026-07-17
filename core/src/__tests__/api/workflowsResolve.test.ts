@@ -47,6 +47,18 @@ describe('workflow resolve and origin approval', () => {
     expect(lifecycle.runPinnedLifecycle).toHaveBeenCalledWith('https://example.test/repo.git', 'a'.repeat(40), 'p1', expect.any(Object));
   });
 
+  it('resolves contract-type sources by descriptor readability without clone or compile', async () => {
+    let runner!: JobRunner;
+    const document = { schemaVersion: 1, sources: [{ id: 'proxy', origin: 'contract-type', contractName: 'Proxy', pluginId: 'proxy-plugin', artifactKey: 'proxy', versionLabel: '1', contentHash: 'a'.repeat(64) }], steps: [{ id: 'deploy-proxy', kind: 'deploy', contractId: 'proxy' }], requiredPlugins: [{ id: 'proxy-plugin', version: '1' }], outputs: { hooks: [] } };
+    const lifecycle = { runPinnedLifecycle: vi.fn() };
+    const artifactReadable = vi.fn(async () => true);
+    const handlers = createWorkflowHandlers({ repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify(document) } })) } as never, jobs: { start: vi.fn((_type, _params, value) => { runner = value; return { id: 'job-1' }; }) } as never, lifecycle: lifecycle as never, pinnedStore: { isOriginApproved: async () => true, approveOrigins: async () => {} } as never, getProfileId: async () => 'p1', pluginStatus: async () => ({ id: 'proxy-plugin', status: 'installed', installedVersion: '1' }), artifactReadable });
+    await handlers.resolveWorkflow({ body: { repoPathOrUrl: '/workflow', name: 'test' } } as never, reply());
+    await expect(runner({ log: () => {}, signal: new AbortController().signal })).resolves.toMatchObject({ sources: [{ id: 'proxy', status: 'ready' }] });
+    expect(lifecycle.runPinnedLifecycle).not.toHaveBeenCalled();
+    expect(artifactReadable).toHaveBeenCalled();
+  });
+
   it('surfaces unapproved origins in typed job failure details, then approval allows retry', async () => {
     let approved = false; let runner!: JobRunner;
     const runPinnedLifecycle = vi.fn(async () => {

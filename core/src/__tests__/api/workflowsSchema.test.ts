@@ -108,8 +108,9 @@ describe('Workflow document schema', () => {
     };
     const parsed = makeWorkflowDocumentSchema().parse({ ...d, sources: [contractTypeSource], steps: [{ id: 'deploy-proxy', kind: 'deploy', contractId: 'proxy' }], requiredPlugins: [] });
     expect(validateWorkflowClosure(parsed)).toEqual(['oz-uups']);
-    expect(validateWorkflowClosure(makeWorkflowDocumentSchema().parse({ ...parsed, requiredPlugins: [{ id: 'oz-uups', version: '5.3.0' }] }))).toEqual(['oz-uups']);
-    expect(validateWorkflowClosure(makeWorkflowDocumentSchema().parse({ ...parsed, requiredPlugins: [{ id: 'oz-uups', version: '5.4.0' }] }))).toEqual([]);
+    // versionLabel describes the frozen artifact; requiredPlugins pins the
+    // installed plugin version independently.
+    expect(validateWorkflowClosure(makeWorkflowDocumentSchema().parse({ ...parsed, requiredPlugins: [{ id: 'oz-uups', version: '1.2.3' }] }))).toEqual([]);
     expect(makeWorkflowDocumentSchema().safeParse({ ...d, sources: [{ ...contractTypeSource, contentHash: 'not-a-hash' }] }).success).toBe(false);
   });
 

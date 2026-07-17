@@ -19,7 +19,6 @@ import { PluginManager } from '../filesystem/PluginManager.js';
 import { VerificationQueue } from '../verifications/VerificationQueue.js';
 import { renderArtifact } from '../deployments/artifact.js';
 import { ArtifactFreezeService } from '../deployments/ArtifactFreezeService.js';
-import { IgniteError } from '../types/errors.js';
 import type { FrozenInputs } from '@ignite/api';
 
 type PreviewRequest = Extract<WorkflowPromoteRequest, { mode: 'preview' }>;
@@ -94,7 +93,10 @@ export class WorkflowPromotionService {
     const sources: PreviewData['sources'] = [];
     const inspections = new Map<string, PromotionSourceInspection>();
     for (const source of plan.contracts) {
-      if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
+      if (source.origin === 'contract-type') {
+        sources.push({ sourceId: source.id, origin: 'contract-type', commit: source.contentHash, tagChoices: [], dirty: false });
+        continue;
+      }
       if (source.pin) {
         sources.push({ sourceId: source.id, origin: source.pin.url, commit: source.pin.commit, tagChoices: source.pin.refKind === 'tag' && source.pin.ref ? [source.pin.ref] : [], dirty: false });
         continue;
@@ -126,7 +128,7 @@ export class WorkflowPromotionService {
 
     const pins = new Map<string, RepoWorkflowSource['repo']>();
     for (const source of plan.contracts) {
-      if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
+      if (source.origin === 'contract-type') continue;
       if (source.pin) { pins.set(source.id, globalThis.structuredClone(source.pin)); continue; }
       const before = snapshot.inspections.get(source.id);
       if (!before) throw new WorkflowPromotionError(409, 'PROMOTION_PREVIEW_STALE', `Source ${source.id} was not resolved by the preview`);
@@ -183,14 +185,18 @@ export class WorkflowPromotionService {
   private async buildDocument(plan: DeploymentPlan, run: RunRecord | undefined, pins: Map<string, RepoWorkflowSource['repo']>, hooks: string[], profileId: string): Promise<WorkflowDocument> {
     const frozen = run?.inputs ?? await this.deps.freezeInputs(profileId, plan).catch(() => undefined);
     const sources: WorkflowSource[] = plan.contracts.map((source) => {
-      if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
+      if (source.origin === 'contract-type') return {
+        id: source.id, origin: 'contract-type', contractName: source.contractName,
+        pluginId: source.pluginId, artifactKey: source.artifactKey,
+        versionLabel: source.versionLabel, contentHash: source.contentHash,
+      };
       return {
         id: source.id, repo: pins.get(source.id)!, frameworkId: source.frameworkId, sourcePath: source.sourcePath,
         contractName: source.contractName, artifactPath: source.artifactPath,
         ...(frozen?.[source.id]?.artifactHash ? { artifactHash: frozen[source.id].artifactHash } : {}),
       };
     });
-    const pluginIds = new Set<string>([...sources.flatMap((source) => source.origin === 'contract-type' ? [] : [source.frameworkId]), ...hooks]);
+    const pluginIds = new Set<string>([...sources.map((source) => source.origin === 'contract-type' ? source.pluginId : source.frameworkId), ...hooks]);
     for (const step of plan.steps)
       if (step.kind === 'deploy' && step.strategy?.kind === 'plugin') pluginIds.add(step.strategy.pluginId);
     const requiredPlugins = await Promise.all([...pluginIds].sort().map((id) => this.deps.getRequiredPlugin(id)));

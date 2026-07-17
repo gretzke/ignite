@@ -107,6 +107,7 @@ export interface DeployDraftState {
   workflowRequiredPlugins?: WorkflowRequiredPlugin[];
   workflowRunHooks?: string[];
   acknowledgeArtifactDrift?: ArtifactDriftAcknowledgements;
+  contractTypeSelectionPending?: boolean;
 }
 
 export type GasOverrideKey = keyof GasOverrides;
