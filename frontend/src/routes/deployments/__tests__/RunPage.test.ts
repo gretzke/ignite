@@ -1,7 +1,7 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
 import type { VerificationTask } from '@ignite/api';
-import { runHeaderStatus } from '../RunPage';
+import { groupRunVerificationTasks, runHeaderStatus, tasksForLane } from '../RunPage';
 
 const run = { id: 'run-1', status: 'completed' };
 const task = (status: VerificationTask['status']) =>
@@ -33,5 +33,22 @@ describe('runHeaderStatus', () => {
     expect(
       runHeaderStatus({ id: 'run-1', status: 'running' }, [task('queued')])
     ).toBe('running');
+  });
+});
+
+describe('run verification task grouping', () => {
+  it('groups run tasks by chain and step while excluding manual tasks', () => {
+    const runTask = { ...task('polling'), chainId: 1 };
+    const otherStep = {
+      ...task('failed'),
+      id: 'task-2',
+      chainId: 2,
+      origin: { runId: 'run-1', stepId: 'deploy-other', contractId: 'other' },
+    };
+    const manual = { ...task('verified'), id: 'manual', origin: { kind: 'manual' as const } };
+    const grouped = groupRunVerificationTasks([runTask, otherStep, manual]);
+    expect(grouped['1:step-1']).toEqual([runTask]);
+    expect(tasksForLane(grouped, 2)).toEqual([otherStep]);
+    expect(Object.values(grouped).flat()).not.toContain(manual);
   });
 });

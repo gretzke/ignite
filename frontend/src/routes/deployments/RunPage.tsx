@@ -22,12 +22,13 @@ import { signersApi } from '../../store/features/signers/signersSlice';
 import LanePanel from './components/LanePanel';
 import ResolveEditDialog from './components/ResolveEditDialog';
 import ConfirmDialog from '../../components/ConfirmDialog';
-import VerificationPanel from './components/VerificationPanel';
+import { verifyNowLink } from './components/StepVerificationList';
 import { dependentPlanStepIds } from '../deploy/pointerEligibility';
 import HookRunsPanel from './components/HookRunsPanel';
 import { getRepoName } from '../../utils/repo';
 import PromoteWorkflowDialog from '../../components/PromoteWorkflowDialog';
 import { decodeUrlEncodingForDisplay } from '../../utils/displayText';
+import { verificationsApi } from '../../store/api/verificationsApi';
 
 const TERMINAL_VERIFICATION_STATUSES = new Set([
   'verified',
@@ -53,6 +54,27 @@ export function runHeaderStatus(
   return hasActiveVerification ? 'verifying' : run.status;
 }
 
+export function groupRunVerificationTasks(
+  tasks: VerificationTask[] | undefined
+): Record<string, VerificationTask[]> {
+  const grouped: Record<string, VerificationTask[]> = {};
+  for (const task of tasks ?? []) {
+    if (!('runId' in task.origin)) continue;
+    const key = `${task.chainId}:${task.origin.stepId}`;
+    (grouped[key] ??= []).push(task);
+  }
+  return grouped;
+}
+
+export function tasksForLane(
+  groupedTasks: Record<string, VerificationTask[]>,
+  chainId: number
+): VerificationTask[] {
+  return Object.entries(groupedTasks)
+    .filter(([key]) => key.startsWith(`${chainId}:`))
+    .flatMap(([, tasks]) => tasks);
+}
+
 function signerFor(
   ref: SignerRef | undefined,
   providers: SignerProviderAccounts[]
@@ -76,8 +98,11 @@ export default function RunPage() {
   const run = useAppSelector((state) => selectDeploymentRun(state, runId));
   const chains = useAppSelector((state) => state.chains);
   const providers = useAppSelector((state) => state.signers.providers);
-  const verificationTasks = useAppSelector((state) =>
-    state.verifications.byRun[runId]?.map((id) => state.verifications.tasks[id])
+  const verificationTaskIds = useAppSelector(
+    (state) => state.verifications.byRun[runId]
+  );
+  const verificationTasksById = useAppSelector(
+    (state) => state.verifications.tasks
   );
   const [loading, setLoading] = useState(!run);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +112,7 @@ export default function RunPage() {
   const [promoteOpen, setPromoteOpen] = useState(false);
   const autoOpenedPause = useRef<string | undefined>(undefined);
   const pluginRows = useAppSelector((state) => state.plugins.rows);
+  const verificationRunId = run?.id;
 
   useEnsureChainMetadata(run?.plan.chains ?? []);
 
@@ -123,6 +149,13 @@ export default function RunPage() {
   }, [dispatch, run?.plan.chains]);
 
   useEffect(() => {
+    if (!verificationRunId) return;
+    verificationsApi
+      .fetch({ runId: verificationRunId })
+      .forEach((action) => dispatch(action));
+  }, [dispatch, verificationRunId]);
+
+  useEffect(() => {
     const pointerPause =
       run &&
       Object.values(run.lanes).find(
@@ -155,9 +188,18 @@ export default function RunPage() {
       ),
     [pluginRows]
   );
+  const verificationTasks = useMemo(
+    () => verificationTaskIds?.map((id) => verificationTasksById[id]),
+    [verificationTaskIds, verificationTasksById]
+  );
   const headerStatus = run
     ? runHeaderStatus(run, verificationTasks)
     : undefined;
+  const groupedVerificationTasks = useMemo(
+    () => groupRunVerificationTasks(verificationTasks),
+    [verificationTasks]
+  );
+  const tasksLoaded = verificationTasks !== undefined;
 
   if (loading && !run)
     return (
@@ -338,6 +380,14 @@ export default function RunPage() {
           const capability =
             account?.capability ??
             (pausedAttempt?.rawTx ? 'sign-only' : undefined);
+          const laneTasks = tasksForLane(groupedVerificationTasks, chainId);
+          const verifyHref = verifyNowLink(run, chainId);
+          const verifyHrefsByStep = Object.fromEntries(
+            lane.steps.map((step) => [
+              step.stepId,
+              verifyNowLink(run, chainId, step.stepId),
+            ])
+          );
           return (
             <LanePanel
               key={chainId}
@@ -348,12 +398,16 @@ export default function RunPage() {
               pluginLabels={pluginLabels}
               simulationTier={run.simulationTiers?.[String(chainId)]}
               capability={capability}
+              tasks={laneTasks}
+              tasksLoaded={tasksLoaded}
+              explorerTargets={run.explorerTargets?.[String(chainId)] ?? []}
+              verifyHref={verifyHref}
+              verifyHrefsByStep={verifyHrefsByStep}
               onAction={(action) => act(chainId, action)}
             />
           );
         })}
       </div>
-      <VerificationPanel run={run} />
       {run.hookRuns && Object.keys(run.hookRuns).length > 0 && (
         <HookRunsPanel hookRuns={run.hookRuns} />
       )}
@@ -466,7 +520,8 @@ export default function RunPage() {
           const labels = dependents.map((id) => {
             const step = run.plan.steps.find((item) => item.id === id);
             return step?.kind === 'deploy'
-              ? (contractNames[step.contractId] ?? decodeUrlEncodingForDisplay(id))
+              ? (contractNames[step.contractId] ??
+                  decodeUrlEncodingForDisplay(id))
               : (step?.signature ?? decodeUrlEncodingForDisplay(id));
           });
           return (
