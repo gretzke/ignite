@@ -21,6 +21,9 @@ const ABI_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const SOURCE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$)).+$/;
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 type Provider = PluginConfig;
+// The API adds contentHash after this service freezes a descriptor. Describe
+// responses themselves cannot carry it (the hash includes artifact bytes).
+type DescriptorInfo = Omit<ContractTypeInfo, 'contentHash'>;
 type Execute = (id: string, operation: string, options: Record<string, unknown>, opts: { chainScope: number | 'none' }) => Promise<PluginResponse<unknown>>;
 export interface ContractTypeServiceDeps {
   getProviders: () => Promise<Provider[]>;
@@ -49,7 +52,7 @@ export function contractTypeContentHash(value: Omit<FrozenContractType, 'content
 
 export class ContractTypeService {
   private static instance: ContractTypeService;
-  private cache?: Promise<ContractTypeInfo[]>;
+  private cache?: Promise<DescriptorInfo[]>;
   private readonly artifacts = new Map<string, Promise<ParsedContractArtifact>>();
   private readonly frozen = new Map<string, Promise<FrozenContractType>>();
   private readonly deps: ContractTypeServiceDeps;
@@ -65,7 +68,7 @@ export class ContractTypeService {
   static resetInstance(): void { this.instance = undefined as unknown as ContractTypeService; }
   invalidate(): void { this.cache = undefined; this.artifacts.clear(); this.frozen.clear(); }
 
-  async list(refresh = false): Promise<ContractTypeInfo[]> {
+  async list(refresh = false): Promise<DescriptorInfo[]> {
     if (refresh || !this.cache) this.cache = this.describeAll();
     return this.cache;
   }
@@ -100,7 +103,7 @@ export class ContractTypeService {
     return result;
   }
 
-  private async describeAll(): Promise<ContractTypeInfo[]> {
+  private async describeAll(): Promise<DescriptorInfo[]> {
     const providers = await this.deps.getProviders();
     // One hostile or broken provider must not poison the whole cached list
     // (and with it the wizard dropdown) — isolate failures per plugin.
@@ -111,7 +114,7 @@ export class ContractTypeService {
       return [];
     });
   }
-  private async getInfo(pluginId: string): Promise<ContractTypeInfo> {
+  private async getInfo(pluginId: string): Promise<DescriptorInfo> {
     const entry = (await this.list()).find((item) => item.pluginId === pluginId);
     if (entry) return entry;
     // list() drops providers whose describe failed so one broken plugin
@@ -136,7 +139,7 @@ export class ContractTypeService {
     }
     return response!.data;
   }
-  private parseDescribe(raw: unknown): Omit<ContractTypeInfo, 'pluginId'> {
+  private parseDescribe(raw: unknown): Omit<DescriptorInfo, 'pluginId'> {
     if (!isRecord(raw) || Object.keys(raw).some((key) => !['label', 'description', 'versionLabel', 'params', 'artifacts', 'synthesis', 'validation', 'capture'].includes(key))) this.failed('describeContractType returned an invalid result');
     const label = text(raw.label, 64); const description = text(raw.description, 512); const versionLabel = text(raw.versionLabel, 128);
     if (!label || !description || !versionLabel || !Array.isArray(raw.params) || raw.params.length > 16 || !Array.isArray(raw.artifacts) || raw.artifacts.length > 8 || !Array.isArray(raw.capture) || raw.capture.length > 8 || !isRecord(raw.validation)) this.failed('describeContractType returned invalid fields');
@@ -211,7 +214,7 @@ export class ContractTypeService {
     if (sources.length === 0 || sources.length > 512) this.failed('getContractArtifact returned an invalid standard JSON input');
     for (const [path, source] of sources) if (!SOURCE_PATH.test(path) || !isRecord(source) || typeof source.content !== 'string' || 'urls' in source) this.failed('getContractArtifact returned an invalid standard JSON input');
   }
-  private validateDescriptor(descriptor: ContractTypeInfo, artifacts: Record<string, ParsedContractArtifact>): void {
+  private validateDescriptor(descriptor: DescriptorInfo, artifacts: Record<string, ParsedContractArtifact>): void {
     const artifactKeys = new Set(descriptor.artifacts); const params = new Map(descriptor.params.map((param) => [param.key, param]));
     for (const key of descriptor.artifacts) this.validateAbiShape(artifacts[key]);
     if (descriptor.synthesis) {
@@ -298,7 +301,7 @@ export class ContractTypeService {
   private failed(message: string): never { throw new IgniteError(message, 'CONTRACT_TYPE_OP_FAILED'); }
 }
 
-function omitPluginId(info: ContractTypeInfo): NormalizedContractTypeDescriptor { const { pluginId: _pluginId, ...descriptor } = info; return descriptor; }
+function omitPluginId(info: DescriptorInfo): NormalizedContractTypeDescriptor { const { pluginId: _pluginId, ...descriptor } = info; return descriptor; }
 function matchesParamType(type: NormalizedContractTypeDescriptor['params'][number]['type'], abiType: string): boolean {
   if (type === 'address') return abiType === 'address'; if (type === 'boolean') return abiType === 'bool'; if (type === 'string') return abiType === 'string'; if (type === 'number') return /^u?int\d*$/.test(abiType); return type === 'select' && abiType === 'string';
 }

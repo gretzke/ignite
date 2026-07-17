@@ -30,7 +30,11 @@ export type DraftContract = ContractSource;
 export type DraftDeployStep = Omit<
   DeployStep,
   'strategy' | 'libraries' | 'librariesPerChain'
->;
+> & {
+  // Wizard-only distinction between an untouched empty initializer and the
+  // user's explicit "No initialization" choice. It never reaches the plan.
+  initializerSelection?: string;
+};
 
 export interface DraftCallStep {
   id: string;

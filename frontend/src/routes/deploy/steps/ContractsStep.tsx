@@ -31,10 +31,10 @@ export default function ContractsStep({
   useEffect(() => {
     let cancelled = false;
     setChecks(
-      Object.fromEntries(contracts.map((contract) => [contract.id, 'loading']))
+      Object.fromEntries(contracts.map((contract) => [contract.id, contract.origin === 'contract-type' ? 'ok' : 'loading']))
     );
     for (const contract of contracts) {
-      if (contract.origin === 'contract-type') continue; // contract-types plan phase 11
+      if (contract.origin === 'contract-type') continue;
       void apiClient
         .request('getArtifactData', {
           body: {
@@ -94,7 +94,6 @@ export default function ContractsStep({
       ) : (
         <div className="glass-list">
           {contracts.map((contract) => {
-            if (contract.origin === 'contract-type') return null; // contract-types plan phase 11
             return (
             <div key={contract.id} className="list-row flex items-center gap-3">
               <Box size={17} className="text-info" />
@@ -103,7 +102,7 @@ export default function ContractsStep({
                   {contract.contractName}
                 </div>
                 <div className="mono-data text-muted truncate">
-                  {decodeUrlEncodingForDisplay(contract.sourcePath)} · {contract.frameworkId}
+                  {contract.origin === 'contract-type' ? `${contract.pluginId} @ ${contract.versionLabel}` : `${decodeUrlEncodingForDisplay(contract.sourcePath)} · ${contract.frameworkId}`}
                 </div>
                 {checks[contract.id] === 'loading' && (
                   <div className="text-xs text-muted flex items-center gap-1">
@@ -120,7 +119,7 @@ export default function ContractsStep({
                   </div>
                 )}
               </div>
-              {!workflowMode && <button
+              {!workflowMode && contract.origin !== 'contract-type' && <button
                 type="button"
                 className="btn btn-sm btn-secondary"
                 aria-label={`Remove ${contract.contractName} from deployment`}

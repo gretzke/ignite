@@ -4,6 +4,8 @@ import type { ContractSource } from '@ignite/api';
 import {
   deployDraftReducer,
   addContracts,
+  seedDraft,
+  selectContractType,
   toggleChain,
 } from '../deployDraftSlice';
 import {
@@ -50,6 +52,23 @@ describe('deployDraftPersistence', () => {
 
     saveDraft(draft, storage);
 
+    expect(loadDraft(storage)).toEqual(draft);
+  });
+
+  it('round-trips synthesized wrapper state, including the explicit empty initializer choice', () => {
+    const storage = fakeStorage();
+    let draft = deployDraftReducer(undefined, seedDraft([contract('token', 'Token')]));
+    draft = deployDraftReducer(draft, selectContractType({
+      implementationStepId: 'deploy-token',
+      contractType: {
+        pluginId: 'transparent', label: 'Transparent proxy', description: 'test', versionLabel: 'OZ 5.3.0', contentHash: 'a'.repeat(64), params: [], artifacts: ['proxy'],
+        synthesis: { artifact: 'proxy', constructorArgs: [{ name: '_logic', from: 'implementation' }, { name: '_data', from: 'initializer' }] }, validation: {}, capture: [],
+      },
+      artifact: { sourceIdentifier: 'Proxy.sol:TransparentUpgradeableProxy' },
+    }));
+    const wrapper = draft.steps.find((step) => step.kind === 'deploy' && step.wraps)!;
+    draft = deployDraftReducer(draft, { type: 'deployDraft/setWrapperInitializer', payload: { stepId: wrapper.id, key: '_data', value: '0x', selection: '' } });
+    saveDraft(draft, storage);
     expect(loadDraft(storage)).toEqual(draft);
   });
 

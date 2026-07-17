@@ -16,7 +16,19 @@ function sendContractTypeError(reply: FastifyReply, error: unknown, fallback: st
 
 export const contractTypeHandlers = {
   listContractTypes: async (_request: FastifyRequest, reply: FastifyReply): Promise<IApiResponse<ListContractTypesData>> => {
-    try { return reply.status(200).send({ data: { contractTypes: await ContractTypeService.getInstance().list() } }); }
+    try {
+      const service = ContractTypeService.getInstance();
+      const listed = await service.list();
+      // A list entry is actionable only with the content hash of the frozen
+      // descriptor. frozenDescriptor also enforces contractBytecode consent;
+      // surface that as the typed 403 instead of letting the wizard create an
+      // unlaunchable source.
+      const contractTypes = await Promise.all(listed.map(async (info) => ({
+        ...info,
+        contentHash: (await service.frozenDescriptor(info.pluginId)).contentHash,
+      })));
+      return reply.status(200).send({ data: { contractTypes } });
+    }
     catch (error) { return sendContractTypeError(reply, error, 'Failed to list contract types'); }
   },
   getContractTypeArtifact: async (request: FastifyRequest<{ Params: { pluginId: string; artifactKey: string } }>, reply: FastifyReply): Promise<IApiResponse<GetContractTypeArtifactData>> => {

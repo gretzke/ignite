@@ -44,6 +44,33 @@ function gasFromDraft(gas: GasOverrides | undefined): GasOverrides | undefined {
   return cleanRecord(result);
 }
 
+function isEncoded(value: unknown): value is { $encode: { contractId: string; fn: string; args?: Record<string, unknown> } } {
+  return Boolean(value && typeof value === 'object' && '$encode' in value);
+}
+
+// Core deliberately treats wrapper argsPerChain atomically. The draft stays
+// sparse for pleasant per-chain editing, then this boundary emits every
+// constructor field and every encoded initializer argument for each override.
+function materializedWrapperArgs(step: DraftDeployStep): Record<string, Record<string, unknown>> | undefined {
+  if (!step.wraps || !step.argsPerChain) return step.argsPerChain;
+  return Object.fromEntries(Object.entries(step.argsPerChain).map(([chainId, override]) => {
+    const args: Record<string, unknown> = { ...(step.args ?? {}), ...override };
+    for (const [key, value] of Object.entries(override)) {
+      const global = step.args?.[key];
+      if (isEncoded(global) && isEncoded(value)) {
+        args[key] = {
+          $encode: {
+            ...global.$encode,
+            ...value.$encode,
+            args: { ...(global.$encode.args ?? {}), ...(value.$encode.args ?? {}) },
+          },
+        };
+      }
+    }
+    return [chainId, args];
+  }));
+}
+
 function stepFromDraft(
   step: DraftStep,
   draft: DeployDraftState,
@@ -84,12 +111,13 @@ function stepFromDraft(
       .map(([chainId, gas]) => [chainId, gasFromDraft(gas)])
       .filter((entry): entry is [string, GasOverrides] => Boolean(entry[1]))
   );
+  const argsPerChain = step.kind === 'deploy' ? materializedWrapperArgs(step) : step.argsPerChain;
   const common = {
     ...(cleanRecord(step.args) ? { args: { ...step.args } } : {}),
-    ...(cleanRecord(step.argsPerChain)
+    ...(cleanRecord(argsPerChain)
       ? {
           argsPerChain: Object.fromEntries(
-            Object.entries(step.argsPerChain ?? {}).map(([chainId, args]) => [
+            Object.entries(argsPerChain ?? {}).map(([chainId, args]) => [
               chainId,
               { ...args },
             ])
@@ -197,6 +225,8 @@ function deployStepFromDraft(
     ...(extras?.librariesPerChain
       ? { librariesPerChain: { ...extras.librariesPerChain } }
       : {}),
+    ...(step.wraps ? { wraps: { ...step.wraps } } : {}),
+    ...(step.acknowledgeUninitialized ? { acknowledgeUninitialized: true } : {}),
   } as Step;
 }
 

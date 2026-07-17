@@ -74,7 +74,7 @@ export function contractTypeStaticItems(plan: DeploymentPlan, frozen: FrozenInpu
       const hasInitialize = abi.some((entry) => Boolean(entry && typeof entry === 'object' && (entry as { type?: string; name?: string }).type === 'function' && (entry as { name?: string }).name === 'initialize'));
       if (hasInitialize && wrapper.acknowledgeUninitialized !== true) {
         const deterministic = wrapper.strategy?.kind === 'create2' || wrapper.strategy?.kind === 'plugin';
-        out.push(failure('UNINITIALIZED_PROXY_ACK_REQUIRED', `This proxy can be initialized post-deploy by anyone.${deterministic ? ' A deterministic deployment can be front-run: an attacker can deploy the identical proxy first, initialize it, and Ignite will only see a CREATE2 collision.' : ''}`));
+        out.push(failure('UNINITIALIZED_PROXY_ACK_REQUIRED', `This proxy can be initialized post-deploy by anyone.${deterministic ? ' A deterministic deployment can be front-run: an attacker can deploy the identical proxy first, initialize it, and Ignite will only see a CREATE2 collision.' : ''}`, { stepId: wrapper.id }));
       }
     }
     if (isEncodedCallValue(value) && (wrapper.strategy?.kind === 'create2' || wrapper.strategy?.kind === 'plugin'))

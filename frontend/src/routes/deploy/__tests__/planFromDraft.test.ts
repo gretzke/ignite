@@ -83,6 +83,25 @@ describe('planFromDraft', () => {
     expect(() => parseUnitsDecimal('0.0000001', 6)).toThrow();
   });
 
+  it('materializes complete per-chain wrapper args and encoded initializer args', () => {
+    const draft: DeployDraftState = {
+      contracts: [
+        { id: 'impl', repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: 'out/Impl.json', contractName: 'Impl', sourcePath: 'src/Impl.sol' },
+        { id: 'proxy', origin: 'contract-type', pluginId: 'transparent', artifactKey: 'proxy', versionLabel: 'OZ 5.3.0', contentHash: 'a'.repeat(64), contractName: 'TransparentUpgradeableProxy' },
+      ],
+      chains: [1, 999], rpcSelection: {}, explorerSelection: {}, signers: {}, unseenIds: [], deployExtras: {},
+      steps: [
+        { id: 'deploy-impl', kind: 'deploy', contractId: 'impl' },
+        { id: 'deploy-proxy', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'deploy-impl', contractTypePluginId: 'transparent' }, args: { _logic: { $ref: { kind: 'step', stepId: 'deploy-impl' } }, initialOwner: '0x1111111111111111111111111111111111111111', _data: { $encode: { contractId: 'impl', fn: 'initialize(address)', args: { owner: '0x1111111111111111111111111111111111111111' } } } }, argsPerChain: { '999': { initialOwner: '0x2222222222222222222222222222222222222222', _data: { $encode: { contractId: 'impl', fn: 'initialize(address)', args: { owner: '0x2222222222222222222222222222222222222222' } } } } } },
+      ],
+    };
+    const wrapper = planFromDraft(draft, chains).steps[1];
+    expect(wrapper).toMatchObject({
+      wraps: { stepId: 'deploy-impl', contractTypePluginId: 'transparent' },
+      argsPerChain: { '999': { _logic: { $ref: { kind: 'step', stepId: 'deploy-impl' } }, initialOwner: '0x2222222222222222222222222222222222222222', _data: { $encode: { contractId: 'impl', fn: 'initialize(address)', args: { owner: '0x2222222222222222222222222222222222222222' } } } } },
+    });
+  });
+
   it('refuses to guess native currency decimals', () => {
     const draft: DeployDraftState = {
       contracts: [],

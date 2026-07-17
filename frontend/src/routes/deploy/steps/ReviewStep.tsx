@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   DeploymentHookInfo,
   DeploymentPlan,
+  ValidationItem,
   ValidationReport,
 } from '@ignite/api';
 import { Loader2, RefreshCw, Rocket } from 'lucide-react';
@@ -14,6 +15,7 @@ import {
   mintIdempotencyKey,
   setName,
   acknowledgeDeployed,
+  setAcknowledgeUninitialized,
   acknowledgeArtifactDrift,
   setWorkflowRunHooks,
 } from '../../../store/features/deployments/deployDraftSlice';
@@ -75,6 +77,10 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
         ])
       ),
     [draft.contracts, plan.steps]
+  );
+  const wrapperStepIds = useMemo(
+    () => new Set(draft.steps.filter((step) => step.kind === 'deploy' && step.wraps).map((step) => step.id)),
+    [draft.steps]
   );
   const rpcSelection = useMemo(
     () =>
@@ -192,8 +198,15 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
 
   const acknowledge = (
     chainId: number,
-    item: { details?: Record<string, unknown> }
+    item: ValidationItem
   ) => {
+    if (item.code === 'UNINITIALIZED_PROXY_ACK_REQUIRED') {
+      const stepId = item.details?.stepId;
+      if (typeof stepId === 'string') {
+        dispatch(setAcknowledgeUninitialized({ stepId, acknowledged: true }));
+        return;
+      }
+    }
     const details = item.details ?? {};
     const stepId =
       typeof details.stepId === 'string' ? details.stepId : undefined;
@@ -453,7 +466,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
                   key={`${stepId}-${chainId}`}
                   className="list-row flex gap-3"
                 >
-                  <span className="font-medium">{name}</span>
+                  <span className="font-medium">{name}{wrapperStepIds.has(stepId) && ' (wrapper)'}</span>
                   <span className="text-muted">
                     {chains.find((chain) => String(chain.chainId) === chainId)
                       ?.name ?? `Chain ${chainId}`}

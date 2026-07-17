@@ -1,5 +1,6 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type {
+  ContractTypeInfo,
   Hex,
   Hex32,
   LibraryBinding,
@@ -37,6 +38,26 @@ function stepFor(contract: DraftContract) {
     kind: 'deploy' as const,
     contractId: contract.id,
   };
+}
+
+function contractNameFromArtifact(sourceIdentifier: string | undefined, fallback: string): string {
+  const name = sourceIdentifier?.split(':').at(-1)?.trim();
+  return name || fallback;
+}
+
+function removeStepAndSource(state: DeployDraftState, stepId: string): void {
+  const step = state.steps.find((candidate) => candidate.id === stepId && candidate.kind === 'deploy');
+  if (!step) return;
+  state.steps = state.steps.filter((candidate) => candidate.id !== stepId);
+  state.contracts = state.contracts.filter((contract) => contract.id !== step.contractId);
+  delete state.deployExtras[stepId];
+  clearDanglingReferences(state, stepId);
+}
+
+function removeWrappersFor(state: DeployDraftState, implementationStepId: string): void {
+  for (const wrapper of state.steps.filter((step) => step.kind === 'deploy' && step.wraps?.stepId === implementationStepId)) {
+    removeStepAndSource(state, wrapper.id);
+  }
 }
 
 function removeEmptyRecord(
@@ -407,23 +428,19 @@ const deployDraftSlice = createSlice({
     removeContract(state, action: PayloadAction<string>) {
       const id = action.payload;
       if (!state.contracts.some((contract) => contract.id === id)) return;
+      const removed = state.steps.find(
+        (step) => step.kind === 'deploy' && step.contractId === id
+      );
+      if (removed) removeWrappersFor(state, removed.id);
       if (state.contracts.length === 1) {
         // Removing the last contract ends the session. Chains, signers, name
         // and idempotency key must not silently survive into the next
         // deployment's "first" add.
         return initialState;
       }
-      state.contracts = state.contracts.filter(
-        (contract) => contract.id !== id
-      );
-      const removed = state.steps.find(
-        (step) => step.kind === 'deploy' && step.contractId === id
-      );
       if (removed) {
         invalidatePredictions(state, removed.id);
-        state.steps = state.steps.filter((step) => step.id !== removed.id);
-        delete state.deployExtras[removed.id];
-        clearDanglingReferences(state, removed.id);
+        removeStepAndSource(state, removed.id);
       }
       state.unseenIds = state.unseenIds.filter((unseen) => unseen !== id);
     },
@@ -453,6 +470,13 @@ const deployDraftSlice = createSlice({
       }
       const [step] = state.steps.splice(fromIndex, 1);
       state.steps.splice(toIndex, 0, step);
+      // A wrapper may have calls between it and its implementation, but may
+      // never cross to the preceding side of that implementation.
+      if (state.steps.some((candidate, index) => candidate.kind === 'deploy' && candidate.wraps && index <= state.steps.findIndex((item) => item.id === candidate.wraps!.stepId))) {
+        state.steps.splice(toIndex, 1);
+        state.steps.splice(fromIndex, 0, step);
+        return;
+      }
       // Step order is part of preparation context (and controls which plain
       // creates are resolvable), so a reorder invalidates prepared results.
       for (const item of state.steps) {
@@ -591,6 +615,72 @@ const deployDraftSlice = createSlice({
       step.argsPerChain[chainKey] ??= {};
       step.argsPerChain[chainKey][key] = value;
       if (step.kind === 'deploy') invalidatePredictions(state, step.id);
+    },
+    selectContractType(
+      state,
+      action: PayloadAction<{
+        implementationStepId: string;
+        contractType?: ContractTypeInfo;
+        artifact?: { sourceIdentifier?: string };
+      }>
+    ) {
+      const impl = deployStep(state, action.payload.implementationStepId);
+      if (!impl) return;
+      removeWrappersFor(state, impl.id);
+      const type = action.payload.contractType;
+      const synthesis = type?.synthesis;
+      if (!type || !synthesis) {
+        invalidatePredictions(state, impl.id);
+        return;
+      }
+      const sourceId = `contract-type-${globalThis.crypto.randomUUID()}`;
+      const wrapperId = `deploy-${sourceId}`;
+      const source: DraftContract = {
+        id: sourceId,
+        origin: 'contract-type',
+        contractName: contractNameFromArtifact(action.payload.artifact?.sourceIdentifier, synthesis.artifact),
+        pluginId: type.pluginId,
+        artifactKey: synthesis.artifact,
+        versionLabel: type.versionLabel,
+        contentHash: type.contentHash,
+      };
+      const args: Record<string, unknown> = {};
+      for (const arg of synthesis.constructorArgs) {
+        if (arg.from === 'implementation') args[arg.name] = { $ref: { kind: 'step', stepId: impl.id } };
+        else if (arg.from === 'initializer') args[arg.name] = '0x';
+      }
+      const wrapper = {
+        id: wrapperId,
+        kind: 'deploy' as const,
+        contractId: sourceId,
+        wraps: { stepId: impl.id, contractTypePluginId: type.pluginId },
+        args,
+      };
+      state.contracts.push(source);
+      const index = state.steps.findIndex((step) => step.id === impl.id);
+      state.steps.splice(index + 1, 0, wrapper);
+      state.deployExtras[wrapperId] = { strategy: { kind: 'create' } };
+      invalidatePredictions(state, wrapperId);
+    },
+    setAcknowledgeUninitialized(
+      state,
+      action: PayloadAction<{ stepId: string; acknowledged: boolean }>
+    ) {
+      const step = deployStep(state, action.payload.stepId);
+      if (!step?.wraps) return;
+      if (action.payload.acknowledged) step.acknowledgeUninitialized = true;
+      else delete step.acknowledgeUninitialized;
+    },
+    setWrapperInitializer(
+      state,
+      action: PayloadAction<{ stepId: string; key: string; value: unknown; selection: string }>
+    ) {
+      const step = deployStep(state, action.payload.stepId);
+      if (!step?.wraps) return;
+      step.args ??= {};
+      step.args[action.payload.key] = action.payload.value;
+      step.initializerSelection = action.payload.selection;
+      invalidatePredictions(state, step.id);
     },
     setValue(state, action: PayloadAction<{ stepId: string; value?: string }>) {
       const step = state.steps.find(({ id }) => id === action.payload.stepId);
@@ -835,6 +925,9 @@ export const {
   setChainSigner,
   setArg,
   setChainArgOverride,
+  selectContractType,
+  setAcknowledgeUninitialized,
+  setWrapperInitializer,
   setValue,
   setValuePerChain,
   setGasOverride,

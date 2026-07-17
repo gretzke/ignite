@@ -4,6 +4,7 @@ import { apiClient } from '../../../store/api/client';
 import { useAppDispatch, useAppSelector } from '../../../store';
 import { addCallStep, confirmExternalResolution, moveStep, toggleWorkflowStep, workflowDependentsForExclusion } from '../../../store/features/deployments/deployDraftSlice';
 import DeployStepCard from '../components/DeployStepCard';
+import WrapperStepCard from '../components/WrapperStepCard';
 import CallStepCard from '../components/CallStepCard';
 import ConfirmDialog from '../../../components/ConfirmDialog';
 import { workflowDocumentFromDraft } from '../../../store/features/deployments/workflowDraft';
@@ -22,8 +23,13 @@ export default function StepsStep() {
   useEffect(() => {
     let cancelled = false;
     for (const contract of draft.contracts) {
-      if (contract.origin === 'contract-type') continue; // contract-types plan phase 11
       if (artifacts[contract.id]) continue;
+      if (contract.origin === 'contract-type') {
+        void apiClient.request('getContractTypeArtifact', { params: { pluginId: contract.pluginId, artifactKey: contract.artifactKey } }).then((response) => {
+          if ('data' in response && !cancelled) setArtifacts((current) => ({ ...current, [contract.id]: response.data.artifact as unknown as ArtifactData }));
+        }).catch(() => undefined);
+        continue;
+      }
       void apiClient.request('getArtifactData', { body: { pathOrUrl: contract.repoPathOrUrl, pluginId: contract.frameworkId, artifactPath: contract.artifactPath, ...(contract.pin ? { pin: contract.pin } : {}) } }).then((response) => {
         if ('data' in response && !cancelled) setArtifacts((current) => ({ ...current, [contract.id]: response.data }));
       }).catch(() => undefined);
@@ -31,7 +37,7 @@ export default function StepsStep() {
     return () => { cancelled = true; };
   }, [draft.contracts, artifacts]);
   return <section className="grid gap-4"><div><h2 className="text-lg font-semibold">Steps</h2><p className="text-sm text-muted">Arrange deployments and calls in the order they run on every chain.</p></div>
-    {draft.steps.map((step, index) => <div key={step.id} className="grid gap-3">{!draft.workflowRef && <button type="button" className="btn btn-sm btn-secondary justify-self-start" onClick={() => dispatch(addCallStep(index - 1))}>+ Add call</button>}{step.kind === 'call' && draft.workflowRef && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.workflowIncludedStepIds?.[step.id] !== false} onChange={() => { const dependents = workflowDependentsForExclusion(draft, step.id); if (draft.workflowIncludedStepIds?.[step.id] !== false && dependents.length) setPendingToggle(step.id); else dispatch(toggleWorkflowStep(step.id)); }} /><span>Include call step <span className="mono-data">{decodeUrlEncodingForDisplay(step.id)}</span></span></label>}{step.kind === 'deploy' ? <DeployStepCard step={step} data={artifacts[step.contractId]} onMove={(delta) => dispatch(moveStep({ fromIndex: index, toIndex: index + delta }))} /> : <CallStepCard step={step} artifactData={artifacts} onMove={(delta) => dispatch(moveStep({ fromIndex: index, toIndex: index + delta }))} />}</div>)}
+    {draft.steps.map((step, index) => <div key={step.id} className="grid gap-3">{!draft.workflowRef && <button type="button" className="btn btn-sm btn-secondary justify-self-start" onClick={() => dispatch(addCallStep(index - 1))}>+ Add call</button>}{step.kind === 'call' && draft.workflowRef && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.workflowIncludedStepIds?.[step.id] !== false} onChange={() => { const dependents = workflowDependentsForExclusion(draft, step.id); if (draft.workflowIncludedStepIds?.[step.id] !== false && dependents.length) setPendingToggle(step.id); else dispatch(toggleWorkflowStep(step.id)); }} /><span>Include call step <span className="mono-data">{decodeUrlEncodingForDisplay(step.id)}</span></span></label>}{step.kind === 'deploy' ? step.wraps ? <WrapperStepCard step={step} implementationAbi={artifacts[draft.steps.find((candidate) => candidate.id === step.wraps?.stepId && candidate.kind === 'deploy')?.contractId ?? '']?.abi as unknown[] | undefined} onMove={(delta) => dispatch(moveStep({ fromIndex: index, toIndex: index + delta }))} /> : <DeployStepCard step={step} data={artifacts[step.contractId]} onMove={(delta) => dispatch(moveStep({ fromIndex: index, toIndex: index + delta }))} /> : <CallStepCard step={step} artifactData={artifacts} onMove={(delta) => dispatch(moveStep({ fromIndex: index, toIndex: index + delta }))} />}</div>)}
     {!draft.workflowRef && <button type="button" className="btn btn-secondary justify-self-start" onClick={() => dispatch(addCallStep(draft.steps.length - 1))}>+ Add call</button>}
     {draft.workflowRef && unboundGroups.length > 0 && <div className="grid gap-3"><h3 className="font-semibold">Unresolved per-chain pointers</h3>{unboundGroups.map((slots) => {
       if (!slots?.length || !workflowDocument) return null;

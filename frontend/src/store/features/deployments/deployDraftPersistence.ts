@@ -38,6 +38,11 @@ const DraftDeployStepSchema = z.object({
     .record(z.string(), GasOverridesDraftSchema.partial())
     .optional(),
   signerOverride: SignerCascadeSchema.optional(),
+  wraps: z
+    .object({ stepId: z.string().min(1), contractTypePluginId: z.string().min(1) })
+    .optional(),
+  acknowledgeUninitialized: z.literal(true).optional(),
+  initializerSelection: z.string().optional(),
 });
 
 const DraftCallStepSchema = z.object({
@@ -162,6 +167,12 @@ function invariantsHold(draft: DeployDraftState): boolean {
   if (stepIds.size !== draft.steps.length) return false;
   for (const step of deploySteps)
     if (!contractIds.has(step.contractId)) return false;
+  for (const step of deploySteps) {
+    if (!step.wraps) continue;
+    const implIndex = draft.steps.findIndex((candidate) => candidate.id === step.wraps!.stepId);
+    if (implIndex < 0 || draft.steps.findIndex((candidate) => candidate.id === step.id) <= implIndex)
+      return false;
+  }
   if (!draft.unseenIds.every((id) => contractIds.has(id))) return false;
   return Object.keys(draft.deployExtras).every((id) =>
     deploySteps.some((step) => step.id === id)

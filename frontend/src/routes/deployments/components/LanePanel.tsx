@@ -256,6 +256,16 @@ export default function LanePanel({
                     ) : null}
                   </div>
                 )}
+                {step.captured?.admin && (
+                  <div className="flex flex-wrap items-center gap-2 mt-1 text-xs">
+                    <span className="text-muted w-12">ProxyAdmin</span>
+                    <CopyValue value={step.captured.admin} />
+                    <ExplorerLink
+                      href={explorerAddressUrl(chain, explorerTargets, step.captured.admin)}
+                      label="Open ProxyAdmin in explorer"
+                    />
+                  </div>
+                )}
                 {attempt?.txHash && (
                   <div className="flex flex-wrap items-center gap-2 mt-1 text-xs">
                     <span className="text-muted w-12">Tx</span>

@@ -207,6 +207,16 @@ export default function ValidationChecklist({
                             {replaceIdsForDisplay(warning, stepLabels)}
                           </div>
                         ))}
+                      {key === 'args' &&
+                        Array.isArray(item.details?.contractTypeItems) && (
+                          <div className="grid gap-1 mt-2 text-xs">
+                            {(item.details!.contractTypeItems as unknown[]).map((entry, index) => {
+                              if (!entry || typeof entry !== 'object') return null;
+                              const contractTypeItem = entry as ValidationItem;
+                              return <div key={`${contractTypeItem.code}-${index}`} className={contractTypeItem.blocking && !contractTypeItem.ok ? 'text-err' : contractTypeItem.ok ? 'text-muted' : 'text-warn'}>{contractTypeItem.details?.['plugin-declared'] === true && <span className="chip mr-1">plugin-declared</span>}{replaceIdsForDisplay(contractTypeItem.message, stepLabels)}</div>;
+                            })}
+                          </div>
+                        )}
                     </div>
                     {!item.ok &&
                       (item.code === 'CREATE2_ALREADY_DEPLOYED' ||
@@ -236,6 +246,9 @@ export default function ValidationChecklist({
                           Accept drifted bytecode
                         </button>
                       )}
+                    {!item.ok && item.code === 'UNINITIALIZED_PROXY_ACK_REQUIRED' && onAcknowledge && (
+                      <button type="button" className="btn btn-sm btn-secondary shrink-0" onClick={() => onAcknowledge(Number(chainId), item)}>Acknowledge risk</button>
+                    )}
                   </div>
                 );
               })}

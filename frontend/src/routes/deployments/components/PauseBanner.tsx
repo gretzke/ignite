@@ -60,6 +60,8 @@ export default function PauseBanner({
   // without a known hash is a harmless engine-side no-op, and hiding shared
   // verbs here would desynchronize the UI from the enforcement contract.
   const safeActions = actionsForPausedLane(lane, capability ?? 'sign-and-send');
+  const details = lane.pause.details as Record<string, unknown> | undefined;
+  const assertion = typeof details?.assertion === 'string' ? details.assertion : undefined;
   return (
     <div className="card-milky p-4 border border-warn/30">
       <div className="flex items-start gap-3">
@@ -69,6 +71,12 @@ export default function PauseBanner({
           <p className="text-sm text-muted mt-1">{PAUSE_COPY[lane.pause.reason] ?? lane.pause.error}</p>
           {PAUSE_COPY[lane.pause.reason] && lane.pause.error && (
             <p className="text-xs text-muted mt-1">{lane.pause.error}</p>
+          )}
+          {lane.pause.reason === 'needs-review' && details && (
+            <details className="text-xs text-muted mt-2">
+              <summary className="cursor-pointer">Capture details{assertion ? `: ${assertion}` : ''}</summary>
+              <div className="mono-data mt-1" style={{ overflowWrap: 'anywhere' }}>{JSON.stringify(details)}</div>
+            </details>
           )}
           <div className="flex flex-wrap gap-2 mt-3">
             {safeActions.map((action) => (
