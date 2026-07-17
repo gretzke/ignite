@@ -234,6 +234,7 @@ const deployDraftSlice = createSlice({
       }>
     ) {
       const { repoPathOrUrl, name, docHash, document } = action.payload;
+      if (document.sources.some((source) => source.origin === 'contract-type')) throw new Error('contract-type sources are not supported here yet (contract-types plan phase 13)');
       const deployExtras: DeployDraftState['deployExtras'] = {};
       const steps: DraftStep[] = document.steps.map((step) => {
         if (step.kind === 'call')
@@ -282,15 +283,13 @@ const deployDraftSlice = createSlice({
       });
       return {
         ...initialState,
-        contracts: document.sources.map((source) => ({
-          id: source.id,
-          repoPathOrUrl: source.repo.url,
-          frameworkId: source.frameworkId,
-          artifactPath: source.artifactPath,
-          contractName: source.contractName,
-          sourcePath: source.sourcePath,
-          pin: { ...source.repo },
-        })),
+        contracts: document.sources.map((source) => {
+          if (source.origin === 'contract-type') throw new Error('contract-type sources are not supported here yet (contract-types plan phase 13)');
+          return {
+            id: source.id, repoPathOrUrl: source.repo.url, frameworkId: source.frameworkId,
+            artifactPath: source.artifactPath, contractName: source.contractName, sourcePath: source.sourcePath, pin: { ...source.repo },
+          };
+        }),
         chains: [],
         steps,
         deployExtras,
@@ -356,6 +355,7 @@ const deployDraftSlice = createSlice({
         (item) => item.id === action.payload.sourceId
       );
       if (!source || !contract) return;
+      if (source.origin === 'contract-type' || contract.origin === 'contract-type') throw new Error('contract-type sources are not supported here yet (contract-types plan phase 13)');
       source.repo = {
         url: source.repo.url,
         commit: action.payload.commit,

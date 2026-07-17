@@ -6,6 +6,7 @@ import type {
   WorkflowPromoteData,
   WorkflowPromoteRequest,
   WorkflowRequiredPlugin,
+  RepoWorkflowSource,
   WorkflowSource,
   WorkflowSummary,
 } from '@ignite/api';
@@ -18,6 +19,7 @@ import { PluginManager } from '../filesystem/PluginManager.js';
 import { VerificationQueue } from '../verifications/VerificationQueue.js';
 import { renderArtifact } from '../deployments/artifact.js';
 import { ArtifactFreezeService } from '../deployments/ArtifactFreezeService.js';
+import { IgniteError } from '../types/errors.js';
 import type { FrozenInputs } from '@ignite/api';
 
 type PreviewRequest = Extract<WorkflowPromoteRequest, { mode: 'preview' }>;
@@ -92,6 +94,7 @@ export class WorkflowPromotionService {
     const sources: PreviewData['sources'] = [];
     const inspections = new Map<string, PromotionSourceInspection>();
     for (const source of plan.contracts) {
+      if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
       if (source.pin) {
         sources.push({ sourceId: source.id, origin: source.pin.url, commit: source.pin.commit, tagChoices: source.pin.refKind === 'tag' && source.pin.ref ? [source.pin.ref] : [], dirty: false });
         continue;
@@ -121,8 +124,9 @@ export class WorkflowPromotionService {
     const previewErrors = snapshot.sources.filter((source) => source.error);
     if (previewErrors.length) throw new WorkflowPromotionError(422, 'PROMOTION_SOURCE_INVALID', previewErrors.map((source) => `${source.sourceId}: ${source.error}`).join('; '));
 
-    const pins = new Map<string, WorkflowSource['repo']>();
+    const pins = new Map<string, RepoWorkflowSource['repo']>();
     for (const source of plan.contracts) {
+      if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
       if (source.pin) { pins.set(source.id, globalThis.structuredClone(source.pin)); continue; }
       const before = snapshot.inspections.get(source.id);
       if (!before) throw new WorkflowPromotionError(409, 'PROMOTION_PREVIEW_STALE', `Source ${source.id} was not resolved by the preview`);
@@ -176,14 +180,17 @@ export class WorkflowPromotionService {
     return { mode: 'apply', workflow: summary(request.target.name, document), docHash };
   }
 
-  private async buildDocument(plan: DeploymentPlan, run: RunRecord | undefined, pins: Map<string, WorkflowSource['repo']>, hooks: string[], profileId: string): Promise<WorkflowDocument> {
+  private async buildDocument(plan: DeploymentPlan, run: RunRecord | undefined, pins: Map<string, RepoWorkflowSource['repo']>, hooks: string[], profileId: string): Promise<WorkflowDocument> {
     const frozen = run?.inputs ?? await this.deps.freezeInputs(profileId, plan).catch(() => undefined);
-    const sources: WorkflowSource[] = plan.contracts.map((source) => ({
-      id: source.id, repo: pins.get(source.id)!, frameworkId: source.frameworkId, sourcePath: source.sourcePath,
-      contractName: source.contractName, artifactPath: source.artifactPath,
-      ...(frozen?.[source.id]?.artifactHash ? { artifactHash: frozen[source.id].artifactHash } : {}),
-    }));
-    const pluginIds = new Set<string>([...sources.map((source) => source.frameworkId), ...hooks]);
+    const sources: WorkflowSource[] = plan.contracts.map((source) => {
+      if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
+      return {
+        id: source.id, repo: pins.get(source.id)!, frameworkId: source.frameworkId, sourcePath: source.sourcePath,
+        contractName: source.contractName, artifactPath: source.artifactPath,
+        ...(frozen?.[source.id]?.artifactHash ? { artifactHash: frozen[source.id].artifactHash } : {}),
+      };
+    });
+    const pluginIds = new Set<string>([...sources.flatMap((source) => source.origin === 'contract-type' ? [] : [source.frameworkId]), ...hooks]);
     for (const step of plan.steps)
       if (step.kind === 'deploy' && step.strategy?.kind === 'plugin') pluginIds.add(step.strategy.pluginId);
     const requiredPlugins = await Promise.all([...pluginIds].sort().map((id) => this.deps.getRequiredPlugin(id)));

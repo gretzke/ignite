@@ -129,7 +129,7 @@ export default function VerifyContractPage() {
     };
   }, [chainSearch, dispatch]);
   useEffect(() => {
-    if (!contract || abi.length) return;
+    if (!contract || contract.origin === 'contract-type' || abi.length) return; // contract-types plan phase 10
     void apiClient
       .request('getArtifactData', {
         body: {
@@ -237,7 +237,7 @@ export default function VerifyContractPage() {
         />
         {contract && (
           <p className="mono-data text-muted">
-            {contract.sourcePath} · {contract.contractName}
+            {contract.origin === 'contract-type' ? contract.contractName : `${contract.sourcePath} · ${contract.contractName}`}
           </p>
         )}
       </section>

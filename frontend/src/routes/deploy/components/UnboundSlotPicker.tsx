@@ -47,16 +47,18 @@ export default function UnboundSlotPicker({
   const [error, setError] = useState<string>();
   const [manual, setManual] = useState<Record<string, string>>({});
   const chainKey = slots.map((slot) => slot.chainId).join(',');
+  const artifactHash = source.origin === 'contract-type' ? undefined : source.artifactHash;
 
   useEffect(() => {
     let cancelled = false;
+    if (source.origin === 'contract-type') return () => { cancelled = true; }; // contract-types plan phase 13
     const chainIds = chainKey.split(',').map(Number);
     setLoading(true);
     void apiClient.request('pointerSuggestions', {
       body: {
         workflow: { repoPathOrUrl, name: workflowName },
         sourceId: source.id,
-        ...(source.artifactHash ? { expectedArtifactHash: source.artifactHash } : {}),
+        ...(artifactHash ? { expectedArtifactHash: artifactHash } : {}),
         contractName: source.contractName,
         chainIds,
       },
@@ -68,7 +70,9 @@ export default function UnboundSlotPicker({
       if (!cancelled) setError(reason instanceof Error ? reason.message : 'Suggestions could not be loaded');
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [repoPathOrUrl, source.artifactHash, source.contractName, source.id, workflowName, chainKey]);
+  }, [repoPathOrUrl, artifactHash, source, workflowName, chainKey]);
+
+  if (source.origin === 'contract-type') return null; // contract-types plan phase 13
 
   return (
     <div className="card-milky p-4 grid gap-4">

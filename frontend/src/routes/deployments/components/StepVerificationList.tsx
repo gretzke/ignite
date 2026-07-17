@@ -116,7 +116,7 @@ export function verifyNowLink(
     (candidate) => candidate.id === planStep.contractId
   );
   params.set('address', step.address);
-  if (contract) {
+  if (contract && contract.origin !== 'contract-type') {
     params.set('contractId', contract.id);
     params.set('repoPathOrUrl', contract.repoPathOrUrl);
     params.set('frameworkId', contract.frameworkId);

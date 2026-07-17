@@ -29,8 +29,16 @@ export interface WorkflowPin {
   refKind?: 'tag' | 'branch';
 }
 
-export interface WorkflowSource {
+export interface WorkflowContractTypeSourceRef {
+  pluginId: string;
+  artifactKey: string;
+  versionLabel: string;
+  contentHash: string;
+}
+
+export interface RepoWorkflowSource {
   id: string;
+  origin?: 'repo';
   repo: WorkflowPin;
   frameworkId: string;
   sourcePath: string;
@@ -38,6 +46,9 @@ export interface WorkflowSource {
   artifactPath: string;
   artifactHash?: string;
 }
+
+export type ContractTypeWorkflowSource = { id: string; origin: 'contract-type'; contractName: string } & WorkflowContractTypeSourceRef;
+export type WorkflowSource = RepoWorkflowSource | ContractTypeWorkflowSource;
 
 export type WorkflowPluginSource =
   | { kind: 'local'; contextDir: string; dockerfile?: string }
@@ -187,7 +198,9 @@ const WorkflowStepSchema = z.discriminatedUnion('kind', [
 
 export function makeWorkflowDocumentSchema(options: { allowFileUrls?: boolean } = {}): z.ZodType<WorkflowDocument> {
   const PinSchema = z.object({ url: z.string().min(1).refine((value) => allowedPinUrl(value, options.allowFileUrls === true), 'pin URL must be credential-free https:// (or file:// in dev mode)'), commit: z.string().regex(COMMIT), ref: z.string().min(1).optional(), refKind: z.enum(['tag', 'branch']).optional() }).strict().superRefine((pin, ctx) => { if (pin.ref !== undefined && pin.refKind === undefined) ctx.addIssue({ code: 'custom', message: 'refKind is required when ref is present', path: ['refKind'] }); });
-  const SourceSchema = z.object({ id: z.string().min(1), repo: PinSchema, frameworkId: z.string().min(1), sourcePath: z.string().refine(relativePath, 'sourcePath must be a relative path without dot segments'), contractName: z.string().min(1), artifactPath: z.string().refine(relativePath, 'artifactPath must be a relative path without dot segments'), artifactHash: z.string().regex(SHA256_HEX).optional() }).strict();
+  const RepoSourceSchema = z.object({ id: z.string().min(1), origin: z.literal('repo').optional(), repo: PinSchema, frameworkId: z.string().min(1), sourcePath: z.string().refine(relativePath, 'sourcePath must be a relative path without dot segments'), contractName: z.string().min(1), artifactPath: z.string().refine(relativePath, 'artifactPath must be a relative path without dot segments'), artifactHash: z.string().regex(SHA256_HEX).optional() }).strict() satisfies z.ZodType<RepoWorkflowSource>;
+  const ContractTypeSourceSchema = z.object({ id: z.string().min(1), origin: z.literal('contract-type'), contractName: z.string().min(1), pluginId: z.string().min(1), artifactKey: z.string().min(1), versionLabel: z.string().min(1), contentHash: z.string().regex(SHA256_HEX) }).strict() satisfies z.ZodType<ContractTypeWorkflowSource>;
+  const SourceSchema = z.union([RepoSourceSchema, ContractTypeSourceSchema]) satisfies z.ZodType<WorkflowSource>;
   const TrackSchema = z.discriminatedUnion('mode', [z.object({ mode: z.literal('release'), version: z.string().min(1) }).strict(), z.object({ mode: z.literal('branch'), branch: z.string().min(1) }).strict(), z.object({ mode: z.literal('commit') }).strict()]);
   const PluginSourceSchema = z.discriminatedUnion('kind', [z.object({ kind: z.literal('local'), contextDir: z.string().min(1), dockerfile: z.string().min(1).optional() }).strict(), z.object({ kind: z.literal('git'), url: z.string().min(1), ref: z.string().min(1).optional(), track: TrackSchema.optional(), commit: z.string().min(1).optional() }).strict()]);
   const RequiredPluginSchema = z.object({ id: z.string().min(1), version: z.string().min(1), source: PluginSourceSchema.optional() }).strict();
@@ -213,9 +226,16 @@ export const WorkflowDocumentSchema = makeWorkflowDocumentSchema();
 
 export function validateWorkflowClosure(document: WorkflowDocument): string[] {
   const plugins = new Set(document.requiredPlugins.map((plugin) => plugin.id));
-  const required = new Set<string>([...document.sources.map((source) => source.frameworkId), ...document.outputs.hooks]);
+  const required = new Set<string>([...document.sources.map((source) => source.origin === 'contract-type' ? source.pluginId : source.frameworkId), ...document.outputs.hooks]);
+  const missing = new Set<string>();
+  for (const source of document.sources) {
+    if (source.origin !== 'contract-type') continue;
+    const plugin = document.requiredPlugins.find((entry) => entry.id === source.pluginId);
+    if (!plugin || plugin.version !== source.versionLabel) missing.add(source.pluginId);
+  }
   for (const step of document.steps) if (step.kind === 'deploy' && step.strategy?.kind === 'plugin') required.add(step.strategy.pluginId);
-  return [...required].filter((id) => !plugins.has(id)).sort();
+  for (const id of required) if (!plugins.has(id)) missing.add(id);
+  return [...missing].sort();
 }
 
 export const WorkflowSummarySchema = z.object({ name: z.string().regex(WorkflowNamePattern), valid: z.boolean(), error: z.string().optional(), description: z.string().max(1024).optional(), sourceCount: z.number().int().nonnegative().optional(), stepCount: z.number().int().nonnegative().optional(), hooks: z.array(z.string().min(1)).max(16).optional() }).strict() satisfies z.ZodType<WorkflowSummary>;

@@ -23,6 +23,7 @@ import { PinnedStore } from '../../../repos/PinnedStore.js';
 import { ProfileManager } from '../../../filesystem/ProfileManager.js';
 import { getLogger } from '../../../utils/logger.js';
 import { ErrorCodes } from '../../../types/errors.js';
+import { IgniteError } from '../../../types/errors.js';
 import {
   sendPluginError,
   sendCaughtError,
@@ -64,6 +65,7 @@ export async function getCompilerArtifactData(
   input: { contract: ContractSource; profileId: string }
 ): Promise<ArtifactData> {
   const { contract } = input;
+  if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 7)', 'CONTRACT_TYPE_UNSUPPORTED');
   let config;
   try {
     config = await deps.registryLoader.getPluginConfig(contract.frameworkId);
@@ -112,6 +114,7 @@ export async function getCompilerVerificationBundle(
   input: { contract: ContractSource; profileId: string }
 ): Promise<VerificationBundleData> {
   const { contract } = input;
+  if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 7)', 'CONTRACT_TYPE_UNSUPPORTED');
   let config;
   try {
     config = await deps.registryLoader.getPluginConfig(contract.frameworkId);

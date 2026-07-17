@@ -16,6 +16,7 @@ import { getCompilerVerificationBundle } from '../api/plugins/compiler/index.js'
 import { BundleStore, type VerificationBundle } from '../verifications/BundleStore.js';
 import { validateUnlinkedBytecode } from './linking.js';
 import { getLogger } from '../utils/logger.js';
+import { IgniteError } from '../types/errors.js';
 
 export interface ArtifactFreezeDeps {
   getArtifactData: (input: {
@@ -54,6 +55,7 @@ export class ArtifactFreezeService {
       repoDirty:
         deps?.repoDirty ??
         (async (profileId, contract) => {
+          if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 7)', 'CONTRACT_TYPE_UNSUPPORTED');
           const records = await repoRegistry.list(profileId);
           const record = [...records.local, ...records.cloned].find(
             (item) => item.pathOrUrl === contract.repoPathOrUrl
@@ -101,6 +103,7 @@ export class ArtifactFreezeService {
   ): Promise<FrozenInputs> {
     const entries = await Promise.all(
       contracts.map(async (contract) => {
+        if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 7)', 'CONTRACT_TYPE_UNSUPPORTED');
         const [artifact, config, repoDirty] = await Promise.all([
           this.deps.getArtifactData({
             contract,

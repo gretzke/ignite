@@ -28,6 +28,7 @@ import { guessConstructorArgs as guess } from '../verifications/guessArgs.js';
 import { createPublicClient, http, type Hex } from 'viem';
 import { sendBadRequest, sendCaughtError } from './utils/errors.js';
 import type { ErrorCode } from '../types/errors.js';
+import { IgniteError } from '../types/errors.js';
 type ProfileSource = { getCurrentProfile(): string };
 export interface VerificationHandlerDeps {
   queue: Pick<
@@ -88,6 +89,7 @@ export function createVerificationHandlers(
       try {
         const profileId = await profile();
         const { contract } = request.body;
+        if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 10)', 'CONTRACT_TYPE_UNSUPPORTED');
         const [artifact, bundleData] = await Promise.all([
           getCompilerArtifactData(d.compiler, {
             contract,
@@ -193,6 +195,7 @@ export function createVerificationHandlers(
       try {
         const profileId = await profile();
         const c = request.body.contract;
+        if (c.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 10)', 'CONTRACT_TYPE_UNSUPPORTED');
         const [artifact, bundle] = await Promise.all([
           getCompilerArtifactData(d.compiler, {
             contract: c,

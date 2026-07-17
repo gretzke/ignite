@@ -53,8 +53,16 @@ export interface GasOverrides {
   maxPriorityFeePerGas?: string;
 }
 
-export interface ContractSource {
+export interface ContractTypeSourceRef {
+  pluginId: string;
+  artifactKey: string;
+  versionLabel: string;
+  contentHash: string;
+}
+
+export interface RepoContractSource {
   id: string;
+  origin?: 'repo';
   repoPathOrUrl: string;
   frameworkId: string;
   artifactPath: string;
@@ -62,6 +70,9 @@ export interface ContractSource {
   sourcePath: string;
   pin?: ContractSourcePin;
 }
+
+export type ContractTypeContractSource = { id: string; origin: 'contract-type'; contractName: string } & ContractTypeSourceRef;
+export type ContractSource = RepoContractSource | ContractTypeContractSource;
 
 export interface ContractSourcePin {
   url: string;
@@ -84,9 +95,13 @@ export interface DeployStep {
   strategy?: DeployStrategy;
   libraries?: Record<string, LibraryBinding>;
   librariesPerChain?: Record<string, Record<string, LibraryBinding>>;
+  wraps?: WrapsRef;
+  acknowledgeUninitialized?: true;
 }
 
 export interface ValueRef { $ref: { kind: 'step'; stepId: string } }
+export interface EncodedCallValue { $encode: { contractId: string; fn: string; args?: ArgValues } }
+export interface WrapsRef { stepId: string; contractTypePluginId: string }
 export type LibraryBinding = { kind: 'address'; address: Hex } | { kind: 'step'; stepId: string };
 export type AckMap = Record<string, { predictedAddress: Hex; initcodeHash: Hex32 }>;
 export type DeployStrategy =
@@ -124,6 +139,12 @@ export function isValueRef(value: unknown): value is ValueRef {
 }
 
 export const ArgValuesSchema = z.record(z.string(), z.unknown());
+export const EncodedCallValueSchema = z.object({
+  $encode: z.object({ contractId: z.string().min(1), fn: z.string().min(1).max(512), args: ArgValuesSchema.optional() }).strict(),
+}).strict() satisfies z.ZodType<EncodedCallValue>;
+export function isEncodedCallValue(value: unknown): value is EncodedCallValue {
+  return EncodedCallValueSchema.safeParse(value).success;
+}
 
 export const SignerRefSchema = z.object({
   pluginId: z.string().min(1),
@@ -151,8 +172,9 @@ export const ContractSourcePinSchema = z.object({
   if (pin.ref !== undefined && pin.refKind === undefined) ctx.addIssue({ code: 'custom', message: 'refKind is required when ref is present', path: ['refKind'] });
 }) satisfies z.ZodType<ContractSourcePin>;
 
-export const ContractSourceSchema = z.object({
+const RepoContractSourceSchema = z.object({
   id: z.string().min(1),
+  origin: z.literal('repo').optional(),
   repoPathOrUrl: z.string().min(1),
   frameworkId: z.string().min(1),
   artifactPath: z.string().min(1),
@@ -161,7 +183,17 @@ export const ContractSourceSchema = z.object({
   pin: ContractSourcePinSchema.optional(),
 }).superRefine((source, ctx) => {
   if (source.pin && source.repoPathOrUrl !== source.pin.url) ctx.addIssue({ code: 'custom', message: 'repoPathOrUrl must equal pin.url', path: ['pin', 'url'] });
-}) satisfies z.ZodType<ContractSource>;
+}) satisfies z.ZodType<RepoContractSource>;
+const ContractTypeContractSourceSchema = z.object({
+  id: z.string().min(1),
+  origin: z.literal('contract-type'),
+  contractName: z.string().min(1),
+  pluginId: z.string().min(1),
+  artifactKey: z.string().min(1),
+  versionLabel: z.string().min(1),
+  contentHash: z.string().regex(SHA256_HEX),
+}).strict() satisfies z.ZodType<ContractTypeContractSource>;
+export const ContractSourceSchema = z.union([RepoContractSourceSchema, ContractTypeContractSourceSchema]) satisfies z.ZodType<ContractSource>;
 
 export const LinkReferencesWireSchema = z.record(
   z.string(),
@@ -203,6 +235,8 @@ export const DeployStepSchema = z.object({
   strategy: DeployStrategySchema.optional(),
   libraries: z.record(z.string(), LibraryBindingSchema).optional(),
   librariesPerChain: z.record(ChainIdKeySchema, z.record(z.string(), LibraryBindingSchema)).optional(),
+  wraps: z.object({ stepId: z.string().min(1), contractTypePluginId: z.string().min(1) }).strict().optional(),
+  acknowledgeUninitialized: z.literal(true).optional(),
 }) satisfies z.ZodType<DeployStep>;
 
 export const CallStepSchema = z.object({
@@ -242,16 +276,32 @@ export const DeploymentPlanSchema = createRequestSchema<DeploymentPlan>(
       if (Array.isArray(value)) value.forEach((entry, index) => visitRefs(entry, [...path, index]));
       else if (value && typeof value === 'object') Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => visitRefs(entry, [...path, key]));
     };
+    const visitEncodes = (value: unknown, path: (string | number)[]): void => {
+      if (isEncodedCallValue(value)) {
+        if (!ids.has(value.$encode.contractId)) ctx.addIssue({ code: 'custom', message: '$encode contractId must reference a contract', path: [...path, '$encode', 'contractId'] });
+        return;
+      }
+      if (Array.isArray(value)) value.forEach((entry, childIndex) => visitEncodes(entry, [...path, childIndex]));
+      else if (value && typeof value === 'object') Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => visitEncodes(entry, [...path, key]));
+    };
     plan.steps.forEach((step, index) => {
       if (step.kind === 'deploy') {
         if (!ids.has(step.contractId)) ctx.addIssue({ code: 'custom', message: 'step contractId must reference a contract', path: ['steps', index, 'contractId'] });
+        if (step.wraps) checkDeployId(step.wraps.stepId, ['steps', index, 'wraps', 'stepId']);
+        const hasValue = step.value !== undefined && step.value !== '0' || Object.values(step.valuePerChain ?? {}).some((value) => value !== '0');
+        // ABI synthesis determines `_data` later; at the wire layer only
+        // global args are inspectable without incorrectly merging lane values.
+        if (step.wraps && hasValue && !Object.values(step.args ?? {}).some(isEncodedCallValue))
+          ctx.addIssue({ code: 'custom', message: 'wrapper value requires a global $encode initializer', path: ['steps', index, 'args'] });
         visitRefs(step.args, ['steps', index, 'args']); visitRefs(step.argsPerChain, ['steps', index, 'argsPerChain']);
+        visitEncodes(step.args, ['steps', index, 'args']); visitEncodes(step.argsPerChain, ['steps', index, 'argsPerChain']);
         Object.entries(step.libraries ?? {}).forEach(([key, binding]) => { if (binding.kind === 'step') checkDeployId(binding.stepId, ['steps', index, 'libraries', key]); });
         Object.entries(step.librariesPerChain ?? {}).forEach(([chainId, bindings]) => Object.entries(bindings).forEach(([key, binding]) => { if (binding.kind === 'step') checkDeployId(binding.stepId, ['steps', index, 'librariesPerChain', chainId, key]); }));
       } else {
         if (step.target.kind === 'step') checkDeployId(step.target.stepId, ['steps', index, 'target']);
         Object.entries(step.targetPerChain ?? {}).forEach(([chainId, target]) => { if (target.kind === 'step') checkDeployId(target.stepId, ['steps', index, 'targetPerChain', chainId]); });
         visitRefs(step.args, ['steps', index, 'args']); visitRefs(step.argsPerChain, ['steps', index, 'argsPerChain']);
+        visitEncodes(step.args, ['steps', index, 'args']); visitEncodes(step.argsPerChain, ['steps', index, 'argsPerChain']);
       }
     });
   }),

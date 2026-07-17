@@ -4,6 +4,7 @@ import {
   CREATE2_PROXY_RUNTIME_CODE,
   type DeploymentPlan,
   type FrozenInputs,
+  type RepoContractSource,
 } from '@ignite/api';
 import { validatePlan } from '../../deployments/validation.js';
 import { initcodeHashOf, predictCreate2Address } from '../../deployments/create2.js';
@@ -40,6 +41,12 @@ function plan(overrides: Partial<DeploymentPlan> = {}): DeploymentPlan {
     ],
     ...overrides,
   };
+}
+
+function repoContract(): RepoContractSource {
+  const contract = plan().contracts[0];
+  if (contract.origin === 'contract-type') throw new Error('test fixture must use a repo contract');
+  return contract;
 }
 
 const frozen: FrozenInputs = {
@@ -604,7 +611,7 @@ describe('validatePlan', () => {
 
   it('adds run-level workflow/output items and blocks pinned artifact drift', async () => {
     const expected = 'a'.repeat(64);
-    const pinned = plan({ contracts: [{ ...plan().contracts[0], repoPathOrUrl: 'https://source.test/repo.git', pin: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) } }] });
+    const pinned = plan({ contracts: [{ ...repoContract(), repoPathOrUrl: 'https://source.test/repo.git', pin: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) } }] });
     const workflow = {
       document: {
         schemaVersion: 1, description: undefined,
@@ -625,13 +632,13 @@ describe('validatePlan', () => {
 
   it('renders portable credential-free pin labels and drops hostless file pins', async () => {
     const credentialed = 'https://user:secret@source.test/private/repo.git';
-    const remotePlan = plan({ contracts: [{ ...plan().contracts[0], repoPathOrUrl: credentialed, pin: { url: credentialed, commit: 'c'.repeat(40), ref: 'main', refKind: 'branch' } }] });
+    const remotePlan = plan({ contracts: [{ ...repoContract(), repoPathOrUrl: credentialed, pin: { url: credentialed, commit: 'c'.repeat(40), ref: 'main', refKind: 'branch' } }] });
     const remote = await validatePlan(remotePlan, { '1': 'rpc-1' }, deps());
     expect(remote.report.chains['1'].inputs.details).toEqual({ pinned: [{ sourceId: 'token', pin: 'source.test/private/repo.git@main', commit: 'cccccccccccc' }] });
     expect(JSON.stringify(remote.report)).not.toContain('user:secret');
 
     const fileUrl = 'file:///Volumes/private/repo';
-    const filePlan = plan({ contracts: [{ ...plan().contracts[0], repoPathOrUrl: fileUrl, pin: { url: fileUrl, commit: 'd'.repeat(40) } }] });
+    const filePlan = plan({ contracts: [{ ...repoContract(), repoPathOrUrl: fileUrl, pin: { url: fileUrl, commit: 'd'.repeat(40) } }] });
     const file = await validatePlan(filePlan, { '1': 'rpc-1' }, deps());
     expect(file.report.chains['1'].inputs.details).toBeUndefined();
     expect(JSON.stringify(file.report)).not.toContain('Volumes');
@@ -639,7 +646,7 @@ describe('validatePlan', () => {
 
   it('honors only a fresh artifact-drift acknowledgement and re-blocks either stale side', async () => {
     const expected = 'a'.repeat(64);
-    const pinned = plan({ contracts: [{ ...plan().contracts[0], repoPathOrUrl: 'https://source.test/repo.git', pin: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) } }] });
+    const pinned = plan({ contracts: [{ ...repoContract(), repoPathOrUrl: 'https://source.test/repo.git', pin: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) } }] });
     const document = {
       schemaVersion: 1, sources: [{ id: 'token', repo: { url: 'https://source.test/repo.git', commit: 'c'.repeat(40) }, frameworkId: 'foundry', sourcePath: 'src/Token.sol', contractName: 'Token', artifactPath: 'out/Token.json', artifactHash: expected }],
       steps: [{ id: 'deploy-token', kind: 'deploy', contractId: 'token' }], requiredPlugins: [], outputs: { hooks: [] },

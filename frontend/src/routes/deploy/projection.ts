@@ -157,15 +157,13 @@ export function projectWorkflowPlan(input: WorkflowProjectionInput): DeploymentP
   const usedSources = new Set(steps.filter((step) => step.kind === 'deploy').map((step) => step.contractId));
   return {
     schemaVersion: 1,
-    contracts: input.document.sources.filter((source) => usedSources.has(source.id)).map((source) => ({
-      id: source.id,
-      repoPathOrUrl: source.repo.url,
-      frameworkId: source.frameworkId,
-      sourcePath: source.sourcePath,
-      contractName: source.contractName,
-      artifactPath: source.artifactPath,
-      pin: { ...source.repo },
-    })),
+    contracts: input.document.sources.filter((source) => usedSources.has(source.id)).map((source) => {
+      if (source.origin === 'contract-type') throw new Error('contract-type sources are not supported here yet (contract-types plan phase 13)');
+      return {
+        id: source.id, repoPathOrUrl: source.repo.url, frameworkId: source.frameworkId,
+        sourcePath: source.sourcePath, contractName: source.contractName, artifactPath: source.artifactPath, pin: { ...source.repo },
+      };
+    }),
     steps,
     chains: [...input.chains],
     signers: {},

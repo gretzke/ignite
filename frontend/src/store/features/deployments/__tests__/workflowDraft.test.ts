@@ -79,7 +79,7 @@ describe('workflow deploy drafts', () => {
     expect(state.contracts[0]).toMatchObject({
       id: 'token',
       repoPathOrUrl: 'https://example.com/token.git',
-      pin: document.sources[0].repo,
+      pin: document.sources[0].origin === 'contract-type' ? undefined : document.sources[0].repo,
     });
     expect(state.steps.map((step) => step.id)).toEqual([
       'deploy-a',
@@ -195,11 +195,14 @@ describe('workflow deploy drafts', () => {
         refKind: 'tag',
       })
     );
-    expect(state.contracts[0].pin).toMatchObject({
+    const contract = state.contracts[0];
+    const source = workflowDocumentFromDraft(state).sources[0];
+    if (contract.origin === 'contract-type' || source.origin === 'contract-type') throw new Error('test fixture must use repo sources');
+    expect(contract.pin).toMatchObject({
       commit: '9'.repeat(40),
       ref: 'v2.0.0',
     });
-    expect(workflowDocumentFromDraft(state).sources[0].repo).toMatchObject({
+    expect(source.repo).toMatchObject({
       commit: '9'.repeat(40),
       ref: 'v2.0.0',
     });

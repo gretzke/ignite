@@ -64,7 +64,10 @@ describe('WorkflowPromotionService', () => {
     expect(applied).toMatchObject({ mode: 'apply', workflow: { name: 'release', valid: true } });
     expect(lockCalls).toBe(1);
     const document = JSON.parse(files.get('ignite/workflows/release.json')!) as WorkflowDocument;
-    expect(document.sources.find((source) => source.id === 'pinned')!.repo).toEqual(run.plan.contracts[0].pin);
+    const pinnedSource = document.sources.find((source) => source.id === 'pinned')!;
+    const pinnedContract = run.plan.contracts[0];
+    if (pinnedSource.origin === 'contract-type' || pinnedContract.origin === 'contract-type') throw new Error('test fixture must use repo sources');
+    expect(pinnedSource.repo).toEqual(pinnedContract.pin);
     expect(document.sources.find((source) => source.id === 'unpinned')).toMatchObject({ repo: { url: 'https://example.test/unpinned', commit: SHA, ref: 'v2.0.0', refKind: 'tag' }, artifactHash: HASH });
     expect(document.steps.every((step) => !('signerOverride' in step))).toBe(true);
     expect(document).not.toHaveProperty('signers');
@@ -83,7 +86,9 @@ describe('WorkflowPromotionService', () => {
     const apply = { mode: 'apply' as const, previewId: preview.previewId, target: request.target, plan: request.plan, hooks: [] };
     await expect(service.promote(apply, 'p1')).rejects.toMatchObject({ code: 'WORKFLOW_NAME_CONFLICT', statusCode: 409 });
     await expect(service.promote({ ...apply, overwrite: true }, 'p1')).resolves.toMatchObject({ mode: 'apply' });
-    expect((JSON.parse(files.get('ignite/workflows/release.json')!) as WorkflowDocument).sources[0].artifactHash).toBe(HASH);
+    const source = (JSON.parse(files.get('ignite/workflows/release.json')!) as WorkflowDocument).sources[0];
+    if (source.origin === 'contract-type') throw new Error('test fixture must use a repo source');
+    expect(source.artifactHash).toBe(HASH);
   });
 
   it('renders and revalidates every adoption before the first workflow write', async () => {
@@ -119,10 +124,12 @@ describe('WorkflowPromotionService', () => {
 
 function plan(): DeploymentPlan {
   const base = oneSourcePlan();
+  const first = base.contracts[0];
+  if (first.origin === 'contract-type') throw new Error('test fixture must use a repo contract');
   base.contracts.push(
-    { ...base.contracts[0], id: 'two', repoPathOrUrl: '/two' },
-    { ...base.contracts[0], id: 'three', repoPathOrUrl: '/three' },
-    { ...base.contracts[0], id: 'four', repoPathOrUrl: '/four' },
+    { ...first, id: 'two', repoPathOrUrl: '/two' },
+    { ...first, id: 'three', repoPathOrUrl: '/three' },
+    { ...first, id: 'four', repoPathOrUrl: '/four' },
   );
   return base;
 }
@@ -131,9 +138,11 @@ function oneSourcePlan(): DeploymentPlan {
 }
 function promotedRun(): RunRecord {
   const value = oneSourcePlan();
+  const first = value.contracts[0];
+  if (first.origin === 'contract-type') throw new Error('test fixture must use a repo contract');
   value.contracts = [
-    { ...value.contracts[0], id: 'pinned', pin: { url: 'https://pinned.test/repo.git', commit: SHA2, ref: 'fixed', refKind: 'tag' } },
-    { ...value.contracts[0], id: 'unpinned', repoPathOrUrl: '/unpinned' },
+    { ...first, id: 'pinned', pin: { url: 'https://pinned.test/repo.git', commit: SHA2, ref: 'fixed', refKind: 'tag' } },
+    { ...first, id: 'unpinned', repoPathOrUrl: '/unpinned' },
   ];
   value.steps = [
     { id: 'deploy-pinned', kind: 'deploy', contractId: 'pinned', signerOverride: { global: { pluginId: 'signer', accountId: 'a', address: '0x1111111111111111111111111111111111111111' } } },

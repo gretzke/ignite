@@ -18,6 +18,7 @@ import type { PluginInstallSource } from '../plugins/install/types.js';
 import type { PluginVersionInfoData } from '@ignite/api';
 import { PinnedStore, pinnedOrigin } from '../repos/PinnedStore.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
+import { IgniteError } from '../types/errors.js';
 
 export interface WorkflowUpdateServiceDeps {
   readWorkflow: (request: WorkflowCheckUpdatesRequest) => Promise<WorkflowDocument>;
@@ -44,6 +45,7 @@ export class WorkflowUpdateService {
     const profileId = await this.deps.getProfileId();
     const sources: WorkflowSourceUpdate[] = [];
     for (const source of document.sources) {
+      if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
       const pin = source.repo;
       if (!(await this.deps.isOriginApproved(profileId, pin.url))) {
         sources.push({ sourceId: source.id, status: 'approval-required', currentCommit: pin.commit, origin: pinnedOrigin(pin.url) });

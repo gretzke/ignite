@@ -34,6 +34,7 @@ export default function ContractsStep({
       Object.fromEntries(contracts.map((contract) => [contract.id, 'loading']))
     );
     for (const contract of contracts) {
+      if (contract.origin === 'contract-type') continue; // contract-types plan phase 11
       void apiClient
         .request('getArtifactData', {
           body: {
@@ -92,7 +93,9 @@ export default function ContractsStep({
         </div>
       ) : (
         <div className="glass-list">
-          {contracts.map((contract) => (
+          {contracts.map((contract) => {
+            if (contract.origin === 'contract-type') return null; // contract-types plan phase 11
+            return (
             <div key={contract.id} className="list-row flex items-center gap-3">
               <Box size={17} className="text-info" />
               <div className="min-w-0 flex-1">
@@ -141,7 +144,7 @@ export default function ContractsStep({
                 </div>
               )}
             </div>
-          ))}
+          ); })}
         </div>
       )}
       <ConfirmDialog open={Boolean(pendingToggle)} onOpenChange={(open) => { if (!open) setPendingToggle(undefined); }} title="Exclude a depended-on step?" description={pendingToggle ? `These steps depend on it: ${workflowDependentsForExclusion(draft, pendingToggle).map(decodeUrlEncodingForDisplay).join(', ')}. Their pointers must be resolved per chain before continuing.` : ''} confirmText="Exclude step" variant="warning" onConfirm={() => { if (pendingToggle) dispatch(toggleWorkflowStep(pendingToggle)); }} />

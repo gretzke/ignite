@@ -409,8 +409,15 @@ function validateFrozenInputs(
   if (workflow) {
     const sources = new Map(workflow.document.sources.map((source) => [source.id, source]));
     for (const contract of plan.contracts) {
+      if (contract.origin === 'contract-type') {
+        const source = sources.get(contract.id);
+        if (source?.origin === 'contract-type' && source.contentHash !== contract.contentHash)
+          drifts.push({ sourceId: contract.id, expected: source.contentHash, actual: contract.contentHash });
+        continue;
+      }
       if (!contract.pin) continue;
-      const expected = sources.get(contract.id)?.artifactHash;
+      const source = sources.get(contract.id);
+      const expected = source?.origin === 'contract-type' ? undefined : source?.artifactHash;
       const actual = frozen[contract.id]?.artifactHash;
       if (!expected || !actual || expected === actual) continue;
       const acknowledgement = workflow.binding.acknowledgeArtifactDrift?.[contract.id];
@@ -419,7 +426,7 @@ function validateFrozenInputs(
     }
   }
   if (drifts.length > 0) return failure('WORKFLOW_ARTIFACT_DRIFT', 'Frozen artifact hashes differ from the workflow document', { drifts });
-  const pinned = plan.contracts.filter((contract) => contract.pin).flatMap((contract) => {
+  const pinned = plan.contracts.filter((contract): contract is Extract<ContractSource, { origin?: 'repo' }> => contract.origin !== 'contract-type' && contract.pin !== undefined).flatMap((contract) => {
     const pin = portablePinLabel(contract.pin!.url, contract.pin!.ref ?? contract.pin!.commit.slice(0, 12));
     return pin ? [{ sourceId: contract.id, pin, commit: contract.pin!.commit.slice(0, 12) }] : [];
   });

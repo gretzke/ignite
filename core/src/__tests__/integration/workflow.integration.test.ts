@@ -154,7 +154,9 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
     expect(blocked.body).toMatchObject({ code: 'PINNED_ORIGIN_UNAPPROVED', details: { origins: [pinnedOrigin(remote.url)] } });
 
     const ssh = structuredClone(document) as WorkflowDocument;
-    ssh.sources[0].repo.url = 'ssh://git@example.test/repo.git';
+    const sshSource = ssh.sources[0];
+    if (sshSource.origin === 'contract-type') throw new Error('test fixture must use a repo source');
+    sshSource.repo.url = 'ssh://git@example.test/repo.git';
     const invalid = reply();
     await handlers.putWorkflow({ params: { name: 'ssh-pin' }, query: { pathOrUrl: workspace }, body: { document: ssh } } as never, invalid);
     expect(invalid.statusCode).toBe(400);
@@ -325,6 +327,7 @@ function deploymentPlan(document: WorkflowDocument, signer: Hex): DeploymentPlan
 }
 
 function toContract(source: WorkflowDocument['sources'][number]) {
+  if (source.origin === 'contract-type') throw new Error('test fixture must use a repo source');
   return { id: source.id, repoPathOrUrl: source.repo.url, frameworkId: source.frameworkId, sourcePath: source.sourcePath, contractName: source.contractName, artifactPath: source.artifactPath, pin: structuredClone(source.repo) };
 }
 

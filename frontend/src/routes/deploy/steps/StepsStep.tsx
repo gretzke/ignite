@@ -22,6 +22,7 @@ export default function StepsStep() {
   useEffect(() => {
     let cancelled = false;
     for (const contract of draft.contracts) {
+      if (contract.origin === 'contract-type') continue; // contract-types plan phase 11
       if (artifacts[contract.id]) continue;
       void apiClient.request('getArtifactData', { body: { pathOrUrl: contract.repoPathOrUrl, pluginId: contract.frameworkId, artifactPath: contract.artifactPath, ...(contract.pin ? { pin: contract.pin } : {}) } }).then((response) => {
         if ('data' in response && !cancelled) setArtifacts((current) => ({ ...current, [contract.id]: response.data }));

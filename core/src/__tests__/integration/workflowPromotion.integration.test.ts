@@ -157,7 +157,10 @@ describe.skipIf(!ready)('workflow promotion integration (offline)', () => {
 
     const promotedPlan: DeploymentPlan = {
       schemaVersion: 1,
-      contracts: document.sources.map((entry) => ({ id: entry.id, repoPathOrUrl: entry.repo.url, frameworkId: entry.frameworkId, sourcePath: entry.sourcePath, contractName: entry.contractName, artifactPath: entry.artifactPath, pin: structuredClone(entry.repo) })),
+      contracts: document.sources.map((entry) => {
+        if (entry.origin === 'contract-type') throw new Error('test fixture must use a repo source');
+        return { id: entry.id, repoPathOrUrl: entry.repo.url, frameworkId: entry.frameworkId, sourcePath: entry.sourcePath, contractName: entry.contractName, artifactPath: entry.artifactPath, pin: structuredClone(entry.repo) };
+      }),
       steps: structuredClone(document.steps) as DeploymentPlan['steps'],
       chains: [CHAIN_ID], signers: signerCascade(),
     };

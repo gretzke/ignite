@@ -57,7 +57,7 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
           {documentState && (
             <div className="mt-3 space-y-1 text-xs">
               {documentState.document.sources.map((source) => (
-                <div key={source.id}><span className="mono-data">{source.contractName}</span>{source.repo.ref ? ` @ ${source.repo.ref}` : ` @ ${source.repo.commit.slice(0, 7)}`}</div>
+                source.origin === 'contract-type' ? null : <div key={source.id}><span className="mono-data">{source.contractName}</span>{source.repo.ref ? ` @ ${source.repo.ref}` : ` @ ${source.repo.commit.slice(0, 7)}`}</div> // contract-types plan phase 13
               ))}
               <div className="flex flex-wrap gap-2 pt-1">
                 {documentState.document.requiredPlugins.map((required) => {
@@ -85,6 +85,7 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
           {updates.report.sources.length === 0 && updates.report.plugins.length === 0 && <div className="text-muted">Everything is up to date.</div>}
           {updates.report.sources.map((row) => {
             const requiredSource = documentState?.document.sources.find((source) => source.id === row.sourceId);
+            if (requiredSource?.origin === 'contract-type') return null; // contract-types plan phase 13
             const upgrade = row.upgrades?.at(-1);
             const commit = upgrade?.commit ?? row.latestCommit;
             const ref = upgrade?.ref ?? requiredSource?.repo.ref;

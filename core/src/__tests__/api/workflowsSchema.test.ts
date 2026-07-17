@@ -100,6 +100,19 @@ describe('Workflow document schema', () => {
     expect(validateWorkflowClosure(parsed)).toEqual(expect.arrayContaining(['foundry', 'deployer', 'hook']));
   });
 
+  it('accepts contract-type sources and derives their required plugin closure', () => {
+    const d = document();
+    const contractTypeSource = {
+      id: 'proxy', origin: 'contract-type' as const, contractName: 'ERC1967Proxy',
+      pluginId: 'oz-uups', artifactKey: 'proxy', versionLabel: '5.4.0', contentHash: 'a'.repeat(64),
+    };
+    const parsed = makeWorkflowDocumentSchema().parse({ ...d, sources: [contractTypeSource], steps: [{ id: 'deploy-proxy', kind: 'deploy', contractId: 'proxy' }], requiredPlugins: [] });
+    expect(validateWorkflowClosure(parsed)).toEqual(['oz-uups']);
+    expect(validateWorkflowClosure(makeWorkflowDocumentSchema().parse({ ...parsed, requiredPlugins: [{ id: 'oz-uups', version: '5.3.0' }] }))).toEqual(['oz-uups']);
+    expect(validateWorkflowClosure(makeWorkflowDocumentSchema().parse({ ...parsed, requiredPlugins: [{ id: 'oz-uups', version: '5.4.0' }] }))).toEqual([]);
+    expect(makeWorkflowDocumentSchema().safeParse({ ...d, sources: [{ ...contractTypeSource, contentHash: 'not-a-hash' }] }).success).toBe(false);
+  });
+
   it('accepts only minted UUIDv4 run ids on promotion wires', () => {
     const target = { repoPathOrUrl: '/repo', name: 'release' };
     const runId = '11111111-1111-4111-8111-111111111111';

@@ -12,6 +12,7 @@ import { FileSystem } from '../filesystem/FileSystem.js';
 import { RepoService } from '../repos/RepoService.js';
 import { RunStore } from './RunStore.js';
 import { getLogger } from '../utils/logger.js';
+import { IgniteError } from '../types/errors.js';
 import { collectRefs, dynamicDeterministicStepIds, effectiveValue, mergeArgs, mergeCallTarget, mergeGas, mergeLibraries, resolveSigner } from './resolver.js';
 
 export function renderArtifact(
@@ -19,6 +20,7 @@ export function renderArtifact(
   verifications: VerificationTask[] = []
 ): DeploymentArtifact {
   const contracts = run.plan.contracts.map((contract) => {
+    if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 10)', 'CONTRACT_TYPE_UNSUPPORTED');
     const input = run.inputs[contract.id];
     if (!input) {
       throw new Error(`Frozen input is missing for contract ${contract.id}`);

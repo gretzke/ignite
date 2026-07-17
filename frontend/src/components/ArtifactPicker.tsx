@@ -22,8 +22,8 @@ export default function ArtifactPicker({
   const repositories = useAppSelector((state) => state.repositories.repositories);
   const repositoryData = useAppSelector((state) => state.repositories.repositoriesData);
   const compilations = useAppSelector((state) => state.compiler.compilations);
-  const [repoPath, setRepoPath] = useState(value?.repoPathOrUrl ?? '');
-  const [frameworkId, setFrameworkId] = useState(value?.frameworkId ?? '');
+  const [repoPath, setRepoPath] = useState(value?.origin === 'contract-type' ? '' : value?.repoPathOrUrl ?? '');
+  const [frameworkId, setFrameworkId] = useState(value?.origin === 'contract-type' ? '' : value?.frameworkId ?? '');
 
   const repoOptions = useMemo(
     () =>
