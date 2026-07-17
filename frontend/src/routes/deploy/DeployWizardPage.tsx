@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, Save, Trash2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { apiClient } from '../../store/api/client';
-import { mergeChainsSucceeded } from '../../store/features/chains/chainsSlice';
+import { useEnsureChainMetadata } from '../../store/features/chains/useEnsureChainMetadata';
 import {
   markDraftSeen,
   clearDraft,
@@ -138,36 +137,7 @@ export default function DeployWizardPage() {
   useEffect(() => {
     dispatch(markDraftSeen());
   }, [dispatch]);
-  // A restored draft can select chains the store has never fetched (they are
-  // only ever loaded via the Chains step's search); every wizard step needs
-  // their metadata (names, native-currency decimals), so backfill by id.
-  useEffect(() => {
-    const missing = draft.chains.filter(
-      (chainId) => !chains.some((chain) => chain.chainId === chainId)
-    );
-    if (missing.length === 0) return;
-    let cancelled = false;
-    void Promise.all(
-      missing.map((chainId) =>
-        apiClient
-          .request('listChains', { query: { q: String(chainId), limit: 50 } })
-          .then((response) =>
-            'data' in response
-              ? response.data.chains.filter(
-                  (chain) => chain.chainId === chainId
-                )
-              : []
-          )
-          .catch(() => [])
-      )
-    ).then((results) => {
-      const found = results.flat();
-      if (!cancelled && found.length) dispatch(mergeChainsSucceeded(found));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [chains, dispatch, draft.chains]);
+  useEnsureChainMetadata(draft.chains);
   useEffect(() => {
     if (workflowRepo && workflowName && !workflowState)
       dispatch(workflowsApi.get(workflowRepo, workflowName));

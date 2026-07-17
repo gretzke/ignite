@@ -17,6 +17,7 @@ import {
   selectDeploymentRun,
 } from '../../store/features/deployments/deploymentsSlice';
 import { chainsApi } from '../../store/features/chains/chainsSlice';
+import { useEnsureChainMetadata } from '../../store/features/chains/useEnsureChainMetadata';
 import { signersApi } from '../../store/features/signers/signersSlice';
 import LanePanel from './components/LanePanel';
 import ResolveEditDialog from './components/ResolveEditDialog';
@@ -86,6 +87,8 @@ export default function RunPage() {
   const [promoteOpen, setPromoteOpen] = useState(false);
   const autoOpenedPause = useRef<string | undefined>(undefined);
   const pluginRows = useAppSelector((state) => state.plugins.rows);
+
+  useEnsureChainMetadata(run?.plan.chains ?? []);
 
   useEffect(() => {
     dispatch(runViewMounted(runId));
