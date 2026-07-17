@@ -48,13 +48,27 @@ describe('contract-type deployment wire schema', () => {
     expect(DeploymentPlanSchema.parse(value)).toEqual(value);
   });
 
-  it('rejects nonzero wrapper value without a global encoded initializer', () => {
+  it('is fail-closed for malformed and misplaced $encode markers', () => {
+    // Malformed marker must error, not pass as an ordinary object.
     expect(DeploymentPlanSchema.safeParse(plan([{
-      id: 'wrapper', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'wrapper', contractTypePluginId: 'oz-uups' }, value: '1', args: { _data: '0x' },
+      id: 'wrapper', kind: 'deploy', contractId: 'proxy', args: { _data: { $encode: { contractId: 'missing', fn: 'initialize()' }, extra: true } },
     }])).success).toBe(false);
     expect(DeploymentPlanSchema.safeParse(plan([{
-      id: 'wrapper', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'wrapper', contractTypePluginId: 'oz-uups' }, valuePerChain: { '1': '1' }, args: { _data: { $encode: { contractId: 'implementation', fn: 'initialize()' } } },
-    }])).success).toBe(true);
+      id: 'wrapper', kind: 'deploy', contractId: 'proxy', args: { _data: { $encode: { contractId: 'implementation' } } },
+    }])).success).toBe(false);
+    // Non-canonical fn shape rejected at the wire.
+    expect(EncodedCallValueSchema.safeParse({ $encode: { contractId: 'implementation', fn: 'x' } }).success).toBe(false);
+    // $encode is not legal inside strategy params.
+    expect(DeploymentPlanSchema.safeParse(plan([{
+      id: 'wrapper', kind: 'deploy', contractId: 'proxy',
+      strategy: { kind: 'plugin', pluginId: 'miner', params: { data: { $encode: { contractId: 'implementation', fn: 'initialize()' } } } },
+    }])).success).toBe(false);
+  });
+
+  it('rejects a wrapper step that wraps itself', () => {
+    expect(DeploymentPlanSchema.safeParse(plan([{
+      id: 'wrapper', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'wrapper', contractTypePluginId: 'oz-uups' },
+    }])).success).toBe(false);
   });
 
   it('keeps repo sources compatible and accepts contract-type sources', () => {
@@ -67,5 +81,8 @@ describe('contract-type deployment wire schema', () => {
       expect(ContractSourceSchema.safeParse(invalid).success).toBe(false);
     }
     expect(ContractSourceSchema.parse({ ...repoContract, origin: 'repo' })).toMatchObject({ origin: 'repo' });
+    // A hybrid object missing its origin discriminator must error, not parse
+    // as a repo source with the contract-type fields silently stripped.
+    expect(ContractSourceSchema.safeParse({ ...repoContract, pluginId: 'oz-uups', artifactKey: 'proxy', versionLabel: '5.3.0', contentHash: 'a'.repeat(64) }).success).toBe(false);
   });
 });

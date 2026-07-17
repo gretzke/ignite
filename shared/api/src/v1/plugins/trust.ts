@@ -9,6 +9,7 @@ export interface PluginTrustEntryData {
   permissions: {
     repoWrite: boolean;
     net: boolean;
+    contractBytecode: boolean;
     // Granted secret config-field keys.
     secrets: string[];
   };
@@ -28,6 +29,7 @@ const PluginTrustEntrySchema = z.object({
   permissions: z.object({
     repoWrite: z.boolean(),
     net: z.boolean(),
+    contractBytecode: z.boolean(),
     secrets: z.array(z.string()),
   }),
 });
@@ -52,6 +54,7 @@ export const SetPluginTrustBodySchema = z.object({
   permissions: z.object({
     repoWrite: z.boolean(),
     net: z.boolean(),
+    contractBytecode: z.boolean(),
     // Secret config-field keys to grant. Every call replaces the full grant
     // (omitted/empty clears all secret grants). The server rejects any key
     // the plugin doesn't declare as a secret config field.

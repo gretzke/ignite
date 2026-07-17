@@ -22,6 +22,7 @@ import type { RootState } from '../../store';
 export interface PluginPermissions {
   repoWrite: boolean;
   net: boolean;
+  contractBytecode: boolean;
   // Granted secret config-field keys (see PluginConfigField.secret).
   secrets: string[];
 }
@@ -117,6 +118,7 @@ const pluginsSlice = createSlice({
           permissions: state.rows[id]?.permissions ?? {
             repoWrite: false,
             net: false,
+            contractBytecode: false,
             secrets: [],
           },
           name: m.name,
@@ -310,7 +312,7 @@ export const pluginsApi = {
   setPermissions(
     pluginId: string,
     trust: 'trusted' | 'untrusted',
-    permissions: { repoWrite: boolean; net: boolean; secrets: string[] }
+    permissions: { repoWrite: boolean; net: boolean; contractBytecode: boolean; secrets: string[] }
   ) {
     return apiClient.dispatch.setPluginTrust({
       params: { pluginId },

@@ -21,6 +21,7 @@ export * from "./signers.js";
 export * from "./deployments.js";
 export * from "./deploymentTypes.js";
 export * from "./deploymentHooks.js";
+export * from "./contractTypes.js";
 export * from "./explorers.js";
 export * from "./verifications.js";
 export * from "./workflows.js";
@@ -43,6 +44,7 @@ import { signerRoutes } from "./signers.js";
 import { deploymentRoutes, prepareDeploymentStepRoute } from "./deployments.js";
 import { deploymentTypeRoutes } from "./deploymentTypes.js";
 import { deploymentHookRoutes } from "./deploymentHooks.js";
+import { contractTypeRoutes } from "./contractTypes.js";
 import { explorerRoutes } from "./explorers.js";
 import { verificationRoutes } from "./verifications.js";
 import { workflowRoutes } from "./workflows.js";
@@ -92,6 +94,7 @@ const allRoutes = {
   prepareDeploymentStep: prepareDeploymentStepRoute,
   ...deploymentTypeRoutes,
   ...deploymentHookRoutes,
+  ...contractTypeRoutes,
   ...explorerRoutes,
   ...verificationRoutes,
   ...workflowRoutes,

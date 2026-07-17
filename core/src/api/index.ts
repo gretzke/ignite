@@ -30,6 +30,7 @@ import { verificationHandlers } from './verifications.js';
 import { pluginOperationHandlers } from './plugins/operations.js';
 import { deploymentTypeHandlers } from './deploymentTypes.js';
 import { deploymentHookHandlers } from './deploymentHooks.js';
+import { contractTypeHandlers } from './contractTypes.js';
 import { workflowHandlers } from './workflows.js';
 import { pointerSuggestionHandlers } from './pointerSuggestions.js';
 import { workflowPromotionHandlers } from './workflowPromotion.js';
@@ -115,6 +116,7 @@ async function registerRoutes(app: FastifyInstance) {
     ...pluginOperationHandlers,
     ...deploymentTypeHandlers,
     ...deploymentHookHandlers,
+    ...contractTypeHandlers,
     ...workflowHandlers,
     ...pointerSuggestionHandlers,
     ...workflowPromotionHandlers,

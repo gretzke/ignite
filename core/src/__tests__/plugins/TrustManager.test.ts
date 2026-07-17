@@ -28,6 +28,7 @@ describe('TrustManager', () => {
     expect(grant).toEqual(UNTRUSTED_GRANT);
     expect(grant.repoWrite).toBe(false);
     expect(grant.net).toBe(false);
+    expect(grant.contractBytecode).toBe(false);
   });
 
   it('fails closed when trust.json is corrupt', async () => {
@@ -61,6 +62,18 @@ describe('TrustManager', () => {
     const fresh = new TrustManager(trustFile, async () => false);
     const reloaded = await fresh.getGrant('@acme/foundry');
     expect(reloaded.repoWrite).toBe(true);
+  });
+
+  it('round-trips the contract bytecode grant and defaults missing legacy entries to false', async () => {
+    await manager.setTrust('@acme/proxy', 'trusted', {
+      repoWrite: false,
+      net: false,
+      contractBytecode: true,
+      secrets: [],
+    });
+    expect((await manager.getGrant('@acme/proxy')).contractBytecode).toBe(true);
+    await fs.writeFile(trustFile, JSON.stringify({ '@acme/old': { trust: 'trusted', permissions: { repoWrite: false, net: false, secrets: [] }, ts: 'now' } }), 'utf8');
+    expect((await manager.getGrant('@acme/old')).contractBytecode).toBe(false);
   });
 
   it('a trusted plugin without a permission still lacks it', async () => {
@@ -165,6 +178,7 @@ describe('TrustManager', () => {
       expect(raw.waffle.permissions).toEqual({
         repoWrite: true,
         net: false,
+        contractBytecode: false,
         secrets: [],
       });
       expect('hostWrite' in raw.waffle.permissions).toBe(false);

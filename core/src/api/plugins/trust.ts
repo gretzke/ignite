@@ -18,10 +18,11 @@ import { ErrorCodes } from '../../types/errors.js';
 import { sendCaughtError } from '../utils/errors.js';
 import { DeploymentTypeService } from '../../deployments/DeploymentTypeService.js';
 import { DeploymentHookService } from '../../deployments/DeploymentHookService.js';
+import { ContractTypeService } from '../../deployments/ContractTypeService.js';
 
 type SetTrustBody = {
   trust: 'trusted' | 'untrusted';
-  permissions: { repoWrite: boolean; net: boolean; secrets?: string[] };
+  permissions: { repoWrite: boolean; net: boolean; contractBytecode: boolean; secrets?: string[] };
 };
 
 // Factory so tests can inject a TrustManager and plugin listing; the exported
@@ -45,7 +46,8 @@ export function createTrustHandlers(
   // cached account list must not outlive the grant that produced it.
   signers: Pick<SignerProviderService, 'invalidate'> = SignerProviderService.getInstance(),
   deploymentTypes: Pick<DeploymentTypeService, 'invalidate'> = DeploymentTypeService.getInstance(),
-  deploymentHooks: Pick<DeploymentHookService, 'invalidate'> = DeploymentHookService.getInstance()
+  deploymentHooks: Pick<DeploymentHookService, 'invalidate'> = DeploymentHookService.getInstance(),
+  contractTypes: Pick<ContractTypeService, 'invalidate'> = ContractTypeService.getInstance(),
 ) {
   return {
     listPluginTrust: async (
@@ -63,6 +65,7 @@ export function createTrustHandlers(
               permissions: {
                 repoWrite: grant.repoWrite,
                 net: grant.net,
+                contractBytecode: grant.contractBytecode === true,
                 secrets: grant.secrets,
               },
             };
@@ -115,7 +118,7 @@ export function createTrustHandlers(
         // Only manifest-requested permissions are grantable. This keeps the
         // grant surface exactly what the user was shown at install time.
         const requested = await getRequestedPermissions(pluginId);
-        const notRequested = (['repoWrite', 'net'] as const).filter(
+        const notRequested = (['repoWrite', 'net', 'contractBytecode'] as const).filter(
           (permission) =>
             permissions[permission] && !requested.includes(permission)
         );
@@ -149,18 +152,20 @@ export function createTrustHandlers(
         const entry = await manager.setTrust(pluginId, trust, {
           repoWrite: permissions.repoWrite,
           net: permissions.net,
+          contractBytecode: permissions.contractBytecode,
           secrets: requestedSecrets,
         });
         providers.invalidate(pluginId);
         signers.invalidate(pluginId);
         deploymentTypes.invalidate();
         deploymentHooks.invalidate();
+        contractTypes.invalidate();
         const body: IApiResponse<SetPluginTrustData> = {
           data: {
             plugin: {
               pluginId,
               trust: entry.trust,
-              permissions: entry.permissions,
+              permissions: { ...entry.permissions, contractBytecode: entry.permissions.contractBytecode === true },
             },
           },
         };

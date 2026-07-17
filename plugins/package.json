@@ -11,6 +11,7 @@
     "postinstall": "node scripts/install-all.js"
   },
   "devDependencies": {
+    "@openzeppelin/upgrades-core": "1.46.0",
     "@types/node": "^22.0.0",
     "nodemon": "^3.1.10"
   },

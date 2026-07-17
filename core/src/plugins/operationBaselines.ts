@@ -40,6 +40,10 @@ export const BASELINE_OPERATIONS: Readonly<
     'onRunCompleted',
     'suggestAddresses',
   ],
+  [PluginType.CONTRACT_TYPE]: [
+    'describeContractType',
+    'getContractArtifact',
+  ],
 };
 
 export const HOST_PERMISSION_MINIMUMS: Readonly<

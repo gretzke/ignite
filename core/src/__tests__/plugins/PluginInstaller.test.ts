@@ -40,6 +40,7 @@ function makeDeps() {
       trust: 'trusted' | 'untrusted';
       repoWrite: boolean;
       net: boolean;
+      contractBytecode?: boolean;
       secrets?: string[];
     }
   > = {};
@@ -72,15 +73,17 @@ function makeDeps() {
         trust: grants[id]?.trust ?? ('untrusted' as const),
         repoWrite: grants[id]?.repoWrite ?? false,
         net: grants[id]?.net ?? false,
+        contractBytecode: grants[id]?.contractBytecode ?? false,
         secrets: grants[id]?.secrets ?? ([] as string[]),
       })),
       setTrust: vi.fn(
         async (
           id: string,
           trust: 'trusted' | 'untrusted',
-          permissions: { repoWrite: boolean; net: boolean; secrets: string[] }
+          permissions: { repoWrite: boolean; net: boolean; contractBytecode?: boolean; secrets: string[] }
         ) => {
-          grants[id] = { trust, ...permissions };
+          const { contractBytecode, ...legacy } = permissions;
+          grants[id] = { trust, ...legacy, ...(contractBytecode ? { contractBytecode } : {}) };
         }
       ),
     },
@@ -452,6 +455,13 @@ describe('PluginInstaller', () => {
       );
       expect(deps.store.waffle.baseImage).toBe('ignite/installed_waffle:2.0.0');
       expect(deps.sources.waffle).toEqual(enrichedGitSource);
+    });
+
+    it('clamps a contractBytecode grant when the updated manifest no longer requests it', async () => {
+      await installV1(deps);
+      deps.grants.waffle = { trust: 'trusted', repoWrite: true, net: false, contractBytecode: true };
+      await new PluginInstaller(backendReturning({ imageTag: 'ignite/installed_waffle:2.0.0', metadata: { ...waffleMeta, version: '2.0.0' } }), deps).update('waffle');
+      expect(deps.trust.setTrust).toHaveBeenLastCalledWith('waffle', 'trusted', expect.objectContaining({ contractBytecode: false }));
     });
 
     it('revokes a grant whose permission the new version no longer requests', async () => {

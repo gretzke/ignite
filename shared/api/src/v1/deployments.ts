@@ -139,8 +139,11 @@ export function isValueRef(value: unknown): value is ValueRef {
 }
 
 export const ArgValuesSchema = z.record(z.string(), z.unknown());
+// Wire-level canonical-shape guard only; core re-parses via viem and rejects
+// non-canonical signatures against the actual ABI.
+const FN_SIGNATURE = /^[A-Za-z_$][A-Za-z0-9_$]*\([^()]*\)$/;
 export const EncodedCallValueSchema = z.object({
-  $encode: z.object({ contractId: z.string().min(1), fn: z.string().min(1).max(512), args: ArgValuesSchema.optional() }).strict(),
+  $encode: z.object({ contractId: z.string().min(1), fn: z.string().min(1).max(512).regex(FN_SIGNATURE, 'fn must be a canonical function signature'), args: ArgValuesSchema.optional() }).strict(),
 }).strict() satisfies z.ZodType<EncodedCallValue>;
 export function isEncodedCallValue(value: unknown): value is EncodedCallValue {
   return EncodedCallValueSchema.safeParse(value).success;
@@ -181,7 +184,9 @@ const RepoContractSourceSchema = z.object({
   contractName: z.string().min(1),
   sourcePath: z.string().min(1),
   pin: ContractSourcePinSchema.optional(),
-}).superRefine((source, ctx) => {
+// Strict so a contract-type-shaped object missing its origin discriminator
+// errors instead of silently parsing as a repo source with stripped fields.
+}).strict().superRefine((source, ctx) => {
   if (source.pin && source.repoPathOrUrl !== source.pin.url) ctx.addIssue({ code: 'custom', message: 'repoPathOrUrl must equal pin.url', path: ['pin', 'url'] });
 }) satisfies z.ZodType<RepoContractSource>;
 const ContractTypeContractSourceSchema = z.object({
@@ -276,32 +281,39 @@ export const DeploymentPlanSchema = createRequestSchema<DeploymentPlan>(
       if (Array.isArray(value)) value.forEach((entry, index) => visitRefs(entry, [...path, index]));
       else if (value && typeof value === 'object') Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => visitRefs(entry, [...path, key]));
     };
-    const visitEncodes = (value: unknown, path: (string | number)[]): void => {
-      if (isEncodedCallValue(value)) {
-        if (!ids.has(value.$encode.contractId)) ctx.addIssue({ code: 'custom', message: '$encode contractId must reference a contract', path: [...path, '$encode', 'contractId'] });
+    // Fail-closed: anything carrying an `$encode` key must fully parse, so a
+    // malformed marker cannot slip through as an ordinary object.
+    const visitEncodes = (value: unknown, path: (string | number)[], allowed: boolean): void => {
+      if (value && typeof value === 'object' && !Array.isArray(value) && '$encode' in (value as Record<string, unknown>)) {
+        if (!allowed) { ctx.addIssue({ code: 'custom', message: '$encode is only valid inside step args', path }); return; }
+        const parsed = EncodedCallValueSchema.safeParse(value);
+        if (!parsed.success) { ctx.addIssue({ code: 'custom', message: '$encode value is malformed', path }); return; }
+        if (!ids.has(parsed.data.$encode.contractId)) ctx.addIssue({ code: 'custom', message: '$encode contractId must reference a contract', path: [...path, '$encode', 'contractId'] });
         return;
       }
-      if (Array.isArray(value)) value.forEach((entry, childIndex) => visitEncodes(entry, [...path, childIndex]));
-      else if (value && typeof value === 'object') Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => visitEncodes(entry, [...path, key]));
+      if (Array.isArray(value)) value.forEach((entry, childIndex) => visitEncodes(entry, [...path, childIndex], allowed));
+      else if (value && typeof value === 'object') Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => visitEncodes(entry, [...path, key], allowed));
     };
     plan.steps.forEach((step, index) => {
       if (step.kind === 'deploy') {
         if (!ids.has(step.contractId)) ctx.addIssue({ code: 'custom', message: 'step contractId must reference a contract', path: ['steps', index, 'contractId'] });
-        if (step.wraps) checkDeployId(step.wraps.stepId, ['steps', index, 'wraps', 'stepId']);
-        const hasValue = step.value !== undefined && step.value !== '0' || Object.values(step.valuePerChain ?? {}).some((value) => value !== '0');
-        // ABI synthesis determines `_data` later; at the wire layer only
-        // global args are inspectable without incorrectly merging lane values.
-        if (step.wraps && hasValue && !Object.values(step.args ?? {}).some(isEncodedCallValue))
-          ctx.addIssue({ code: 'custom', message: 'wrapper value requires a global $encode initializer', path: ['steps', index, 'args'] });
+        if (step.wraps) {
+          checkDeployId(step.wraps.stepId, ['steps', index, 'wraps', 'stepId']);
+          if (step.wraps.stepId === step.id) ctx.addIssue({ code: 'custom', message: 'wraps must reference a different step', path: ['steps', index, 'wraps', 'stepId'] });
+        }
+        // The value-vs-initializer payability rule is ABI-dependent (only the
+        // synthesis spec knows the `_data` position) and lives in core
+        // validation, not here.
         visitRefs(step.args, ['steps', index, 'args']); visitRefs(step.argsPerChain, ['steps', index, 'argsPerChain']);
-        visitEncodes(step.args, ['steps', index, 'args']); visitEncodes(step.argsPerChain, ['steps', index, 'argsPerChain']);
+        visitEncodes(step.args, ['steps', index, 'args'], true); visitEncodes(step.argsPerChain, ['steps', index, 'argsPerChain'], true);
+        if (step.strategy?.kind === 'plugin') visitEncodes(step.strategy.params, ['steps', index, 'strategy', 'params'], false);
         Object.entries(step.libraries ?? {}).forEach(([key, binding]) => { if (binding.kind === 'step') checkDeployId(binding.stepId, ['steps', index, 'libraries', key]); });
         Object.entries(step.librariesPerChain ?? {}).forEach(([chainId, bindings]) => Object.entries(bindings).forEach(([key, binding]) => { if (binding.kind === 'step') checkDeployId(binding.stepId, ['steps', index, 'librariesPerChain', chainId, key]); }));
       } else {
         if (step.target.kind === 'step') checkDeployId(step.target.stepId, ['steps', index, 'target']);
         Object.entries(step.targetPerChain ?? {}).forEach(([chainId, target]) => { if (target.kind === 'step') checkDeployId(target.stepId, ['steps', index, 'targetPerChain', chainId]); });
         visitRefs(step.args, ['steps', index, 'args']); visitRefs(step.argsPerChain, ['steps', index, 'argsPerChain']);
-        visitEncodes(step.args, ['steps', index, 'args']); visitEncodes(step.argsPerChain, ['steps', index, 'argsPerChain']);
+        visitEncodes(step.args, ['steps', index, 'args'], true); visitEncodes(step.argsPerChain, ['steps', index, 'argsPerChain'], true);
       }
     });
   }),
@@ -373,6 +385,24 @@ export interface FrozenInput {
 }
 
 export type FrozenInputs = Record<string, FrozenInput>;
+
+export interface ContractTypeParamWire {
+  key: string; label: string; type: 'string' | 'number' | 'boolean' | 'select' | 'address';
+  options?: Array<{ value: string; label: string }>; required?: boolean; description?: string;
+}
+export type ContractTypeSynthesisArg = { name: string; from: 'implementation' } | { name: string; from: 'param'; param: string } | { name: string; from: 'initializer' };
+export interface ContractTypeCaptureSpec {
+  slot: Hex32; record?: string; expect?: 'implementation-address'; derivedCreate?: { nonce: number }; expectCodeOf?: string; verifyAs?: string; constructorArgs?: string[];
+  assertCalls?: Array<{ call: string; on: string; expectParam: string }>;
+}
+export interface NormalizedContractTypeDescriptor {
+  label: string; description: string; versionLabel: string; params: ContractTypeParamWire[]; artifacts: string[];
+  synthesis: { artifact: string; constructorArgs: ContractTypeSynthesisArg[] } | null;
+  validation: { requiredFunctions?: string[]; probe?: { call: string; expectReturn: Hex }; warnings?: Array<{ when: 'impl-has-function'; fn: string; message: string }> };
+  capture: ContractTypeCaptureSpec[];
+}
+export interface ParsedContractArtifact { abi: unknown; creationBytecode: Hex; runtimeBytecode: Hex; solcVersion: string; standardJsonInput: unknown; sourceIdentifier: string; }
+export interface FrozenContractType { pluginId: string; versionLabel: string; descriptor: NormalizedContractTypeDescriptor; artifacts: Record<string, ParsedContractArtifact>; contentHash: string; }
 
 export interface RpcBinding {
   endpointId: string;
@@ -543,6 +573,7 @@ export interface RunRecord {
   updatedAt: string;
   plan: DeploymentPlan;
   inputs: FrozenInputs;
+  contractTypes?: Record<string, FrozenContractType>;
   rpcSelection: Record<string, RpcBinding>;
   explorerTargets?: Record<string, ExplorerTargetSnapshot[]>;
   validation: ValidationReport;
@@ -639,6 +670,17 @@ export const FrozenInputSchema = z.object({
   if (input.runtimeBytecode === undefined && input.runtimeBytecodeLinkReferences !== undefined) ctx.addIssue({ code: 'custom', message: 'runtimeBytecodeLinkReferences requires runtimeBytecode', path: ['runtimeBytecodeLinkReferences'] });
   else if (input.runtimeBytecode !== undefined) validateBytecodeLinkReferences({ code: input.runtimeBytecode, refs: input.runtimeBytecodeLinkReferences }, ctx, 'runtimeBytecode', 'runtimeBytecodeLinkReferences');
 }) satisfies z.ZodType<FrozenInput>;
+
+export const ContractTypeParamWireSchema = z.object({ key: z.string().min(1), label: z.string().min(1), type: z.enum(['string', 'number', 'boolean', 'select', 'address']), options: z.array(z.object({ value: z.string(), label: z.string() })).optional(), required: z.boolean().optional(), description: z.string().optional() }) satisfies z.ZodType<ContractTypeParamWire>;
+export const ContractTypeSynthesisArgSchema = z.union([
+  z.object({ name: z.string().min(1), from: z.literal('implementation') }).strict(),
+  z.object({ name: z.string().min(1), from: z.literal('param'), param: z.string().min(1) }).strict(),
+  z.object({ name: z.string().min(1), from: z.literal('initializer') }).strict(),
+]) satisfies z.ZodType<ContractTypeSynthesisArg>;
+export const ContractTypeCaptureSpecSchema = z.object({ slot: Hex32Schema, record: z.string().min(1).optional(), expect: z.literal('implementation-address').optional(), derivedCreate: z.object({ nonce: z.number().int().nonnegative() }).strict().optional(), expectCodeOf: z.string().min(1).optional(), verifyAs: z.string().min(1).optional(), constructorArgs: z.array(z.string().min(1)).optional(), assertCalls: z.array(z.object({ call: z.string().min(1), on: z.string().min(1), expectParam: z.string().min(1) }).strict()).optional() }).strict() satisfies z.ZodType<ContractTypeCaptureSpec>;
+export const NormalizedContractTypeDescriptorSchema = z.object({ label: z.string().min(1), description: z.string().min(1), versionLabel: z.string().min(1), params: z.array(ContractTypeParamWireSchema), artifacts: z.array(z.string().min(1)), synthesis: z.object({ artifact: z.string().min(1), constructorArgs: z.array(ContractTypeSynthesisArgSchema) }).strict().nullable(), validation: z.object({ requiredFunctions: z.array(z.string().min(1)).optional(), probe: z.object({ call: z.string().min(1), expectReturn: HexSchema }).strict().optional(), warnings: z.array(z.object({ when: z.literal('impl-has-function'), fn: z.string().min(1), message: z.string().min(1) }).strict()).optional() }).strict(), capture: z.array(ContractTypeCaptureSpecSchema) }).strict() satisfies z.ZodType<NormalizedContractTypeDescriptor>;
+export const ParsedContractArtifactSchema = z.object({ abi: z.unknown(), creationBytecode: HexSchema, runtimeBytecode: HexSchema, solcVersion: z.string().min(1), standardJsonInput: z.unknown(), sourceIdentifier: z.string().min(1) }).strict() satisfies z.ZodType<ParsedContractArtifact>;
+export const FrozenContractTypeSchema = z.object({ pluginId: z.string().min(1), versionLabel: z.string().min(1), descriptor: NormalizedContractTypeDescriptorSchema, artifacts: z.record(z.string().min(1), ParsedContractArtifactSchema), contentHash: z.string().regex(SHA256_HEX) }).strict() satisfies z.ZodType<FrozenContractType>;
 
 export const RpcBindingSchema = z.object({
   endpointId: z.string().min(1),
@@ -794,6 +836,7 @@ export const RunRecordSchema = z.object({
   updatedAt: z.string(),
   plan: DeploymentPlanSchema,
   inputs: z.record(z.string(), FrozenInputSchema),
+  contractTypes: z.record(z.string().min(1), FrozenContractTypeSchema).optional(),
   rpcSelection: z.record(ChainIdKeySchema, RpcBindingSchema),
   explorerTargets: z
     .record(ChainIdKeySchema, z.array(ExplorerTargetSnapshotSchema))

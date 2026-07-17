@@ -16,9 +16,10 @@ import type { RootState } from '../store/store';
 const PERMISSION_TITLES: Record<string, string> = {
   repoWrite: 'Repo Write',
   net: 'Network',
+  contractBytecode: 'Contract Bytecode',
 };
 
-type Pending = { repoWrite: boolean; net: boolean };
+type Pending = { repoWrite: boolean; net: boolean; contractBytecode: boolean };
 
 // Global permission-grant modal. Opened from a plugin card's Permissions
 // button, automatically after installing a plugin that requests permissions,
@@ -33,6 +34,7 @@ export default function PluginPermissionsModal() {
   const [pending, setPending] = useState<Pending>({
     repoWrite: false,
     net: false,
+    contractBytecode: false,
   });
   // Secret-scope grants (config fields marked `secret: true`, AND `file`
   // fields — a file field's grant covers file *contents* flowing to the
@@ -51,6 +53,7 @@ export default function PluginPermissionsModal() {
   const grantKey = modal
     ? `${modal.pluginId}:${row?.permissions.repoWrite}:${
         row?.permissions.net
+      }:${row?.permissions.contractBytecode
       }:${(row?.permissions.secrets ?? []).slice().sort().join(',')}`
     : '';
   useEffect(() => {
@@ -58,6 +61,7 @@ export default function PluginPermissionsModal() {
     setPending({
       repoWrite: row?.permissions.repoWrite ?? false,
       net: row?.permissions.net ?? false,
+      contractBytecode: row?.permissions.contractBytecode ?? false,
     });
     setPendingSecrets(new Set(row?.permissions.secrets ?? []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,6 +90,9 @@ export default function PluginPermissionsModal() {
       repoWrite:
         pending.repoWrite && requested.some((r) => r.id === 'repoWrite'),
       net: pending.net && requested.some((r) => r.id === 'net'),
+      contractBytecode:
+        pending.contractBytecode &&
+        requested.some((r) => r.id === 'contractBytecode'),
     };
     // Clamp to the plugin's declared secret keys for the same reason.
     const secretKeys = secretFields
@@ -94,7 +101,7 @@ export default function PluginPermissionsModal() {
     dispatch(
       pluginsApi.setPermissions(
         modal.pluginId,
-        next.repoWrite || next.net || secretKeys.length > 0
+        next.repoWrite || next.net || next.contractBytecode || secretKeys.length > 0
           ? 'trusted'
           : 'untrusted',
         { ...next, secrets: secretKeys }
@@ -155,7 +162,9 @@ export default function PluginPermissionsModal() {
                     </div>
                     {/* Plugin-authored text: rendered strictly as plain text */}
                     <div className="text-sm opacity-80 mt-1 break-words">
-                      {request.description}
+                      {request.id === 'contractBytecode'
+                        ? 'Supplies contract bytecode that your deployments will execute'
+                        : request.description}
                     </div>
                   </div>
                   <div className="shrink-0 pt-1">

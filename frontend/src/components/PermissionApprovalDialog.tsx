@@ -14,10 +14,11 @@ import { wsSend } from '../store/middleware/websocket';
 import type { ApiError } from '@ignite/api/client';
 import type { ListPluginTrustData } from '@ignite/api';
 
-const PERMISSION_COPY: Record<'repoWrite' | 'net', string> = {
+const PERMISSION_COPY: Record<'repoWrite' | 'net' | 'contractBytecode', string> = {
   repoWrite:
     'write files in the open repository (build outputs, artifacts)',
   net: 'access the network (RPC endpoints, block explorers)',
+  contractBytecode: 'Supplies contract bytecode that your deployments will execute',
 };
 
 export default function PermissionApprovalDialog() {
@@ -52,6 +53,7 @@ export default function PermissionApprovalDialog() {
   const grantTrust = (permissions: {
     repoWrite: boolean;
     net: boolean;
+    contractBytecode: boolean;
     secrets: string[];
   }) => {
     dispatch(
@@ -118,6 +120,9 @@ export default function PermissionApprovalDialog() {
               (existing?.permissions.repoWrite ?? false) ||
               permission === 'repoWrite',
             net: (existing?.permissions.net ?? false) || permission === 'net',
+            contractBytecode:
+              (existing?.permissions.contractBytecode ?? false) ||
+              permission === 'contractBytecode',
             // setPluginTrust replaces the full secrets grant on every call —
             // round-trip whatever is currently granted so approving
             // repoWrite/net here can never silently revoke a secret grant.

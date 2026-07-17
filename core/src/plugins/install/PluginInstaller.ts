@@ -322,6 +322,7 @@ export class PluginInstaller {
       const clamped: PluginPermissions = {
         repoWrite: grant.repoWrite && requestedIds.has('repoWrite'),
         net: grant.net && requestedIds.has('net'),
+        contractBytecode: grant.contractBytecode === true && requestedIds.has('contractBytecode'),
         secrets: clampedSecrets,
       };
 
@@ -329,7 +330,7 @@ export class PluginInstaller {
       await this.deps.pluginManager.addPlugin(persisted, effective);
       await this.deps.trust.setTrust(
         pluginId,
-        clamped.repoWrite || clamped.net || clamped.secrets.length > 0
+        clamped.repoWrite || clamped.net || clamped.contractBytecode || clamped.secrets.length > 0
           ? 'trusted'
           : 'untrusted',
         clamped

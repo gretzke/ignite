@@ -44,6 +44,7 @@ export enum PluginType {
   VERIFIER = "verifier",
   DEPLOYMENT_TYPE = "deployment-type",
   DEPLOYMENT_HOOK = "deployment-hook",
+  CONTRACT_TYPE = "contract-type",
 }
 
 // Where a plugin's code executes. "container" (default when absent) runs in
@@ -54,11 +55,12 @@ export type PluginRuntime = "container" | "frontend";
 
 // The permission vocabulary core can actually enforce (container mounts and
 // network mode). Plugins request a subset in their manifest.
-export type PluginPermissionId = "repoWrite" | "net";
+export type PluginPermissionId = "repoWrite" | "net" | "contractBytecode";
 
 export const PLUGIN_PERMISSION_IDS: readonly PluginPermissionId[] = [
   "repoWrite",
   "net",
+  "contractBytecode",
 ];
 
 // A manifest-declared permission request: the plugin says which permission it

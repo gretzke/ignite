@@ -23,7 +23,6 @@ import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { TrustManager } from '../plugins/trust/TrustManager.js';
 import { getCompilerArtifactData } from './plugins/compiler/index.js';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
-import { IgniteError } from '../types/errors.js';
 
 const MAX_WORKFLOW_BYTES = 512 * 1024;
 const MAX_LIST_ENTRIES = 256;
@@ -186,7 +185,7 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
         const profileId = await d.getProfileId();
         const origins = new Map<string, string>();
         for (const source of document.sources) {
-          if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
+          if (source.origin === 'contract-type') throw new WorkflowHttpError(422, 'CONTRACT_TYPE_UNSUPPORTED', 'contract-type sources are not supported here yet (contract-types plan phase 13)');
           origins.set(pinnedOrigin(source.repo.url), source.repo.url);
         }
         const unapproved = (await Promise.all([...origins].map(async ([origin, url]) => ({ origin, approved: await d.pinnedStore.isOriginApproved(profileId, url) }))))
@@ -197,7 +196,7 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
           const sources: WorkflowResolveResult['sources'] = [];
           for (const source of document.sources) {
             try {
-              if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
+              if (source.origin === 'contract-type') throw new WorkflowHttpError(422, 'CONTRACT_TYPE_UNSUPPORTED', 'contract-type sources are not supported here yet (contract-types plan phase 13)');
               ctx.log(`source ${source.id}: cloning\n`);
               const lifecycle = await d.lifecycle.runPinnedLifecycle(source.repo.url, source.repo.commit, profileId, ctx);
               if (!lifecycle.frameworks.some((framework) => framework.id === source.frameworkId)) throw new Error(`Framework '${source.frameworkId}' was not detected`);
@@ -233,7 +232,7 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
 }
 
 function workflowSourceToContract(source: WorkflowSource) {
-  if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 13)', 'CONTRACT_TYPE_UNSUPPORTED');
+  if (source.origin === 'contract-type') throw new WorkflowHttpError(422, 'CONTRACT_TYPE_UNSUPPORTED', 'contract-type sources are not supported here yet (contract-types plan phase 13)');
   return {
     id: source.id, repoPathOrUrl: source.repo.url, frameworkId: source.frameworkId,
     artifactPath: source.artifactPath, contractName: source.contractName, sourcePath: source.sourcePath,

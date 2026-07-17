@@ -21,7 +21,7 @@ describe('trust API handlers', () => {
     // '@acme/foundry' declares both permissions in its manifest; grants are
     // clamped to that set.
     const requested = vi.fn(async (pluginId: string) =>
-      pluginId === '@acme/foundry' ? ['repoWrite', 'net'] : []
+      pluginId === '@acme/foundry' ? ['repoWrite', 'net', 'contractBytecode'] : []
     );
     providers = { invalidate: vi.fn() };
     const handlers = createTrustHandlers(
@@ -49,12 +49,12 @@ describe('trust API handlers', () => {
     expect(data.plugins).toContainEqual({
       pluginId: 'local-repo',
       trust: 'native',
-      permissions: { repoWrite: true, net: true, secrets: [] },
+      permissions: { repoWrite: true, net: true, contractBytecode: true, secrets: [] },
     });
     expect(data.plugins).toContainEqual({
       pluginId: '@acme/foundry',
       trust: 'untrusted',
-      permissions: { repoWrite: false, net: false, secrets: [] },
+      permissions: { repoWrite: false, net: false, contractBytecode: false, secrets: [] },
     });
   });
 
@@ -64,11 +64,12 @@ describe('trust API handlers', () => {
       url: '/api/v1/plugins/@acme%2Ffoundry/trust',
       payload: {
         trust: 'trusted',
-        permissions: { repoWrite: true, net: false },
+        permissions: { repoWrite: true, net: false, contractBytecode: true },
       },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.plugin.permissions.repoWrite).toBe(true);
+    expect(res.json().data.plugin.permissions.contractBytecode).toBe(true);
     expect(res.json().data.plugin.permissions.secrets).toEqual([]);
     const grant = await manager.getGrant('@acme/foundry');
     expect(grant.repoWrite).toBe(true);
@@ -120,6 +121,16 @@ describe('trust API handlers', () => {
     });
     expect(ok.statusCode).toBe(200);
     expect(strictProviders.invalidate).toHaveBeenCalledWith('@acme/foundry');
+    await strictApp.close();
+  });
+
+  it('rejects an unrequested contract-bytecode grant', async () => {
+    const strictManager = new TrustManager(path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-trust-api-bytecode-')), 'trust.json'), async () => false);
+    const handlers = createTrustHandlers(strictManager, vi.fn(async () => ['@acme/proxy']), vi.fn(async () => ['net']));
+    const strictApp = fastify(); strictApp.post('/api/v1/plugins/:pluginId/trust', handlers.setPluginTrust); await strictApp.ready();
+    const denied = await strictApp.inject({ method: 'POST', url: '/api/v1/plugins/@acme%2Fproxy/trust', payload: { trust: 'trusted', permissions: { repoWrite: false, net: false, contractBytecode: true } } });
+    expect(denied.statusCode).toBe(400);
+    expect((await strictManager.getGrant('@acme/proxy')).contractBytecode).toBe(false);
     await strictApp.close();
   });
 

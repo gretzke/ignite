@@ -70,14 +70,14 @@ export const jobsEffects = createListenerMiddleware();
 // the same trust approval dialog apiGate.ts uses for non-job endpoints.
 function permissionDetails(
   job: JobRecord
-): { pluginId: string; permission: 'repoWrite' | 'net' } | null {
+): { pluginId: string; permission: 'repoWrite' | 'net' | 'contractBytecode' } | null {
   if (job.error?.code !== 'PERMISSION_REQUIRED') return null;
   const details = job.error.details as
     { pluginId?: string; permission?: string } | undefined;
   if (!details?.pluginId || !details.permission) return null;
   return {
     pluginId: details.pluginId,
-    permission: details.permission as 'repoWrite' | 'net',
+    permission: details.permission as 'repoWrite' | 'net' | 'contractBytecode',
   };
 }
 

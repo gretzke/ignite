@@ -411,13 +411,22 @@ function validateFrozenInputs(
     for (const contract of plan.contracts) {
       if (contract.origin === 'contract-type') {
         const source = sources.get(contract.id);
-        if (source?.origin === 'contract-type' && source.contentHash !== contract.contentHash)
-          drifts.push({ sourceId: contract.id, expected: source.contentHash, actual: contract.contentHash });
+        // Origin or identity mismatch is drift too: a run must not swap a
+        // repo source for a plugin artifact (or a different artifact) under
+        // an id the workflow pinned differently.
+        if (source && source.origin !== 'contract-type')
+          drifts.push({ sourceId: contract.id, expected: `repo:${source.artifactHash ?? 'unpinned'}`, actual: `contract-type:${contract.contentHash}` });
+        else if (source?.origin === 'contract-type' && (source.contentHash !== contract.contentHash || source.pluginId !== contract.pluginId || source.artifactKey !== contract.artifactKey || source.versionLabel !== contract.versionLabel))
+          drifts.push({ sourceId: contract.id, expected: `${source.pluginId}/${source.artifactKey}@${source.versionLabel}:${source.contentHash}`, actual: `${contract.pluginId}/${contract.artifactKey}@${contract.versionLabel}:${contract.contentHash}` });
+        continue;
+      }
+      const source = sources.get(contract.id);
+      if (source?.origin === 'contract-type') {
+        drifts.push({ sourceId: contract.id, expected: `contract-type:${source.contentHash}`, actual: `repo:${frozen[contract.id]?.artifactHash ?? 'unfrozen'}` });
         continue;
       }
       if (!contract.pin) continue;
-      const source = sources.get(contract.id);
-      const expected = source?.origin === 'contract-type' ? undefined : source?.artifactHash;
+      const expected = source?.artifactHash;
       const actual = frozen[contract.id]?.artifactHash;
       if (!expected || !actual || expected === actual) continue;
       const acknowledgement = workflow.binding.acknowledgeArtifactDrift?.[contract.id];
