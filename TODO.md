@@ -310,6 +310,16 @@ dispatch, `operationPermissions` hints unioned with host minimums, and the
 
 ## Verification follow-ups (D4)
 
+- **Run origin through the verify page** (run-summary redesign, 2026-07-17):
+  the verify page's `runId` query param is ornamental — `enqueueManual`
+  always tags tasks `{kind: 'manual'}`, so "Verify now" from a run lane
+  creates a task that lands in the Deployments manual section instead of
+  embedding under its run step. Plumb origin through the verify flow.
+- **Cross-origin live-task dedup** (run-summary redesign, 2026-07-17):
+  `VerificationStore.upsertLive` keys live tasks by chain+address+explorer,
+  so a run enqueue colliding with a live manual (or earlier-run) task
+  returns that task with the foreign origin and the new run shows no
+  verification row. Consider origin-aware dedup or re-tagging.
 - **Reconciliation with provider-plugin RPC bindings.** `verificationIntegration.ts`
   resolves the run's bound endpoint from the RpcStore only; runs whose binding was a
   provider-plugin endpoint fall back to `rawTx` parsing (container signers) or skip
