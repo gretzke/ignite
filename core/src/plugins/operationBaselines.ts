@@ -56,6 +56,7 @@ export const HOST_PERMISSION_MINIMUMS: Readonly<
   checkVerification: 'net',
   getCreationTx: 'net',
   sendTransaction: 'net',
+  getContractArtifact: 'contractBytecode',
 };
 
 export function effectiveOperations(metadata: PluginMetadata): string[] {

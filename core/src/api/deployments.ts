@@ -264,13 +264,15 @@ export function createDeploymentHandlers(
                 predictions[id]?.predictedAddress ??
                 (() => {
                   throw new Error(`Missing predicted pointer ${id}`);
-                })()
+                })(),
+              { frozen, contracts: predictionPlan.contracts }
             );
             runtimeBytecode = buildRuntimeCode(
               step,
               input,
               chainId,
-              (id) => predictions[id]?.predictedAddress ?? (() => { throw new Error(`Missing predicted pointer ${id}`); })()
+              (id) => predictions[id]?.predictedAddress ?? (() => { throw new Error(`Missing predicted pointer ${id}`); })(),
+              { frozen, contracts: predictionPlan.contracts }
             );
           } catch (error) {
             throw mapPreparePointerError(error, plan);

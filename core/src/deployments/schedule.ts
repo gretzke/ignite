@@ -20,17 +20,17 @@ function constructorInputs(abi: unknown): AbiParameter[] {
 function linkedCode(step: DeployStep, input: FrozenInputs[string], libraries: Record<string, Hex> | undefined): Hex {
   return input.creationCodeLinkReferences ? linkBytecode(input.creationBytecode, input.creationCodeLinkReferences, libraries ?? {}) : input.creationBytecode as Hex;
 }
-export function buildInitcode(step: DeployStep, input: FrozenInputs[string], chainId: number, resolveRef: (stepId: string) => Hex): Hex {
+export function buildInitcode(step: DeployStep, input: FrozenInputs[string], chainId: number, resolveRef: (stepId: string) => Hex, context: { frozen?: FrozenInputs; contracts?: DeploymentPlan['contracts'] } = {}): Hex {
   const ctor = constructorInputs(input.abi);
-  const values = resolveStepValues(step, chainId, resolveRef, ctor);
+  const values = resolveStepValues(step, chainId, resolveRef, ctor, context);
   return encodeDeployData({ abi: input.abi as Abi, bytecode: linkedCode(step, input, values.libraries), args: toConstructorArgs(ctor, values.args) });
 }
 
-export function buildRuntimeCode(step: DeployStep, input: FrozenInputs[string], chainId: number, resolveRef: (stepId: string) => Hex): Hex | undefined {
+export function buildRuntimeCode(step: DeployStep, input: FrozenInputs[string], chainId: number, resolveRef: (stepId: string) => Hex, context: { frozen?: FrozenInputs; contracts?: DeploymentPlan['contracts'] } = {}): Hex | undefined {
   if (input.runtimeBytecode === undefined) return undefined;
   if (!input.runtimeBytecodeLinkReferences) return input.runtimeBytecode as Hex;
   try {
-    const libraries = resolveStepValues(step, chainId, resolveRef).libraries ?? {};
+    const libraries = resolveStepValues(step, chainId, resolveRef, [], context).libraries ?? {};
     const keys = new Set(flattenLinkReferences(input.runtimeBytecodeLinkReferences).map((ref) => ref.key));
     return linkBytecode(input.runtimeBytecode, input.runtimeBytecodeLinkReferences, Object.fromEntries(Object.entries(libraries).filter(([key]) => keys.has(key))));
   } catch { return undefined; }
@@ -45,7 +45,7 @@ export function predictPlanAddresses(plan: DeploymentPlan, frozen: FrozenInputs,
     let firstRealError: unknown;
     const next = remaining.find((step) => {
       try {
-        buildInitcode(step, frozen[step.contractId]!, chainId, (id) => predicted[id]?.predictedAddress ?? (() => { throw new Error('unresolved'); })());
+        buildInitcode(step, frozen[step.contractId]!, chainId, (id) => predicted[id]?.predictedAddress ?? (() => { throw new Error('unresolved'); })(), { frozen, contracts: plan.contracts });
         return true;
       } catch (error) {
         // A pointer at a not-yet-predicted create2 step means "try later";
@@ -59,7 +59,7 @@ export function predictPlanAddresses(plan: DeploymentPlan, frozen: FrozenInputs,
     const strategy = next.strategy!;
     const salt = effectiveSalt(strategy as Extract<typeof strategy, { kind: 'create2' | 'plugin' }>, chainId);
     if (!salt) throw new Error(`No salt is available for ${next.id}`);
-    const code = buildInitcode(next, frozen[next.contractId]!, chainId, (id) => predicted[id]!.predictedAddress);
+    const code = buildInitcode(next, frozen[next.contractId]!, chainId, (id) => predicted[id]!.predictedAddress, { frozen, contracts: plan.contracts });
     const hash = initcodeHashOf(code);
     predicted[next.id] = { salt, initcodeHash: hash, predictedAddress: predictCreate2Address(salt, hash) };
     remaining.splice(remaining.indexOf(next), 1);
@@ -108,7 +108,7 @@ export async function buildChainPredictions(plan: DeploymentPlan, frozen: Frozen
         if (hasPredicted(entry)) return entry.predictedAddress;
         const created = createAddresses.get(id); if (created) return created;
         throw new Error(`Missing provisional pointer ${id}`);
-      });
+      }, { frozen, contracts: plan.contracts });
       const hash = initcodeHashOf(initcode);
       const strategy = step.strategy!;
       if (strategy.kind === 'create2') {
@@ -120,7 +120,7 @@ export async function buildChainPredictions(plan: DeploymentPlan, frozen: Frozen
       const runtimeBytecode = buildRuntimeCode(step, input, chainId, (id) => {
         const entry = entries[id]; if (hasPredicted(entry)) return entry.predictedAddress;
         return createAddresses.get(id) ?? (() => { throw new Error(`Missing provisional pointer ${id}`); })();
-      });
+      }, { frozen, contracts: plan.contracts });
       if (strategy.kind !== 'plugin') throw new Error(`Unsupported deterministic strategy for ${step.id}`);
       const cacheKey = `${strategy.pluginId}:${chainId}:${hash}:${runtimeBytecode ? initcodeHashOf(runtimeBytecode) : ''}:${JSON.stringify(strategy.params ?? {})}`;
       const now = Date.now(); let cached = provisionalCache.get(cacheKey);
@@ -174,12 +174,12 @@ export function buildSchedule(plan: DeploymentPlan, frozen: FrozenInputs, chainI
       const target = mergeCallTarget(step, chainId);
       const targetStep = target.kind === 'step' ? plan.steps.find((item): item is DeployStep => item.id === target.stepId && item.kind === 'deploy') : undefined;
       const fn = callAbiItem(step, chainId, targetStep ? frozen[targetStep.contractId]?.abi : undefined);
-      const values = resolveStepValues(step, chainId, addresses, fn?.inputs ?? []);
+      const values = resolveStepValues(step, chainId, addresses, fn?.inputs ?? [], { frozen, contracts: plan.contracts });
       const data = fn ? encodeFunctionData({ abi: [fn], functionName: fn.name, args: toConstructorArgs(fn.inputs, values.args) }) : '0x';
       return { stepId: step.id, kind: 'tx', from, to: values.target!, data, value: effectiveValue(step, chainId) };
     }
     const strategy = step.strategy ?? { kind: 'create' as const };
-    const data = buildInitcode(step, frozen[step.contractId]!, chainId, addresses);
+    const data = buildInitcode(step, frozen[step.contractId]!, chainId, addresses, { frozen, contracts: plan.contracts });
     // 'existing' requires OBSERVED code, not just a fresh acknowledgment —
     // the caller (simulation) verifies via eth_getCode; execution deploys
     // when code is absent, so the schedule must include that tx (F7). When

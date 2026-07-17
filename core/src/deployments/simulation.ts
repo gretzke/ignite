@@ -25,6 +25,7 @@ export interface SimulationOutcome {
   >;
   warnings: string[];
   fallthrough: string[];
+  probes?: Record<string, Hex>;
 }
 
 export interface SimClient {
@@ -94,6 +95,11 @@ function resultStatus(result: Record<string, unknown> | undefined): {
   };
 }
 
+function resultData(result: Record<string, unknown> | undefined): Hex | undefined {
+  const value = result?.returnData ?? result?.data ?? result?.output;
+  return typeof value === 'string' && /^0x(?:[0-9a-fA-F]{2})*$/.test(value) ? value as Hex : undefined;
+}
+
 function dependsOnPlainCreate(
   plan: DeploymentPlan,
   entry: ScheduleEntry,
@@ -160,6 +166,7 @@ export async function simulateChain(args: {
   // tier 1 succeeds (final-review F1).
   getFork: () => Promise<ForkRunner | undefined>;
   predictions?: ChainPredictions;
+  probes?: Array<{ stepId: string; data: Hex }>;
 }): Promise<SimulationOutcome> {
   const signerAddresses = [
     ...new Set(
@@ -239,21 +246,32 @@ export async function simulateChain(args: {
           nonce: BigInt(current),
         };
       });
+      const probeCalls = (args.probes ?? []).flatMap((probe) => {
+        const entry = schedule.find((item) => item.stepId === probe.stepId);
+        const to = entry?.address ?? entry?.predictedAddress;
+        const account = txs.at(-1)?.from;
+        return to && account ? [{ account, to, data: probe.data, value: 0n }] : [];
+      });
       const results = simResults(
         await args.client.simulateBlocks({
-          blocks: [{ calls }],
+          blocks: [{ calls: [...calls, ...probeCalls] }],
           validation: false,
         })
       );
       txs.forEach((entry, index) => {
         entries[entry.stepId] = resultStatus(results[index]);
       });
+      const probes = Object.fromEntries((args.probes ?? []).flatMap((probe, index) => {
+        const data = resultData(results[txs.length + index]);
+        return data ? [[probe.stepId, data]] : [];
+      }));
       return {
         tier: 'simulateV1',
         baseBlock,
         perStep: entries,
         warnings,
         fallthrough,
+        ...(Object.keys(probes).length ? { probes } : {}),
       };
     } catch (error) {
       // Tier 1 infrastructure/shape errors (method missing, RPCs like anvil
@@ -271,7 +289,7 @@ export async function simulateChain(args: {
   const fork = await args.getFork().catch(() => undefined);
   if (fork) {
     try {
-      const receipts = await fork.run(schedule);
+      const receipts = await fork.run(schedule, args.probes);
       assertForkAddresses(schedule, receipts);
       for (const entry of schedule) {
         if (entry.kind === 'tx') {
@@ -291,6 +309,7 @@ export async function simulateChain(args: {
         perStep: entries,
         warnings,
         fallthrough,
+        ...(receipts.probes ? { probes: receipts.probes } : {}),
       };
     } catch (error) {
       if ((error as { code?: string }).code === 'SIMULATION_ADDRESS_DIVERGENCE')

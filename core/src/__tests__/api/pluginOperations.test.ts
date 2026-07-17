@@ -71,7 +71,7 @@ describe('generic plugin operation dispatch', () => {
   it('rejects declared reserved operations and the reserved config key', async () => {
     const handlers = createPluginOperationHandlers({
       getPluginConfig: vi.fn(async () => ({
-        metadata: { ...metadata, operations: ['compile', 'customOperation'] },
+        metadata: { ...metadata, operations: ['compile', 'getContractArtifact', 'customOperation'] },
         repoRead: false,
         origin: 'installed' as const,
       })),
@@ -83,6 +83,10 @@ describe('generic plugin operation dispatch', () => {
       reserved,
     );
     expect(reserved.body).toMatchObject({ code: 'OPERATION_RESERVED' });
+
+    const artifact = reply();
+    await handlers.invokePluginOperation({ params: { pluginId: 'example', operation: 'getContractArtifact' }, body: {} } as never, artifact);
+    expect(artifact.body).toMatchObject({ code: 'OPERATION_RESERVED' });
 
     const config = reply();
     await handlers.invokePluginOperation(

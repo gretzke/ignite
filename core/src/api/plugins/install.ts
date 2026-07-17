@@ -13,6 +13,7 @@ import { getLogger } from '../../utils/logger.js';
 import { sendBadRequest, sendCaughtError } from '../utils/errors.js';
 import { DeploymentTypeService } from '../../deployments/DeploymentTypeService.js';
 import { DeploymentHookService } from '../../deployments/DeploymentHookService.js';
+import { ContractTypeService } from '../../deployments/ContractTypeService.js';
 
 interface InstallerLike {
   install(source: PluginInstallSource): Promise<PluginMetadata>;
@@ -41,6 +42,7 @@ export interface InstallHandlerDeps {
   resweepRepos: () => Promise<void>;
   invalidateDeploymentTypes: () => void;
   invalidateDeploymentHooks: () => void;
+  invalidateContractTypes: () => void;
 }
 
 async function resweepCurrentProfile(): Promise<void> {
@@ -71,6 +73,9 @@ export function createInstallHandlers(
     invalidateDeploymentHooks:
       deps?.invalidateDeploymentHooks ??
       (() => DeploymentHookService.getInstance().invalidate()),
+    invalidateContractTypes:
+      deps?.invalidateContractTypes ??
+      (() => ContractTypeService.getInstance().invalidate()),
   };
 
   return {
@@ -94,6 +99,7 @@ export function createInstallHandlers(
         await d.resweepRepos();
         d.invalidateDeploymentTypes();
         d.invalidateDeploymentHooks();
+        d.invalidateContractTypes();
         return { plugin };
       });
 
@@ -128,6 +134,7 @@ export function createInstallHandlers(
           await d.resweepRepos();
           d.invalidateDeploymentTypes();
           d.invalidateDeploymentHooks();
+        d.invalidateContractTypes();
           return result;
         }
       );
@@ -144,6 +151,7 @@ export function createInstallHandlers(
         await d.resweepRepos();
         d.invalidateDeploymentTypes();
         d.invalidateDeploymentHooks();
+        d.invalidateContractTypes();
         return reply.status(204).send();
       } catch (error) {
         if (

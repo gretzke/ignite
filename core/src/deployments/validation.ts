@@ -1,13 +1,16 @@
 import crypto from 'node:crypto';
 import {
   createPublicClient,
+  encodeFunctionData,
   http,
   keccak256,
+  parseAbiItem,
   type Hex,
 } from 'viem';
 import type {
   ChainChecklist,
   ContractSource,
+  FrozenContractType,
   DeploymentPlan,
   FrozenInputs,
   RpcBinding,
@@ -41,6 +44,7 @@ import {
 } from './simulation.js';
 import { makeForkRunner, type ForkRunner } from './forkContainer.js';
 import { DeploymentTypeService } from './DeploymentTypeService.js';
+import { contractTypeStaticItems, estimateWrapperItems } from './contractTypeValidation.js';
 import { verifyRpcEndpoint } from '../chains/rpcVerify.js';
 import { SignerProviderService } from '../signers/SignerProviderService.js';
 import { RpcStore } from '../chains/RpcStore.js';
@@ -112,6 +116,7 @@ export interface ValidationDeps {
     profileId: string,
     contracts: ContractSource[]
   ) => Promise<FrozenInputs>;
+  freezeContractTypes: (contracts: ContractSource[]) => Promise<Record<string, FrozenContractType>>;
   resolveRpcEndpoint: (
     chainId: number,
     endpointId: string
@@ -141,7 +146,7 @@ export interface ValidationDeps {
     frozen: FrozenInputs,
     contracts: ContractSource[],
     profileId: string
-  ) => Promise<Record<string, { bundleHash: string } | { error: string }>>;
+  , contractTypes?: Record<string, FrozenContractType>) => Promise<Record<string, { bundleHash: string } | { error: string }>>;
   resolveExplorers: (chainId: number) => Promise<ExplorerEntry[]>;
   resolveVerifierTrust: (
     pluginId: string
@@ -162,6 +167,7 @@ export async function validatePlan(
 ): Promise<{
   report: ValidationReport;
   frozen: FrozenInputs;
+  contractTypes?: Record<string, FrozenContractType>;
   rpcBindings: Record<string, RpcBinding>;
   explorerTargets?: Record<string, ExplorerTargetSnapshot[]>;
   predicted?: Record<
@@ -202,6 +208,7 @@ async function validatePlanOnce(
 ): Promise<{
   report: ValidationReport;
   frozen: FrozenInputs;
+  contractTypes?: Record<string, FrozenContractType>;
   rpcBindings: Record<string, RpcBinding>;
   explorerTargets?: Record<string, ExplorerTargetSnapshot[]>;
   predicted?: Record<
@@ -213,11 +220,13 @@ async function validatePlanOnce(
   const deps: ValidationDeps = { ...defaults, ...overrides };
   let frozen: FrozenInputs = {};
   let freezeError: unknown;
+  let contractTypes: Record<string, FrozenContractType> = {};
   try {
     frozen = await deps.freezeInputs(
       deps.profileId ?? 'default',
       plan.contracts
     );
+    contractTypes = await deps.freezeContractTypes(plan.contracts);
   } catch (error) {
     freezeError = error;
   }
@@ -232,7 +241,8 @@ async function validatePlanOnce(
     bundleResults = await deps.captureBundles(
       frozen,
       plan.contracts,
-      deps.profileId ?? 'default'
+      deps.profileId ?? 'default',
+      contractTypes
     );
   }
 
@@ -278,7 +288,7 @@ async function validatePlanOnce(
         });
       } catch (error) { snapshotError = error; }
     }
-    const args = validateArgs(plan, chainId, frozen, freezeError, snapshot, snapshotError);
+    const rawArgs = validateArgs(plan, chainId, frozen, freezeError, snapshot, snapshotError);
     const create2 = await validateCreate2(
       plan,
       chainId,
@@ -298,8 +308,15 @@ async function validatePlanOnce(
       signerResults.signers,
       deps,
       freezeError,
-      snapshot
+      snapshot,
+      contractTypes
     );
+    const contractTypeItems = freezeError ? [] : [
+      ...contractTypeStaticItems(plan, frozen, contractTypes, chainId),
+      ...probeValidationItems(plan, contractTypes, simulation.outcome),
+      ...estimateWrapperItems(plan, chainId, (simulation.item.details as { tier?: 'simulateV1' | 'fork' | 'estimate' } | undefined)?.tier),
+    ];
+    const args = combineContractTypeItems(rawArgs, contractTypeItems);
     const balance = await validateBalance(
       plan,
       chainId,
@@ -336,6 +353,7 @@ async function validatePlanOnce(
   return {
     report: { chains, ...(run ? { run } : {}) },
     frozen,
+    contractTypes,
     rpcBindings: bindings,
     explorerTargets,
     predicted,
@@ -356,6 +374,7 @@ function defaultDeps(): ValidationDeps {
   return {
     profileId: 'default',
     freezeInputs: freeze.freezeInputs.bind(freeze),
+    freezeContractTypes: freeze.freezeContractTypes.bind(freeze),
     resolveRpcEndpoint: async (chainId, endpointId) => {
       const stored = (await rpcStore.list(chainId)).find(
         (item) => item.id === endpointId
@@ -758,7 +777,7 @@ function validateArgs(
             `Call arguments are missing for ${stepLabel(plan, step.id)}`,
             { fields: missingCall }
           );
-        toConstructorArgs(fn.inputs, resolveStepValues(step, chainId, resolveRef, fn.inputs).args);
+        toConstructorArgs(fn.inputs, resolveStepValues(step, chainId, resolveRef, fn.inputs, { frozen, contracts: plan.contracts }).args);
         continue;
       }
       const input = frozen[step.contractId];
@@ -793,7 +812,7 @@ function validateArgs(
       // non-hex placeholders until their library bindings are resolved.
       toConstructorArgs(
         ctor,
-        resolveStepValues(step, chainId, resolveRef, ctor).args
+        resolveStepValues(step, chainId, resolveRef, ctor, { frozen, contracts: plan.contracts }).args
       );
     }
     return success('Constructor arguments are valid');
@@ -806,6 +825,50 @@ function validateArgs(
       )
     );
   }
+}
+
+// Phase D renders checklist items, so Phase C deliberately keeps these under
+// the existing args key rather than changing the public checklist shape.
+function combineContractTypeItems(base: ValidationItem, items: ValidationItem[]): ValidationItem {
+  if (!items.length) return base;
+  const failed = items.find((item) => item.blocking && !item.ok);
+  if (failed) return { ...failed, details: { ...(failed.details ?? {}), contractTypeItems: items } };
+  return { ...base, details: { ...(base.details ?? {}), contractTypeItems: items } };
+}
+
+function contractTypeProbes(plan: DeploymentPlan, contractTypes: Record<string, FrozenContractType>): Array<{ stepId: string; data: Hex }> {
+  return plan.steps.flatMap((wrapper) => {
+    if (wrapper.kind !== 'deploy' || !wrapper.wraps) return [];
+    const probe = contractTypes[wrapper.wraps.contractTypePluginId]?.descriptor.validation.probe;
+    if (!probe) return [];
+    try {
+      const fn = parseAbiItem(`function ${probe.call}`) as import('viem').AbiFunction;
+      return [{ stepId: wrapper.wraps.stepId, data: encodeFunctionData({ abi: [fn], functionName: fn.name }) }];
+    } catch { return []; }
+  });
+}
+
+function probeValidationItems(plan: DeploymentPlan, contractTypes: Record<string, FrozenContractType>, outcome: SimulationOutcome | undefined): ValidationItem[] {
+  const items: ValidationItem[] = [];
+  for (const wrapper of plan.steps) {
+    if (wrapper.kind !== 'deploy' || !wrapper.wraps) continue;
+    const type = contractTypes[wrapper.wraps.contractTypePluginId];
+    const probe = type?.descriptor.validation.probe;
+    if (!probe) continue;
+    if (outcome?.tier === 'estimate') {
+      items.push(warning('CONTRACT_TYPE_STATIC_ONLY', 'Static check only: contract-type simulation probe was not executed on this chain', { 'plugin-declared': true, pluginId: type.pluginId, call: probe.call }));
+      continue;
+    }
+    // eth_simulateV1 does not expose a durable post-state for a separate
+    // eth_call. Fork simulation does; lack of a fork result is visible rather
+    // than treated as a successful probe.
+    if (outcome?.tier === 'fork' || outcome?.tier === 'simulateV1') {
+      const actual = outcome.probes?.[wrapper.wraps.stepId];
+      if (!actual || actual.toLowerCase() !== probe.expectReturn.toLowerCase())
+        items.push(failure('CONTRACT_TYPE_REQUIREMENTS', `Plugin-declared probe ${probe.call} did not return the expected value`, { 'plugin-declared': true, pluginId: type.pluginId, expected: probe.expectReturn, actual }));
+    }
+  }
+  return items;
 }
 
 async function validateCreate2(
@@ -912,13 +975,15 @@ async function validateCreate2(
               predictions[id]?.predictedAddress ??
               (() => {
                 throw new Error(`Missing predicted pointer ${id}`);
-              })()
+              })(),
+            { frozen, contracts: plan.contracts }
           );
           const runtimeBytecode = buildRuntimeCode(
             step,
             frozen[step.contractId]!,
             chainId,
-            (id) => predictions[id]?.predictedAddress ?? (() => { throw new Error(`Missing predicted pointer ${id}`); })()
+            (id) => predictions[id]?.predictedAddress ?? (() => { throw new Error(`Missing predicted pointer ${id}`); })(),
+            { frozen, contracts: plan.contracts }
           );
           const verdict = await deps.deploymentTypes.validate(
             strategy.pluginId,
@@ -998,7 +1063,8 @@ async function validateSimulation(
   signers: Map<string, Hex>,
   deps: ValidationDeps,
   freezeError: unknown,
-  snapshot?: ChainPredictions
+  snapshot?: ChainPredictions,
+  contractTypes: Record<string, FrozenContractType> = {}
 ) {
   const degraded = snapshot && [...snapshot.dynamic].map((id) => snapshot.entries[id]).find((entry) => entry && 'absent' in entry) as Extract<ChainPredictions['entries'][string], { absent: true }> | undefined;
   if (degraded) {
@@ -1046,6 +1112,7 @@ async function validateSimulation(
       signers,
       client: simClient,
       predictions: snapshot,
+      probes: contractTypeProbes(plan, contractTypes),
       getFork: () =>
         canFork
           ? deps.makeForkRunner({ rpcUrl, chainId })
@@ -1062,6 +1129,7 @@ async function validateSimulation(
       perStep: outcome.perStep,
       warnings: outcome.warnings,
       fallthrough: outcome.fallthrough,
+      ...(outcome.probes ? { probes: outcome.probes } : {}),
     };
     return {
       item: reverted

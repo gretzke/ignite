@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import type {
   ArtifactData,
   ContractSource,
+  FrozenContractType,
   FrozenInputs,
 } from '@ignite/api';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
@@ -17,6 +18,7 @@ import { BundleStore, type VerificationBundle } from '../verifications/BundleSto
 import { validateUnlinkedBytecode } from './linking.js';
 import { getLogger } from '../utils/logger.js';
 import { IgniteError } from '../types/errors.js';
+import { ContractTypeService } from './ContractTypeService.js';
 
 export interface ArtifactFreezeDeps {
   getArtifactData: (input: {
@@ -29,6 +31,7 @@ export interface ArtifactFreezeDeps {
     contract: ContractSource; profileId: string;
   }) => Promise<import('@ignite/plugin-types/base/compiler').VerificationBundleData>;
   bundleStore: Pick<BundleStore, 'write'>;
+  contractTypes: Pick<ContractTypeService, 'frozenDescriptor'>;
 }
 
 export class ArtifactFreezeService {
@@ -55,7 +58,7 @@ export class ArtifactFreezeService {
       repoDirty:
         deps?.repoDirty ??
         (async (profileId, contract) => {
-          if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 7)', 'CONTRACT_TYPE_UNSUPPORTED');
+          if (contract.origin === 'contract-type') return false;
           const records = await repoRegistry.list(profileId);
           const record = [...records.local, ...records.cloned].find(
             (item) => item.pathOrUrl === contract.repoPathOrUrl
@@ -94,6 +97,7 @@ export class ArtifactFreezeService {
             { contract, profileId }
           )),
       bundleStore: deps?.bundleStore ?? new BundleStore(),
+      contractTypes: deps?.contractTypes ?? ContractTypeService.getInstance(),
     };
   }
 
@@ -103,7 +107,21 @@ export class ArtifactFreezeService {
   ): Promise<FrozenInputs> {
     const entries = await Promise.all(
       contracts.map(async (contract) => {
-        if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 7)', 'CONTRACT_TYPE_UNSUPPORTED');
+        if (contract.origin === 'contract-type') {
+          const frozenType = await this.deps.contractTypes.frozenDescriptor(contract.pluginId);
+          if (frozenType.contentHash !== contract.contentHash)
+            throw new IgniteError('Contract-type plugin content changed since this plan was reviewed', 'CONTRACT_TYPE_DRIFT', { pluginId: contract.pluginId, expected: contract.contentHash, actual: frozenType.contentHash });
+          const artifact = frozenType.artifacts[contract.artifactKey];
+          if (!artifact) throw new IgniteError(`Contract-type artifact ${contract.artifactKey} is missing`, 'ARTIFACT_NOT_FOUND');
+          return [contract.id, {
+            abi: artifact.abi,
+            creationBytecode: artifact.creationBytecode,
+            runtimeBytecode: artifact.runtimeBytecode,
+            compiler: { pluginId: contract.pluginId, version: artifact.solcVersion, settingsHash: sha256(canonicalJson(settingsOf(artifact.standardJsonInput))) },
+            artifactHash: sha256(canonicalJson(artifact)),
+            repoDirty: false,
+          }] as const;
+        }
         const [artifact, config, repoDirty] = await Promise.all([
           this.deps.getArtifactData({
             contract,
@@ -177,22 +195,32 @@ export class ArtifactFreezeService {
     return Object.fromEntries(entries);
   }
 
+  async freezeContractTypes(contracts: ContractSource[]): Promise<Record<string, FrozenContractType>> {
+    const ids = [...new Set(contracts.flatMap((contract) => contract.origin === 'contract-type' ? [contract.pluginId] : []))];
+    const entries = await Promise.all(ids.map(async (pluginId) => [pluginId, await this.deps.contractTypes.frozenDescriptor(pluginId)] as const));
+    return Object.fromEntries(entries);
+  }
+
   // Capture is deliberately separate from freezeInputs(): source verification
   // availability is optional and must never turn into the global freeze error
   // that blocks argument, estimate, and balance validation.
   async captureBundles(
     frozen: FrozenInputs,
     contracts: ContractSource[],
-    profileId: string
+    profileId: string,
+    contractTypes: Record<string, FrozenContractType> = {}
   ): Promise<Record<string, { bundleHash: string } | { error: string }>> {
     const entries = await Promise.all(contracts.map(async (contract) => {
       try {
         const input = frozen[contract.id];
         if (!input) throw new Error('Frozen input is missing');
-        const data = await this.deps.getVerificationBundle({
-          contract,
-          profileId,
-        });
+        const type = contract.origin === 'contract-type' ? contractTypes[contract.pluginId] : undefined;
+        if (contract.origin === 'contract-type' && !type) throw new Error('Frozen contract-type descriptor is missing');
+        const artifact = contract.origin === 'contract-type' ? type!.artifacts[contract.artifactKey] : undefined;
+        if (contract.origin === 'contract-type' && !artifact) throw new Error('Frozen contract-type artifact is missing');
+        const data = artifact
+          ? { standardJsonInput: artifact.standardJsonInput, solcVersion: artifact.solcVersion, contractIdentifier: artifact.sourceIdentifier, creationCode: artifact.creationBytecode }
+          : await this.deps.getVerificationBundle({ contract, profileId });
         if (data.creationCode.toLowerCase() !== input.creationBytecode.toLowerCase()) {
           throw Object.assign(new Error('Verification bundle creation bytecode does not match frozen artifact'), { code: 'BUNDLE_COHERENCE_MISMATCH' });
         }
@@ -204,6 +232,7 @@ export class ArtifactFreezeService {
             input.compiler.pluginId,
             data.standardJsonInput
           ),
+          ...(contract.origin === 'contract-type' && (await this.deps.getPluginConfig(contract.pluginId)).origin !== 'builtin' ? { unverifiedProvenance: true as const } : {}),
         };
         const bundleHash = await this.deps.bundleStore.write(profileId, bundle);
         input.bundleHash = bundleHash;
@@ -214,6 +243,12 @@ export class ArtifactFreezeService {
     }));
     return Object.fromEntries(entries);
   }
+}
+
+function settingsOf(value: unknown): unknown {
+  return value && typeof value === 'object' && 'settings' in value
+    ? (value as { settings?: unknown }).settings ?? {}
+    : {};
 }
 
 export function sha256(value: string): string {

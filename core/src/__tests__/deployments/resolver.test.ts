@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AbiParameter } from 'viem';
+import { encodeFunctionData, type AbiParameter } from 'viem';
 import type { DeploymentPlan, DeployStep } from '@ignite/api';
 import {
   argKeysForAbi,
@@ -71,6 +71,25 @@ describe('deployment resolver', () => {
     catch (error) { expect(error).toMatchObject({ code: 'ARG_TYPE_MISMATCH' }); }
   });
 
+  it('encodes frozen initializer calls and records nested pointer provenance', () => {
+    const fn = { type: 'function' as const, name: 'initialize', stateMutability: 'nonpayable' as const, inputs: [{ name: 'owner', type: 'address' as const }, { name: 'supply', type: 'uint256' as const }], outputs: [] };
+    const step = deployStep({ args: { data: { $encode: { contractId: 'impl', fn: 'initialize(address,uint256)', args: { owner: { $ref: { kind: 'step', stepId: 'owner' } }, supply: '7' } } } } });
+    const values = resolveStepValues(step, 1, () => address, [{ name: 'data', type: 'bytes' }], { contracts: [{ id: 'impl', repoPathOrUrl: '/r', frameworkId: 'f', artifactPath: 'a', contractName: 'Impl', sourcePath: 'I.sol' }], frozen: { impl: { abi: [fn], creationBytecode: '0x00', compiler: { pluginId: 'f', version: '1', settingsHash: 'a'.repeat(64) }, artifactHash: 'a'.repeat(64), repoDirty: false } } });
+    expect(values.args.data).toBe(encodeFunctionData({ abi: [fn], functionName: 'initialize', args: [address, 7n] }));
+    expect(values.pointers).toEqual({ 'args.data.$encode.owner': address });
+  });
+
+  it('replaces a per-chain $encode wrapper wholesale and rejects invalid encode markers', () => {
+    const fn = { type: 'function' as const, name: 'initialize', stateMutability: 'nonpayable' as const, inputs: [], outputs: [] };
+    const context = { contracts: [{ id: 'impl', repoPathOrUrl: '/r', frameworkId: 'f', artifactPath: 'a', contractName: 'Impl', sourcePath: 'I.sol' }], frozen: { impl: { abi: [fn], creationBytecode: '0x00', compiler: { pluginId: 'f', version: '1', settingsHash: 'a'.repeat(64) }, artifactHash: 'a'.repeat(64), repoDirty: false } } };
+    const step = deployStep({ args: { data: { $encode: { contractId: 'impl', fn: 'initialize()' } } }, argsPerChain: { '1': { data: '0x' } } });
+    expect(resolveStepValues(step, 1, () => address, [{ name: 'data', type: 'bytes' }], context).args.data).toBe('0x');
+    expect(() => resolveStepValues(deployStep({ args: { data: { $encode: { contractId: 'impl' } } } }), 1, () => address, [{ name: 'data', type: 'bytes' }], context)).toThrow(/malformed/);
+    expect(() => resolveStepValues(deployStep({ args: { amount: { $encode: { contractId: 'impl', fn: 'initialize()' } } } }), 1, () => address, [{ name: 'amount', type: 'uint256' }], context)).toThrow(/only valid for bytes/);
+    expect(() => resolveStepValues(deployStep({ args: { data: { $encode: { contractId: 'impl', fn: 'missing()' } } } }), 1, () => address, [{ name: 'data', type: 'bytes' }], context)).toThrow(/not in the frozen ABI/);
+    expect(() => resolveStepValues(deployStep({ args: { data: { $encode: { contractId: 'impl', fn: 'initialize()', args: { nested: { $encode: { contractId: 'impl', fn: 'initialize()' } } } } } } }), 1, () => address, [{ name: 'data', type: 'bytes' }], context)).toThrow(/Nested/);
+  });
+
   it('rejects mutual create2 prediction cycles', () => {
     const plan: DeploymentPlan = { schemaVersion: 1, contracts: [], chains: [1], signers: {}, steps: [
       { id: 'a', kind: 'deploy', contractId: 'a', strategy: { kind: 'create2', salt: `0x${'01'.repeat(32)}` }, args: { owner: { $ref: { kind: 'step', stepId: 'b' } } } },
@@ -105,6 +124,21 @@ describe('call-arg and per-chain dependency validation', () => {
       ],
     };
     expect(() => validateDependencies(plan)).toThrowError(/references later create step/);
+  });
+
+  it('orders $encode-nested refs exactly like ordinary refs', () => {
+    const encode = { $encode: { contractId: 'c', fn: 'initialize(address)', args: { owner: { $ref: { kind: 'step' as const, stepId: 'late' } } } } };
+    expect(() => validateDependencies({ ...base, steps: [
+      { id: 'wrapper', kind: 'deploy' as const, contractId: 'c', args: { data: encode } },
+      { id: 'late', kind: 'deploy' as const, contractId: 'c' },
+    ] })).toThrow(/later create step/);
+    const dynamic = { ...base, steps: [
+      { id: 'impl', kind: 'deploy' as const, contractId: 'c' },
+      { id: 'wrapper', kind: 'deploy' as const, contractId: 'c', strategy: { kind: 'create2' as const, salt: `0x${'77'.repeat(32)}` as `0x${string}` }, args: {
+        data: { $encode: { contractId: 'c', fn: 'initialize(address)', args: { owner: { $ref: { kind: 'step' as const, stepId: 'impl' } } } } },
+      } },
+    ] };
+    expect(dynamicDeterministicStepIds(dynamic, 1)).toEqual(new Set(['wrapper']));
   });
 
   it('catches refs that only exist in a non-first chain override', () => {

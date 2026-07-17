@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { keccak256 } from 'viem';
+import { encodeFunctionResult, getContractAddress, keccak256 } from 'viem';
 import type {
   DeploymentPlan,
   DeployStep,
@@ -1321,6 +1321,50 @@ describe('final-review regressions', () => {
     await fs.rm(home, { recursive: true, force: true });
   });
 
+  function transparentCapturePlan(): DeploymentPlan {
+    return { schemaVersion: 1, chains: [1], signers: { global: { pluginId: 'p', accountId: 'a', address: ADDRESS } }, contracts: [
+      { id: 'implementation', repoPathOrUrl: 'repo', frameworkId: 'f', artifactPath: 'impl', contractName: 'Implementation', sourcePath: 'Implementation.sol' },
+      { id: 'proxy', origin: 'contract-type', contractName: 'TransparentUpgradeableProxy', pluginId: 'transparent', artifactKey: 'proxy', versionLabel: 'v1', contentHash: 'a'.repeat(64) },
+    ] as any, steps: [
+      { id: 'implementation', kind: 'deploy', contractId: 'implementation' },
+      { id: 'proxy', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'implementation', contractTypePluginId: 'transparent' }, args: { implementation: { $ref: { kind: 'step', stepId: 'implementation' } }, initialOwner: ADDRESS, _data: '0x' } },
+    ] };
+  }
+
+  function transparentCaptureValidation(plan: DeploymentPlan) {
+    const result = validated(plan) as any;
+    result.frozen.proxy.abi = [{ type: 'constructor', inputs: [{ name: 'implementation', type: 'address' }, { name: 'initialOwner', type: 'address' }, { name: '_data', type: 'bytes' }] }];
+    result.contractTypes = { transparent: { pluginId: 'transparent', versionLabel: 'v1', contentHash: 'b'.repeat(64), descriptor: {
+      label: 'Transparent', description: 'test', versionLabel: 'v1', params: [{ key: 'initialOwner', label: 'Initial owner', type: 'address', required: true }], artifacts: ['proxy', 'admin'],
+      synthesis: { artifact: 'proxy', constructorArgs: [{ name: 'implementation', from: 'implementation' }, { name: 'initialOwner', from: 'param', param: 'initialOwner' }, { name: '_data', from: 'initializer' }] }, validation: {},
+      capture: [{ slot: `0x${'36'.repeat(32)}`, expect: 'implementation-address' }, { slot: `0x${'b5'.repeat(32)}`, record: 'admin', derivedCreate: { nonce: 1 }, expectCodeOf: 'admin', verifyAs: 'admin', constructorArgs: ['initialOwner'], assertCalls: [{ call: 'owner()', on: 'admin', expectParam: 'initialOwner' }] }],
+    }, artifacts: {
+      proxy: { abi: [], creationBytecode: '0x6000', runtimeBytecode: '0x6001', solcVersion: '0.8.29', standardJsonInput: { language: 'Solidity', sources: { 'Proxy.sol': { content: 'contract Proxy {}' } }, settings: {} }, sourceIdentifier: 'Proxy.sol:Proxy' },
+      admin: { abi: [{ type: 'constructor', inputs: [{ name: 'initialOwner', type: 'address' }] }, { type: 'function', name: 'owner', inputs: [], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' }], creationBytecode: '0x6000', runtimeBytecode: '0x6001', solcVersion: '0.8.29', standardJsonInput: { language: 'Solidity', sources: { 'Admin.sol': { content: 'contract Admin {}' } }, settings: {} }, sourceIdentifier: 'Admin.sol:Admin' },
+    } } };
+    return result;
+  }
+
+  function makeCaptureEngine(deps: Partial<DeployEngineDeps>) {
+    const store = new RunStore({ baseDir: home });
+    const engine = new DeployEngine({
+      runStore: store, validate: async (plan) => transparentCaptureValidation(plan),
+      resolveRpcUrl: async () => ({ url: 'http://rpc.local', fingerprint: HASH }),
+      verifyRpc: async () => ({ ok: true, chainIdMatch: true, checkedAt: new Date().toISOString() }),
+      resolveAccount: async () => ({ account: { id: 'a', address: ADDRESS, capability: 'sign-only' } }),
+      chainMetadata: async () => ({ name: 'Anvil', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } }),
+      executeTx: async (args) => { await args.onPhase?.('broadcasting', { tx: { nonce: 1 }, rawTx: RAW_TX, txHash: TX_HASH }); return { txHash: TX_HASH, ...RECEIPT }; },
+      writeArtifact: async () => undefined, getReceipt: async () => undefined,
+      getTxForProvenance: async () => ({ from: ADDRESS, to: null, input: '0x6000', value: 0n }), getCode: async () => '0x',
+      getStorageAt: async () => `0x${'0'.repeat(64)}` as `0x${string}`, call: async () => '0x', rebroadcast: async () => TX_HASH,
+      ...deps,
+    });
+    return { engine, store };
+  }
+  async function launchCapture(engine: DeployEngine, plan: DeploymentPlan) {
+    return engine.launch({ profileId: 'p1', plan, rpcSelection: { '1': 'rpc' }, idempotencyKey: crypto.randomUUID() });
+  }
+
   it('F6: a failure-skipped step never resolves pointers via its prediction', async () => {
     const store = new RunStore({ baseDir: home });
     const plan = makePlan({
@@ -1431,5 +1475,67 @@ describe('final-review regressions', () => {
     } finally {
       await engine.shutdown();
     }
+  });
+
+  it('captures transparent admin provenance, code, and owner into the persisted lane and events', async () => {
+    const plan = transparentCapturePlan();
+    const proxy = RECEIPT.contractAddress;
+    const admin = getContractAddress({ from: proxy, nonce: 1n });
+    const word = (address: string) => `0x${'0'.repeat(24)}${address.slice(2)}` as `0x${string}`;
+    const events: RunEvent[] = [];
+    const harness = makeCaptureEngine({
+      validate: async (candidate) => transparentCaptureValidation(candidate),
+      getStorageAt: async (_url, _address, slot) => slot === `0x${'36'.repeat(32)}` ? word(proxy) : word(admin),
+      getCode: async (_url, address) => address.toLowerCase() === admin.toLowerCase() ? '0x6001' : '0x',
+      call: async () => encodeFunctionResult({ abi: [{ type: 'function', name: 'owner', inputs: [], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' }], functionName: 'owner', result: ADDRESS }),
+    });
+    const stop = harness.engine.subscribe((_runId, event) => events.push(event));
+    const run = await launchCapture(harness.engine, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.status === 'completed', 'capture completed');
+    stop();
+    const current = (await harness.engine.get('p1', run.id))!;
+    expect(current.lanes['1'].steps[1]).toMatchObject({ status: 'confirmed', captured: { admin } });
+    expect(JSON.stringify(events)).toContain(admin);
+  });
+
+  it.each([
+    ['implementation-address', (proxy: `0x${string}`) => `0x${'0'.repeat(24)}${ADDRESS.slice(2)}` as `0x${string}`],
+    ['derivedCreate', (_proxy: `0x${string}`) => `0x${'0'.repeat(24)}${ADDRESS.slice(2)}` as `0x${string}`],
+  ])('pauses capture mismatches for %s as needs-review', async (assertion, storage) => {
+    const plan = transparentCapturePlan();
+    const proxy = RECEIPT.contractAddress;
+    const admin = getContractAddress({ from: proxy, nonce: 1n });
+    const word = (address: string) => `0x${'0'.repeat(24)}${address.slice(2)}` as `0x${string}`;
+    const harness = makeCaptureEngine({
+      validate: async (candidate) => transparentCaptureValidation(candidate),
+      getStorageAt: async (_url, _address, slot) => assertion === 'implementation-address' && slot === `0x${'36'.repeat(32)}` ? storage(proxy) : assertion === 'derivedCreate' && slot !== `0x${'36'.repeat(32)}` ? storage(proxy) : word(assertion === 'implementation-address' ? admin : proxy),
+      getCode: async () => '0x6001',
+      call: async () => encodeFunctionResult({ abi: [{ type: 'function', name: 'owner', inputs: [], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' }], functionName: 'owner', result: ADDRESS }),
+    });
+    const run = await launchCapture(harness.engine, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'needs-review', 'capture mismatch paused');
+    expect((await harness.engine.get('p1', run.id))!.lanes['1'].pause).toMatchObject({ details: { assertion } });
+  });
+
+  it('retries capture reads after an RPC pause when resumed', async () => {
+    const plan = transparentCapturePlan();
+    const proxy = RECEIPT.contractAddress;
+    const admin = getContractAddress({ from: proxy, nonce: 1n });
+    const word = (address: string) => `0x${'0'.repeat(24)}${address.slice(2)}` as `0x${string}`;
+    let fail = true; let reads = 0;
+    const harness = makeCaptureEngine({
+      validate: async (candidate) => transparentCaptureValidation(candidate),
+      getStorageAt: async (_url, _address, slot) => { reads += 1; if (fail) throw new Error('temporary RPC outage'); return slot === `0x${'36'.repeat(32)}` ? word(proxy) : word(admin); },
+      getCode: async () => '0x6001',
+      call: async () => encodeFunctionResult({ abi: [{ type: 'function', name: 'owner', inputs: [], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' }], functionName: 'owner', result: ADDRESS }),
+      getReceipt: async () => RECEIPT,
+    });
+    const run = await launchCapture(harness.engine, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'rpc', 'capture RPC paused');
+    fail = false;
+    await harness.engine.resume('p1', run.id);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.status === 'completed', 'capture retry completed');
+    expect(reads).toBeGreaterThan(2);
+    expect((await harness.engine.get('p1', run.id))!.lanes['1'].steps[1].captured).toEqual({ admin });
   });
 });

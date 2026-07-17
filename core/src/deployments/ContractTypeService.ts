@@ -5,12 +5,13 @@ import {
   type NormalizedContractTypeDescriptor,
   type ParsedContractArtifact,
 } from '@ignite/api';
-import { parseAbiItem, toFunctionSignature } from 'viem';
+import { parseAbiItem, parseAbiParameters, toFunctionSignature } from 'viem';
 import { PluginType, type PluginResponse } from '@ignite/plugin-types/types';
 import { PluginRegistryLoader, type PluginConfig } from '../assets/PluginRegistryLoader.js';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
 import { TrustManager } from '../plugins/trust/TrustManager.js';
 import { IgniteError } from '../types/errors.js';
+import { getLogger } from '../utils/logger.js';
 import { sanitizePluginString } from '../verifications/sanitize.js';
 
 const HEX = /^0x(?:[0-9a-fA-F]{2})*$/;
@@ -101,12 +102,24 @@ export class ContractTypeService {
 
   private async describeAll(): Promise<ContractTypeInfo[]> {
     const providers = await this.deps.getProviders();
-    return Promise.all(providers.map(async (provider) => ({ pluginId: provider.metadata.id, ...this.parseDescribe(await this.execute(provider.metadata.id, 'describeContractType', {}, 'none')) })));
+    // One hostile or broken provider must not poison the whole cached list
+    // (and with it the wizard dropdown) — isolate failures per plugin.
+    const settled = await Promise.allSettled(providers.map(async (provider) => ({ pluginId: provider.metadata.id, ...this.parseDescribe(await this.execute(provider.metadata.id, 'describeContractType', {}, 'none')) })));
+    return settled.flatMap((entry, index) => {
+      if (entry.status === 'fulfilled') return [entry.value];
+      getLogger().warn(`contract-type describe failed for ${providers[index]?.metadata.id}: ${entry.reason instanceof Error ? entry.reason.message : String(entry.reason)}`);
+      return [];
+    });
   }
   private async getInfo(pluginId: string): Promise<ContractTypeInfo> {
     const entry = (await this.list()).find((item) => item.pluginId === pluginId);
-    if (!entry) throw new IgniteError(`Contract-type plugin ${pluginId} is not installed`, 'PLUGIN_NOT_FOUND');
-    return entry;
+    if (entry) return entry;
+    // list() drops providers whose describe failed so one broken plugin
+    // cannot poison the dropdown; a direct lookup should still surface that
+    // plugin's actual parse error rather than a generic not-installed.
+    const provider = (await this.deps.getProviders()).find((item) => item.metadata.id === pluginId);
+    if (!provider) throw new IgniteError(`Contract-type plugin ${pluginId} is not installed`, 'PLUGIN_NOT_FOUND');
+    return { pluginId, ...this.parseDescribe(await this.execute(pluginId, 'describeContractType', {}, 'none')) };
   }
   private async assertBytecodeGrant(pluginId: string): Promise<void> {
     if ((await this.deps.getGrant(pluginId)).contractBytecode !== true) {
@@ -200,6 +213,7 @@ export class ContractTypeService {
   }
   private validateDescriptor(descriptor: ContractTypeInfo, artifacts: Record<string, ParsedContractArtifact>): void {
     const artifactKeys = new Set(descriptor.artifacts); const params = new Map(descriptor.params.map((param) => [param.key, param]));
+    for (const key of descriptor.artifacts) this.validateAbiShape(artifacts[key]);
     if (descriptor.synthesis) {
       if (!artifactKeys.has(descriptor.synthesis.artifact)) this.failed('synthesis references an unknown artifact');
       const constructor = this.constructorInputs(artifacts[descriptor.synthesis.artifact]);
@@ -212,11 +226,63 @@ export class ContractTypeService {
         if (arg.from === 'param') { const param = params.get(arg.param); if (!param || !matchesParamType(param.type, input.type)) this.failed('parameter synthesis argument does not match artifact ABI'); }
       }
     }
+    const recorded = new Set(descriptor.capture.flatMap((capture) => capture.record ? [capture.record] : []));
     for (const capture of descriptor.capture) {
       for (const artifact of [capture.record, capture.expectCodeOf, capture.verifyAs]) if (artifact !== undefined && !artifactKeys.has(artifact)) this.failed('capture references an unknown artifact');
-      for (const parameter of capture.constructorArgs ?? []) if (!params.has(parameter)) this.failed('capture references an unknown parameter');
-      for (const assertion of capture.assertCalls ?? []) { if (!artifactKeys.has(assertion.on) || !params.has(assertion.expectParam)) this.failed('capture assertion references an unknown artifact or parameter'); }
+      // verifyAs/assertCalls act on a captured ADDRESS, so the referenced key
+      // must actually be recorded by some capture, not merely exist as an
+      // artifact — otherwise the failure only shows up after deployment.
+      if (capture.verifyAs !== undefined && !recorded.has(capture.verifyAs)) this.failed('capture verifyAs must reference a recorded capture');
+      const verifyArtifact = capture.verifyAs === undefined ? undefined : artifacts[capture.verifyAs];
+      const verifyInputs = verifyArtifact === undefined ? undefined : this.constructorInputs(verifyArtifact);
+      const constructorArgs = capture.constructorArgs ?? [];
+      if (verifyInputs && constructorArgs.length !== verifyInputs.length) this.failed('capture constructorArgs do not match the verifyAs constructor ABI');
+      constructorArgs.forEach((parameter, index) => {
+        const param = params.get(parameter);
+        if (!param) this.failed('capture references an unknown parameter');
+        if (verifyInputs && !matchesParamType(param!.type, verifyInputs[index]!.type)) this.failed('capture constructorArgs do not match the verifyAs constructor ABI');
+      });
+      for (const assertion of capture.assertCalls ?? []) {
+        if (!recorded.has(assertion.on) || !params.has(assertion.expectParam)) this.failed('capture assertion references an unrecorded artifact or unknown parameter');
+        const fn = this.zeroArgFunction(artifacts[assertion.on], assertion.call);
+        if (!fn) this.failed('capture assertion function is not a zero-argument function of the target artifact');
+        if (!matchesParamType(params.get(assertion.expectParam)!.type, fn!.outputs[0]?.type ?? '')) this.failed('capture assertion return type does not match the expected parameter');
+      }
     }
+  }
+  private validateAbiShape(artifact: ParsedContractArtifact | undefined): void {
+    if (!artifact) this.failed('descriptor references a missing artifact');
+    for (const entry of artifact!.abi as unknown[]) {
+      if (!isRecord(entry) || typeof entry.type !== 'string') this.failed('artifact ABI entry is invalid');
+      if (entry.type !== 'function' && entry.type !== 'constructor') continue;
+      for (const side of ['inputs', 'outputs'] as const) {
+        if (entry[side] === undefined) continue;
+        if (!Array.isArray(entry[side])) this.failed('artifact ABI entry is invalid');
+        for (const parameter of entry[side] as unknown[]) this.validateAbiParameter(parameter);
+      }
+    }
+  }
+  private validateAbiParameter(parameter: unknown): void {
+    if (!isRecord(parameter) || typeof parameter.type !== 'string') this.failed('artifact ABI parameter is invalid');
+    const record = parameter as Record<string, unknown>;
+    const type = record.type as string;
+    if (/^tuple(\[\d*\])*$/.test(type)) {
+      if (!Array.isArray(record.components)) this.failed('artifact ABI parameter is invalid');
+      for (const component of record.components as unknown[]) this.validateAbiParameter(component);
+      return;
+    }
+    // Leaf types must be real ABI types so later viem encode/decode calls
+    // cannot be crashed by hostile strings like uint7.
+    try { parseAbiParameters(type); } catch { this.failed('artifact ABI parameter is invalid'); }
+  }
+  private zeroArgFunction(artifact: ParsedContractArtifact | undefined, call: string): { outputs: Array<{ type: string }> } | undefined {
+    if (!artifact) return undefined;
+    const entry = (artifact.abi as unknown[]).find((item) => {
+      if (!isRecord(item) || item.type !== 'function') return false;
+      try { return toFunctionSignature(item as never) === call; } catch { return false; }
+    }) as Record<string, unknown> | undefined;
+    if (!entry || (Array.isArray(entry.inputs) && entry.inputs.length > 0) || !Array.isArray(entry.outputs) || entry.outputs.length !== 1) return undefined;
+    return entry as never;
   }
   private constructorInputs(artifact: ParsedContractArtifact): Array<{ name: string; type: string }> {
     const entry = (artifact.abi as unknown[]).find((item) => isRecord(item) && item.type === 'constructor') as Record<string, unknown> | undefined;

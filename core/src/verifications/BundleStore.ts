@@ -17,6 +17,10 @@ export interface VerificationBundle extends VerificationBundleData {
     runs: number;
     viaIR: boolean;
   };
+  // Bundles supplied by installed contract-type plugins have not been
+  // independently reproduced. Phase F requires an explicit confirmation
+  // before they are submitted to an explorer.
+  unverifiedProvenance?: true;
 }
 
 export class BundleStore {

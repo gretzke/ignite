@@ -53,6 +53,7 @@ function makeCtx(): JobContext {
 describe('install API handlers', () => {
   let app: FastifyInstance;
   let fakeJobs: ReturnType<typeof makeFakeJobs>;
+  let invalidations: { deployment: ReturnType<typeof vi.fn>; contract: ReturnType<typeof vi.fn> };
   const installer = {
     install: vi.fn(async () => waffleMeta),
     update: vi.fn(async () => ({ plugin: waffleMeta, newPermissions: [] })),
@@ -62,10 +63,11 @@ describe('install API handlers', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     fakeJobs = makeFakeJobs();
+    invalidations = { deployment: vi.fn(), contract: vi.fn() };
     const handlers = createInstallHandlers(
       installer,
       { allowLocalSource: () => true },
-      { jobs: fakeJobs }
+      { jobs: fakeJobs, resweepRepos: async () => undefined, invalidateDeploymentTypes: invalidations.deployment, invalidateDeploymentHooks: vi.fn(), invalidateContractTypes: invalidations.contract }
     );
     app = fastify();
     app.post('/api/v1/plugins/install', handlers.installPlugin);
@@ -98,6 +100,8 @@ describe('install API handlers', () => {
       kind: 'local',
       contextDir: '/src/waffle',
     });
+    expect(invalidations.deployment).toHaveBeenCalledOnce();
+    expect(invalidations.contract).toHaveBeenCalledOnce();
   });
 
   it('propagates a plugin-install conflict as a job failure, not a sync 400', async () => {
@@ -172,6 +176,8 @@ describe('install API handlers', () => {
     const result = await runner(makeCtx());
     expect(result).toEqual({ plugin: waffleMeta, newPermissions: [] });
     expect(installer.update).toHaveBeenCalledWith('waffle', undefined);
+    expect(invalidations.deployment).toHaveBeenCalledOnce();
+    expect(invalidations.contract).toHaveBeenCalledOnce();
 
     const withSource = await app.inject({
       method: 'POST',
@@ -221,5 +227,7 @@ describe('install API handlers', () => {
     });
     expect(res.statusCode).toBe(204);
     expect(installer.uninstall).toHaveBeenCalledWith('waffle');
+    expect(invalidations.deployment).toHaveBeenCalledOnce();
+    expect(invalidations.contract).toHaveBeenCalledOnce();
   });
 });

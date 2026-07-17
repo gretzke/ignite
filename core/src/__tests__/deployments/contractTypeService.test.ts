@@ -30,6 +30,10 @@ describe('ContractTypeService', () => {
     ['capture artifact reference', descriptor({ capture: [{ slot: `0x${'11'.repeat(32)}`, expectCodeOf: 'missing' }] }), artifact()],
     ['oversized capture list', descriptor({ capture: Array.from({ length: 9 }, () => ({ slot: `0x${'11'.repeat(32)}` })) }), artifact()],
     ['bad parameter shape', descriptor({ params: [{ key: 'owner', label: 'Owner', type: 'wat' }] }), artifact()],
+    ['assertCalls target has no recorded capture', descriptor({ params: [{ key: 'owner', label: 'Owner', type: 'address' }], capture: [{ slot: `0x${'11'.repeat(32)}`, assertCalls: [{ call: 'owner()', on: 'proxy', expectParam: 'owner' }] }] }), artifact()],
+    ['verifyAs has no recorded capture', descriptor({ capture: [{ slot: `0x${'11'.repeat(32)}`, verifyAs: 'proxy' }] }), artifact()],
+    ['verify constructor arg count differs', descriptor({ capture: [{ slot: `0x${'11'.repeat(32)}`, record: 'proxy', verifyAs: 'proxy', constructorArgs: [] }] }), artifact()],
+    ['hostile ABI leaf type', descriptor(), artifact([{ name: 'implementation', type: 'uint7' }, { name: '_data', type: 'bytes' }])],
   ])('rejects %s', async (_label, raw, artifactRaw) => {
     const { service: subject } = service(raw, artifactRaw);
     await expect(subject.frozenDescriptor('proxy')).rejects.toMatchObject({ code: 'CONTRACT_TYPE_OP_FAILED' });
@@ -52,5 +56,19 @@ describe('ContractTypeService', () => {
     const { service: subject, execute } = service(descriptor(), artifact(), false);
     await expect(subject.getArtifact('proxy', 'proxy')).rejects.toMatchObject({ code: 'CONTRACT_BYTECODE_NOT_GRANTED' });
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-zero-argument assertCall target ABI', async () => {
+    const raw = descriptor({ params: [{ key: 'owner', label: 'Owner', type: 'address' }], capture: [{ slot: `0x${'11'.repeat(32)}`, record: 'proxy', assertCalls: [{ call: 'owner(address)', on: 'proxy', expectParam: 'owner' }] }] });
+    const withOwner = { ...artifact(), abi: [...artifact().abi, { type: 'function', name: 'owner', inputs: [{ name: 'who', type: 'address' }], outputs: [{ name: '', type: 'address' }] }] };
+    await expect(service(raw, withOwner).service.frozenDescriptor('proxy')).rejects.toMatchObject({ code: 'CONTRACT_TYPE_OP_FAILED' });
+  });
+
+  it('keeps valid providers listed when another provider returns malformed describe data', async () => {
+    const bad = { ...config, metadata: { ...config.metadata, id: 'broken' } };
+    const execute = vi.fn(async (id: string, operation: string) => ({ success: true as const, data: operation === 'describeContractType' ? id === 'broken' ? { nope: true } : descriptor() : artifact() }));
+    const subject = new ContractTypeService({ getProviders: async () => [config, bad], execute, getGrant: async () => ({ contractBytecode: true }) });
+    await expect(subject.list()).resolves.toMatchObject([{ pluginId: 'proxy' }]);
+    await expect(subject.frozenDescriptor('broken')).rejects.toMatchObject({ code: 'CONTRACT_TYPE_OP_FAILED' });
   });
 });

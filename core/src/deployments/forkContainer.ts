@@ -13,7 +13,7 @@ const MAX_FORKS = 2;
 let inUse = 0;
 
 export interface ForkRunner {
-  run(schedule: ScheduleEntry[]): Promise<
+  run(schedule: ScheduleEntry[], probes?: Array<{ stepId: string; data: Hex }>): Promise<
     Record<
       string,
       {
@@ -22,7 +22,7 @@ export interface ForkRunner {
         reason?: string;
         createdAddress?: Hex;
       }
-    >
+    > & { probes?: Record<string, Hex> }
   >;
 }
 
@@ -123,7 +123,7 @@ export async function makeForkRunner(
     await waitForRpc(url);
     const owned = container;
     return {
-      async run(schedule) {
+      async run(schedule, probes) {
         const client = createPublicClient({ transport: http(url) });
         const deadline = Date.now() + 120_000;
         const receipts: Record<
@@ -179,7 +179,14 @@ export async function makeForkRunner(
                 : {}),
             };
           }
-          return receipts;
+          const probeResults: Record<string, Hex> = {};
+          for (const probe of probes ?? []) {
+            const entry = schedule.find((item) => item.stepId === probe.stepId);
+            const to = entry?.address ?? entry?.predictedAddress;
+            if (!to) throw new Error(`Probe target ${probe.stepId} has no simulated address`);
+            probeResults[probe.stepId] = (await client.call({ to, data: probe.data })).data ?? '0x';
+          }
+          return Object.assign(receipts, Object.keys(probeResults).length ? { probes: probeResults } : {});
         } finally {
           try {
             await owned.stop({ t: 1 });

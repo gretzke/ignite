@@ -59,6 +59,9 @@ export const RESERVED_OPERATIONS: readonly string[] = [
   'getAccounts', 'signTransaction', 'sendTransaction',
   'getSupportedExplorers', 'verify', 'checkVerification', 'getCreationTx',
   'onRunCompleted', 'suggestAddresses',
+  // Contract-type artifact serving must flow through ContractTypeService's
+  // grant gate, never generic dispatch.
+  'describeContractType', 'getContractArtifact',
 ];
 
 export const pluginOperationRoutes = {

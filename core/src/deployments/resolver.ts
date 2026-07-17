@@ -1,18 +1,19 @@
 // Canonical deployment-plan resolution. Validation and execution share these
 // rules so a per-chain preview cannot diverge from the transaction submitted.
-import { isAddress, parseAbiItem, toFunctionSignature, type AbiFunction, type AbiParameter } from 'viem';
+import { encodeFunctionData, isAddress, parseAbiItem, toFunctionSignature, type AbiFunction, type AbiParameter } from 'viem';
 import type {
   ArgValues,
   CallStep,
   DeploymentPlan,
   DeployStep,
   GasOverrides,
+  FrozenInputs,
   SignerRef,
   Step,
   Hex,
   LibraryBinding,
 } from '@ignite/api';
-import { isValueRef } from '@ignite/api';
+import { EncodedCallValueSchema, isValueRef } from '@ignite/api';
 import { ErrorCodes, IgniteError } from '../types/errors.js';
 
 export function argKeysForAbi(abiInputs: { name?: string }[]): string[] {
@@ -68,7 +69,12 @@ export function collectRefs(step: Step, chainId: number): Array<{ path: string; 
   return refs;
 }
 
-export function resolveStepValues(step: Step, chainId: number, resolveRef: (stepId: string) => Hex, abiInputs: readonly AbiParameter[] = []): { args: ArgValues; target?: Hex; libraries?: Record<string, Hex>; pointers: Record<string, Hex> } {
+export interface ResolveStepContext {
+  frozen?: FrozenInputs;
+  contracts?: DeploymentPlan['contracts'];
+}
+
+export function resolveStepValues(step: Step, chainId: number, resolveRef: (stepId: string) => Hex, abiInputs: readonly AbiParameter[] = [], context: ResolveStepContext = {}): { args: ArgValues; target?: Hex; libraries?: Record<string, Hex>; pointers: Record<string, Hex> } {
   const pointers: Record<string, Hex> = {};
   const resolve = (stepId: string, path: string): Hex => {
     try { const address = resolveRef(stepId); if (!address) throw new Error('missing'); pointers[path] = address; return address; }
@@ -80,7 +86,7 @@ export function resolveStepValues(step: Step, chainId: number, resolveRef: (step
     const parameter = abiInputs[index]; const key = parameter.name || `arg${index}`;
     // Pointer paths use the same `args.`-rooted vocabulary as collectRefs so
     // Attempt.expected.pointers and artifact rendering line up exactly.
-    if (Object.prototype.hasOwnProperty.call(merged, key)) args[key] = resolveAbiRefs(parameter, merged[key], `args.${key}`, resolve);
+    if (Object.prototype.hasOwnProperty.call(merged, key)) args[key] = resolveAbiRefs(parameter, merged[key], `args.${key}`, resolve, context);
   }
   // Without ABI inputs, retain data for callers that only need target/library resolution.
   if (abiInputs.length === 0) Object.assign(args, merged);
@@ -96,19 +102,54 @@ export function resolveStepValues(step: Step, chainId: number, resolveRef: (step
   return result;
 }
 
-function resolveAbiRefs(parameter: AbiParameter, value: unknown, path: string, resolve: (stepId: string, path: string) => Hex): unknown {
+function resolveAbiRefs(parameter: AbiParameter, value: unknown, path: string, resolve: (stepId: string, path: string) => Hex, context: ResolveStepContext): unknown {
+  // $encode is intentionally detected by ownership, not by its type guard:
+  // a malformed marker must never fall through as a tuple/object value.
+  if (ownsEncode(value)) {
+    const parsed = EncodedCallValueSchema.safeParse(value);
+    if (!parsed.success) throw new IgniteError(`Encoded call at ${path} is malformed`, 'ENCODED_CALL_INVALID', { field: path });
+    if (parameter.type !== 'bytes') throw new IgniteError(`Encoded call at ${path} is only valid for bytes ABI inputs`, 'ENCODED_CALL_NON_BYTES', { field: path });
+    if (containsEncode(parsed.data.$encode.args)) throw new IgniteError(`Nested $encode is not supported at ${path}`, 'ENCODED_CALL_NESTED', { field: path });
+    const contract = context.contracts?.find((candidate) => candidate.id === parsed.data.$encode.contractId);
+    const abi = context.frozen?.[parsed.data.$encode.contractId]?.abi;
+    if (!contract || !Array.isArray(abi)) throw new IgniteError(`Encoded call contract ${parsed.data.$encode.contractId} is not frozen`, 'ENCODED_CALL_CONTRACT_NOT_FOUND', { contractId: parsed.data.$encode.contractId, field: path });
+    const fn = abi.find((entry): entry is AbiFunction => {
+      if (!entry || typeof entry !== 'object' || (entry as { type?: string }).type !== 'function') return false;
+      try { return toFunctionSignature(entry as AbiFunction) === parsed.data.$encode.fn; } catch { return false; }
+    });
+    if (!fn) throw new IgniteError(`Encoded call function ${parsed.data.$encode.fn} is not in the frozen ABI`, 'ENCODED_CALL_FUNCTION_NOT_FOUND', { contractId: contract.id, fn: parsed.data.$encode.fn, field: path });
+    const rawArgs = parsed.data.$encode.args ?? {};
+    const resolvedArgs: ArgValues = {};
+    for (let index = 0; index < fn.inputs.length; index += 1) {
+      const input = fn.inputs[index]!;
+      const key = input.name || `arg${index}`;
+      if (Object.prototype.hasOwnProperty.call(rawArgs, key))
+        resolvedArgs[key] = resolveAbiRefs(input, rawArgs[key], `${path}.$encode.${key}`, resolve, context);
+    }
+    return encodeFunctionData({ abi: [fn], functionName: fn.name, args: toConstructorArgs(fn.inputs, resolvedArgs) as never });
+  }
   if (isValueRef(value)) {
     if (parameter.type !== 'address') throw new IgniteError(`Pointer at ${path} is only valid for address ABI inputs`, ErrorCodes.ARG_TYPE_MISMATCH, { field: path });
     return resolve(value.$ref.stepId, path);
   }
   const array = parameter.type.match(/^(.*)\[([0-9]*)\]$/);
-  if (array && Array.isArray(value)) return value.map((item, index) => resolveAbiRefs({ ...parameter, type: array[1] }, item, `${path}[${index}]`, resolve));
+  if (array && Array.isArray(value)) return value.map((item, index) => resolveAbiRefs({ ...parameter, type: array[1] }, item, `${path}[${index}]`, resolve, context));
   if (parameter.type === 'tuple' && value && typeof value === 'object') {
     const components = 'components' in parameter ? parameter.components ?? [] : [];
-    if (Array.isArray(value)) return value.map((item, index) => resolveAbiRefs(components[index]!, item, `${path}.${components[index]?.name || `arg${index}`}`, resolve));
-    return Object.fromEntries(components.map((component, index) => { const key = component.name || `arg${index}`; return [key, resolveAbiRefs(component, (value as Record<string, unknown>)[key], `${path}.${key}`, resolve)]; }));
+    if (Array.isArray(value)) return value.map((item, index) => resolveAbiRefs(components[index]!, item, `${path}.${components[index]?.name || `arg${index}`}`, resolve, context));
+    return Object.fromEntries(components.map((component, index) => { const key = component.name || `arg${index}`; return [key, resolveAbiRefs(component, (value as Record<string, unknown>)[key], `${path}.${key}`, resolve, context)]; }));
   }
   return value;
+}
+
+function ownsEncode(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, '$encode'));
+}
+
+function containsEncode(value: unknown): boolean {
+  if (ownsEncode(value)) return true;
+  if (Array.isArray(value)) return value.some(containsEncode);
+  return Boolean(value && typeof value === 'object' && Object.values(value as Record<string, unknown>).some(containsEncode));
 }
 
 export function mergeCallTarget(step: CallStep, chainId: number): CallStep['target'] {

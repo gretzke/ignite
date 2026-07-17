@@ -58,6 +58,7 @@ describe('contract-type deployment wire schema', () => {
     }])).success).toBe(false);
     // Non-canonical fn shape rejected at the wire.
     expect(EncodedCallValueSchema.safeParse({ $encode: { contractId: 'implementation', fn: 'x' } }).success).toBe(false);
+    expect(EncodedCallValueSchema.safeParse({ $encode: { contractId: 'implementation', fn: 'setConfig((uint256,address))' } }).success).toBe(true);
     // $encode is not legal inside strategy params.
     expect(DeploymentPlanSchema.safeParse(plan([{
       id: 'wrapper', kind: 'deploy', contractId: 'proxy',

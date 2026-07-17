@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { encodeFunctionData, keccak256, parseTransaction, type Abi, type Hex } from 'viem';
+import { decodeFunctionResult, encodeFunctionData, getContractAddress, keccak256, parseAbiItem, parseTransaction, toFunctionSignature, type Abi, type AbiFunction, type Hex } from 'viem';
 import type {
   DeploymentPlan,
   Lane,
@@ -49,6 +49,7 @@ import { VerificationQueue } from '../verifications/VerificationQueue.js';
 import { getLogger } from '../utils/logger.js';
 import { DeploymentHookService } from './DeploymentHookService.js';
 import { DeploymentTypeService } from './DeploymentTypeService.js';
+import { validateWrapsIntegrity } from './contractTypeValidation.js';
 
 type ResolvedRpc = { url: string; fingerprint: string; label?: string };
 type ExecuteResult = {
@@ -103,6 +104,8 @@ export interface DeployEngineDeps {
     hash: Hex
   ) => Promise<{ from: Hex; to: Hex | null; input: Hex; value: bigint } | undefined>;
   getCode: (url: string, address: Hex) => Promise<Hex>;
+  getStorageAt: (url: string, address: Hex, slot: Hex) => Promise<Hex>;
+  call: (url: string, args: { to: Hex; data: Hex }) => Promise<Hex>;
   getTransactionData: (url: string, hash: Hex) => Promise<Hex | undefined>;
   verificationQueue: Pick<VerificationQueue, 'enqueueForConfirmedStep'>;
   rebroadcast: (url: string, raw: Hex) => Promise<Hex>;
@@ -176,6 +179,14 @@ export class DeployEngine {
         const { createPublicClient, http } = await import('viem');
         return (await createPublicClient({ transport: http(url) }).getCode({ address })) ?? '0x';
       }),
+      getStorageAt: deps?.getStorageAt ?? (async (url, address, slot) => {
+        const { createPublicClient, http } = await import('viem');
+        return await createPublicClient({ transport: http(url) }).getStorageAt({ address, slot }) ?? '0x';
+      }),
+      call: deps?.call ?? (async (url, args) => {
+        const { createPublicClient, http } = await import('viem');
+        return await createPublicClient({ transport: http(url) }).call(args).then((result) => result.data ?? '0x');
+      }),
       getTransactionData: deps?.getTransactionData ??
         (async (url, hash) => {
           const { createPublicClient, http } = await import('viem');
@@ -245,6 +256,7 @@ export class DeployEngine {
         updatedAt: now,
         plan: globalThis.structuredClone(args.plan),
         inputs: validated.frozen,
+        ...(Object.keys(validated.contractTypes ?? {}).length ? { contractTypes: globalThis.structuredClone(validated.contractTypes) } : {}),
         rpcSelection: validated.rpcBindings,
         ...(Object.keys(validated.explorerTargets ?? {}).length
           ? { explorerTargets: validated.explorerTargets }
@@ -391,7 +403,7 @@ export class DeployEngine {
               const ref = target.steps.find((item) => item.stepId === id);
               if (!ref?.address && !ref?.predictedAddress) throw new Error('unresolved');
               return (ref.address ?? ref.predictedAddress)!;
-            }));
+            }, { frozen: current.inputs, contracts: current.plan.contracts }));
             planStep.strategy = {
               ...strategy,
               acknowledgeDeployed: {
@@ -611,7 +623,7 @@ export class DeployEngine {
       for (const lane of Object.values(run.lanes)) {
         if (
           lane.status !== 'paused' ||
-          !['interrupted', 'needs-review'].includes(lane.pause?.reason ?? '')
+          !['interrupted', 'needs-review', 'rpc'].includes(lane.pause?.reason ?? '')
         )
           continue;
         const attempt = lane.steps[lane.pause!.stepIndex]?.attempts.at(-1);
@@ -1029,7 +1041,7 @@ export class DeployEngine {
         ? run.plan.steps.find((candidate): candidate is Extract<typeof candidate, { kind: 'deploy' }> => candidate.id === target.stepId && candidate.kind === 'deploy')
         : undefined;
       const fn = callAbiItem(step, chainId, callTarget ? run.inputs[callTarget.contractId]?.abi : undefined);
-      const values = resolveStepValues(step, chainId, resolveRef, fn?.inputs ?? []);
+      const values = resolveStepValues(step, chainId, resolveRef, fn?.inputs ?? [], { frozen: run.inputs, contracts: run.plan.contracts });
       to = values.target!;
       pointers = values.pointers;
       data = fn
@@ -1039,10 +1051,10 @@ export class DeployEngine {
       const input = run.inputs[step.contractId];
       if (!input) throw coded('estimation', `Frozen input missing for ${step.contractId}`);
       const ctor = (input.abi as Abi).find((entry) => entry.type === 'constructor');
-      const values = resolveStepValues(step, chainId, resolveRef, (ctor?.inputs ?? []) as never);
+      const values = resolveStepValues(step, chainId, resolveRef, (ctor?.inputs ?? []) as never, { frozen: run.inputs, contracts: run.plan.contracts });
       libraries = values.libraries;
       pointers = values.pointers;
-      const initcode = buildInitcode(step, input, chainId, resolveRef);
+      const initcode = buildInitcode(step, input, chainId, resolveRef, { frozen: run.inputs, contracts: run.plan.contracts });
       deterministicInitcode = initcode;
       const strategy = step.strategy ?? { kind: 'create' as const };
       if (strategy.kind === 'create') {
@@ -1055,7 +1067,7 @@ export class DeployEngine {
         if (dynamic) {
           try {
             if (strategy.kind === 'plugin') {
-              const runtimeBytecode = buildRuntimeCode(step, input, chainId, resolveRef);
+              const runtimeBytecode = buildRuntimeCode(step, input, chainId, resolveRef, { frozen: run.inputs, contracts: run.plan.contracts });
               const prepared = await this.deps.deploymentTypes.prepare(strategy.pluginId, { chainId, initcode, ...(runtimeBytecode === undefined ? {} : { runtimeBytecode }), params: strategy.params });
               if (predictCreate2Address(prepared.salt, initcodeHashOf(initcode)).toLowerCase() !== prepared.predictedAddress.toLowerCase())
                 throw new Error('Deployment type returned a mismatched predicted address');
@@ -1231,6 +1243,13 @@ export class DeployEngine {
     const deterministicCodePresent = !deterministic || !laneStep.predictedAddress
       ? true
       : Boolean(deterministicCode && deterministicCode !== '0x');
+    let captured: Record<string, Hex> | undefined;
+    let captureError: unknown;
+    const confirmedAddress = deterministic ? laneStep.predictedAddress : receipt.contractAddress ?? undefined;
+    if (receipt.status === 'success' && planStep?.kind === 'deploy' && planStep.wraps && confirmedAddress && deterministicCodePresent) {
+      try { captured = await this.captureWrapper(before, chainId, beforeLane.currentStepIndex, confirmedAddress); }
+      catch (error) { captureError = error; }
+    }
     const settled = await this.mutate(
       profileId,
       runId,
@@ -1294,12 +1313,23 @@ export class DeployEngine {
             error: 'Transaction succeeded but the receipt reports no created contract address',
             attemptId: attempt.id,
           };
+        } else if (captureError) {
+          step.status = 'failed';
+          lane.status = 'paused';
+          lane.pause = {
+            reason: (captureError as { pauseReason?: PauseReason }).pauseReason === 'rpc' ? 'rpc' : 'needs-review',
+            stepIndex: lane.currentStepIndex,
+            error: sanitizeRunError(captureError),
+            attemptId: attempt.id,
+            ...((captureError as { details?: Record<string, unknown> }).details ? { details: (captureError as { details: Record<string, unknown> }).details } : {}),
+          };
         } else {
           step.status = 'confirmed';
           if (planStep?.kind === 'deploy')
             step.address = deterministic
               ? lane.steps[lane.currentStepIndex].predictedAddress
               : receipt.contractAddress ?? undefined;
+          if (captured && Object.keys(captured).length) step.captured = captured;
           lane.currentStepIndex += 1;
           lane.status =
             lane.currentStepIndex >= lane.steps.length
@@ -1348,6 +1378,70 @@ export class DeployEngine {
       run.profileId, run, chainId, step.stepId, planStep.contractId,
       step.address, hash, decomposition.constructorData, attempt.expected.libraries
     );
+  }
+
+  /** Executes only frozen descriptor capture rules; live plugin data is never read. */
+  private async captureWrapper(run: RunRecord, chainId: number, stepIndex: number, wrapperAddress: Hex): Promise<Record<string, Hex>> {
+    const wrapper = run.plan.steps[stepIndex];
+    if (!wrapper || wrapper.kind !== 'deploy' || !wrapper.wraps) return {};
+    const type = run.contractTypes?.[wrapper.wraps.contractTypePluginId];
+    if (!type) throw Object.assign(new Error('Frozen contract-type descriptor is missing'), { details: { assertion: 'descriptor' } });
+    const impl = run.lanes[String(chainId)].steps.find((entry) => entry.stepId === wrapper.wraps!.stepId)?.address;
+    if (!impl) throw Object.assign(new Error('Wrapped implementation address is unresolved'), { details: { assertion: 'implementation-address' } });
+    const rpc = await this.rpcFor(run, chainId);
+    const addresses = (id: string): Hex => {
+      const laneStep = run.lanes[String(chainId)].steps.find((entry) => entry.stepId === id);
+      if (!laneStep?.address && !laneStep?.predictedAddress) throw coded('pointer-unresolved', `Pointer ${id} is unresolved during capture`);
+      return (laneStep.address ?? laneStep.predictedAddress)!;
+    };
+    const synthesis = type.descriptor.synthesis;
+    const ctor = synthesis ? ((run.inputs[wrapper.contractId]?.abi as Abi | undefined)?.find((item) => item.type === 'constructor')?.inputs ?? []) : [];
+    const values = resolveStepValues(wrapper, chainId, addresses, ctor as never, { frozen: run.inputs, contracts: run.plan.contracts });
+    const captured: Record<string, Hex> = {};
+    for (const capture of type.descriptor.capture) {
+      let word: Hex;
+      try { word = await this.deps.getStorageAt(rpc.url, wrapperAddress, capture.slot); }
+      catch (error) { throw coded('rpc', `Capture storage read failed: ${error instanceof Error ? error.message : String(error)}`); }
+      if (!/^0x[0-9a-fA-F]{64}$/.test(word)) throw Object.assign(new Error(`Capture slot ${capture.slot} did not return a 32-byte word`), { details: { assertion: 'storage-word', slot: capture.slot } });
+      const address = `0x${word.slice(-40)}` as Hex;
+      if (capture.record) captured[capture.record] = address;
+      if (capture.expect === 'implementation-address' && address.toLowerCase() !== impl.toLowerCase())
+        throw Object.assign(new Error('Captured implementation address does not match the wrapped implementation'), { details: { assertion: 'implementation-address', slot: capture.slot, expected: impl, actual: address } });
+      if (capture.derivedCreate) {
+        const expected = getContractAddress({ from: wrapperAddress, nonce: BigInt(capture.derivedCreate.nonce) });
+        if (address.toLowerCase() !== expected.toLowerCase())
+          throw Object.assign(new Error('Captured address does not match the required CREATE derivation'), { details: { assertion: 'derivedCreate', slot: capture.slot, expected, actual: address } });
+      }
+      if (capture.expectCodeOf) {
+        const artifact = type.artifacts[capture.expectCodeOf];
+        if (!artifact) throw Object.assign(new Error(`Frozen capture artifact ${capture.expectCodeOf} is missing`), { details: { assertion: 'expectCodeOf' } });
+        let code: Hex;
+        try { code = await this.deps.getCode(rpc.url, address); }
+        catch (error) { throw coded('rpc', `Capture code read failed: ${error instanceof Error ? error.message : String(error)}`); }
+        if (code.toLowerCase() !== artifact.runtimeBytecode.toLowerCase())
+          throw Object.assign(new Error('Captured contract runtime bytecode does not match the frozen artifact'), { details: { assertion: 'expectCodeOf', artifact: capture.expectCodeOf, expected: artifact.runtimeBytecode, actual: code } });
+      }
+      for (const assertion of capture.assertCalls ?? []) {
+        const target = captured[assertion.on];
+        const artifact = type.artifacts[capture.expectCodeOf ?? capture.verifyAs ?? assertion.on];
+        if (!target || !artifact) throw Object.assign(new Error(`Capture call target ${assertion.on} is unavailable`), { details: { assertion: 'assertCalls', on: assertion.on } });
+        const fn = Array.isArray(artifact.abi)
+          ? artifact.abi.find((item): item is AbiFunction => Boolean(item && typeof item === 'object' && (item as { type?: string }).type === 'function') && (() => { try { return toFunctionSignature(item as AbiFunction) === assertion.call; } catch { return false; } })())
+          : undefined;
+        const callFn = fn ?? parseAbiItem(`function ${assertion.call}`) as AbiFunction;
+        let data: Hex;
+        try { data = await this.deps.call(rpc.url, { to: target, data: encodeFunctionData({ abi: [callFn], functionName: callFn.name }) }); }
+        catch (error) { throw coded('rpc', `Capture call failed: ${error instanceof Error ? error.message : String(error)}`); }
+        const actual = decodeFunctionResult({ abi: [callFn], functionName: callFn.name, data });
+        const parameter = synthesis?.constructorArgs.find((arg) => arg.from === 'param' && arg.param === assertion.expectParam);
+        const expected = parameter ? values.args[parameter.name] : undefined;
+        const same = typeof actual === 'string' && typeof expected === 'string' && /^0x[0-9a-fA-F]{40}$/.test(actual) && /^0x[0-9a-fA-F]{40}$/.test(expected)
+          ? String(actual).toLowerCase() === (expected as string).toLowerCase()
+          : actual === expected;
+        if (!same) throw Object.assign(new Error(`Capture call ${assertion.call} returned an unexpected value`), { details: { assertion: 'assertCalls', call: assertion.call, expected, actual } });
+      }
+    }
+    return captured;
   }
 
   private async reconcile(
@@ -1495,6 +1589,7 @@ export class DeployEngine {
     this.applyEdits(draft, draftLane, cmd, attempt);
     try {
       validateDependencies(draft.plan);
+      validateWrapsIntegrity(draft.plan, draft.inputs, draft.contractTypes, lane.chainId);
       const dynamic = dynamicDeterministicStepIds(draft.plan, lane.chainId);
       const addresses = (id: string): Hex => {
         const item = draftLane.steps.find((candidate) => candidate.stepId === id);
@@ -1509,12 +1604,12 @@ export class DeployEngine {
             ? draft.plan.steps.find((candidate): candidate is Extract<typeof candidate, { kind: 'deploy' }> => candidate.id === target.stepId && candidate.kind === 'deploy')
             : undefined;
           const fn = callAbiItem(step, lane.chainId, targetStep ? draft.inputs[targetStep.contractId]?.abi : undefined);
-          resolveStepValues(step, lane.chainId, addresses, fn?.inputs ?? []);
+          resolveStepValues(step, lane.chainId, addresses, fn?.inputs ?? [], { frozen: draft.inputs, contracts: draft.plan.contracts });
         } else {
           const input = draft.inputs[step.contractId];
           if (!input) throw new Error(`Frozen input missing for ${step.contractId}`);
           try {
-            buildInitcode(step, input, lane.chainId, addresses);
+            buildInitcode(step, input, lane.chainId, addresses, { frozen: draft.inputs, contracts: draft.plan.contracts });
           } catch (error) {
             if (dynamic.has(step.id) && ((error as { pauseReason?: string }).pauseReason === 'pointer-unresolved' || (error as { code?: string }).code === 'POINTER_UNRESOLVED')) continue;
             throw error;

@@ -116,6 +116,8 @@ function makeDeps() {
     signers: {
       invalidate: vi.fn(),
     },
+    deploymentTypes: { invalidate: vi.fn() },
+    contractTypes: { invalidate: vi.fn() },
   };
   return { deps, configValues, vaultEntries };
 }
@@ -206,6 +208,8 @@ describe('plugin config handlers', () => {
     const body = reply.body as { data: GetPluginConfigData };
     expect(body.data.values.timeout).toEqual({ global: 30 });
     expect(deps.providers.invalidate).toHaveBeenCalledWith(PLUGIN_ID);
+    expect(deps.deploymentTypes?.invalidate).toHaveBeenCalled();
+    expect(deps.contractTypes?.invalidate).toHaveBeenCalled();
   });
 
   it('PUT config rejects a secret key with CONFIG_FIELD_IS_SECRET', async () => {

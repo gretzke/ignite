@@ -39,7 +39,7 @@ const PluginTypeSchema = z.enum(PluginType);
 // text shown in the grant dialog — length-capped here and rendered as plain
 // text by the frontend.
 export const PluginPermissionRequestSchema = z.object({
-  id: z.enum(["repoWrite", "net"]),
+  id: z.enum(["repoWrite", "net", "contractBytecode"]),
   description: z.string().min(1).max(280),
 });
 
@@ -87,7 +87,7 @@ export const PluginMetadataSchema = z.object({
     .max(32)
     .optional(),
   operationPermissions: z
-    .record(z.string(), z.enum(["repoWrite", "net"]))
+    .record(z.string(), z.enum(["repoWrite", "net", "contractBytecode"]))
     .refine((value) => Object.keys(value).length <= 32)
     .optional(),
   repoRead: z.boolean().optional(),

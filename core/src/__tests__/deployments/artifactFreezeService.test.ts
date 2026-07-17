@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ContractSource } from '@ignite/api';
+import { RunRecordSchema, type ContractSource, type FrozenContractType } from '@ignite/api';
 import { ArtifactFreezeService, canonicalJson, sha256 } from '../../deployments/ArtifactFreezeService.js';
 
 const logger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
@@ -17,6 +17,25 @@ async function freeze(artifact: Record<string, unknown>) {
 }
 
 describe('ArtifactFreezeService runtime bytecode', () => {
+  it('freezes contract-type artifacts, rejects descriptor drift, and preserves repoDirty false', async () => {
+    const source: ContractSource = { id: 'proxy', origin: 'contract-type', pluginId: 'ct', artifactKey: 'proxy', versionLabel: 'v1', contentHash: 'b'.repeat(64), contractName: 'Proxy' };
+    const descriptor: FrozenContractType = { pluginId: 'ct', versionLabel: 'v1', contentHash: 'b'.repeat(64), descriptor: { label: 'CT', description: 'd', versionLabel: 'v1', params: [], artifacts: ['proxy'], synthesis: null, validation: {}, capture: [] }, artifacts: { proxy: { abi: [], creationBytecode: '0x6000', runtimeBytecode: '0x6001', solcVersion: '0.8.29', standardJsonInput: { language: 'Solidity', sources: { 'P.sol': { content: 'contract P {}' } }, settings: {} }, sourceIdentifier: 'P.sol:P' } } };
+    const service = new ArtifactFreezeService({ contractTypes: { frozenDescriptor: async () => descriptor }, getPluginConfig: async () => ({ origin: 'builtin', metadata: { version: 'x' } }) as never });
+    const frozen = await service.freezeInputs('p', [source]);
+    expect(frozen.proxy).toMatchObject({ creationBytecode: '0x6000', runtimeBytecode: '0x6001', repoDirty: false, compiler: { pluginId: 'ct', version: '0.8.29' } });
+    await expect(new ArtifactFreezeService({ contractTypes: { frozenDescriptor: async () => ({ ...descriptor, contentHash: 'c'.repeat(64) }) } }).freezeInputs('p', [source])).rejects.toMatchObject({ code: 'CONTRACT_TYPE_DRIFT', details: { expected: 'b'.repeat(64), actual: 'c'.repeat(64) } });
+    const item = { ok: true, blocking: false, message: 'ok' };
+    expect(RunRecordSchema.safeParse({ schemaVersion: 1, id: 'r', profileId: 'p', name: 'n', idempotencyKey: 'k', createdAt: 'now', updatedAt: 'now', plan: { schemaVersion: 1, contracts: [source], steps: [{ id: 's', kind: 'deploy', contractId: 'proxy' }], chains: [1], signers: { global: { pluginId: 'p', accountId: 'a', address: `0x${'11'.repeat(20)}` } } }, inputs: frozen, contractTypes: { ct: descriptor }, rpcSelection: { '1': { endpointId: 'rpc', label: 'rpc', urlFingerprint: 'a'.repeat(64) } }, validation: { chains: { '1': { rpc: item, signers: item, args: item, estimation: item, balance: item, inputs: item } } }, lanes: { '1': { chainId: 1, status: 'completed', currentStepIndex: 1, steps: [{ stepId: 's', status: 'confirmed', attempts: [] }] } }, status: 'completed' }).success).toBe(true);
+  });
+  it('marks installed contract-type verification bundles as unverified provenance', async () => {
+    const source: ContractSource = { id: 'proxy', origin: 'contract-type', pluginId: 'ct', artifactKey: 'proxy', versionLabel: 'v1', contentHash: 'b'.repeat(64), contractName: 'Proxy' };
+    const descriptor: FrozenContractType = { pluginId: 'ct', versionLabel: 'v1', contentHash: 'b'.repeat(64), descriptor: { label: 'CT', description: 'd', versionLabel: 'v1', params: [], artifacts: ['proxy'], synthesis: null, validation: {}, capture: [] }, artifacts: { proxy: { abi: [], creationBytecode: '0x6000', runtimeBytecode: '0x6001', solcVersion: '0.8.29', standardJsonInput: { language: 'Solidity', sources: { 'P.sol': { content: 'contract P {}' } }, settings: {} }, sourceIdentifier: 'P.sol:P' } } };
+    const write = vi.fn(async () => 'd'.repeat(64));
+    const service = new ArtifactFreezeService({ contractTypes: { frozenDescriptor: async () => descriptor }, getPluginConfig: async () => ({ origin: 'installed', metadata: { version: 'x' } }) as never, bundleStore: { write } });
+    const frozen = await service.freezeInputs('p', [source]);
+    await service.captureBundles(frozen, [source], 'p', { ct: descriptor });
+    expect(write).toHaveBeenCalledWith('p', expect.objectContaining({ unverifiedProvenance: true, solcVersion: '0.8.29', contractIdentifier: 'P.sol:P' }));
+  });
   it('passes the full pinned source to artifact reads and structurally forces repoDirty false', async () => {
     const pinned: ContractSource = { ...contract, repoPathOrUrl: 'https://example.test/repo.git', pin: { url: 'https://example.test/repo.git', commit: 'a'.repeat(40) } };
     const getArtifactData = vi.fn(async () => base as never);

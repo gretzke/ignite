@@ -46,6 +46,7 @@ describe('operation baselines', () => {
         'compile',
       ),
     ).toEqual(['net', 'repoWrite']);
+    expect(requiredPermissions(metadata(), 'getContractArtifact')).toEqual(['contractBytecode']);
   });
 
   it('preserves an explicit repoRead false and infers it for legacy compilers', () => {

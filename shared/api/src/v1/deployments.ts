@@ -139,9 +139,10 @@ export function isValueRef(value: unknown): value is ValueRef {
 }
 
 export const ArgValuesSchema = z.record(z.string(), z.unknown());
-// Wire-level canonical-shape guard only; core re-parses via viem and rejects
-// non-canonical signatures against the actual ABI.
-const FN_SIGNATURE = /^[A-Za-z_$][A-Za-z0-9_$]*\([^()]*\)$/;
+// Wire-level shape guard only (nested parens/brackets allowed for tuple and
+// array parameters); core matches the canonical viem signature against the
+// actual frozen ABI and rejects anything non-canonical there.
+const FN_SIGNATURE = /^[A-Za-z_$][A-Za-z0-9_$]*\([A-Za-z0-9_$,()[\] ]*\)$/;
 export const EncodedCallValueSchema = z.object({
   $encode: z.object({ contractId: z.string().min(1), fn: z.string().min(1).max(512).regex(FN_SIGNATURE, 'fn must be a canonical function signature'), args: ArgValuesSchema.optional() }).strict(),
 }).strict() satisfies z.ZodType<EncodedCallValue>;
@@ -543,6 +544,7 @@ export interface LaneStep {
   predictedAddress?: Hex;
   salt?: Hex32;
   notes?: string[];
+  captured?: Record<string, Hex>;
   unresolvedTx?: { txHash?: Hex; note?: string };
   attempts: Attempt[];
 }
@@ -803,6 +805,7 @@ export const LaneStepSchema = z.object({
   predictedAddress: z.string().regex(HEX_ADDRESS).optional() as z.ZodType<Hex | undefined>,
   salt: Hex32Schema.optional(),
   notes: z.array(z.string().max(256)).max(8).optional(),
+  captured: z.record(z.string().min(1), HexSchema).optional(),
   unresolvedTx: z
     .object({ txHash: HexSchema.optional(), note: z.string().optional() })
     .optional(),
