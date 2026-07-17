@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   History,
@@ -15,6 +15,7 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { runsListReceived } from '../../store/features/deployments/deploymentsSlice';
 import { runSnapshotReceived } from '../../store/features/deployments/deploymentsSlice';
 import { verificationsApi } from '../../store/api/verificationsApi';
+import { useEnsureChainMetadata } from '../../store/features/chains/useEnsureChainMetadata';
 import Tooltip from '../../components/Tooltip';
 
 function StatusPill({ status }: { status: string }) {
@@ -47,6 +48,16 @@ export default function DeploymentsPage() {
     state.verifications.manualIds?.map((id) => state.verifications.tasks[id])
   );
   const checkedPaused = useRef(new Map<string, string>());
+  const chains = useAppSelector((state) => state.chains.chains);
+  const runChainIds = useMemo(
+    () => [...new Set(summaries.flatMap((run) => run.chains))],
+    [summaries]
+  );
+  useEnsureChainMetadata(runChainIds);
+  const chainLabel = (chainId: number) => {
+    const name = chains.find((chain) => chain.chainId === chainId)?.name;
+    return name ? `${name} (${chainId})` : `Chain ${chainId}`;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -160,7 +171,7 @@ export default function DeploymentsPage() {
                 </span>
               )}
               <div className="mono-data text-muted">
-                {run.chains.join(', ')} ·{' '}
+                {run.chains.map(chainLabel).join(', ')} ·{' '}
                 {new Date(run.updatedAt).toLocaleString()}
               </div>
             </Link>
