@@ -227,6 +227,7 @@ function deployStepFromDraft(
       : {}),
     ...(step.wraps ? { wraps: { ...step.wraps } } : {}),
     ...(step.acknowledgeUninitialized ? { acknowledgeUninitialized: true } : {}),
+    ...(step.acknowledgeUnverifiedBytecode ? { acknowledgeUnverifiedBytecode: true } : {}),
   } as Step;
 }
 

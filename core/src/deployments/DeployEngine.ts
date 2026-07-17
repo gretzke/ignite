@@ -49,7 +49,7 @@ import { VerificationQueue } from '../verifications/VerificationQueue.js';
 import { getLogger } from '../utils/logger.js';
 import { DeploymentHookService } from './DeploymentHookService.js';
 import { DeploymentTypeService } from './DeploymentTypeService.js';
-import { validateWrapsIntegrity } from './contractTypeValidation.js';
+import { contractTypeStaticItems, validateWrapsIntegrity } from './contractTypeValidation.js';
 
 type ResolvedRpc = { url: string; fingerprint: string; label?: string };
 type ExecuteResult = {
@@ -62,6 +62,7 @@ type ExecuteResult = {
   nonce?: number;
 };
 type Receipt = Omit<ExecuteResult, 'txHash'>;
+type WrapperCapture = { captured: Record<string, Hex>; note?: string };
 const RECEIPT_RECHECK_ATTEMPTS = 60;
 const RECEIPT_RECHECK_INTERVAL_MS = 500;
 
@@ -389,11 +390,26 @@ export class DeployEngine {
             target.steps[target.currentStepIndex].status = 'pending';
           }, chainId);
         } else {
+          let capture: WrapperCapture | undefined;
+          let captureError: unknown;
+          try { capture = await this.captureWrapper(run, chainId, lane.pause.stepIndex, predicted); }
+          catch (error) { captureError = error; }
           await this.mutate(profileId, runId, (current) => {
             const target = current.lanes[String(chainId)];
             const planStep = current.plan.steps[target.currentStepIndex] as Extract<typeof pausedStep, { kind: 'deploy' }>;
             const targetStep = target.steps[target.currentStepIndex];
             const expected = targetStep.attempts.find((entry) => entry.id === cmd.attemptId);
+            if (captureError) {
+              targetStep.status = 'failed'; target.status = 'paused';
+              target.pause = {
+                reason: (captureError as { pauseReason?: PauseReason }).pauseReason === 'rpc' ? 'rpc' : 'needs-review',
+                stepIndex: target.currentStepIndex,
+                error: sanitizeRunError(captureError),
+                attemptId: cmd.attemptId,
+                ...((captureError as { details?: Record<string, unknown> }).details ? { details: (captureError as { details: Record<string, unknown> }).details } : {}),
+              };
+              return;
+            }
             const strategy = planStep.strategy;
             if (!strategy || strategy.kind === 'create') throw new IgniteError('Only deterministic deployment can be accepted', ErrorCodes.ILLEGAL_RESOLVE);
             const dynamic = dynamicDeterministicStepIds(current.plan, chainId).has(planStep.id);
@@ -413,6 +429,8 @@ export class DeployEngine {
             };
             if (expected) { expected.resolution = 'accept-deployed'; expected.endedAt = iso(this.deps.now()); }
             targetStep.status = 'skipped'; targetStep.address = predicted;
+            if (capture && Object.keys(capture.captured).length) targetStep.captured = capture.captured;
+            if (capture?.note) appendLaneStepNote(targetStep, capture.note);
             target.currentStepIndex += 1; target.pause = undefined;
             target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
           }, chainId);
@@ -430,14 +448,31 @@ export class DeployEngine {
             : undefined;
           if (predicted && code && code !== '0x') {
             const confirmedHash = attempt?.txHash;
+            let capture: WrapperCapture | undefined;
+            let captureError: unknown;
+            try { capture = await this.captureWrapper(run, chainId, lane.pause.stepIndex, predicted); }
+            catch (error) { captureError = error; }
             const settled = await this.mutate(profileId, runId, (current) => {
               const target = current.lanes[String(chainId)]; const targetStep = target.steps[target.currentStepIndex];
+              if (captureError) {
+                targetStep.status = 'failed'; target.status = 'paused';
+                target.pause = {
+                  reason: (captureError as { pauseReason?: PauseReason }).pauseReason === 'rpc' ? 'rpc' : 'needs-review',
+                  stepIndex: target.currentStepIndex,
+                  error: sanitizeRunError(captureError),
+                  attemptId: targetStep.attempts.at(-1)?.id ?? lane.pause!.attemptId,
+                  ...((captureError as { details?: Record<string, unknown> }).details ? { details: (captureError as { details: Record<string, unknown> }).details } : {}),
+                };
+                return;
+              }
               targetStep.status = 'confirmed'; targetStep.address = predicted; target.currentStepIndex += 1;
+              if (capture && Object.keys(capture.captured).length) targetStep.captured = capture.captured;
+              if (capture?.note) appendLaneStepNote(targetStep, capture.note);
               target.pause = undefined; target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
             }, chainId);
             // Late confirmation follows the same post-confirmation path as
             // confirmReceipt — without this the step never verifies (F9).
-            if (confirmedHash)
+            if (confirmedHash && !captureError)
               void this.enqueueConfirmedVerification(settled, chainId, confirmedHash).catch((error) =>
                 getLogger().warn(`verification enqueue skipped for ${confirmedHash}: ${error instanceof Error ? error.message : String(error)}`)
               );
@@ -627,6 +662,15 @@ export class DeployEngine {
         )
           continue;
         const attempt = lane.steps[lane.pause!.stepIndex]?.attempts.at(-1);
+        if (lane.pause?.reason === 'rpc' && attempt?.txHash && !attempt.rawTx) {
+          const receipt = await this.safeReceipt((await this.rpcFor(run, lane.chainId)).url, attempt.txHash);
+          if (receipt)
+            await this.confirmReceipt(profileId, runId, lane.chainId, attempt.txHash, receipt);
+          // A sign-and-send submission is already in-flight. Without raw
+          // bytes it cannot be safely rebroadcast, and must never fall
+          // through into a fresh deployment attempt.
+          continue;
+        }
         if (attempt?.rawTx && attempt.txHash) {
           const rpc = await this.rpcFor(run, lane.chainId);
           const receipt = await this.safeReceipt(rpc.url, attempt.txHash);
@@ -670,6 +714,7 @@ export class DeployEngine {
               continue;
             }
           }
+          continue;
         } else if (attempt?.txHash || lane.pause?.reason === 'needs-review')
           continue;
         await this.mutate(
@@ -1089,14 +1134,33 @@ export class DeployEngine {
           const code = await this.deps.getCode(rpc.url, predictedAddress);
           if (code && code !== '0x') {
             if (ackIsFresh(strategy, chainId, { predictedAddress, initcodeHash: initcodeHashOf(initcode) })) {
-            await this.mutate(profileId, runId, (current) => {
-              const target = current.lanes[String(chainId)];
-              const targetStep = target.steps[stepIndex];
-              targetStep.status = 'skipped'; targetStep.address = predictedAddress;
-              target.currentStepIndex += 1;
-              target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
-            }, chainId);
-            return;
+              let capture: WrapperCapture | undefined;
+              let captureError: unknown;
+              const captureAttemptId = crypto.randomUUID();
+              try { capture = await this.captureWrapper(run, chainId, stepIndex, predictedAddress); }
+              catch (error) { captureError = error; }
+              await this.mutate(profileId, runId, (current) => {
+                const target = current.lanes[String(chainId)];
+                const targetStep = target.steps[stepIndex];
+                if (captureError) {
+                  targetStep.attempts.push({ id: captureAttemptId, startedAt: iso(this.deps.now()), error: sanitizeRunError(captureError) });
+                  targetStep.status = 'failed'; target.status = 'paused';
+                  target.pause = {
+                    reason: (captureError as { pauseReason?: PauseReason }).pauseReason === 'rpc' ? 'rpc' : 'needs-review',
+                    stepIndex,
+                    error: sanitizeRunError(captureError),
+                    attemptId: captureAttemptId,
+                    ...((captureError as { details?: Record<string, unknown> }).details ? { details: (captureError as { details: Record<string, unknown> }).details } : {}),
+                  };
+                  return;
+                }
+                targetStep.status = 'skipped'; targetStep.address = predictedAddress;
+                if (capture && Object.keys(capture.captured).length) targetStep.captured = capture.captured;
+                if (capture?.note) appendLaneStepNote(targetStep, capture.note);
+                target.currentStepIndex += 1;
+                target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
+              }, chainId);
+              return;
             }
             throw coded('create2-collision', `Code already exists at predicted address ${predictedAddress}`);
           }
@@ -1138,11 +1202,28 @@ export class DeployEngine {
       if (code && code !== '0x') {
         const strategy = step.kind === 'deploy' ? step.strategy : undefined;
         if (strategy && strategy.kind !== 'create' && deterministicInitcode && ackIsFresh(strategy, chainId, { predictedAddress: jit.predictedAddress, initcodeHash: initcodeHashOf(deterministicInitcode) })) {
+          let capture: WrapperCapture | undefined;
+          let captureError: unknown;
+          try { capture = await this.captureWrapper(run, chainId, stepIndex, jit.predictedAddress); }
+          catch (error) { captureError = error; }
           await this.mutate(profileId, runId, (current) => {
             const target = current.lanes[String(chainId)]; const targetStep = target.steps[stepIndex];
+            if (captureError) {
+              targetStep.status = 'failed'; target.status = 'paused';
+              target.pause = {
+                reason: (captureError as { pauseReason?: PauseReason }).pauseReason === 'rpc' ? 'rpc' : 'needs-review',
+                stepIndex,
+                error: sanitizeRunError(captureError),
+                attemptId: targetStep.attempts.find((entry) => entry.id === attemptId)?.id ?? attemptId,
+                ...((captureError as { details?: Record<string, unknown> }).details ? { details: (captureError as { details: Record<string, unknown> }).details } : {}),
+              };
+              return;
+            }
             targetStep.status = 'skipped'; targetStep.address = jit.predictedAddress;
             const attempt = targetStep.attempts.find((entry) => entry.id === attemptId);
             if (attempt) { attempt.resolution = 'accept-deployed'; attempt.endedAt = iso(this.deps.now()); }
+            if (capture && Object.keys(capture.captured).length) targetStep.captured = capture.captured;
+            if (capture?.note) appendLaneStepNote(targetStep, capture.note);
             target.currentStepIndex += 1;
             target.status = target.currentStepIndex >= target.steps.length ? 'completed' : 'running';
           }, chainId);
@@ -1243,11 +1324,11 @@ export class DeployEngine {
     const deterministicCodePresent = !deterministic || !laneStep.predictedAddress
       ? true
       : Boolean(deterministicCode && deterministicCode !== '0x');
-    let captured: Record<string, Hex> | undefined;
+    let capture: WrapperCapture | undefined;
     let captureError: unknown;
     const confirmedAddress = deterministic ? laneStep.predictedAddress : receipt.contractAddress ?? undefined;
     if (receipt.status === 'success' && planStep?.kind === 'deploy' && planStep.wraps && confirmedAddress && deterministicCodePresent) {
-      try { captured = await this.captureWrapper(before, chainId, beforeLane.currentStepIndex, confirmedAddress); }
+      try { capture = await this.captureWrapper(before, chainId, beforeLane.currentStepIndex, confirmedAddress); }
       catch (error) { captureError = error; }
     }
     const settled = await this.mutate(
@@ -1329,7 +1410,8 @@ export class DeployEngine {
             step.address = deterministic
               ? lane.steps[lane.currentStepIndex].predictedAddress
               : receipt.contractAddress ?? undefined;
-          if (captured && Object.keys(captured).length) step.captured = captured;
+          if (capture && Object.keys(capture.captured).length) step.captured = capture.captured;
+          if (capture?.note) appendLaneStepNote(step, capture.note);
           lane.currentStepIndex += 1;
           lane.status =
             lane.currentStepIndex >= lane.steps.length
@@ -1381,9 +1463,9 @@ export class DeployEngine {
   }
 
   /** Executes only frozen descriptor capture rules; live plugin data is never read. */
-  private async captureWrapper(run: RunRecord, chainId: number, stepIndex: number, wrapperAddress: Hex): Promise<Record<string, Hex>> {
+  private async captureWrapper(run: RunRecord, chainId: number, stepIndex: number, wrapperAddress: Hex): Promise<WrapperCapture> {
     const wrapper = run.plan.steps[stepIndex];
-    if (!wrapper || wrapper.kind !== 'deploy' || !wrapper.wraps) return {};
+    if (!wrapper || wrapper.kind !== 'deploy' || !wrapper.wraps) return { captured: {} };
     const type = run.contractTypes?.[wrapper.wraps.contractTypePluginId];
     if (!type) throw Object.assign(new Error('Frozen contract-type descriptor is missing'), { details: { assertion: 'descriptor' } });
     const impl = run.lanes[String(chainId)].steps.find((entry) => entry.stepId === wrapper.wraps!.stepId)?.address;
@@ -1405,11 +1487,12 @@ export class DeployEngine {
       if (!/^0x[0-9a-fA-F]{64}$/.test(word)) throw Object.assign(new Error(`Capture slot ${capture.slot} did not return a 32-byte word`), { details: { assertion: 'storage-word', slot: capture.slot } });
       const address = `0x${word.slice(-40)}` as Hex;
       if (capture.record) captured[capture.record] = address;
-      if (capture.expect === 'implementation-address' && address.toLowerCase() !== impl.toLowerCase())
+      const expectedWord = (address: Hex) => `0x${'0'.repeat(24)}${address.slice(2).toLowerCase()}`;
+      if (capture.expect === 'implementation-address' && word.toLowerCase() !== expectedWord(impl))
         throw Object.assign(new Error('Captured implementation address does not match the wrapped implementation'), { details: { assertion: 'implementation-address', slot: capture.slot, expected: impl, actual: address } });
       if (capture.derivedCreate) {
         const expected = getContractAddress({ from: wrapperAddress, nonce: BigInt(capture.derivedCreate.nonce) });
-        if (address.toLowerCase() !== expected.toLowerCase())
+        if (word.toLowerCase() !== expectedWord(expected))
           throw Object.assign(new Error('Captured address does not match the required CREATE derivation'), { details: { assertion: 'derivedCreate', slot: capture.slot, expected, actual: address } });
       }
       if (capture.expectCodeOf) {
@@ -1441,7 +1524,16 @@ export class DeployEngine {
         if (!same) throw Object.assign(new Error(`Capture call ${assertion.call} returned an unexpected value`), { details: { assertion: 'assertCalls', call: assertion.call, expected, actual } });
       }
     }
-    return captured;
+    const runtime = run.inputs[wrapper.contractId]?.runtimeBytecode;
+    let note: string | undefined;
+    if (runtime) {
+      let code: Hex;
+      try { code = await this.deps.getCode(rpc.url, wrapperAddress); }
+      catch (error) { throw coded('rpc', `Capture wrapper code read failed: ${error instanceof Error ? error.message : String(error)}`); }
+      if (code.toLowerCase() !== runtime.toLowerCase())
+        note = 'wrapper runtime differs from frozen artifact (immutables or unverified provenance)';
+    }
+    return { captured, note };
   }
 
   private async reconcile(
@@ -1590,6 +1682,18 @@ export class DeployEngine {
     try {
       validateDependencies(draft.plan);
       validateWrapsIntegrity(draft.plan, draft.inputs, draft.contractTypes, lane.chainId);
+      const contractTypeFailure = contractTypeStaticItems(
+        draft.plan,
+        draft.inputs,
+        draft.contractTypes,
+        lane.chainId
+      ).find((item) => !item.ok && item.blocking);
+      if (contractTypeFailure)
+        throw new IgniteError(
+          contractTypeFailure.message,
+          ErrorCodes.ILLEGAL_RESOLVE,
+          { contractTypeCode: contractTypeFailure.code, ...contractTypeFailure.details }
+        );
       const dynamic = dynamicDeterministicStepIds(draft.plan, lane.chainId);
       const addresses = (id: string): Hex => {
         const item = draftLane.steps.find((candidate) => candidate.stepId === id);
@@ -1626,7 +1730,7 @@ export class DeployEngine {
       }
       return predictions;
     } catch (error) {
-      if (error instanceof IgniteError && error.message === 'EDIT_REQUIRES_REMINE') throw error;
+      if (error instanceof IgniteError && (error.message === 'EDIT_REQUIRES_REMINE' || error.code === ErrorCodes.ILLEGAL_RESOLVE)) throw error;
       throw new IgniteError(error instanceof Error ? error.message : 'Edited plan is invalid', ErrorCodes.ILLEGAL_RESOLVE);
     }
   }
@@ -1736,6 +1840,10 @@ function terminalRunStatus(status: RunRecord['status']): boolean {
 }
 function iso(now: number): string {
   return new Date(now).toISOString();
+}
+function appendLaneStepNote(step: { notes?: string[] }, note: string): void {
+  if (step.notes?.includes(note)) return;
+  step.notes = [...(step.notes ?? []), note].slice(-8);
 }
 function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();

@@ -103,12 +103,17 @@ export class ArtifactFreezeService {
 
   async freezeInputs(
     profileId: string,
-    contracts: ContractSource[]
+    contracts: ContractSource[],
+    contractTypes?: Record<string, FrozenContractType>
   ): Promise<FrozenInputs> {
     const entries = await Promise.all(
       contracts.map(async (contract) => {
         if (contract.origin === 'contract-type') {
-          const frozenType = await this.deps.contractTypes.frozenDescriptor(contract.pluginId);
+          const frozenType = contractTypes
+            ? contractTypes[contract.pluginId]
+            : await this.deps.contractTypes.frozenDescriptor(contract.pluginId);
+          if (!frozenType)
+            throw new IgniteError(`Frozen contract-type descriptor ${contract.pluginId} is missing`, 'ARTIFACT_NOT_FOUND');
           if (frozenType.contentHash !== contract.contentHash)
             throw new IgniteError('Contract-type plugin content changed since this plan was reviewed', 'CONTRACT_TYPE_DRIFT', { pluginId: contract.pluginId, expected: contract.contentHash, actual: frozenType.contentHash });
           const artifact = frozenType.artifacts[contract.artifactKey];

@@ -1,5 +1,5 @@
 import { toFunctionSelector, toFunctionSignature, type AbiFunction } from 'viem';
-import type { ContractSource, DeploymentPlan, FrozenContractType, FrozenInputs, Hex, ValidationItem } from '@ignite/api';
+import type { ContractSource, DeploymentPlan, FrozenContractType, FrozenInputs, ValidationItem } from '@ignite/api';
 import { isEncodedCallValue, isValueRef } from '@ignite/api';
 import { IgniteError } from '../types/errors.js';
 import { effectiveValue, mergeArgs } from './resolver.js';
@@ -41,13 +41,21 @@ export function validateWrapsIntegrity(plan: DeploymentPlan, frozen: FrozenInput
   }
 }
 
-export function contractTypeStaticItems(plan: DeploymentPlan, frozen: FrozenInputs, contractTypes: Record<string, FrozenContractType> | undefined, chainId: number): ValidationItem[] {
+export function contractTypeStaticItems(plan: DeploymentPlan, frozen: FrozenInputs, contractTypes: Record<string, FrozenContractType> | undefined, chainId: number, contractTypeOrigins?: Record<string, string>): ValidationItem[] {
   const out: ValidationItem[] = [];
   try { validateWrapsIntegrity(plan, frozen, contractTypes, chainId); }
   catch (error) { return [failure('CONTRACT_TYPE_REQUIREMENTS', error instanceof Error ? error.message : 'Contract-type relationship is invalid')]; }
   for (const wrapper of plan.steps) {
     if (wrapper.kind !== 'deploy' || !wrapper.wraps) continue;
-    const type = contractTypes?.[wrapper.wraps.contractTypePluginId]!;
+    const type = contractTypes?.[wrapper.wraps.contractTypePluginId];
+    if (!type) continue; // unreachable: validateWrapsIntegrity ran above
+    if (contractTypeOrigins && contractTypeOrigins[type.pluginId] !== 'builtin' && wrapper.acknowledgeUnverifiedBytecode !== true) {
+      out.push(failure(
+        'CONTRACT_TYPE_PROVENANCE_ACK_REQUIRED',
+        'This contract-type plugin supplies bytecode that is not reproduced from its claimed sources. Acknowledge this risk before deployment.',
+        { stepId: wrapper.id, pluginId: type.pluginId }
+      ));
+    }
     const impl = plan.steps.find((step) => step.id === wrapper.wraps!.stepId) as Extract<typeof wrapper, { kind: 'deploy' }>;
     const input = frozen[impl.contractId];
     const abi = Array.isArray(input?.abi) ? input.abi : [];

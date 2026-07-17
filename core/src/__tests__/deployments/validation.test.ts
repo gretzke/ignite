@@ -233,6 +233,18 @@ describe('validatePlan', () => {
     expect(freezeInputs).toHaveBeenCalledOnce();
   });
 
+  it('freezes contract types once and passes that exact snapshot into input freezing', async () => {
+    const snapshot = {};
+    const freezeContractTypes = vi.fn(async () => snapshot);
+    const freezeInputs = vi.fn(async (_profileId: string, _contracts: unknown[], contractTypes?: unknown) => {
+      expect(contractTypes).toBe(snapshot);
+      return frozen;
+    });
+    await validatePlan(plan(), { '1': 'rpc-1' }, deps({ freezeContractTypes, freezeInputs }));
+    expect(freezeContractTypes).toHaveBeenCalledOnce();
+    expect(freezeInputs).toHaveBeenCalledOnce();
+  });
+
   it('validates the canonical proxy and returns create2 predictions without broadcasting', async () => {
     const getCode = vi.fn(async ({ address }: { address: string }) =>
       address.toLowerCase() === CREATE2_PROXY_ADDRESS.toLowerCase()

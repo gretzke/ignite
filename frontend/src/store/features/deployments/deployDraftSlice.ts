@@ -671,6 +671,15 @@ const deployDraftSlice = createSlice({
       if (action.payload.acknowledged) step.acknowledgeUninitialized = true;
       else delete step.acknowledgeUninitialized;
     },
+    setAcknowledgeUnverifiedBytecode(
+      state,
+      action: PayloadAction<{ stepId: string; acknowledged: boolean }>
+    ) {
+      const step = deployStep(state, action.payload.stepId);
+      if (!step?.wraps) return;
+      if (action.payload.acknowledged) step.acknowledgeUnverifiedBytecode = true;
+      else delete step.acknowledgeUnverifiedBytecode;
+    },
     setWrapperInitializer(
       state,
       action: PayloadAction<{ stepId: string; key: string; value: unknown; selection: string }>
@@ -927,6 +936,7 @@ export const {
   setChainArgOverride,
   selectContractType,
   setAcknowledgeUninitialized,
+  setAcknowledgeUnverifiedBytecode,
   setWrapperInitializer,
   setValue,
   setValuePerChain,

@@ -36,6 +36,17 @@ describe('ArtifactFreezeService runtime bytecode', () => {
     await service.captureBundles(frozen, [source], 'p', { ct: descriptor });
     expect(write).toHaveBeenCalledWith('p', expect.objectContaining({ unverifiedProvenance: true, solcVersion: '0.8.29', contractIdentifier: 'P.sol:P' }));
   });
+  it('uses the caller supplied contract-type snapshot without fetching a second descriptor', async () => {
+    const source: ContractSource = { id: 'proxy', origin: 'contract-type', pluginId: 'ct', artifactKey: 'proxy', versionLabel: 'v1', contentHash: 'b'.repeat(64), contractName: 'Proxy' };
+    const first: FrozenContractType = { pluginId: 'ct', versionLabel: 'v1', contentHash: 'b'.repeat(64), descriptor: { label: 'CT', description: 'd', versionLabel: 'v1', params: [], artifacts: ['proxy'], synthesis: null, validation: {}, capture: [] }, artifacts: { proxy: { abi: [], creationBytecode: '0x6000', runtimeBytecode: '0x6001', solcVersion: '0.8.29', standardJsonInput: { language: 'Solidity', sources: { 'P.sol': { content: 'contract P {}' } }, settings: {} }, sourceIdentifier: 'P.sol:P' } } };
+    const second: FrozenContractType = { ...first, artifacts: { proxy: { ...first.artifacts.proxy, creationBytecode: '0x6002' as `0x${string}` } } };
+    const frozenDescriptor = vi.fn(async () => frozenDescriptor.mock.calls.length === 1 ? first : second);
+    const service = new ArtifactFreezeService({ contractTypes: { frozenDescriptor }, getPluginConfig: async () => ({ origin: 'builtin', metadata: { version: 'x' } }) as never });
+    const types = await service.freezeContractTypes([source]);
+    const inputs = await service.freezeInputs('p', [source], types);
+    expect(frozenDescriptor).toHaveBeenCalledOnce();
+    expect(inputs.proxy.creationBytecode).toBe('0x6000');
+  });
   it('passes the full pinned source to artifact reads and structurally forces repoDirty false', async () => {
     const pinned: ContractSource = { ...contract, repoPathOrUrl: 'https://example.test/repo.git', pin: { url: 'https://example.test/repo.git', commit: 'a'.repeat(40) } };
     const getArtifactData = vi.fn(async () => base as never);

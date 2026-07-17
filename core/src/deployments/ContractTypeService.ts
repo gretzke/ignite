@@ -19,6 +19,7 @@ const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const KEY = /^[a-zA-Z][a-zA-Z0-9._-]*$/;
 const ABI_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const SOURCE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$)).+$/;
+// eslint-disable-next-line no-control-regex -- boundary sanitization needs the literal control range
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 type Provider = PluginConfig;
 // The API adds contentHash after this service freezes a descriptor. Describe

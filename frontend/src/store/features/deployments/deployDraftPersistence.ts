@@ -42,6 +42,7 @@ const DraftDeployStepSchema = z.object({
     .object({ stepId: z.string().min(1), contractTypePluginId: z.string().min(1) })
     .optional(),
   acknowledgeUninitialized: z.literal(true).optional(),
+  acknowledgeUnverifiedBytecode: z.literal(true).optional(),
   initializerSelection: z.string().optional(),
 });
 

@@ -1334,6 +1334,7 @@ describe('final-review regressions', () => {
   function transparentCaptureValidation(plan: DeploymentPlan) {
     const result = validated(plan) as any;
     result.frozen.proxy.abi = [{ type: 'constructor', inputs: [{ name: 'implementation', type: 'address' }, { name: 'initialOwner', type: 'address' }, { name: '_data', type: 'bytes' }] }];
+    result.frozen.proxy.runtimeBytecode = '0x6001';
     result.contractTypes = { transparent: { pluginId: 'transparent', versionLabel: 'v1', contentHash: 'b'.repeat(64), descriptor: {
       label: 'Transparent', description: 'test', versionLabel: 'v1', params: [{ key: 'initialOwner', label: 'Initial owner', type: 'address', required: true }], artifacts: ['proxy', 'admin'],
       synthesis: { artifact: 'proxy', constructorArgs: [{ name: 'implementation', from: 'implementation' }, { name: 'initialOwner', from: 'param', param: 'initialOwner' }, { name: '_data', from: 'initializer' }] }, validation: {},
@@ -1495,7 +1496,57 @@ describe('final-review regressions', () => {
     stop();
     const current = (await harness.engine.get('p1', run.id))!;
     expect(current.lanes['1'].steps[1]).toMatchObject({ status: 'confirmed', captured: { admin } });
+    expect(current.lanes['1'].steps[1].notes).toContain('wrapper runtime differs from frozen artifact (immutables or unverified provenance)');
     expect(JSON.stringify(events)).toContain(admin);
+  });
+
+  it('rejects a lane edit that swaps wrapper calldata to unacknowledged empty data', async () => {
+    const plan = transparentCapturePlan();
+    (plan.steps[1] as DeployStep).args!._data = { $encode: { contractId: 'implementation', fn: 'initialize()' } };
+    let sends = 0;
+    const harness = makeCaptureEngine({
+      validate: async (candidate) => {
+        const result = transparentCaptureValidation(candidate);
+        result.frozen.implementation.abi = [{ type: 'function', name: 'initialize', inputs: [], outputs: [], stateMutability: 'nonpayable' }];
+        return result;
+      },
+      executeTx: async (args) => {
+        sends += 1;
+        if (sends === 1) { await args.onPhase?.('broadcasting', { tx: { nonce: 1 }, rawTx: RAW_TX, txHash: TX_HASH }); return { txHash: TX_HASH, ...RECEIPT }; }
+        throw new Error('pause for edit');
+      },
+    });
+    const run = await launchCapture(harness.engine, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'broadcast', 'wrapper edit pause');
+    const paused = (await harness.engine.get('p1', run.id))!;
+    await expect(harness.engine.resolveLane('p1', run.id, 1, {
+      action: 'edit', attemptId: paused.lanes['1'].pause!.attemptId, commandId: crypto.randomUUID(),
+      edits: { argsByStep: { proxy: { _data: '0x' } } },
+    })).rejects.toMatchObject({ code: ErrorCodes.ILLEGAL_RESOLVE, details: { contractTypeCode: 'UNINITIALIZED_PROXY_ACK_REQUIRED' } });
+  });
+
+  it.each(['accept-deployed', 'created-code-missing'] as const)('runs wrapper capture through %s completion paths', async (path) => {
+    const plan = transparentCapturePlan();
+    (plan.steps[1] as DeployStep).strategy = { kind: 'plugin', pluginId: 'hook' };
+    const salt = `0x${'77'.repeat(32)}` as const;
+    let codeReads = 0;
+    const harness = makeCaptureEngine({
+      deploymentTypes: { prepare: async (_id, input) => ({ salt, predictedAddress: predictCreate2Address(salt, initcodeHashOf(input.initcode)), notes: [] }), list: async () => [], validate: async () => ({ ok: true }) },
+      getCode: async () => {
+        codeReads += 1;
+        // JIT collision check, then confirmation check, then recheck.
+        if (path === 'created-code-missing') return codeReads >= 3 ? '0x6001' : '0x';
+        return '0x6001';
+      },
+      getStorageAt: async () => `0x${'0'.repeat(24)}${ADDRESS.slice(2)}` as `0x${string}`,
+    });
+    const run = await launchCapture(harness.engine, plan);
+    const expectedPause = path === 'accept-deployed' ? 'create2-collision' : 'created-code-missing';
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === expectedPause, `${path} pause`);
+    const paused = (await harness.engine.get('p1', run.id))!;
+    await harness.engine.resolveLane('p1', run.id, 1, { action: path === 'accept-deployed' ? 'accept-deployed' : 'recheck', attemptId: paused.lanes['1'].pause!.attemptId, commandId: crypto.randomUUID() } as any);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'needs-review', `${path} capture mismatch`);
+    expect((await harness.engine.get('p1', run.id))!.lanes['1'].pause).toMatchObject({ details: { assertion: 'implementation-address' } });
   });
 
   it.each([
@@ -1515,6 +1566,20 @@ describe('final-review regressions', () => {
     const run = await launchCapture(harness.engine, plan);
     await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'needs-review', 'capture mismatch paused');
     expect((await harness.engine.get('p1', run.id))!.lanes['1'].pause).toMatchObject({ details: { assertion } });
+  });
+
+  it('rejects a capture slot with nonzero high bits even when its low address matches', async () => {
+    const plan = transparentCapturePlan();
+    const proxy = RECEIPT.contractAddress;
+    const harness = makeCaptureEngine({
+      getStorageAt: async (_url, _address, slot) => slot === `0x${'36'.repeat(32)}`
+        ? `0x${'ff'.repeat(12)}${proxy.slice(2)}` as `0x${string}`
+        : `0x${'0'.repeat(24)}${getContractAddress({ from: proxy, nonce: 1n }).slice(2)}` as `0x${string}`,
+      getCode: async () => '0x6001',
+    });
+    const run = await launchCapture(harness.engine, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'needs-review', 'high-word capture pause');
+    expect((await harness.engine.get('p1', run.id))!.lanes['1'].pause).toMatchObject({ details: { assertion: 'implementation-address' } });
   });
 
   it('retries capture reads after an RPC pause when resumed', async () => {
@@ -1537,5 +1602,27 @@ describe('final-review regressions', () => {
     await eventually(async () => (await harness.engine.get('p1', run.id))?.status === 'completed', 'capture retry completed');
     expect(reads).toBeGreaterThan(2);
     expect((await harness.engine.get('p1', run.id))!.lanes['1'].steps[1].captured).toEqual({ admin });
+  });
+
+  it('reconciles an rpc-paused sign-and-send capture with a hash but no raw transaction', async () => {
+    const plan = transparentCapturePlan();
+    const proxy = RECEIPT.contractAddress;
+    const admin = getContractAddress({ from: proxy, nonce: 1n });
+    const word = (address: string) => `0x${'0'.repeat(24)}${address.slice(2)}` as `0x${string}`;
+    let fail = true;
+    const harness = makeCaptureEngine({
+      resolveAccount: async () => ({ account: { id: 'a', address: ADDRESS, capability: 'sign-and-send' } }),
+      executeTx: async (args) => { await args.onPhase?.('broadcasting', { tx: { nonce: 1 }, txHash: TX_HASH }); return { txHash: TX_HASH, ...RECEIPT }; },
+      getStorageAt: async (_url, _address, slot) => { if (fail) throw new Error('temporary RPC outage'); return slot === `0x${'36'.repeat(32)}` ? word(proxy) : word(admin); },
+      getCode: async () => '0x6001',
+      call: async () => encodeFunctionResult({ abi: [{ type: 'function', name: 'owner', inputs: [], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' }], functionName: 'owner', result: ADDRESS }),
+      getReceipt: async () => RECEIPT,
+    });
+    const run = await launchCapture(harness.engine, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.lanes['1'].pause?.reason === 'rpc', 'sign-and-send RPC pause');
+    fail = false;
+    await harness.engine.resume('p1', run.id);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.status === 'completed', 'sign-and-send capture reconciled');
+    expect((await harness.engine.get('p1', run.id))!.lanes['1'].steps[1]).toMatchObject({ status: 'confirmed', captured: { admin } });
   });
 });

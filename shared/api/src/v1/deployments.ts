@@ -97,6 +97,7 @@ export interface DeployStep {
   librariesPerChain?: Record<string, Record<string, LibraryBinding>>;
   wraps?: WrapsRef;
   acknowledgeUninitialized?: true;
+  acknowledgeUnverifiedBytecode?: true;
 }
 
 export interface ValueRef { $ref: { kind: 'step'; stepId: string } }
@@ -243,6 +244,7 @@ export const DeployStepSchema = z.object({
   librariesPerChain: z.record(ChainIdKeySchema, z.record(z.string(), LibraryBindingSchema)).optional(),
   wraps: z.object({ stepId: z.string().min(1), contractTypePluginId: z.string().min(1) }).strict().optional(),
   acknowledgeUninitialized: z.literal(true).optional(),
+  acknowledgeUnverifiedBytecode: z.literal(true).optional(),
 }) satisfies z.ZodType<DeployStep>;
 
 export const CallStepSchema = z.object({

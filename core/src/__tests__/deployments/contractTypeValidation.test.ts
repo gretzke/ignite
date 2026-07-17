@@ -98,6 +98,17 @@ describe('contract type validation', () => {
     expect(contractTypeStaticItems(base.plan, base.frozen, base.contractTypes, 1).some((item) => item.code === 'CONTRACT_TYPE_VALUE_NOT_PAYABLE')).toBe(false);
   });
 
+  it('requires third-party bytecode provenance acknowledgement but exempts builtin plugins', () => {
+    const thirdParty = fixture();
+    let items = contractTypeStaticItems(thirdParty.plan, thirdParty.frozen, thirdParty.contractTypes, 1, { transparent: 'installed' });
+    expect(items).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'CONTRACT_TYPE_PROVENANCE_ACK_REQUIRED', blocking: true })]));
+    (thirdParty.plan.steps[1] as any).acknowledgeUnverifiedBytecode = true;
+    items = contractTypeStaticItems(thirdParty.plan, thirdParty.frozen, thirdParty.contractTypes, 1, { transparent: 'installed' });
+    expect(items.some((item) => item.code === 'CONTRACT_TYPE_PROVENANCE_ACK_REQUIRED')).toBe(false);
+    const builtin = fixture();
+    expect(contractTypeStaticItems(builtin.plan, builtin.frozen, builtin.contractTypes, 1, { transparent: 'builtin' }).some((item) => item.code === 'CONTRACT_TYPE_PROVENANCE_ACK_REQUIRED')).toBe(false);
+  });
+
   it('applies the value rule per chain and only notes estimate-tier plain-create wrappers', () => {
     const value = fixture({ wrapper: { valuePerChain: { '1': '0', '2': '1' }, argsPerChain: { '2': { implementation: { $ref: { kind: 'step', stepId: 'implementation' } }, initialOwner: owner, _data: '0x' } } } });
     expect(contractTypeStaticItems(value.plan, value.frozen, value.contractTypes, 1).some((item) => item.code === 'CONTRACT_TYPE_VALUE_NOT_PAYABLE')).toBe(false);

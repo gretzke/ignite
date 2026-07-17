@@ -114,7 +114,8 @@ export interface ValidationDeps {
   profileId?: string;
   freezeInputs: (
     profileId: string,
-    contracts: ContractSource[]
+    contracts: ContractSource[],
+    contractTypes?: Record<string, FrozenContractType>
   ) => Promise<FrozenInputs>;
   freezeContractTypes: (contracts: ContractSource[]) => Promise<Record<string, FrozenContractType>>;
   resolveRpcEndpoint: (
@@ -151,6 +152,7 @@ export interface ValidationDeps {
   resolveVerifierTrust: (
     pluginId: string
   ) => Promise<{ metadata: PluginMetadata; grant: PermissionGrant }>;
+  resolveContractTypeOrigin: (pluginId: string) => Promise<string>;
   deploymentTypes: Pick<DeploymentTypeService, 'list' | 'prepare' | 'validate'>;
   makeForkRunner: (opts: {
     rpcUrl: string;
@@ -221,12 +223,17 @@ async function validatePlanOnce(
   let frozen: FrozenInputs = {};
   let freezeError: unknown;
   let contractTypes: Record<string, FrozenContractType> = {};
+  let contractTypeOrigins: Record<string, string> = {};
   try {
+    contractTypes = await deps.freezeContractTypes(plan.contracts);
     frozen = await deps.freezeInputs(
       deps.profileId ?? 'default',
-      plan.contracts
+      plan.contracts,
+      contractTypes
     );
-    contractTypes = await deps.freezeContractTypes(plan.contracts);
+    contractTypeOrigins = Object.fromEntries(await Promise.all(
+      Object.keys(contractTypes).map(async (pluginId) => [pluginId, await deps.resolveContractTypeOrigin(pluginId)] as const)
+    ));
   } catch (error) {
     freezeError = error;
   }
@@ -312,7 +319,7 @@ async function validatePlanOnce(
       contractTypes
     );
     const contractTypeItems = freezeError ? [] : [
-      ...contractTypeStaticItems(plan, frozen, contractTypes, chainId),
+      ...contractTypeStaticItems(plan, frozen, contractTypes, chainId, contractTypeOrigins),
       ...probeValidationItems(plan, contractTypes, simulation.outcome),
       ...estimateWrapperItems(plan, chainId, (simulation.item.details as { tier?: 'simulateV1' | 'fork' | 'estimate' } | undefined)?.tier),
     ];
@@ -405,6 +412,8 @@ function defaultDeps(): ValidationDeps {
       metadata: (await registry.getPluginConfig(pluginId)).metadata,
       grant: await trust.getGrant(pluginId),
     }),
+    resolveContractTypeOrigin: async (pluginId) =>
+      (await registry.getPluginConfig(pluginId)).origin,
     deploymentTypes: DeploymentTypeService.getInstance(),
     makeForkRunner,
     resolveHookStatus: async (pluginId) => {
