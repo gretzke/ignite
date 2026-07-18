@@ -127,6 +127,7 @@ export function verifyNowLink(
       params.set('pinUrl', contract.pin.url);
       params.set('pinCommit', contract.pin.commit);
       if (contract.pin.ref) params.set('pinRef', contract.pin.ref);
+      if (contract.pin.refKind) params.set('pinRefKind', contract.pin.refKind);
     }
   }
   if (contract?.origin === 'contract-type') {

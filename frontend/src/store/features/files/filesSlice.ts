@@ -55,7 +55,7 @@ export function fileCacheKey(
   filePath: string,
   pin?: ContractSourcePin
 ): string {
-  return `${repoPath}${pin ? `\u0000${pin.commit.slice(0, 12)}` : ''}:${filePath}`;
+  return `${repoPath}${pin ? `\u0000${pin.commit}` : ''}:${filePath}`;
 }
 
 const filesSlice = createSlice({

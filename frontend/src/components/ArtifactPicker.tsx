@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ArtifactData, ArtifactLocation, ContractSource, ContractTypeInfo, ContractSourcePin, AddRepoVersionRequest } from '@ignite/api';
+import type { ArtifactData, ArtifactLocation, ContractSource, ContractTypeInfo, ContractSourcePin, AddRepoVersionRequest, RepoVersionSummary } from '@ignite/api';
 import Select from './Select';
 import { useAppDispatch, useAppSelector } from '../store';
 import { compilerScopeKey, listArtifacts } from '../store/features/compiler/compilerSlice';
@@ -23,6 +23,16 @@ type RepoChoice = {
   newVersion?: boolean;
   local?: boolean;
 };
+
+export function pinForRepoVersion(version: RepoVersionSummary): ContractSourcePin {
+  return {
+    url: version.url,
+    commit: version.commit,
+    ...(version.refLabel && (version.refKind === 'tag' || version.refKind === 'branch')
+      ? { ref: version.refLabel, refKind: version.refKind }
+      : {}),
+  };
+}
 
 export default function ArtifactPicker({
   value,
@@ -55,7 +65,7 @@ export default function ArtifactPicker({
           value: `version:${repo.pathOrUrl}\u0000${version.commit}`,
           label: `  ↳ ${version.refLabel ?? version.commit.slice(0, 12)} · ${version.commit.slice(0, 12)}`,
           path: version.url,
-          pin: { url: version.url, commit: version.commit, ...(version.refLabel ? { ref: version.refLabel } : {}) },
+          pin: pinForRepoVersion(version),
         })),
         { value: `new:${repo.pathOrUrl}`, label: `  + new version… (${repo.pathOrUrl})`, path: repo.pathOrUrl, newVersion: true, local: (repositories?.local ?? []).some((local) => local.pathOrUrl === repo.pathOrUrl) },
       ]);
@@ -64,7 +74,7 @@ export default function ArtifactPicker({
           value: `version:${group.url}\u0000${version.commit}`,
           label: `  ↳ ${group.url} · ${version.refLabel ?? version.commit.slice(0, 12)} · ${version.commit.slice(0, 12)}`,
           path: group.url,
-          pin: { url: group.url, commit: version.commit, ...(version.refLabel ? { ref: version.refLabel } : {}) },
+          pin: pinForRepoVersion(version),
         })),
         { value: `new:${group.url}`, label: `  + new version… (${group.url})`, path: group.url, newVersion: true, local: false },
       ]);

@@ -20,8 +20,8 @@ describe('version-scoped file cache', () => {
     const filePath = 'src/Counter.sol';
     const artifactPath = 'out/Counter.sol/Counter.json';
     const pins = [
-      { url: repoPath, commit: 'a'.repeat(40) },
-      { url: repoPath, commit: 'b'.repeat(40) },
+      { url: repoPath, commit: `${'a'.repeat(12)}${'b'.repeat(28)}` },
+      { url: repoPath, commit: `${'a'.repeat(12)}${'c'.repeat(28)}` },
     ];
     let state = filesReducer(undefined, { type: '@@init' });
 
@@ -45,6 +45,8 @@ describe('version-scoped file cache', () => {
     const firstKey = fileCacheKey(repoPath, filePath, pins[0]);
     const secondKey = fileCacheKey(repoPath, filePath, pins[1]);
     expect(firstKey).not.toBe(secondKey);
+    expect(firstKey).toContain(pins[0].commit);
+    expect(secondKey).toContain(pins[1].commit);
     expect(state.files[firstKey].content?.content).toBe('version-1');
     expect(state.files[secondKey].content?.content).toBe('version-2');
     expect(state.files[firstKey].artifactData?.[`foundry:${artifactPath}`].bytecodeHash).toBe('hash-1');

@@ -62,11 +62,21 @@ export function contractFromSearchParams(params: URLSearchParams): ContractSourc
   if (!required.every((key) => params.get(key))) return undefined;
   const pinUrl = params.get('pinUrl');
   const pinCommit = params.get('pinCommit');
+  const pinRef = params.get('pinRef');
+  const pinRefKind = params.get('pinRefKind');
   return {
     id: params.get('contractId')!, repoPathOrUrl: params.get('repoPathOrUrl')!,
     frameworkId: params.get('frameworkId')!, artifactPath: params.get('artifactPath')!,
     contractName: params.get('contractName')!, sourcePath: params.get('sourcePath')!,
-    ...(pinUrl && pinCommit ? { pin: { url: pinUrl, commit: pinCommit, ...(params.get('pinRef') ? { ref: params.get('pinRef')! } : {}) } } : {}),
+    ...(pinUrl && pinCommit ? {
+      pin: {
+        url: pinUrl,
+        commit: pinCommit,
+        ...(pinRef && (pinRefKind === 'tag' || pinRefKind === 'branch')
+          ? { ref: pinRef, refKind: pinRefKind }
+          : {}),
+      },
+    } : {}),
   };
 }
 

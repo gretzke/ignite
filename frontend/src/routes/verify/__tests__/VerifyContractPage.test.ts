@@ -1,6 +1,7 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
 import { constructorInputs } from '../../../components/ConstructorArgsForm';
+import { ContractSourcePinSchema } from '@ignite/api';
 import { contractFromSearchParams, verificationSubmitBody } from '../VerifyContractPage';
 
 const contract = {
@@ -26,9 +27,10 @@ describe('VerifyContractPage helpers', () => {
   it('reconstructs a pinned source from a Verify now deep link', () => {
     const source = contractFromSearchParams(new URLSearchParams({
       contractId: 'token', repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: 'out/Token.json', contractName: 'Token', sourcePath: 'src/Token.sol',
-      pinUrl: 'https://example.test/contracts.git', pinCommit: 'a'.repeat(40), pinRef: 'v1.2.3',
+      pinUrl: 'https://example.test/contracts.git', pinCommit: 'a'.repeat(40), pinRef: 'v1.2.3', pinRefKind: 'tag',
     }));
-    expect(source).toMatchObject({ pin: { url: 'https://example.test/contracts.git', commit: 'a'.repeat(40), ref: 'v1.2.3' } });
+    expect(source).toMatchObject({ pin: { url: 'https://example.test/contracts.git', commit: 'a'.repeat(40), ref: 'v1.2.3', refKind: 'tag' } });
+    expect(ContractSourcePinSchema.safeParse(source?.origin === 'contract-type' ? undefined : source?.pin).success).toBe(true);
   });
 
   it('skips the argument section for a zero-input constructor', () => {

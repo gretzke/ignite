@@ -394,6 +394,7 @@ export default function FilePage() {
       params.set('pinUrl', pin.url);
       params.set('pinCommit', pin.commit);
       if (pin.ref) params.set('pinRef', pin.ref);
+      if (pin.refKind) params.set('pinRefKind', pin.refKind);
     }
     navigate(`/verify?${params}`);
   };
