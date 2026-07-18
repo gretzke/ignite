@@ -18,6 +18,11 @@ describe('VerifyContractPage helpers', () => {
     expect(guessed).not.toHaveProperty('args');
   });
 
+  it('includes explicit unverified-provenance consent only when acknowledged', () => {
+    const body = verificationSubmitBody({ contract, chainId: 1, address: '0x0000000000000000000000000000000000000001', args: {}, explorerEntryIds: ['scan'], confirmUnverifiedProvenance: true });
+    expect(body).toHaveProperty('confirmUnverifiedProvenance', true);
+  });
+
   it('skips the argument section for a zero-input constructor', () => {
     expect(constructorInputs([{ type: 'constructor', inputs: [] }])).toEqual([]);
   });

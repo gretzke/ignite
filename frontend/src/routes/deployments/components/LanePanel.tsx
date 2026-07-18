@@ -93,12 +93,14 @@ export function splitLaneVerificationTasks(
       continue;
     }
     const step = laneSteps.get(task.origin.stepId);
-    if (
-      !step ||
-      !deployStepIds.has(step.stepId) ||
-      !step.address ||
-      task.address.toLowerCase() !== step.address.toLowerCase()
-    ) {
+    if (!step || !deployStepIds.has(step.stepId)) {
+      orphans.push(task);
+      continue;
+    }
+    const isStepAddress = Boolean(step?.address) && task.address.toLowerCase() === step.address!.toLowerCase();
+    const captureKey = 'captureKey' in task.origin ? task.origin.captureKey : undefined;
+    const isCapturedAddress = Boolean(step.captured) && Object.values(step.captured!).some((address) => address.toLowerCase() === task.address.toLowerCase());
+    if (!isStepAddress && !(captureKey && isCapturedAddress)) {
       orphans.push(task);
       continue;
     }

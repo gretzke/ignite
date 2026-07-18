@@ -32,8 +32,10 @@ describe('ArtifactFreezeService runtime bytecode', () => {
     const descriptor: FrozenContractType = { pluginId: 'ct', versionLabel: 'v1', contentHash: 'b'.repeat(64), descriptor: { label: 'CT', description: 'd', versionLabel: 'v1', params: [], artifacts: ['proxy'], synthesis: null, validation: {}, capture: [] }, artifacts: { proxy: { abi: [], creationBytecode: '0x6000', runtimeBytecode: '0x6001', solcVersion: '0.8.29', standardJsonInput: { language: 'Solidity', sources: { 'P.sol': { content: 'contract P {}' } }, settings: {} }, sourceIdentifier: 'P.sol:P' } } };
     const write = vi.fn(async () => 'd'.repeat(64));
     const service = new ArtifactFreezeService({ contractTypes: { frozenDescriptor: async () => descriptor }, getPluginConfig: async () => ({ origin: 'installed', metadata: { version: 'x' } }) as never, bundleStore: { write } });
-    const frozen = await service.freezeInputs('p', [source]);
-    await service.captureBundles(frozen, [source], 'p', { ct: descriptor });
+    const types = await service.freezeContractTypes([source]);
+    expect(types.ct).toMatchObject({ unverifiedProvenance: true });
+    const frozen = await service.freezeInputs('p', [source], types);
+    await service.captureBundles(frozen, [source], 'p', types);
     expect(write).toHaveBeenCalledWith('p', expect.objectContaining({ unverifiedProvenance: true, solcVersion: '0.8.29', contractIdentifier: 'P.sol:P' }));
   });
   it('uses the caller supplied contract-type snapshot without fetching a second descriptor', async () => {

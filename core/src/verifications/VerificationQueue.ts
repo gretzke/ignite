@@ -197,10 +197,17 @@ export class VerificationQueue {
     artifact: ParsedContractArtifact,
     encodedConstructorArgs: string
   ): Promise<void> {
-    const wrapperBundle = run.inputs[contractId]?.bundleHash
-      ? await this.bundles.read(profileId, run.inputs[contractId].bundleHash!)
-      : undefined;
     const wrapperSource = run.plan.contracts.find((entry) => entry.id === contractId);
+    const frozenType = wrapperSource?.origin === 'contract-type'
+      ? run.contractTypes?.[wrapperSource.pluginId]
+      : undefined;
+    // Recovery may not have the wrapper bundle sidecar anymore. The frozen
+    // descriptor is the durable provenance authority; without it do not
+    // create a capture bundle that might later be auto-submitted.
+    if (!frozenType) {
+      this.logger.warn(`Skipping contract-type capture verification for ${contractId}: frozen provenance is unavailable`);
+      return;
+    }
     const settings = artifact.standardJsonInput && typeof artifact.standardJsonInput === 'object'
       ? (artifact.standardJsonInput as { settings?: { optimizer?: { enabled?: boolean; runs?: number }; viaIR?: boolean; evmVersion?: string } }).settings
       : undefined;
@@ -218,12 +225,11 @@ export class VerificationQueue {
         viaIR: settings?.viaIR ?? false,
         ...(settings?.evmVersion ? { evmVersion: settings.evmVersion } : {}),
       },
-      ...(wrapperBundle?.unverifiedProvenance ? { unverifiedProvenance: true as const } : {}),
+      ...(frozenType.unverifiedProvenance ? { unverifiedProvenance: true as const } : {}),
     });
-    const bundle = await this.bundles.read(profileId, bundleHash);
     // Third-party contract-type source bundles need a human confirmation;
     // automatic capture is intentionally a no-op in that case.
-    if (!bundle || bundle.unverifiedProvenance) return;
+    if (frozenType.unverifiedProvenance) return;
     for (const explorer of run.explorerTargets?.[String(chainId)] ?? []) {
       await this.enqueue(profileId, {
         chainId,

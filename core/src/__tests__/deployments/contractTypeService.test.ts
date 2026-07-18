@@ -31,6 +31,7 @@ describe('ContractTypeService', () => {
     ['oversized capture list', descriptor({ capture: Array.from({ length: 9 }, () => ({ slot: `0x${'11'.repeat(32)}` })) }), artifact()],
     ['bad parameter shape', descriptor({ params: [{ key: 'owner', label: 'Owner', type: 'wat' }] }), artifact()],
     ['assertCalls target has no recorded capture', descriptor({ params: [{ key: 'owner', label: 'Owner', type: 'address' }], capture: [{ slot: `0x${'11'.repeat(32)}`, assertCalls: [{ call: 'owner()', on: 'proxy', expectParam: 'owner' }] }] }), artifact()],
+    ['forward assertCalls reference', descriptor({ params: [{ key: 'owner', label: 'Owner', type: 'address' }], capture: [{ slot: `0x${'11'.repeat(32)}`, assertCalls: [{ call: 'owner()', on: 'admin', expectParam: 'owner' }] }, { slot: `0x${'22'.repeat(32)}`, record: 'admin' }] }), artifact()],
     ['verifyAs has no recorded capture', descriptor({ capture: [{ slot: `0x${'11'.repeat(32)}`, verifyAs: 'proxy' }] }), artifact()],
     ['verify constructor arg count differs', descriptor({ capture: [{ slot: `0x${'11'.repeat(32)}`, record: 'proxy', verifyAs: 'proxy', constructorArgs: [] }] }), artifact()],
     ['hostile ABI leaf type', descriptor(), artifact([{ name: 'implementation', type: 'uint7' }, { name: '_data', type: 'bytes' }])],

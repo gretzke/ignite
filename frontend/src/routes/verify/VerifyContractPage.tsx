@@ -24,6 +24,7 @@ export function verificationSubmitBody({
   encodedConstructorArgs,
   creationTxHash,
   explorerEntryIds,
+  confirmUnverifiedProvenance,
 }: {
   contract: ContractSource;
   chainId: number;
@@ -32,6 +33,7 @@ export function verificationSubmitBody({
   encodedConstructorArgs?: string;
   creationTxHash?: string;
   explorerEntryIds: string[];
+  confirmUnverifiedProvenance?: true;
 }) {
   return {
     contract,
@@ -39,6 +41,7 @@ export function verificationSubmitBody({
     address,
     ...(encodedConstructorArgs ? { encodedConstructorArgs } : { args }),
     ...(creationTxHash ? { creationTxHash } : {}),
+    ...(confirmUnverifiedProvenance ? { confirmUnverifiedProvenance } : {}),
     explorerEntryIds,
   };
 }
@@ -54,6 +57,12 @@ export default function VerifyContractPage() {
   const [params] = useSearchParams();
   const chains = useAppSelector((state) => state.chains.chains);
   const [contract, setContract] = useState<ContractSource | undefined>(() => {
+    const contractTypeRequired = ['contractId', 'pluginId', 'artifactKey', 'contractName', 'versionLabel', 'contentHash'];
+    if (contractTypeRequired.every((key) => params.get(key))) return {
+      id: params.get('contractId')!, origin: 'contract-type', pluginId: params.get('pluginId')!,
+      artifactKey: params.get('artifactKey')!, contractName: params.get('contractName')!,
+      versionLabel: params.get('versionLabel')!, contentHash: params.get('contentHash')!,
+    };
     const required = [
       'contractId',
       'repoPathOrUrl',
@@ -86,6 +95,8 @@ export default function VerifyContractPage() {
   const [guessError, setGuessError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requiresProvenanceConfirmation, setRequiresProvenanceConfirmation] = useState(false);
+  const [confirmUnverifiedProvenance, setConfirmUnverifiedProvenance] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,7 +140,13 @@ export default function VerifyContractPage() {
     };
   }, [chainSearch, dispatch]);
   useEffect(() => {
-    if (!contract || contract.origin === 'contract-type' || abi.length) return; // contract-types plan phase 10
+    if (!contract || abi.length) return;
+    if (contract.origin === 'contract-type') {
+      void apiClient.request('getContractTypeArtifact', { params: { pluginId: contract.pluginId, artifactKey: contract.artifactKey } }).then((response) => {
+        if ('data' in response) setAbi(response.data.artifact.abi as unknown[]);
+      });
+      return;
+    }
     void apiClient
       .request('getArtifactData', {
         body: {
@@ -202,6 +219,7 @@ export default function VerifyContractPage() {
       encodedConstructorArgs: encodedTail,
       creationTxHash: creationTxHash || undefined,
       explorerEntryIds: explorerIds,
+      ...(confirmUnverifiedProvenance ? { confirmUnverifiedProvenance: true as const } : {}),
     });
     try {
       const response = await apiClient.request('createVerification', { body });
@@ -210,6 +228,7 @@ export default function VerifyContractPage() {
       dispatch(verificationTasksReceived(response.data.tasks));
       navigate('/deployments?manualVerification=1');
     } catch (cause) {
+      if (cause instanceof ApiError && cause.body.code === 'UNVERIFIED_PROVENANCE_CONFIRMATION_REQUIRED') setRequiresProvenanceConfirmation(true);
       setError(submissionErrorMessage(cause));
     } finally {
       setSubmitting(false);
@@ -240,6 +259,7 @@ export default function VerifyContractPage() {
             {contract.origin === 'contract-type' ? contract.contractName : `${contract.sourcePath} · ${contract.contractName}`}
           </p>
         )}
+        {requiresProvenanceConfirmation && <label className="flex gap-2 text-sm text-warn"><input type="checkbox" checked={confirmUnverifiedProvenance} onChange={(event) => setConfirmUnverifiedProvenance(event.target.checked)} />I understand this contract type’s source provenance is unverified and consent to submit it to the selected explorers.</label>}
       </section>
       <section className="card-milky p-4 grid gap-3">
         <h2 className="font-semibold">2. Chain + address</h2>

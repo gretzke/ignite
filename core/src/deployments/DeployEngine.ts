@@ -1510,6 +1510,7 @@ export class DeployEngine {
     const ctor = synthesis ? ((run.inputs[wrapper.contractId]?.abi as Abi | undefined)?.find((item) => item.type === 'constructor')?.inputs ?? []) : [];
     const values = resolveStepValues(wrapper, chainId, addresses, ctor as never, { frozen: run.inputs, contracts: run.plan.contracts });
     const captured: Record<string, Hex> = {};
+    const assertions: Array<NonNullable<(typeof type.descriptor.capture)[number]['assertCalls']>[number]> = [];
     for (const capture of type.descriptor.capture) {
       let word: Hex;
       try { word = await this.deps.getStorageAt(rpc.url, wrapperAddress, capture.slot); }
@@ -1535,8 +1536,15 @@ export class DeployEngine {
           throw Object.assign(new Error('Captured contract runtime bytecode does not match the frozen artifact'), { details: { assertion: 'expectCodeOf', artifact: capture.expectCodeOf, expected: artifact.runtimeBytecode, actual: code } });
       }
       for (const assertion of capture.assertCalls ?? []) {
+        assertions.push(assertion);
+      }
+    }
+    // All storage reads are complete before assertions run. Descriptor
+    // validation additionally guarantees assertion.on is from this or an
+    // earlier capture, so assertions always see their recorded target.
+    for (const assertion of assertions) {
         const target = captured[assertion.on];
-        const artifact = type.artifacts[capture.expectCodeOf ?? capture.verifyAs ?? assertion.on];
+        const artifact = type.artifacts[assertion.on];
         if (!target || !artifact) throw Object.assign(new Error(`Capture call target ${assertion.on} is unavailable`), { details: { assertion: 'assertCalls', on: assertion.on } });
         const fn = Array.isArray(artifact.abi)
           ? artifact.abi.find((item): item is AbiFunction => Boolean(item && typeof item === 'object' && (item as { type?: string }).type === 'function') && (() => { try { return toFunctionSignature(item as AbiFunction) === assertion.call; } catch { return false; } })())
@@ -1552,7 +1560,6 @@ export class DeployEngine {
           ? String(actual).toLowerCase() === (expected as string).toLowerCase()
           : actual === expected;
         if (!same) throw Object.assign(new Error(`Capture call ${assertion.call} returned an unexpected value`), { details: { assertion: 'assertCalls', call: assertion.call, expected, actual } });
-      }
     }
     const runtime = run.inputs[wrapper.contractId]?.runtimeBytecode;
     let note: string | undefined;

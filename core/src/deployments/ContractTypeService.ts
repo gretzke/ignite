@@ -231,6 +231,7 @@ export class ContractTypeService {
       }
     }
     const recorded = new Set(descriptor.capture.flatMap((capture) => capture.record ? [capture.record] : []));
+    const recordedBefore = new Set<string>();
     for (const capture of descriptor.capture) {
       for (const artifact of [capture.record, capture.expectCodeOf, capture.verifyAs]) if (artifact !== undefined && !artifactKeys.has(artifact)) this.failed('capture references an unknown artifact');
       // verifyAs/assertCalls act on a captured ADDRESS, so the referenced key
@@ -247,11 +248,12 @@ export class ContractTypeService {
         if (verifyInputs && !matchesParamType(param!.type, verifyInputs[index]!.type)) this.failed('capture constructorArgs do not match the verifyAs constructor ABI');
       });
       for (const assertion of capture.assertCalls ?? []) {
-        if (!recorded.has(assertion.on) || !params.has(assertion.expectParam)) this.failed('capture assertion references an unrecorded artifact or unknown parameter');
+        if (!(recordedBefore.has(assertion.on) || capture.record === assertion.on) || !params.has(assertion.expectParam)) this.failed('capture assertion references an unrecorded artifact or unknown parameter');
         const fn = this.zeroArgFunction(artifacts[assertion.on], assertion.call);
         if (!fn) this.failed('capture assertion function is not a zero-argument function of the target artifact');
         if (!matchesParamType(params.get(assertion.expectParam)!.type, fn!.outputs[0]?.type ?? '')) this.failed('capture assertion return type does not match the expected parameter');
       }
+      if (capture.record) recordedBefore.add(capture.record);
     }
   }
   private validateAbiShape(artifact: ParsedContractArtifact | undefined): void {

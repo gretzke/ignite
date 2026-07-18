@@ -11,7 +11,7 @@ function sendContractTypeError(reply: FastifyReply, error: unknown, fallback: st
     const status = error.code === 'CONTRACT_BYTECODE_NOT_GRANTED' ? 403 : error.code === 'PLUGIN_NOT_FOUND' || error.code === 'ARTIFACT_NOT_FOUND' ? 404 : undefined;
     if (status) return reply.status(status).send({ statusCode: status, error: status === 403 ? 'Forbidden' : 'Not Found', code: error.code, message: error.message });
   }
-  return sendCaughtError(reply, error, 'CONTRACT_TYPE_OP_FAILED' as never, fallback);
+  return sendCaughtError(reply, error, 'CONTRACT_TYPE_OP_FAILED', fallback);
 }
 
 export const contractTypeHandlers = {
@@ -19,15 +19,19 @@ export const contractTypeHandlers = {
     try {
       const service = ContractTypeService.getInstance();
       const listed = await service.list();
-      // A list entry is actionable only with the content hash of the frozen
-      // descriptor. frozenDescriptor also enforces contractBytecode consent;
-      // surface that as the typed 403 instead of letting the wizard create an
-      // unlaunchable source.
-      const contractTypes = await Promise.all(listed.map(async (info) => ({
+      // Discovery is per provider. One ungranted installed plugin must not
+      // hide built-ins or other usable providers.
+      const settled = await Promise.allSettled(listed.map(async (info) => ({
         ...info,
         contentHash: (await service.frozenDescriptor(info.pluginId)).contentHash,
       })));
-      return reply.status(200).send({ data: { contractTypes } });
+      const contractTypes = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+      const requiresGrant = settled.flatMap((result, index) => result.status === 'rejected'
+        && result.reason instanceof IgniteError
+        && result.reason.code === 'CONTRACT_BYTECODE_NOT_GRANTED'
+        ? [listed[index]!.pluginId]
+        : []);
+      return reply.status(200).send({ data: { contractTypes, requiresGrant } });
     }
     catch (error) { return sendContractTypeError(reply, error, 'Failed to list contract types'); }
   },

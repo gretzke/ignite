@@ -21,10 +21,10 @@ describe('contract type list API', () => {
     const output = reply();
     await contractTypeHandlers.listContractTypes({} as never, output as never);
     expect(output.status).toHaveBeenCalledWith(200);
-    expect(output.send).toHaveBeenCalledWith({ data: { contractTypes: [{ pluginId: 'proxy', label: 'Proxy', contentHash: 'a'.repeat(64) }] } });
+    expect(output.send).toHaveBeenCalledWith({ data: { contractTypes: [{ pluginId: 'proxy', label: 'Proxy', contentHash: 'a'.repeat(64) }], requiresGrant: [] } });
   });
 
-  it('surfaces missing bytecode consent as a 403 before a source can be created', async () => {
+  it('isolates missing bytecode consent and reports the provider grant requirement', async () => {
     const service = {
       list: vi.fn().mockResolvedValue([{ pluginId: 'proxy' }]),
       frozenDescriptor: vi.fn().mockRejectedValue(new IgniteError('Contract-type plugin proxy is not granted contract bytecode permission', 'CONTRACT_BYTECODE_NOT_GRANTED')),
@@ -32,7 +32,7 @@ describe('contract type list API', () => {
     vi.spyOn(ContractTypeService, 'getInstance').mockReturnValue(service as unknown as ContractTypeService);
     const output = reply();
     await contractTypeHandlers.listContractTypes({} as never, output as never);
-    expect(output.status).toHaveBeenCalledWith(403);
-    expect(output.send).toHaveBeenCalledWith(expect.objectContaining({ code: 'CONTRACT_BYTECODE_NOT_GRANTED' }));
+    expect(output.status).toHaveBeenCalledWith(200);
+    expect(output.send).toHaveBeenCalledWith({ data: { contractTypes: [], requiresGrant: ['proxy'] } });
   });
 });

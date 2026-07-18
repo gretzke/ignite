@@ -29,7 +29,7 @@ import { guessConstructorArgs as guess } from '../verifications/guessArgs.js';
 import { createPublicClient, http, type Hex } from 'viem';
 import { sendBadRequest, sendCaughtError } from './utils/errors.js';
 import type { ErrorCode } from '../types/errors.js';
-import { IgniteError } from '../types/errors.js';
+import { IgniteError, ErrorCodes } from '../types/errors.js';
 type ProfileSource = { getCurrentProfile(): string };
 export interface VerificationHandlerDeps {
   queue: Pick<
@@ -40,7 +40,7 @@ export interface VerificationHandlerDeps {
   bundleStore: BundleStore;
   explorers: Parameters<typeof resolveMergedExplorers>[0];
   compiler: Parameters<typeof getCompilerArtifactData>[0];
-  contractTypes: Pick<ContractTypeService, 'getArtifact'>;
+  contractTypes: Pick<ContractTypeService, 'getArtifact' | 'frozenDescriptor'>;
 }
 export function createVerificationHandlers(
   deps?: Partial<VerificationHandlerDeps>
@@ -92,6 +92,27 @@ export function createVerificationHandlers(
       try {
         const profileId = await profile();
         const { contract } = request.body;
+        if (contract.origin === 'contract-type') {
+          const frozen = await d.contractTypes.frozenDescriptor(contract.pluginId);
+          if (
+            frozen.contentHash !== contract.contentHash ||
+            frozen.versionLabel !== contract.versionLabel
+          ) {
+            return reply.status(409).send({
+              statusCode: 409,
+              error: 'Conflict',
+              code: ErrorCodes.CONTRACT_TYPE_DRIFT,
+              message: 'The installed contract type no longer matches the selected source',
+              details: {
+                pluginId: contract.pluginId,
+                expectedContentHash: contract.contentHash,
+                actualContentHash: frozen.contentHash,
+                expectedVersionLabel: contract.versionLabel,
+                actualVersionLabel: frozen.versionLabel,
+              },
+            });
+          }
+        }
         const [artifact, bundleData] = contract.origin === 'contract-type'
           ? await (async () => {
               const value = await d.contractTypes.getArtifact(contract.pluginId, contract.artifactKey);

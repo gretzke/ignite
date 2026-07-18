@@ -202,7 +202,18 @@ export class ArtifactFreezeService {
 
   async freezeContractTypes(contracts: ContractSource[]): Promise<Record<string, FrozenContractType>> {
     const ids = [...new Set(contracts.flatMap((contract) => contract.origin === 'contract-type' ? [contract.pluginId] : []))];
-    const entries = await Promise.all(ids.map(async (pluginId) => [pluginId, await this.deps.contractTypes.frozenDescriptor(pluginId)] as const));
+    const entries = await Promise.all(ids.map(async (pluginId) => {
+      const [descriptor, config] = await Promise.all([
+        this.deps.contractTypes.frozenDescriptor(pluginId),
+        this.deps.getPluginConfig(pluginId),
+      ]);
+      // This is a trust decision, not bundle metadata. Persist it alongside
+      // the frozen descriptor so recovery cannot lose the provenance carrier.
+      return [pluginId, {
+        ...descriptor,
+        ...(config.origin !== 'builtin' ? { unverifiedProvenance: true as const } : {}),
+      }] as const;
+    }));
     return Object.fromEntries(entries);
   }
 
@@ -237,7 +248,7 @@ export class ArtifactFreezeService {
             input.compiler.pluginId,
             data.standardJsonInput
           ),
-          ...(contract.origin === 'contract-type' && (await this.deps.getPluginConfig(contract.pluginId)).origin !== 'builtin' ? { unverifiedProvenance: true as const } : {}),
+          ...(contract.origin === 'contract-type' && type!.unverifiedProvenance ? { unverifiedProvenance: true as const } : {}),
         };
         const bundleHash = await this.deps.bundleStore.write(profileId, bundle);
         input.bundleHash = bundleHash;

@@ -194,6 +194,14 @@ describe('StepVerificationList helpers', () => {
     );
   });
 
+  it('carries contract-type source identity into Verify now', () => {
+    const value = run();
+    value.plan.contracts[0] = { id: 'token', origin: 'contract-type', pluginId: 'ct', artifactKey: 'proxy', contractName: 'Proxy', versionLabel: 'v1', contentHash: 'a'.repeat(64) };
+    const link = verifyNowLink(value, 1, 'deploy-token');
+    expect(link).toContain('pluginId=ct');
+    expect(link).toContain(`contentHash=${'a'.repeat(64)}`);
+  });
+
   it('keeps missing explorer targets visible while a lane is active', () => {
     const targets = [
       task().explorer,

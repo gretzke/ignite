@@ -405,7 +405,7 @@ export interface NormalizedContractTypeDescriptor {
   capture: ContractTypeCaptureSpec[];
 }
 export interface ParsedContractArtifact { abi: unknown; creationBytecode: Hex; runtimeBytecode: Hex; solcVersion: string; standardJsonInput: unknown; sourceIdentifier: string; }
-export interface FrozenContractType { pluginId: string; versionLabel: string; descriptor: NormalizedContractTypeDescriptor; artifacts: Record<string, ParsedContractArtifact>; contentHash: string; }
+export interface FrozenContractType { pluginId: string; versionLabel: string; descriptor: NormalizedContractTypeDescriptor; artifacts: Record<string, ParsedContractArtifact>; contentHash: string; unverifiedProvenance?: true; }
 
 export interface RpcBinding {
   endpointId: string;
@@ -684,7 +684,7 @@ export const ContractTypeSynthesisArgSchema = z.union([
 export const ContractTypeCaptureSpecSchema = z.object({ slot: Hex32Schema, record: z.string().min(1).optional(), expect: z.literal('implementation-address').optional(), derivedCreate: z.object({ nonce: z.number().int().nonnegative() }).strict().optional(), expectCodeOf: z.string().min(1).optional(), verifyAs: z.string().min(1).optional(), constructorArgs: z.array(z.string().min(1)).optional(), assertCalls: z.array(z.object({ call: z.string().min(1), on: z.string().min(1), expectParam: z.string().min(1) }).strict()).optional() }).strict() satisfies z.ZodType<ContractTypeCaptureSpec>;
 export const NormalizedContractTypeDescriptorSchema = z.object({ label: z.string().min(1), description: z.string().min(1), versionLabel: z.string().min(1), params: z.array(ContractTypeParamWireSchema), artifacts: z.array(z.string().min(1)), synthesis: z.object({ artifact: z.string().min(1), constructorArgs: z.array(ContractTypeSynthesisArgSchema) }).strict().nullable(), validation: z.object({ requiredFunctions: z.array(z.string().min(1)).optional(), probe: z.object({ call: z.string().min(1), expectReturn: HexSchema }).strict().optional(), warnings: z.array(z.object({ when: z.literal('impl-has-function'), fn: z.string().min(1), message: z.string().min(1) }).strict()).optional() }).strict(), capture: z.array(ContractTypeCaptureSpecSchema) }).strict() satisfies z.ZodType<NormalizedContractTypeDescriptor>;
 export const ParsedContractArtifactSchema = z.object({ abi: z.unknown(), creationBytecode: HexSchema, runtimeBytecode: HexSchema, solcVersion: z.string().min(1), standardJsonInput: z.unknown(), sourceIdentifier: z.string().min(1) }).strict() satisfies z.ZodType<ParsedContractArtifact>;
-export const FrozenContractTypeSchema = z.object({ pluginId: z.string().min(1), versionLabel: z.string().min(1), descriptor: NormalizedContractTypeDescriptorSchema, artifacts: z.record(z.string().min(1), ParsedContractArtifactSchema), contentHash: z.string().regex(SHA256_HEX) }).strict() satisfies z.ZodType<FrozenContractType>;
+export const FrozenContractTypeSchema = z.object({ pluginId: z.string().min(1), versionLabel: z.string().min(1), descriptor: NormalizedContractTypeDescriptorSchema, artifacts: z.record(z.string().min(1), ParsedContractArtifactSchema), contentHash: z.string().regex(SHA256_HEX), unverifiedProvenance: z.literal(true).optional() }).strict() satisfies z.ZodType<FrozenContractType>;
 
 export const RpcBindingSchema = z.object({
   endpointId: z.string().min(1),

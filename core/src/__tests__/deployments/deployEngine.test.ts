@@ -1500,6 +1500,31 @@ describe('final-review regressions', () => {
     expect(JSON.stringify(events)).toContain(admin);
   });
 
+  it('uses the asserted capture artifact ABI rather than the current capture artifact', async () => {
+    const plan = transparentCapturePlan();
+    const proxy = RECEIPT.contractAddress;
+    const admin = getContractAddress({ from: proxy, nonce: 1n });
+    const word = (address: string) => `0x${'0'.repeat(24)}${address.slice(2)}` as `0x${string}`;
+    const harness = makeCaptureEngine({
+      validate: async (candidate) => {
+        const result = transparentCaptureValidation(candidate);
+        const type = result.contractTypes.transparent;
+        type.descriptor.capture = [
+          { slot: `0x${'36'.repeat(32)}`, expect: 'implementation-address' },
+          { slot: `0x${'b5'.repeat(32)}`, record: 'admin', derivedCreate: { nonce: 1 }, expectCodeOf: 'admin', verifyAs: 'admin', constructorArgs: ['initialOwner'] },
+          { slot: `0x${'c1'.repeat(32)}`, expectCodeOf: 'proxy', assertCalls: [{ call: 'owner()', on: 'admin', expectParam: 'initialOwner' }] },
+        ];
+        type.artifacts.proxy.abi = [{ type: 'function', name: 'owner', inputs: [], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }];
+        return result;
+      },
+      getStorageAt: async (_url, _address, slot) => slot === `0x${'36'.repeat(32)}` ? word(proxy) : word(admin),
+      getCode: async () => '0x6001',
+      call: async () => encodeFunctionResult({ abi: [{ type: 'function', name: 'owner', inputs: [], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' }], functionName: 'owner', result: ADDRESS }),
+    });
+    const run = await launchCapture(harness.engine, plan);
+    await eventually(async () => (await harness.engine.get('p1', run.id))?.status === 'completed', 'capture completed');
+  });
+
   it('rejects a lane edit that swaps wrapper calldata to unacknowledged empty data', async () => {
     const plan = transparentCapturePlan();
     (plan.steps[1] as DeployStep).args!._data = { $encode: { contractId: 'implementation', fn: 'initialize()' } };

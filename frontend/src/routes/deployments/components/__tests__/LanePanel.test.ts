@@ -34,4 +34,12 @@ describe('LanePanel helpers', () => {
     expect(result.byStep['deploy-token']).toEqual([task()]);
     expect(result.orphans).toEqual([mismatch, missing]);
   });
+
+  it('attaches captured-address tasks to their producing deployment step', () => {
+    const capturedLane = { ...lane, steps: [{ ...lane.steps[0]!, captured: { admin: '0x0000000000000000000000000000000000000002' as `0x${string}` } }] };
+    const captured = task({ address: '0x0000000000000000000000000000000000000002', origin: { runId: 'run-1', stepId: 'deploy-token', contractId: 'token', captureKey: 'admin' } });
+    const result = splitLaneVerificationTasks([captured], capturedLane, new Set(['deploy-token']));
+    expect(result.byStep['deploy-token']).toEqual([captured]);
+    expect(result.orphans).toEqual([]);
+  });
 });

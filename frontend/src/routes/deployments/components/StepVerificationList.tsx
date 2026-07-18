@@ -124,6 +124,14 @@ export function verifyNowLink(
     params.set('contractName', contract.contractName);
     params.set('sourcePath', contract.sourcePath);
   }
+  if (contract?.origin === 'contract-type') {
+    params.set('contractId', contract.id);
+    params.set('pluginId', contract.pluginId);
+    params.set('artifactKey', contract.artifactKey);
+    params.set('contractName', contract.contractName);
+    params.set('versionLabel', contract.versionLabel);
+    params.set('contentHash', contract.contentHash);
+  }
   return `/verify?${params}`;
 }
 
@@ -206,6 +214,9 @@ export function VerificationTaskRows({
           <div className="font-medium truncate">
             {pluginLabels?.[task.explorer.verifierPluginId] ??
               task.explorer.verifierPluginId}
+            {'captureKey' in task.origin && task.origin.captureKey && (
+              <span className="ml-2 text-muted">{task.origin.captureKey}</span>
+            )}
           </div>
           <div className="mono-data text-muted truncate">
             {task.explorer.url}
