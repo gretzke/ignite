@@ -153,7 +153,7 @@ describe.skipIf(!ready)('workflow promotion integration (offline)', () => {
     const resolving = reply();
     await workflowHandlers.resolveWorkflow({ body: { repoPathOrUrl: target, name: WORKFLOW } } as never, resolving);
     const job = await waitForJob(jobs, (resolving.body as { data: { jobId: string } }).data.jobId);
-    expect(job).toMatchObject({ state: 'succeeded', result: { sources: [{ id: 'box', status: 'ready' }] } });
+    expect(job).toMatchObject({ state: 'succeeded', result: { sources: [{ id: 'versionedbox-1', status: 'ready' }] } });
 
     const promotedPlan: DeploymentPlan = {
       schemaVersion: 1,
@@ -180,7 +180,7 @@ describe.skipIf(!ready)('workflow promotion integration (offline)', () => {
       (run) => run.status === 'completed' && run.repoArtifact?.status === 'written',
     );
     expect(rerun.lanes[String(CHAIN_ID)].steps[0].address).toBeTruthy();
-    expect(rerun.inputs.box.artifactHash).toBe(completed.inputs.box.artifactHash);
+    expect(rerun.inputs['versionedbox-1'].artifactHash).toBe(completed.inputs.box.artifactHash);
     expect(await exists(path.join(target, 'ignite', 'deployments', WORKFLOW, `${rerun.id}.json`))).toBe(true);
   }, 300_000);
 
