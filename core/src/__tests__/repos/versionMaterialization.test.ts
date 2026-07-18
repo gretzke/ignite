@@ -342,6 +342,27 @@ describe('RepoService version materialization', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('does not opt network-origin groups into file submodule transport', async () => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    const networkUrl = 'https://example.test/repo.git';
+    const calls: string[][] = [];
+    const run = vi.fn(async (...args: Parameters<typeof runCommand>) => {
+      calls.push(args[1] as string[]);
+      return runCommand(...args);
+    });
+    const { repos, versions } = await approved(home, networkUrl, run as typeof runCommand);
+    await fs.mkdir(versions.groupDir(networkUrl), { recursive: true });
+    git(versions.groupDir(networkUrl), ['clone', '--bare', remote.remote, versions.bareRepoPath(networkUrl)]);
+
+    await repos.ensureVersion(profileId, networkUrl, remote.first);
+    const submoduleUpdate = calls.find((args) =>
+      args.includes('submodule') && args.includes('update')
+    );
+    expect(submoduleUpdate).toBeDefined();
+    expect(submoduleUpdate).not.toContain('protocol.file.allow=always');
+  });
+
   it('uses the integrity-checked checkout fast path and serializes concurrent materialization', async () => {
     const remote = await sourceRepo();
     const home = await temp('ignite-version-home-');
@@ -368,7 +389,28 @@ describe('RepoService version materialization', () => {
     ).toHaveLength(fetches);
   });
 
-  it('fetches ref first, then SHA, without shallow or partial fetches', async () => {
+  it('repairs a missing fast-path registry record and merges a new ref label', async () => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    const { repos, versions } = await approved(home, remote.remote);
+    await repos.ensureVersion(profileId, remote.remote, remote.first);
+    await versions.remove(remote.remote, remote.first);
+
+    await repos.ensureVersion(profileId, remote.remote, remote.first, {
+      refLabel: 'v1.2.3',
+      refKind: 'tag',
+    });
+    expect(await versions.get(remote.remote, remote.first)).toMatchObject({
+      url: remote.remote,
+      commit: remote.first,
+      refLabel: 'v1.2.3',
+      refKind: 'tag',
+      createdAt: expect.any(String),
+      lastUsedAt: expect.any(String),
+    });
+  });
+
+  it('does not count an ancestor fetched through a moved ref as ref-stage success', async () => {
     const remote = await sourceRepo();
     const home = await temp('ignite-version-home-');
     const calls: string[][] = [];
@@ -390,7 +432,9 @@ describe('RepoService version materialization', () => {
     expect(fetches[0]).toEqual(
       expect.arrayContaining(['fetch', 'origin', 'refs/heads/main'])
     );
-    expect(fetches.some((args) => args.includes(remote.first))).toBe(false);
+    expect(fetches[1]).toEqual(
+      expect.arrayContaining(['fetch', 'origin', remote.first])
+    );
     expect(fetches.flat()).not.toContain('--depth');
     expect(fetches.flat()).not.toContain('--filter');
     expect(

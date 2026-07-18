@@ -10,6 +10,7 @@ import type {
   GetArtifactDataRequest,
   ArtifactData,
   ContractSource,
+  ContractSourcePin,
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import type { VerificationBundleData } from '@ignite/plugin-types/base/compiler';
@@ -49,6 +50,7 @@ export interface CompilerRepoServiceLike {
   resolveExistingWorkspacePath: RepoService['resolveExistingWorkspacePath'];
   ensureVersion: RepoService['ensureVersion'];
   assertPinnedIntegrity?: RepoService['assertPinnedIntegrity'];
+  withVersionLock: RepoService['withVersionLock'];
 }
 
 export interface CompilerHandlerDeps {
@@ -56,7 +58,12 @@ export interface CompilerHandlerDeps {
   executor: CompilerExecutorLike;
   registryLoader: CompilerRegistryLoaderLike;
   repos: CompilerRepoServiceLike;
+  versionStore: Pick<VersionStore, 'isCachePath' | 'checkoutPath'>;
 }
+
+type MutableCompilerOperationRequest = CompilerOperationRequest & {
+  pin?: ContractSourcePin;
+};
 
 // Shared compiler-artifact operation used by both the HTTP handler and the
 // deployment freeze service. Keeping the plugin invocation here prevents the
@@ -87,6 +94,8 @@ export async function getCompilerArtifactData(
   try {
     workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, versionStore: new VersionStore() });
   } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error)
+      throw error;
     throw Object.assign(
       new Error(
         error instanceof Error ? error.message : 'Failed to resolve workspace'
@@ -138,6 +147,8 @@ export async function getCompilerVerificationBundle(
   try {
     workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, versionStore: new VersionStore() });
   } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error)
+      throw error;
     throw Object.assign(
       new Error(
         error instanceof Error ? error.message : 'Failed to resolve workspace'
@@ -165,6 +176,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
     executor: deps?.executor ?? PluginExecutor.getInstance(),
     registryLoader: deps?.registryLoader ?? PluginRegistryLoader.getInstance(),
     repos: deps?.repos ?? RepoService.getInstance(),
+    versionStore: deps?.versionStore ?? new VersionStore(),
   };
 
   // Returns true (and has already sent a 400) if pluginId does not resolve
@@ -226,6 +238,53 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
       );
       return null;
     }
+  }
+
+  async function resolveMutableWorkspaceOr400(
+    reply: FastifyReply,
+    request: MutableCompilerOperationRequest
+  ): Promise<{ workspacePath: string; pin?: ContractSourcePin } | null> {
+    let workspacePath: string;
+    try {
+      if (request.pin) {
+        const profileId = (await ProfileManager.getInstance()).getCurrentProfile();
+        workspacePath = await resolveContractWorkspace(
+          {
+            id: 'compiler-operation',
+            repoPathOrUrl: request.pathOrUrl,
+            frameworkId: request.pluginId,
+            artifactPath: '',
+            contractName: '',
+            sourcePath: '',
+            pin: request.pin,
+          },
+          profileId,
+          {},
+          { repos: d.repos, versionStore: d.versionStore }
+        );
+      } else {
+        workspacePath = await d.repos.resolveExistingWorkspacePath(request.pathOrUrl);
+      }
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error
+        ? (error as { code?: string }).code
+        : ErrorCodes.INIT_ERROR;
+      sendBadRequest(
+        reply,
+        code as (typeof ErrorCodes)[keyof typeof ErrorCodes],
+        error instanceof Error ? error.message : 'Failed to resolve workspace'
+      );
+      return null;
+    }
+    if (!request.pin && d.versionStore.isCachePath(workspacePath)) {
+      sendBadRequest(
+        reply,
+        ErrorCodes.VERSION_WORKSPACE_PIN_REQUIRED,
+        'Version cache workspaces must be addressed by a version pin'
+      );
+      return null;
+    }
+    return { workspacePath, pin: request.pin };
   }
 
   return {
@@ -330,8 +389,8 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         return reply as unknown as IApiResponse<JobStartedData>;
       }
 
-      const workspacePath = await resolveWorkspaceOr400(reply, pathOrUrl);
-      if (workspacePath === null) {
+      const resolved = await resolveMutableWorkspaceOr400(reply, request.body);
+      if (resolved === null) {
         return reply as unknown as IApiResponse<JobStartedData>;
       }
 
@@ -339,12 +398,13 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         'compiler.install',
         { pathOrUrl, pluginId },
         async (ctx): Promise<null> => {
-          const result = await d.executor.execute(
-            pluginId,
-            'install',
-            { pathOrUrl },
-            { onOutput: (t) => ctx.log(t), workspacePath, signal: ctx.signal }
+          const execute = () => d.executor.execute(
+            pluginId, 'install', { pathOrUrl },
+            { onOutput: (t) => ctx.log(t), workspacePath: resolved.workspacePath, signal: ctx.signal }
           );
+          const result = resolved.pin
+            ? await d.repos.withVersionLock(resolved.pin.url, resolved.pin.commit, execute)
+            : await execute();
 
           if (!result.success) {
             throw Object.assign(
@@ -375,8 +435,8 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         return reply as unknown as IApiResponse<JobStartedData>;
       }
 
-      const workspacePath = await resolveWorkspaceOr400(reply, pathOrUrl);
-      if (workspacePath === null) {
+      const resolved = await resolveMutableWorkspaceOr400(reply, request.body);
+      if (resolved === null) {
         return reply as unknown as IApiResponse<JobStartedData>;
       }
 
@@ -384,12 +444,13 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         'compiler.compile',
         { pathOrUrl, pluginId },
         async (ctx): Promise<null> => {
-          const result = await d.executor.execute(
-            pluginId,
-            'compile',
-            { pathOrUrl },
-            { onOutput: (t) => ctx.log(t), workspacePath, signal: ctx.signal }
+          const execute = () => d.executor.execute(
+            pluginId, 'compile', { pathOrUrl },
+            { onOutput: (t) => ctx.log(t), workspacePath: resolved.workspacePath, signal: ctx.signal }
           );
+          const result = resolved.pin
+            ? await d.repos.withVersionLock(resolved.pin.url, resolved.pin.commit, execute)
+            : await execute();
 
           if (!result.success) {
             throw Object.assign(
@@ -488,14 +549,10 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
           typeof error === 'object' && error !== null && 'code' in error
             ? (error as { code?: string }).code
             : undefined;
-        if (
-          code === ErrorCodes.NOT_A_COMPILER_PLUGIN ||
-          code === ErrorCodes.UNKNOWN_PLUGIN ||
-          code === ErrorCodes.INIT_ERROR
-        ) {
+        if (code) {
           return sendBadRequest(
             reply,
-            code,
+            code as (typeof ErrorCodes)[keyof typeof ErrorCodes],
             error instanceof Error
               ? error.message
               : 'Failed to get artifact data'

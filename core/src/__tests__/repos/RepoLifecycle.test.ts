@@ -142,9 +142,10 @@ function makeLifecycle(opts: {
   const repoService = {
     init: vi.fn(async () => ({ success: true as const, data: null })),
     resolveWorkspacePath: vi.fn(async () => opts.workspaceDir),
-    ensureVersion: vi.fn(async () => ({ checkout: opts.pinnedPath ?? opts.workspaceDir })),
-    removeVersionCheckout: vi.fn(async () => {}),
-    withVersionLock: vi.fn(async (_url, _commit, fn) => fn()),
+    withVersionMaterialized: vi.fn(async (_profileId, _url, _commit, _opts, fn) => fn({
+      checkout: opts.pinnedPath ?? opts.workspaceDir,
+      rematerialize: async () => ({ checkout: opts.pinnedPath ?? opts.workspaceDir }),
+    })),
   };
   const registryLoader = {
     getPluginsByType: vi.fn(async () =>
@@ -195,7 +196,7 @@ describe('RepoLifecycle', () => {
       const job = lifecycle.startPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1');
       expect(job.params).toMatchObject({ mode: 'pinned', url: 'https://example.test/repo.git', commit: 'a'.repeat(40) });
       await jobs.runAll();
-      expect(repoService.ensureVersion).toHaveBeenCalledWith('p1', 'https://example.test/repo.git', 'a'.repeat(40));
+      expect(repoService.withVersionMaterialized).toHaveBeenCalledWith('p1', 'https://example.test/repo.git', 'a'.repeat(40), {}, expect.any(Function));
       expect(executor.calls.map((call) => call.op)).toEqual(['detect', 'getWatchPaths', 'install', 'compile']);
       expect(registry.updates).toHaveLength(0);
       expect(versionStore.updateState).toHaveBeenCalledWith('https://example.test/repo.git', 'a'.repeat(40), expect.objectContaining({ frameworks: [expect.objectContaining({ id: 'foundry' })], compiledWith: { pluginId: 'foundry', version: '1.0.0' } }));
@@ -220,8 +221,7 @@ describe('RepoLifecycle', () => {
       });
       versionStore.get.mockResolvedValue({ compiledWith: { pluginId: 'foundry', version: '0.9.0' } } as never);
       await lifecycle.runPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1', { log: () => {}, signal: new AbortController().signal });
-      expect(repoService.removeVersionCheckout).toHaveBeenCalledWith('https://example.test/repo.git', 'a'.repeat(40));
-      expect(repoService.ensureVersion).toHaveBeenCalledTimes(2);
+      expect(repoService.withVersionMaterialized).toHaveBeenCalledTimes(1);
     } finally { await cleanupTestDirectory(dir); }
   });
   it('keeps an awaitable pinned resolve visible to deletion until it settles', async () => {
@@ -229,7 +229,7 @@ describe('RepoLifecycle', () => {
     try {
       const { lifecycle, repoService } = makeLifecycle({ workspaceDir: dir, pinnedPath: dir, responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK } } });
       let release!: () => void;
-      repoService.ensureVersion.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ checkout: dir }); }));
+      repoService.withVersionMaterialized.mockImplementationOnce((_profileId, _url, _commit, _opts, fn) => new Promise((resolve) => { release = () => resolve(fn({ checkout: dir, rematerialize: async () => ({ checkout: dir }) })); }));
       const running = lifecycle.runPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1', { log: () => {}, signal: new AbortController().signal });
       expect(lifecycle.activeJobFor(dir)).toMatch(/^direct:/);
       release();

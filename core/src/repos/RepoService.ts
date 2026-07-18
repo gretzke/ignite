@@ -233,17 +233,62 @@ export class RepoService {
     return this.locks.run(`version:${this.versionStore.checkoutPath(url, commit)}`, fn);
   }
 
-  async removeVersionCheckout(url: string, commit: string): Promise<void> {
+  async removeVersionCheckout(
+    url: string,
+    commit: string,
+    beforeDelete?: (deleteLocked: () => Promise<void>) => Promise<boolean>
+  ): Promise<boolean> {
+    let deleted = true;
     await this.locks.run(`version-group:${this.versionStore.groupDir(url)}`, async () => {
       await this.withVersionCheckoutLock(url, commit, async () => {
-        await fs.rm(this.versionStore.checkoutPath(url, commit), { recursive: true, force: true });
+        const deleteLocked = () =>
+          fs.rm(this.versionStore.checkoutPath(url, commit), {
+            recursive: true,
+            force: true,
+          });
+        if (beforeDelete) deleted = await beforeDelete(deleteLocked);
+        else await deleteLocked();
       });
     });
+    return deleted;
+  }
+
+  async withVersionMaterialized<T>(
+    profileId: string,
+    url: string,
+    commit: string,
+    opts: EnsureVersionOptions,
+    fn: (materialized: {
+      checkout: string;
+      rematerialize: () => Promise<{ checkout: string }>;
+    }) => Promise<T>
+  ): Promise<T> {
+    await this.validateVersionRequest(profileId, url, commit, opts);
+    return this.locks.run(`version-group:${this.versionStore.groupDir(url)}`, () =>
+      this.withVersionCheckoutLock(url, commit, async () => {
+        const ensure = () => this.ensureVersionLocked(url, commit, opts);
+        const materialized = await ensure();
+        return fn({
+          ...materialized,
+          rematerialize: async () => {
+            await fs.rm(this.versionStore.checkoutPath(url, commit), {
+              recursive: true,
+              force: true,
+            });
+            return ensure();
+          },
+        });
+      })
+    );
   }
 
   // A normal clone rather than a worktree gives every version a real .git
   // directory and independent submodule configuration.
   async ensureVersion(profileId: string, url: string, commit: string, opts: EnsureVersionOptions = {}): Promise<{ checkout: string }> {
+    return this.withVersionMaterialized(profileId, url, commit, opts, async ({ checkout }) => ({ checkout }));
+  }
+
+  private async validateVersionRequest(profileId: string, url: string, commit: string, opts: EnsureVersionOptions): Promise<void> {
     if (!isAllowedCloneUrl(url)) {
       throw Object.assign(new Error('Version URL uses an unsupported clone protocol'), { code: 'VERSION_URL_UNSUPPORTED' });
     }
@@ -259,9 +304,12 @@ export class RepoService {
     if (!(await this.versionStore.isOriginApproved(profileId, url))) {
       throw Object.assign(new Error(`Version origin approval required: ${origin}`), { code: 'VERSION_ORIGIN_UNAPPROVED', origins: [origin] });
     }
+  }
+
+  // Call only while the group -> checkout locks are held.
+  private async ensureVersionLocked(url: string, commit: string, opts: EnsureVersionOptions): Promise<{ checkout: string }> {
     const groupDir = this.versionStore.groupDir(url);
     const checkout = this.versionStore.checkoutPath(url, commit);
-    return this.locks.run(`version-group:${groupDir}`, () => this.withVersionCheckoutLock(url, commit, async () => {
       const controller = new AbortController();
       const deadline = Date.now() + this.materializationTimeoutMs;
       const timer = setTimeout(() => controller.abort(Object.assign(new Error('Version repository materialization timed out'), { code: 'VERSION_MATERIALIZATION_TIMEOUT' })), this.materializationTimeoutMs);
@@ -275,7 +323,16 @@ export class RepoService {
         if (checkoutExists) {
           try {
             await this.assertPinnedIntegrity(checkout, commit, budget);
-            await this.versionStore.bumpLastUsed(url, commit);
+            const now = new Date().toISOString();
+            const existing = await this.versionStore.get(url, commit);
+            await this.versionStore.upsert({
+              ...(existing ?? { url, commit, createdAt: now }),
+              url,
+              commit,
+              ...(opts.refLabel !== undefined ? { refLabel: opts.refLabel } : {}),
+              ...(opts.refKind !== undefined ? { refKind: opts.refKind } : {}),
+              lastUsedAt: now,
+            });
             return { checkout };
           } catch (error) {
             if (controller.signal.aborted) throw controller.signal.reason;
@@ -293,8 +350,10 @@ export class RepoService {
         this.throwGitFailure(clone);
         const detached = await this.runPinnedGit(temp, ['checkout', '--detach', commit], TIMEOUT_LOCAL_MS, budget);
         this.throwGitFailure(detached);
-        // Local fixture submodules need Git's explicit file-transport opt-in.
-        const submodules = await this.runPinnedGit(temp, ['-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--recursive'], TIMEOUT_SUBMODULES_MS, budget);
+        const submoduleArgs = url.toLowerCase().startsWith('file://')
+          ? ['-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--recursive']
+          : ['submodule', 'update', '--init', '--recursive'];
+        const submodules = await this.runPinnedGit(temp, submoduleArgs, TIMEOUT_SUBMODULES_MS, budget);
         this.throwGitFailure(submodules);
         await this.assertPinnedIntegrity(temp, commit, budget);
         if (controller.signal.aborted) throw controller.signal.reason;
@@ -310,7 +369,6 @@ export class RepoService {
         clearTimeout(timer);
         if (temp) await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
       }
-    }));
   }
 
   private async ensureBareVersionRepo(groupDir: string, url: string, budget: { signal: AbortSignal; remaining: () => number }): Promise<void> {
@@ -349,7 +407,31 @@ export class RepoService {
       if (!fetched.success) return false;
       return await hasCommit() && await pinCommit();
     };
-    if (opts.ref && await tryFetch('ref', ['fetch', 'origin', opts.ref])) return false;
+    if (opts.ref) {
+      attemptedStages.push('ref');
+      const fetched = await this.runPinnedGit(
+        bare,
+        ['fetch', 'origin', opts.ref],
+        TIMEOUT_FETCH_MS,
+        budget
+      );
+      if (budget.signal.aborted) throw budget.signal.reason;
+      if (fetched.success) {
+        const fetchedHead = await this.runPinnedGit(
+          bare,
+          ['rev-parse', 'FETCH_HEAD^{commit}'],
+          TIMEOUT_LOCAL_MS,
+          budget
+        );
+        if (
+          fetchedHead.success &&
+          fetchedHead.data.stdout.trim().toLowerCase() === commit.toLowerCase() &&
+          (await hasCommit()) &&
+          (await pinCommit())
+        )
+          return false;
+      }
+    }
     if (await tryFetch('sha', ['fetch', 'origin', commit])) return false;
     if (await tryFetch('tags', ['fetch', 'origin', '--tags'])) return false;
     if (opts.localFallbackPath) {
@@ -972,7 +1054,8 @@ export class RepoService {
     // A few narrow unit fakes predate VersionStore's cache-path helper.
     // Production FileSystem always supplies it; retain the legacy guard for
     // those fakes while the cache-root check remains authoritative in use.
-    if (path.isAbsolute(pathOrUrl) && typeof (this.fileSystem as Partial<FileSystem>).getVersionCachePath === 'function' && this.versionStore.isCachePath(pathOrUrl)) return true;
+    const candidate = path.resolve(pathOrUrl);
+    if (typeof (this.fileSystem as Partial<FileSystem>).getVersionCachePath === 'function' && this.versionStore.isCachePath(candidate)) return true;
     return this.isPinnedWorktree(pathOrUrl);
   }
 
@@ -986,7 +1069,7 @@ export class RepoService {
   }
 
   private readOnlyWorkspaceResult(pathOrUrl: string): RepoResult<null> {
-    if (path.isAbsolute(pathOrUrl) && this.versionStore.isCachePath(pathOrUrl)) {
+    if (this.versionStore.isCachePath(path.resolve(pathOrUrl))) {
       return { success: false, error: { code: 'VERSION_WORKSPACE_READ_ONLY', message: 'Version cache workspaces are read-only; materialize another version instead.' } };
     }
     return { success: false, error: { code: 'PINNED_REPO_READ_ONLY', message: 'Pinned worktrees are read-only; materialize another pin instead.' } };

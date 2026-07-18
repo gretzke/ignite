@@ -73,5 +73,10 @@ describe('writeRepoFile', () => {
       success: false,
       error: { code: 'VERSION_WORKSPACE_READ_ONLY' },
     });
+    const relativeRoot = path.relative(process.cwd(), root);
+    await expect(repos.writeRepoFile(relativeRoot, 'ignite/workflows/a.json', '{}\n')).resolves.toMatchObject({
+      success: false,
+      error: { code: 'VERSION_WORKSPACE_READ_ONLY' },
+    });
   });
 });

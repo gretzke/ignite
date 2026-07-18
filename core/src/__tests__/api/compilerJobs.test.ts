@@ -90,6 +90,7 @@ function makeFakeRepos(
       async (pathOrUrl: string) => `${pathOrUrl}-workspace`
     ),
     ensureVersion: vi.fn(async (_profileId: string, _url: string, _commit: string) => ({ checkout: 'unused-version-workspace' })),
+    withVersionLock: (async <T>(_url: string, _commit: string, fn: () => Promise<T>) => fn()) as CompilerRepoServiceLike['withVersionLock'],
     ...overrides,
   };
 }
@@ -432,6 +433,27 @@ describe('compiler API handlers (jobs)', () => {
         details: { pluginId: 'waffle', permission: 'docker' },
       });
     });
+
+    it('refuses a raw version-cache workspace without a pin', async () => {
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+        versionStore: { isCachePath: vi.fn(() => true), checkoutPath: vi.fn() } as never,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/install', handlers.install);
+      await localApp.ready();
+
+      const res = await localApp.inject({
+        method: 'POST', url: '/api/v1/install',
+        payload: { pathOrUrl: '/cache/version', pluginId: 'waffle' },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().code).toBe(ErrorCodes.VERSION_WORKSPACE_PIN_REQUIRED);
+      expect(fakeJobs.start).not.toHaveBeenCalled();
+    });
   });
 
   describe('compile', () => {
@@ -487,6 +509,35 @@ describe('compiler API handlers (jobs)', () => {
         code: 'COMPILE_FAILED',
         message: 'syntax error',
       });
+    });
+
+    it('holds the version lock while compiling a pinned workspace', async () => {
+      const pin = { url: 'https://example.test/repo.git', commit: 'a'.repeat(40), ref: 'v1', refKind: 'tag' };
+      const checkoutPath = '/cache/repo/versions/' + pin.commit;
+      const withVersionLock = vi.fn(async (_url: string, _commit: string, fn: () => Promise<unknown>) => fn());
+      repos = makeFakeRepos({
+        ensureVersion: vi.fn(async () => ({ checkout: checkoutPath })),
+        withVersionLock: withVersionLock as never,
+      });
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+        versionStore: { isCachePath: vi.fn(() => true), checkoutPath: vi.fn(() => checkoutPath) } as never,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/compile', handlers.compile);
+      await localApp.ready();
+      executor.execute.mockResolvedValue({ success: true, data: null });
+
+      const res = await localApp.inject({
+        method: 'POST', url: '/api/v1/compile',
+        payload: { pathOrUrl: pin.url, pluginId: 'waffle', pin },
+      });
+      expect(res.statusCode).toBe(200);
+      await fakeJobs.started[0].runner(makeCtx());
+      expect(withVersionLock).toHaveBeenCalledWith(pin.url, pin.commit, expect.any(Function));
     });
 
     it('returns 400 synchronously for a non-compiler plugin (no job created)', async () => {
@@ -607,6 +658,34 @@ describe('compiler API handlers (jobs)', () => {
       expect(res.statusCode).toBe(400);
       expect(res.json().code).toBe(ErrorCodes.INIT_ERROR);
       expect(executor.execute).not.toHaveBeenCalled();
+    });
+
+    it('returns VERSION_ORIGIN_UNAPPROVED from getArtifactData instead of INIT_ERROR', async () => {
+      repos = makeFakeRepos({
+        ensureVersion: vi.fn(async () => {
+          throw Object.assign(new Error('origin approval required'), {
+            code: ErrorCodes.VERSION_ORIGIN_UNAPPROVED,
+          });
+        }),
+      });
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/artifacts/data', handlers.getArtifactData);
+      await localApp.ready();
+      const res = await localApp.inject({
+        method: 'POST', url: '/api/v1/artifacts/data',
+        payload: {
+          pathOrUrl: 'https://example.test/repo.git', pluginId: 'waffle', artifactPath: 'out/C.json',
+          pin: { url: 'https://example.test/repo.git', commit: 'a'.repeat(40) },
+        },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().code).toBe(ErrorCodes.VERSION_ORIGIN_UNAPPROVED);
     });
   });
 });

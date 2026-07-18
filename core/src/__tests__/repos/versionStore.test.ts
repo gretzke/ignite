@@ -183,6 +183,34 @@ describe('VersionStore', () => {
     warning.mockRestore();
   });
 
+  it('drops malformed registry records during reconcile while preserving valid records', async () => {
+    const home = await temp('ignite-version-home-');
+    const { fileSystem, store: versions } = await store(home);
+    const valid = record();
+    await fs.mkdir(versions.checkoutPath(urlA, commitA), { recursive: true });
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.writeFile(
+      fileSystem.getVersionRegistryPath(),
+      JSON.stringify({ versions: [null, { nope: true }, valid] })
+    );
+    const warning = vi.spyOn(getLogger(), 'warn').mockImplementation(() => undefined);
+
+    await expect(versions.reconcile()).resolves.toBeUndefined();
+    expect(await versions.list()).toEqual([valid]);
+    expect(warning).toHaveBeenCalledWith(
+      'Ignoring invalid version cache registry record(s)'
+    );
+    warning.mockRestore();
+  });
+
+  it('reconcile drops memberships for versions absent from the reconciled registry', async () => {
+    const home = await temp('ignite-version-home-');
+    const { store: versions } = await store(home);
+    await versions.addMembership('p1', urlA, commitA, 'workflow');
+    await versions.reconcile();
+    expect(await versions.listMemberships('p1')).toEqual({});
+  });
+
   it('reconciles stale registry records and orphan or temporary checkout directories', async () => {
     const home = await temp('ignite-version-home-');
     const { fileSystem, store: versions } = await store(home);

@@ -29,6 +29,7 @@ export interface DetectResponse {
 
 export interface CompilerOperationRequest extends PathOptions {
   pluginId: string;
+  pin?: import('../../deployments.js').ContractSourcePin;
 }
 
 export const ArtifactListResponseSchema =
@@ -48,6 +49,7 @@ export const CompilerOperationRequestSchema =
   createRequestSchema<CompilerOperationRequest>("CompilerOperationRequest")(
     PathShape.extend({
       pluginId: z.string(),
+      pin: ContractSourcePinSchema.optional(),
     }),
   );
 

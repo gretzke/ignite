@@ -210,10 +210,11 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
                 continue;
               }
               ctx.log(`source ${source.id}: cloning\n`);
-              const lifecycle = await d.lifecycle.runPinnedLifecycle(source.repo.url, source.repo.commit, profileId, ctx);
-              // The lifecycle has materialized this immutable checkout. Keep
-              // it retained even if a later framework/artifact check fails.
+              // Retention starts with the resolve attempt, not with a
+              // successful compile. Reconcile removes this if no registry
+              // record was ever materialized.
               await d.versionStore.addMembership(profileId, source.repo.url, source.repo.commit, 'workflow');
+              const lifecycle = await d.lifecycle.runPinnedLifecycle(source.repo.url, source.repo.commit, profileId, ctx);
               if (!lifecycle.frameworks.some((framework) => framework.id === source.frameworkId)) throw new Error(`Framework '${source.frameworkId}' was not detected`);
               ctx.log(`source ${source.id}: compiling\n`);
               if (!(await d.artifactReadable(source, profileId))) throw new Error('Compiled artifact is not readable');

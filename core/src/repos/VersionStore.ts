@@ -228,10 +228,36 @@ export class VersionStore {
         }
       }
 
-      if (liveRecords.length !== registry.versions.length) {
-        await this.fileSystem.writeJsonFile(this.registryPath(), {
-          versions: liveRecords,
-        });
+      // Rewrite on reconcile even when the filtered in-memory list happens
+      // to have the same length: readRegistry intentionally omits malformed
+      // entries before this point.
+      await this.fileSystem.writeJsonFile(this.registryPath(), {
+        versions: liveRecords,
+      });
+
+      // A membership never owns a checkout by itself: the global record is
+      // the authoritative materialization record.  This also cleans up the
+      // deliberately-early workflow membership when materialization failed.
+      const liveVersions = new Set(
+        liveRecords.map((record) => `${record.url}\u0000${record.commit}`)
+      );
+      for (const profileId of await this.fileSystem.listProfiles()) {
+        const memberships = await this.readMemberships(profileId);
+        let changed = false;
+        for (const [url, entries] of Object.entries(memberships)) {
+          const remaining = entries.filter((entry) =>
+            liveVersions.has(`${url}\u0000${entry.commit}`)
+          );
+          if (remaining.length === entries.length) continue;
+          changed = true;
+          if (remaining.length === 0) delete memberships[url];
+          else memberships[url] = remaining;
+        }
+        if (changed)
+          await this.fileSystem.writeJsonFile(
+            this.membershipPath(profileId),
+            memberships
+          );
       }
 
       const recordsByGroup = new Map<string, Set<string>>();
@@ -331,6 +357,48 @@ export class VersionStore {
     });
   }
 
+  // Callers hold the version checkout lock before entering here.  Keeping the
+  // membership mutation, cross-profile refcount, delete and registry removal
+  // in the one RMW critical section means a concurrent addMembership cannot
+  // resurrect a checkout while it is being removed.
+  async removeUserMembershipAndDeleteIfUnreferenced(
+    profileId: string,
+    url: string,
+    commit: string,
+    deleteCheckout: () => Promise<void>
+  ): Promise<boolean> {
+    return this.withRmwLock(async () => {
+      const memberships = await this.readMemberships(profileId);
+      const entries = memberships[url];
+      if (entries) {
+        const remaining = entries.filter(
+          (entry) => entry.commit !== commit || entry.source !== 'user'
+        );
+        if (remaining.length === 0) delete memberships[url];
+        else memberships[url] = remaining;
+        await this.fileSystem.writeJsonFile(this.membershipPath(profileId), memberships);
+      }
+
+      const profiles = await this.fileSystem.listProfiles();
+      let count = 0;
+      for (const candidateProfile of profiles) {
+        count +=
+          (await this.readMemberships(candidateProfile))[url]?.filter(
+            (entry) => entry.commit === commit
+          ).length ?? 0;
+      }
+      if (count !== 0) return false;
+
+      await deleteCheckout();
+      const registry = await this.readRegistry();
+      registry.versions = registry.versions.filter(
+        (record) => record.url !== url || record.commit !== commit
+      );
+      await this.fileSystem.writeJsonFile(this.registryPath(), registry);
+      return true;
+    });
+  }
+
   async listMemberships(
     profileId: string
   ): Promise<Record<string, VersionMembership[]>> {
@@ -391,7 +459,12 @@ export class VersionStore {
       );
       if (!this.isRegistry(registry))
         throw new Error('registry does not contain a versions array');
-      return registry;
+      const versions = registry.versions.filter((record) =>
+        this.isVersionRecord(record)
+      );
+      if (versions.length !== registry.versions.length)
+        getLogger().warn('Ignoring invalid version cache registry record(s)');
+      return { versions };
     } catch (error) {
       getLogger().warn(
         `Ignoring corrupt version cache registry: ${String(error)}`
@@ -405,6 +478,18 @@ export class VersionStore {
       typeof value === 'object' &&
       value !== null &&
       Array.isArray((value as VersionRegistry).versions)
+    );
+  }
+
+  private isVersionRecord(value: unknown): value is VersionRecord {
+    if (typeof value !== 'object' || value === null || Array.isArray(value))
+      return false;
+    const record = value as Partial<VersionRecord>;
+    return (
+      typeof record.url === 'string' &&
+      isCommit(record.commit ?? '') &&
+      typeof record.createdAt === 'string' &&
+      typeof record.lastUsedAt === 'string'
     );
   }
 

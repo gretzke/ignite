@@ -68,12 +68,10 @@ function makeDeps() {
       sessionState: vi.fn((): RepoRecord | null => null),
     },
     versionStore: {
-      remove: vi.fn(async () => {}),
-      removeMembership: vi.fn(async () => {}),
-      referenceCount: vi.fn(async () => 0),
+      removeUserMembershipAndDeleteIfUnreferenced: vi.fn(async (_profileId: string, _url: string, _commit: string, remove: () => Promise<void>) => { await remove(); return true; }),
       checkoutPath: vi.fn((url: string, commit: string) => `/versions/${encodeURIComponent(url)}/${commit}`),
     },
-    deleteWorktree: vi.fn(async () => {}),
+    repos: { removeVersionCheckout: vi.fn(async (_url: string, _commit: string, beforeDelete: (remove: () => Promise<void>) => Promise<boolean>) => beforeDelete(async () => {})) },
     hasWorkspace: vi.fn(async () => true),
   };
 }
@@ -209,16 +207,14 @@ describe('profile handlers', () => {
     expect((reply.body as { data: { pinned: unknown[] } }).data.pinned).toEqual([]);
   });
 
-  it('deletePinnedRepo removes the worktree and registry entry', async () => {
+  it('deletePinnedRepo removes the checkout and registry entry under the version lock', async () => {
     const deps = makeDeps();
     const handlers = createProfileHandlers(deps);
     const reply = makeReply();
     await handlers.deletePinnedRepo({ params: { id: 'p1' }, query: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } } as never, reply as never);
     expect(reply.statusCode).toBe(204);
-    const worktree = `/versions/${encodeURIComponent('https://example.com/contracts.git')}/${'a'.repeat(40)}`;
-    expect(deps.deleteWorktree).toHaveBeenCalledWith(worktree);
-    expect(deps.versionStore.removeMembership).toHaveBeenCalledWith('p1', 'https://example.com/contracts.git', 'a'.repeat(40));
-    expect(deps.versionStore.remove).toHaveBeenCalledWith('https://example.com/contracts.git', 'a'.repeat(40));
+    expect(deps.repos.removeVersionCheckout).toHaveBeenCalledWith('https://example.com/contracts.git', 'a'.repeat(40), expect.any(Function));
+    expect(deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced).toHaveBeenCalledWith('p1', 'https://example.com/contracts.git', 'a'.repeat(40), expect.any(Function));
   });
 
   it('deletePinnedRepo returns REPO_BUSY while its lifecycle job is active', async () => {
@@ -229,8 +225,8 @@ describe('profile handlers', () => {
     await handlers.deletePinnedRepo({ params: { id: 'p1' }, query: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } } as never, reply as never);
     expect(reply.statusCode).toBe(409);
     expect(reply.body).toMatchObject({ code: 'REPO_BUSY' });
-    expect(deps.deleteWorktree).not.toHaveBeenCalled();
-    expect(deps.versionStore.removeMembership).not.toHaveBeenCalled();
+    expect(deps.repos.removeVersionCheckout).not.toHaveBeenCalled();
+    expect(deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced).not.toHaveBeenCalled();
   });
 
   it('deletePinnedRepo returns 409 during an awaitable workflow-resolve lifecycle', async () => {
@@ -244,8 +240,7 @@ describe('profile handlers', () => {
       registryLoader: { getPluginsByType: vi.fn(async () => []) } as never,
       repos: {
         init: vi.fn(), resolveWorkspacePath: vi.fn(async () => worktree),
-        ensureVersion: vi.fn(() => new Promise((resolve) => { release = () => resolve({ checkout: worktree }); })),
-        removeVersionCheckout: vi.fn(), withVersionLock: vi.fn(async (_url, _commit, fn) => fn()),
+        withVersionMaterialized: vi.fn((_profileId, _url, _commit, _opts, fn) => new Promise((resolve) => { release = () => resolve(fn({ checkout: worktree, rematerialize: async () => ({ checkout: worktree }) })); })),
       } as never,
       registry: { list: vi.fn(), updateRepoState: vi.fn() } as never,
       sessionPath: () => null,
@@ -256,7 +251,7 @@ describe('profile handlers', () => {
     const reply = makeReply();
     await createProfileHandlers(deps).deletePinnedRepo({ params: { id: 'p1' }, query: { url, commit } } as never, reply as never);
     expect(reply.statusCode).toBe(409);
-    expect(deps.deleteWorktree).not.toHaveBeenCalled();
+    expect(deps.repos.removeVersionCheckout).not.toHaveBeenCalled();
     release();
     await resolving.catch(() => undefined);
   });

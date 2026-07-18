@@ -45,7 +45,7 @@ export interface RepoLifecycleDeps {
   jobs: Pick<JobManager, 'start' | 'get'>;
   executor: Pick<PluginExecutor, 'execute'>;
   registryLoader: Pick<PluginRegistryLoader, 'getPluginsByType'>;
-  repos: Pick<RepoService, 'init' | 'resolveWorkspacePath' | 'ensureVersion' | 'removeVersionCheckout' | 'withVersionLock'>;
+  repos: Pick<RepoService, 'init' | 'resolveWorkspacePath' | 'withVersionMaterialized'>;
   registry: Pick<ProfileRepoRegistry, 'list' | 'updateRepoState'>;
   sessionPath: () => string | null;
   versionStore: Pick<VersionStore, 'checkoutPath' | 'get' | 'updateState'>;
@@ -225,19 +225,24 @@ export class RepoLifecycle {
     const worktree = this.deps.versionStore.checkoutPath(url, commit);
     this.addDirect(worktree);
     try {
-      let workspacePath = (await this.deps.repos.ensureVersion(profileId, url, commit)).checkout;
-      const compilers = await this.deps.registryLoader.getPluginsByType(PluginType.COMPILER);
-      if (compilers.length === 0) {
-        throw coded('No compiler plugins are available — the plugin catalog is missing or corrupt.', ErrorCodes.NO_COMPILER_PLUGINS);
-      }
-      const prior = await this.deps.versionStore.get(url, commit);
-      if (this.compiledWithMismatch(prior, compilers)) {
-        ctx.log('phase: rebuild (compiler version changed)\n');
-        await this.deps.repos.removeVersionCheckout(url, commit);
-        workspacePath = (await this.deps.repos.ensureVersion(profileId, url, commit)).checkout;
-      }
-      return await this.deps.repos.withVersionLock(url, commit, () =>
-        this.runLifecycle(workspacePath, profileId, 'pinned', ctx, { url, commit }, workspacePath, compilers)
+      return await this.deps.repos.withVersionMaterialized(
+        profileId,
+        url,
+        commit,
+        {},
+        async ({ checkout, rematerialize }) => {
+          let workspacePath = checkout;
+          const compilers = await this.deps.registryLoader.getPluginsByType(PluginType.COMPILER);
+          if (compilers.length === 0) {
+            throw coded('No compiler plugins are available — the plugin catalog is missing or corrupt.', ErrorCodes.NO_COMPILER_PLUGINS);
+          }
+          const prior = await this.deps.versionStore.get(url, commit);
+          if (this.compiledWithMismatch(prior, compilers)) {
+            ctx.log('phase: rebuild (compiler version changed)\n');
+            workspacePath = (await rematerialize()).checkout;
+          }
+          return this.runLifecycle(workspacePath, profileId, 'pinned', ctx, { url, commit }, workspacePath, compilers);
+        }
       );
     } finally { this.removeDirect(worktree); }
   }

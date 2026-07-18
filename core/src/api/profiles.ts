@@ -26,7 +26,6 @@ import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { RepoLifecycle } from '../repos/RepoLifecycle.js';
 import { RepoService } from '../repos/RepoService.js';
 import { VersionStore } from '../repos/VersionStore.js';
-import { FileSystem } from '../filesystem/FileSystem.js';
 import { ErrorCodes } from '../types/errors.js';
 import { sendCaughtError } from './utils/errors.js';
 
@@ -60,8 +59,8 @@ export interface ProfileHandlerDeps {
   >;
   // Cheap host check for the list endpoint's `initialized` field.
   hasWorkspace: (pathOrUrl: string, profileId: string) => Promise<boolean>;
-  versionStore: Pick<VersionStore, 'removeMembership' | 'referenceCount' | 'remove' | 'checkoutPath'>;
-  deleteWorktree: (worktreePath: string) => Promise<void>;
+  versionStore: Pick<VersionStore, 'removeUserMembershipAndDeleteIfUnreferenced' | 'checkoutPath'>;
+  repos: Pick<RepoService, 'removeVersionCheckout'>;
 }
 
 export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
@@ -75,9 +74,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
       ((pathOrUrl: string, profileId: string) =>
         RepoService.getInstance().hasWorkspace(pathOrUrl, profileId)),
     versionStore: deps?.versionStore ?? new VersionStore(),
-    deleteWorktree:
-      deps?.deleteWorktree ??
-      ((worktreePath: string) => FileSystem.getInstance().deleteDirectory(worktreePath)),
+    repos: deps?.repos ?? RepoService.getInstance(),
   };
 
   // Enrich a persisted record with computed state for the list response.
@@ -395,11 +392,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         }) as unknown as null;
       }
       try {
-        await d.versionStore.removeMembership(id, url, commit);
-        if (await d.versionStore.referenceCount(url, commit) === 0) {
-          await d.deleteWorktree(worktreePath);
-          await d.versionStore.remove(url, commit);
-        }
+        await d.repos.removeVersionCheckout(url, commit, (deleteLocked) =>
+          d.versionStore.removeUserMembershipAndDeleteIfUnreferenced(
+            id,
+            url,
+            commit,
+            deleteLocked
+          )
+        );
         return reply.status(204).send(null);
       } catch (error) {
         return sendCaughtError(
