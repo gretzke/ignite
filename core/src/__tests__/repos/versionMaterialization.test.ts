@@ -99,6 +99,50 @@ describe('RepoService version materialization', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it('rejects unsupported version URLs before approval or any git invocation', async () => {
+    const home = await temp('ignite-version-home-');
+    const run = vi.fn(runCommand);
+    const { repos } = await service(home, run as typeof runCommand);
+
+    await expect(
+      repos.ensureVersion(profileId, 'ext::sh -c id', testCommit)
+    ).rejects.toMatchObject({ code: 'VERSION_URL_UNSUPPORTED' });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsafe refs and labels before any git invocation', async () => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    const run = vi.fn(runCommand);
+    const { repos } = await approved(home, remote.remote, run as typeof runCommand);
+
+    await expect(
+      repos.ensureVersion(profileId, remote.remote, remote.first, {
+        ref: '--upload-pack=/bin/true',
+      })
+    ).rejects.toMatchObject({ code: 'VERSION_REF_INVALID' });
+    await expect(
+      repos.ensureVersion(profileId, remote.remote, remote.first, {
+        refLabel: 'release candidate',
+      })
+    ).rejects.toMatchObject({ code: 'VERSION_REF_INVALID' });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('rejects relative local fallback paths before any git invocation', async () => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    const run = vi.fn(runCommand);
+    const { repos } = await approved(home, remote.remote, run as typeof runCommand);
+
+    await expect(
+      repos.ensureVersion(profileId, remote.remote, remote.first, {
+        localFallbackPath: 'relative/repository',
+      })
+    ).rejects.toMatchObject({ code: 'VERSION_LOCAL_FALLBACK_PATH_INVALID' });
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('preserves git probe failures from version integrity checks', async () => {
     const home = await temp('ignite-version-home-');
     const { repos } = await service(home, (async (_command, args) => {
@@ -362,6 +406,16 @@ describe('RepoService version materialization', () => {
     expect(
       calls.filter((args) => args.includes('fetch') && args.includes('origin'))
     ).toEqual([]);
+  });
+
+  it.each(['v1.2.3', 'release/v4'])('accepts normal tag and branch ref %s', async (ref) => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    const { repos } = await approved(home, remote.remote);
+
+    await expect(
+      repos.ensureVersion(profileId, remote.remote, remote.first, { ref })
+    ).resolves.toMatchObject({ checkout: expect.any(String) });
   });
 
   it('falls back from a rejected ref fetch to a SHA fetch', async () => {

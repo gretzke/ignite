@@ -138,6 +138,28 @@ export function isAllowedCloneUrl(url: string): boolean {
   );
 }
 
+// Refs are passed as an argv value to `git fetch origin <ref>`, so accept
+// only ordinary branch/tag-like names. This deliberately excludes refspecs
+// and the special forms Git reserves for option parsing or revision syntax.
+export function isAllowedVersionRef(ref: string): boolean {
+  if (typeof ref !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/@^~-]*$/.test(ref)) return false;
+  if (
+    ref.startsWith('-') ||
+    ref.includes('..') ||
+    ref.includes(':') ||
+    /[\s\x00-\x1f\x7f]/.test(ref) ||
+    ref.includes('//') ||
+    ref.includes('@{') ||
+    ref === '@' ||
+    ref.endsWith('.')
+  ) return false;
+  return ref.split('/').every((component) =>
+    component.length > 0 &&
+    !component.startsWith('.') &&
+    !component.toLowerCase().endsWith('.lock')
+  );
+}
+
 function errMsg(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -222,6 +244,17 @@ export class RepoService {
   // A normal clone rather than a worktree gives every version a real .git
   // directory and independent submodule configuration.
   async ensureVersion(profileId: string, url: string, commit: string, opts: EnsureVersionOptions = {}): Promise<{ checkout: string }> {
+    if (!isAllowedCloneUrl(url)) {
+      throw Object.assign(new Error('Version URL uses an unsupported clone protocol'), { code: 'VERSION_URL_UNSUPPORTED' });
+    }
+    this.assertVersionCommit(commit);
+    if (opts.ref !== undefined) this.assertVersionRef(opts.ref);
+    if (opts.refLabel !== undefined) this.assertVersionRef(opts.refLabel);
+    if (opts.localFallbackPath !== undefined &&
+      (typeof opts.localFallbackPath !== 'string' || !path.isAbsolute(opts.localFallbackPath))) {
+      throw Object.assign(new Error('Version local fallback path must be absolute'), { code: 'VERSION_LOCAL_FALLBACK_PATH_INVALID' });
+    }
+
     const origin = pinnedOrigin(url);
     if (!(await this.versionStore.isOriginApproved(profileId, url))) {
       throw Object.assign(new Error(`Version origin approval required: ${origin}`), { code: 'VERSION_ORIGIN_UNAPPROVED', origins: [origin] });
@@ -332,6 +365,16 @@ export class RepoService {
 
   private throwGitFailure(result: RepoResult<GitOutput>): asserts result is { success: true; data: GitOutput } {
     if (!result.success) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+  }
+
+  private assertVersionCommit(commit: string): void {
+    if (!/^[0-9a-f]{40}$/i.test(commit))
+      throw new Error(`Version commits must be full 40-hex strings: ${commit}`);
+  }
+
+  private assertVersionRef(ref: string): void {
+    if (!isAllowedVersionRef(ref))
+      throw Object.assign(new Error('Version ref must be a safe branch or tag name'), { code: 'VERSION_REF_INVALID' });
   }
 
   // Build outputs are untracked by convention, so they are excluded. Tracked
