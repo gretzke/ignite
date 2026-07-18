@@ -21,8 +21,7 @@ import { runCommand, type RunCommandResult } from '../utils/runCommand.js';
 import { KeyedMutex } from '../utils/KeyedMutex.js';
 import { redactUrlCredentials } from '../utils/redact.js';
 import { getLogger } from '../utils/logger.js';
-import { PinnedStore, pinnedOrigin } from './PinnedStore.js';
-import { VersionStore, type VersionRecord } from './VersionStore.js';
+import { VersionStore, pinnedOrigin, type VersionRecord } from './VersionStore.js';
 
 export enum RepoKind {
   LOCAL = 'local',
@@ -172,7 +171,6 @@ export class RepoService {
   // concurrently (the pre-Phase-3 KeyedMutex guarded the container-name
   // race; this is its host-side equivalent).
   private readonly locks = new KeyedMutex();
-  private readonly pinnedStore: PinnedStore;
   private readonly versionStore: VersionStore;
   private readonly materializationTimeoutMs: number;
 
@@ -180,7 +178,6 @@ export class RepoService {
     this.fileSystem = deps?.fileSystem ?? FileSystem.getInstance();
     this.injectedProfiles = deps?.profiles;
     this.run = deps?.run ?? runCommand;
-    this.pinnedStore = new PinnedStore(this.fileSystem);
     this.versionStore = new VersionStore(this.fileSystem);
     this.materializationTimeoutMs = deps?.materializationTimeoutMs ?? PINNED_MATERIALIZATION_TIMEOUT_MS;
   }
@@ -335,64 +332,6 @@ export class RepoService {
 
   private throwGitFailure(result: RepoResult<GitOutput>): asserts result is { success: true; data: GitOutput } {
     if (!result.success) throw Object.assign(new Error(result.error.message), { code: result.error.code });
-  }
-
-  // Materialize a collaborator-authored URL only after first-contact origin
-  // approval. The worktree is intentionally detached and never participates
-  // in ordinary branch/pull/reset operations.
-  async ensurePinnedClone(profileId: string, url: string, commit: string): Promise<{ path: string }> {
-    const origin = pinnedOrigin(url);
-    if (!(await this.pinnedStore.isOriginApproved(profileId, url))) {
-      throw Object.assign(new Error(`Pinned origin approval required: ${origin}`), { code: 'PINNED_ORIGIN_UNAPPROVED', origins: [origin] });
-    }
-    const worktree = this.pinnedStore.worktreePath(profileId, url, commit);
-    return this.locks.run(`pinned:${worktree}`, async () => {
-      const controller = new AbortController();
-      const deadline = Date.now() + this.materializationTimeoutMs;
-      const timer = setTimeout(() => controller.abort(Object.assign(new Error('Pinned repository materialization timed out'), { code: 'PINNED_MATERIALIZATION_TIMEOUT' })), this.materializationTimeoutMs);
-      const budget = { signal: controller.signal, remaining: () => Math.max(0, deadline - Date.now()) };
-      let temp: string | undefined;
-      try {
-        try {
-          await this.assertPinnedIntegrity(worktree, commit, budget);
-          await this.pinnedStore.upsert(profileId, { url, commit, lastUsedAt: new Date().toISOString() });
-          return { path: worktree };
-        } catch {
-          if (controller.signal.aborted) throw controller.signal.reason;
-          await fs.rm(worktree, { recursive: true, force: true });
-        }
-        const parent = path.dirname(worktree);
-        temp = path.join(parent, `.${path.basename(worktree)}.${process.pid}.${crypto.randomUUID()}.tmp`);
-        await fs.mkdir(parent, { recursive: true });
-        await fs.rm(temp, { recursive: true, force: true });
-        await fs.mkdir(temp, { recursive: true });
-        const git = (args: string[], cap: number) => this.runPinnedGit(temp!, args, cap, budget);
-        const init = await git(['init'], TIMEOUT_LOCAL_MS); if (!init.success) throw Object.assign(new Error(init.error.message), { code: init.error.code });
-        const remote = await git(['remote', 'add', 'origin', url], TIMEOUT_LOCAL_MS); if (!remote.success) throw Object.assign(new Error(remote.error.message), { code: remote.error.code });
-        const shallow = await git(['fetch', '--depth', '1', 'origin', commit], TIMEOUT_FETCH_MS);
-        // Fetch tags explicitly: a requested commit may be reachable only from
-        // a tag and therefore absent from the remote's branch-head fetch.
-        const fetched = shallow.success ? shallow : await git(['fetch', '--tags', 'origin'], TIMEOUT_FETCH_MS);
-        if (!fetched.success) throw Object.assign(new Error(fetched.error.message), { code: fetched.error.code });
-        const checkoutRef = shallow.success ? 'FETCH_HEAD' : commit;
-        const checkout = await git(['checkout', '--detach', checkoutRef], TIMEOUT_LOCAL_MS);
-        if (!checkout.success) throw Object.assign(new Error(checkout.error.message), { code: checkout.error.code });
-        // Approved top-level origins own their checked-out submodule content;
-        // per-submodule approval is intentionally not required. The transport
-        // allowlist and protocol.file.allow=never remain mandatory here.
-        const submodules = await git(['-c', 'protocol.file.allow=never', 'submodule', 'update', '--init', '--recursive', '--depth', '1'], TIMEOUT_SUBMODULES_MS);
-        if (!submodules.success) throw Object.assign(new Error(submodules.error.message), { code: submodules.error.code });
-        await this.assertPinnedIntegrity(temp, commit, budget);
-        if (controller.signal.aborted) throw controller.signal.reason;
-        await fs.rename(temp, worktree);
-        temp = undefined;
-        await this.pinnedStore.upsert(profileId, { url, commit, lastUsedAt: new Date().toISOString() });
-        return { path: worktree };
-      } finally {
-        clearTimeout(timer);
-        if (temp) await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
-      }
-    });
   }
 
   // Build outputs are untracked by convention, so they are excluded. Tracked

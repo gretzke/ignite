@@ -113,6 +113,7 @@ export interface RepoList {
   pinned: PinnedSummary[];
 }
 
+/** @deprecated PinnedStore summaries are replaced by version groups; kept for response-shape compatibility. */
 export interface PinnedSummary {
   url: string;
   commit: string;

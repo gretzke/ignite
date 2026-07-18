@@ -115,19 +115,8 @@ export class FileSystem {
     return path.join(this.getProfilePath(profileId), 'repos');
   }
 
-  // Persisted workflow pins have both a profile registry and per-profile
-  // materialized worktrees. Keeping these paths here prevents each caller
-  // from reconstructing ~/.ignite layout ad hoc.
-  getPinnedRegistryPath(profileId: string): string {
-    return path.join(this.getProfileReposPath(profileId), 'pinned.json');
-  }
-
   getPinnedOriginsPath(profileId: string): string {
     return path.join(this.getProfileReposPath(profileId), 'pinnedOrigins.json');
-  }
-
-  getPinnedReposPath(profileId: string): string {
-    return path.join(this.getReposPath(profileId), 'pinned');
   }
 
   // Global cache for immutable repository versions. Unlike pinned worktrees,

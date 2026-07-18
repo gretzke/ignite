@@ -12,6 +12,7 @@ import { getLogger } from '../../utils/logger.js';
 
 const profileId = 'profile-1';
 const dirs: string[] = [];
+const testCommit = 'a'.repeat(40);
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -98,6 +99,72 @@ describe('RepoService version materialization', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it('preserves git probe failures from version integrity checks', async () => {
+    const home = await temp('ignite-version-home-');
+    const { repos } = await service(home, (async (_command, args) => {
+      if (args.includes('status'))
+        return { code: 1, stdout: '', stderr: 'probe timed out' };
+      return { code: 0, stdout: testCommit, stderr: '' };
+    }) as typeof runCommand);
+
+    await expect(
+      repos.assertPinnedIntegrity('/version/repo', testCommit)
+    ).rejects.toMatchObject({
+      code: 'GIT_COMMAND_FAILED',
+      message: expect.stringContaining('probe timed out'),
+    });
+  });
+
+  it('enforces the version materialization deadline and removes its temporary checkout', async () => {
+    const home = await temp('ignite-version-home-');
+    const url = 'file:///deadline/repo';
+    FileSystem.resetInstance();
+    const fileSystem = FileSystem.getInstance(home);
+    const versions = new VersionStore(fileSystem);
+    await versions.approveOrigins(profileId, [url]);
+    const run = vi.fn(
+      async (
+        _command: string,
+        args: string[],
+        options?: { signal?: AbortSignal }
+      ) => {
+        if (args.includes('rev-parse'))
+          return { code: 1, stdout: '', stderr: 'missing' };
+        if (args.includes('fetch')) {
+          return new Promise<never>((_resolve, reject) => {
+            if (options?.signal?.aborted) reject(options.signal.reason);
+            else
+              options?.signal?.addEventListener(
+                'abort',
+                () => reject(options.signal?.reason),
+                { once: true }
+              );
+          });
+        }
+        return { code: 0, stdout: '', stderr: '' };
+      }
+    );
+    const repos = new RepoService({
+      fileSystem,
+      profiles: {
+        getCurrentProfile: () => profileId,
+      } as unknown as ProfileManager,
+      run: run as typeof runCommand,
+      materializationTimeoutMs: 5,
+    });
+
+    await expect(
+      repos.ensureVersion(profileId, url, testCommit)
+    ).rejects.toThrow(/timed out/i);
+    const entries = await fs.readdir(versions.groupDir(url));
+    expect(entries.filter((entry) => entry.startsWith('tmp-'))).toEqual([]);
+    expect(
+      run.mock.calls.some(
+        (call) => (call[2] as { signal?: AbortSignal } | undefined)?.signal
+      )
+    ).toBe(true);
+  });
+
   it('materializes independent real clones for two versions using one bare cache', async () => {
     const remote = await sourceRepo();
     const home = await temp('ignite-version-home-');
@@ -142,7 +209,29 @@ describe('RepoService version materialization', () => {
     );
   });
 
-  it('keeps each version’s submodule URL and content isolated', async () => {
+  it('resets tracked mutations in a version checkout while preserving untracked outputs', async () => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    const { repos } = await approved(home, remote.remote);
+    const { checkout } = await repos.ensureVersion(
+      profileId,
+      remote.remote,
+      remote.first
+    );
+
+    await fs.writeFile(path.join(checkout, 'tracked.txt'), 'mutated\n');
+    await fs.writeFile(path.join(checkout, 'build.out'), 'keep\n');
+    await repos.assertPinnedIntegrity(checkout, remote.first);
+
+    await expect(
+      fs.readFile(path.join(checkout, 'tracked.txt'), 'utf8')
+    ).resolves.toBe('one\n');
+    await expect(
+      fs.readFile(path.join(checkout, 'build.out'), 'utf8')
+    ).resolves.toBe('keep\n');
+  });
+
+  it('keeps each version’s submodule URL and content isolated (including quiet integrity probes)', async () => {
     const subA = await temp('ignite-version-sub-a-');
     const subB = await temp('ignite-version-sub-b-');
     let subBCommit = '';

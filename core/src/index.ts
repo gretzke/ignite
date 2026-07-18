@@ -29,6 +29,7 @@ import { DeployEngine } from './deployments/DeployEngine.js';
 import { VerificationQueue } from './verifications/VerificationQueue.js';
 import { wireVerificationReconciliation } from './deployments/verificationIntegration.js';
 import { sweepOrphanedDockerResources } from './system/orphanSweep.js';
+import { recoverRepoVersionCache } from './repos/startupMaintenance.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -57,6 +58,7 @@ async function ignite(workspacePath: string): Promise<{
   const profileManager = await ProfileManager.getInstance();
   const pluginManager = PluginManager.getInstance();
   const pluginExecutor = PluginExecutor.getInstance();
+  await recoverRepoVersionCache(fileSystem);
   await JobManager.getInstance().recover();
   let sweepDeadline: NodeJS.Timeout | undefined;
   const sweepResult = await Promise.race([
