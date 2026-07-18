@@ -61,6 +61,7 @@ const { PluginInstaller } = await import('../../plugins/install/PluginInstaller.
 const { LocalFolderBuildBackend } = await import('../../plugins/install/LocalFolderBuildBackend.js');
 const { TrustManager } = await import('../../plugins/trust/TrustManager.js');
 const { DeploymentTypeService } = await import('../../deployments/DeploymentTypeService.js');
+const { ContractTypeService } = await import('../../deployments/ContractTypeService.js');
 
 type Engine = InstanceType<typeof DeployEngine>;
 type Anvil = { container: Docker.Container; rpcUrl: string; chainId: number };
@@ -242,6 +243,124 @@ describe.skipIf(!ready)('plan engine: CREATE2, pointers, calls, plugins', () => 
     }
     expect((await validate(stale, [CHAIN_A])).report.chains[String(CHAIN_A)].create2).toMatchObject({ ok: false, blocking: true, code: 'DEPLOYMENT_TYPE_COMMITMENT_STALE' });
   }, 420_000);
+
+  it('deploys a transparent wrapper atomically, captures its ProxyAdmin, and projects it', async () => {
+    const type = await ContractTypeService.getInstance().frozenDescriptor('oz-transparent');
+    const plan: DeploymentPlan = {
+      ...base([CHAIN_A]),
+      contracts: [
+        ...contracts().filter((entry) => entry.id !== 'hook'),
+        { id: 'impl', repoPathOrUrl: FIXTURE, frameworkId: 'foundry', artifactPath: 'out/ProxyFixtures.sol/InitializableOwner.json', contractName: 'InitializableOwner', sourcePath: 'src/ProxyFixtures.sol' },
+        { id: 'proxy', origin: 'contract-type', contractName: 'TransparentUpgradeableProxy', pluginId: 'oz-transparent', artifactKey: 'proxy', versionLabel: type.versionLabel, contentHash: type.contentHash },
+      ],
+      steps: [
+        { id: 'impl', kind: 'deploy', contractId: 'impl' },
+        { id: 'proxy', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'impl', contractTypePluginId: 'oz-transparent' }, args: { _logic: { $ref: { kind: 'step', stepId: 'impl' } }, initialOwner: SIGNER_A, _data: { $encode: { contractId: 'impl', fn: 'initialize(address)', args: { owner_: SIGNER_B } } } } },
+      ],
+    };
+    const launched = await launch(plan, [CHAIN_A], 'transparent-proxy');
+    const complete = await waitForRun(launched.id, (value) => value.status === 'completed');
+    const lane = complete.lanes[String(CHAIN_A)];
+    const proxy = lane.steps.find((step) => step.stepId === 'proxy')!;
+    const impl = lane.steps.find((step) => step.stepId === 'impl')!;
+    expect(await readOwner(anvilA, proxy.address!)).toBe(SIGNER_B);
+    expect(proxy.captured?.admin).toMatch(/^0x[0-9a-f]{40}$/i);
+    const implementationSlot = await publicClient(anvilA).getStorageAt({ address: proxy.address!, slot: '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc' });
+    expect(implementationSlot?.slice(-40).toLowerCase()).toBe(impl.address!.slice(2).toLowerCase());
+    expect(renderArtifact(complete).lanes[String(CHAIN_A)].steps.find((step) => step.stepId === 'proxy')?.proxy).toMatchObject({ implementation: impl.address, admin: proxy.captured?.admin, contractType: { pluginId: 'oz-transparent' } });
+  }, 240_000);
+
+  it('deploys a UUPS wrapper and upgrades it through an in-plan wrapper call', async () => {
+    const type = await ContractTypeService.getInstance().frozenDescriptor('oz-uups');
+    const plan: DeploymentPlan = {
+      ...base([CHAIN_A]),
+      contracts: [
+        ...contracts().filter((entry) => entry.id !== 'hook'),
+        proxyFixture('impl', 'UupsFixture'),
+        proxyFixture('next', 'UupsFixture'),
+        contractType('proxy', 'ERC1967Proxy', 'oz-uups', 'proxy', type),
+      ],
+      steps: [
+        { id: 'impl', kind: 'deploy', contractId: 'impl' },
+        { id: 'proxy', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'impl', contractTypePluginId: 'oz-uups' }, args: { implementation: { $ref: { kind: 'step', stepId: 'impl' } }, _data: { $encode: { contractId: 'impl', fn: 'initialize(address)', args: { owner_: SIGNER_B } } } } },
+        { id: 'next', kind: 'deploy', contractId: 'next' },
+        { id: 'upgrade', kind: 'call', target: { kind: 'step', stepId: 'proxy' }, signature: 'upgradeToAndCall(address,bytes)', payable: true, args: { next: { $ref: { kind: 'step', stepId: 'next' } }, data: '0x' } },
+      ],
+    };
+    const launched = await launch(plan, [CHAIN_A], 'uups-proxy');
+    const complete = await waitForRun(launched.id, (value) => value.status === 'completed');
+    const lane = complete.lanes[String(CHAIN_A)];
+    const proxy = lane.steps.find((step) => step.stepId === 'proxy')!;
+    const next = lane.steps.find((step) => step.stepId === 'next')!;
+    expect(await readOwner(anvilA, proxy.address!)).toBe(SIGNER_B);
+    expect(await implementationAddress(anvilA, proxy.address!)).toBe(getAddress(next.address!));
+  }, 240_000);
+
+  it('requires acknowledgement before deploying an uninitialized wrapper', async () => {
+    const type = await ContractTypeService.getInstance().frozenDescriptor('oz-transparent');
+    const plan: DeploymentPlan = {
+      ...base([CHAIN_A]),
+      contracts: [
+        ...contracts().filter((entry) => entry.id !== 'hook'),
+        proxyFixture('impl', 'InitializableOwner'),
+        contractType('proxy', 'TransparentUpgradeableProxy', 'oz-transparent', 'proxy', type),
+      ],
+      steps: [
+        { id: 'impl', kind: 'deploy', contractId: 'impl' },
+        { id: 'proxy', kind: 'deploy', contractId: 'proxy', wraps: { stepId: 'impl', contractTypePluginId: 'oz-transparent' }, args: { _logic: { $ref: { kind: 'step', stepId: 'impl' } }, initialOwner: SIGNER_A, _data: '0x' } },
+      ],
+    };
+    expect((await validate(plan, [CHAIN_A])).report.chains[String(CHAIN_A)].args).toMatchObject({ ok: false, blocking: true, code: 'UNINITIALIZED_PROXY_ACK_REQUIRED' });
+    const acknowledged = structuredClone(plan);
+    const wrapper = acknowledged.steps.find((step) => step.id === 'proxy');
+    if (wrapper?.kind === 'deploy') wrapper.acknowledgeUninitialized = true;
+    const launched = await launch(acknowledged, [CHAIN_A], 'uninitialized-proxy');
+    const complete = await waitForRun(launched.id, (value) => value.status === 'completed');
+    const proxy = complete.lanes[String(CHAIN_A)].steps.find((step) => step.stepId === 'proxy')!;
+    expect(await readOwner(anvilA, proxy.address!)).toBe(ZERO);
+  }, 240_000);
+
+  it('forwards wrapper value to a payable initializer', async () => {
+    const type = await ContractTypeService.getInstance().frozenDescriptor('oz-transparent');
+    const value = 123_456_789n;
+    const plan: DeploymentPlan = {
+      ...base([CHAIN_A]),
+      contracts: [
+        ...contracts().filter((entry) => entry.id !== 'hook'),
+        proxyFixture('impl', 'PayableInitializable'),
+        contractType('proxy', 'TransparentUpgradeableProxy', 'oz-transparent', 'proxy', type),
+      ],
+      steps: [
+        { id: 'impl', kind: 'deploy', contractId: 'impl' },
+        { id: 'proxy', kind: 'deploy', contractId: 'proxy', value: value.toString(), wraps: { stepId: 'impl', contractTypePluginId: 'oz-transparent' }, args: { _logic: { $ref: { kind: 'step', stepId: 'impl' } }, initialOwner: SIGNER_A, _data: { $encode: { contractId: 'impl', fn: 'initialize()' } } } },
+      ],
+    };
+    const launched = await launch(plan, [CHAIN_A], 'payable-proxy');
+    const complete = await waitForRun(launched.id, (value) => value.status === 'completed');
+    const proxy = complete.lanes[String(CHAIN_A)].steps.find((step) => step.stepId === 'proxy')!;
+    expect(await publicClient(anvilA).getBalance({ address: proxy.address! })).toBe(value);
+    expect(await readReceived(anvilA, proxy.address!)).toBe(value);
+  }, 240_000);
+
+  it('uses the create2 factory as the wrapper initializer sender', async () => {
+    const type = await ContractTypeService.getInstance().frozenDescriptor('oz-transparent');
+    const plan: DeploymentPlan = {
+      ...base([CHAIN_A]),
+      contracts: [
+        ...contracts().filter((entry) => entry.id !== 'hook'),
+        proxyFixture('impl', 'SenderInitializable'),
+        contractType('proxy', 'TransparentUpgradeableProxy', 'oz-transparent', 'proxy', type),
+      ],
+      steps: [
+        { id: 'impl', kind: 'deploy', contractId: 'impl' },
+        { id: 'proxy', kind: 'deploy', contractId: 'proxy', strategy: { kind: 'create2', salt: salt(0xd5003) }, wraps: { stepId: 'impl', contractTypePluginId: 'oz-transparent' }, args: { _logic: { $ref: { kind: 'step', stepId: 'impl' } }, initialOwner: SIGNER_A, _data: { $encode: { contractId: 'impl', fn: 'initialize()' } } } },
+      ],
+    };
+    const launched = await launch(plan, [CHAIN_A], 'create2-proxy');
+    const complete = await waitForRun(launched.id, (value) => value.status === 'completed');
+    const proxy = complete.lanes[String(CHAIN_A)].steps.find((step) => step.stepId === 'proxy')!;
+    expect(await readInitializerSender(anvilA, proxy.address!)).toBe(getAddress(CREATE2_PROXY_ADDRESS));
+  }, 240_000);
 });
 
 function contracts() {
@@ -251,6 +370,12 @@ function contracts() {
     ['counter', 'out/LinkedCounter.sol/LinkedCounter.json', 'LinkedCounter', 'src/LinkedCounter.sol'],
     ['hook', 'out/MiniHook.sol/MiniHook.json', 'MiniHook', 'src/MiniHook.sol'],
   ].map(([id, artifactPath, contractName, sourcePath]) => ({ id, repoPathOrUrl: FIXTURE, frameworkId: 'foundry', artifactPath, contractName, sourcePath }));
+}
+function proxyFixture(id: string, contractName: 'InitializableOwner' | 'PayableInitializable' | 'SenderInitializable' | 'UupsFixture') {
+  return { id, repoPathOrUrl: FIXTURE, frameworkId: 'foundry', artifactPath: `out/ProxyFixtures.sol/${contractName}.json`, contractName, sourcePath: 'src/ProxyFixtures.sol' };
+}
+function contractType(id: string, contractName: string, pluginId: 'oz-transparent' | 'oz-uups', artifactKey: string, type: Awaited<ReturnType<InstanceType<typeof ContractTypeService>['frozenDescriptor']>>) {
+  return { id, origin: 'contract-type' as const, contractName, pluginId, artifactKey, versionLabel: type.versionLabel, contentHash: type.contentHash };
 }
 
 function base(chains: number[]): Pick<DeploymentPlan, 'schemaVersion' | 'contracts' | 'chains' | 'signers'> {
@@ -290,5 +415,14 @@ async function startAnvil(chainId: number): Promise<Anvil> { const container = a
 async function seed(...anvils: Anvil[]): Promise<Record<number, { id: string }>> { const registry = new ChainRegistry(); const store = new RpcStore(); const result: Record<number, { id: string }> = {}; for (const anvil of anvils) { await registry.upsertCustomChain({ chainId: anvil.chainId, name: `Anvil ${anvil.chainId}`, shortName: `anvil${anvil.chainId}`, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpc: [] }); result[anvil.chainId] = await store.add(anvil.chainId, { url: anvil.rpcUrl, label: `Anvil ${anvil.chainId}` }); } return result; }
 function publicClient(anvil: Anvil) { return createPublicClient({ transport: http(anvil.rpcUrl) }); }
 const boxAbi = [{ type: 'function', name: 'owner', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }, { type: 'function', name: 'peer', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }] as const;
+const payableAbi = [{ type: 'function', name: 'received', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }] as const;
+const senderAbi = [{ type: 'function', name: 'initializerSender', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }] as const;
+const IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc' as const;
 async function readOwner(anvil: Anvil, address: Hex) { return getAddress(await publicClient(anvil).readContract({ address, abi: boxAbi, functionName: 'owner' })); }
 async function readPeer(anvil: Anvil, address: Hex) { return getAddress(await publicClient(anvil).readContract({ address, abi: boxAbi, functionName: 'peer' })); }
+async function readReceived(anvil: Anvil, address: Hex) { return await publicClient(anvil).readContract({ address, abi: payableAbi, functionName: 'received' }); }
+async function readInitializerSender(anvil: Anvil, address: Hex) { return getAddress(await publicClient(anvil).readContract({ address, abi: senderAbi, functionName: 'initializerSender' })); }
+async function implementationAddress(anvil: Anvil, address: Hex) {
+  const word = await publicClient(anvil).getStorageAt({ address, slot: IMPLEMENTATION_SLOT });
+  return getAddress(`0x${word!.slice(-40)}`);
+}

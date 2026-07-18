@@ -52,7 +52,7 @@ export interface VerificationTask {
   explorer: ExplorerTargetSnapshot;
   explorerPageUrl?: string;
   origin:
-    | { runId: string; stepId: string; contractId: string }
+    | { runId: string; stepId: string; contractId: string; captureKey?: string }
     | { kind: "manual" };
   status: VerificationStatus;
   attempts: VerificationAttempt[];
@@ -76,6 +76,9 @@ export interface CreateVerificationRequest {
   args?: ArgValues;
   encodedConstructorArgs?: string;
   creationTxHash?: string;
+  // Installed contract-type bundles are intentionally not submitted until a
+  // user explicitly accepts their unreproduced provenance.
+  confirmUnverifiedProvenance?: true;
   explorerEntryIds: string[];
 }
 
@@ -158,6 +161,7 @@ export const VerificationTaskSchema = z.object({
       runId: z.string().min(1),
       stepId: z.string().min(1),
       contractId: z.string().min(1),
+      captureKey: z.string().min(1).optional(),
     }),
     z.object({ kind: z.literal("manual") }),
   ]),
@@ -187,6 +191,7 @@ export const CreateVerificationRequestSchema =
       args: z.record(z.string(), z.unknown()).optional(),
       encodedConstructorArgs: z.string().regex(HEX).optional(),
       creationTxHash: z.string().regex(HEX).optional(),
+      confirmUnverifiedProvenance: z.literal(true).optional(),
       explorerEntryIds: z.array(z.string().min(1)).min(1),
     }),
   );

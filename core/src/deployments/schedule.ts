@@ -1,7 +1,7 @@
 import { encodeDeployData, encodeFunctionData, getContractAddress, type Abi, type AbiParameter } from 'viem';
 import { CREATE2_PROXY_ADDRESS, type DeploymentPlan, type DeployStep, type FrozenInputs, type Hex, type Hex32 } from '@ignite/api';
 import { effectiveSalt, initcodeHashOf, predictCreate2Address, create2Calldata } from './create2.js';
-import { callAbiItem, dynamicDeterministicStepIds, effectiveValue, mergeCallTarget, resolveSigner, resolveStepValues, toConstructorArgs, validateDependencies } from './resolver.js';
+import { callAbiItem, callTargetAbi, dynamicDeterministicStepIds, effectiveValue, resolveSigner, resolveStepValues, toConstructorArgs, validateDependencies } from './resolver.js';
 import { flattenLinkReferences, linkBytecode } from './linking.js';
 import type { DeploymentTypeService } from './DeploymentTypeService.js';
 
@@ -171,9 +171,7 @@ export function buildSchedule(plan: DeploymentPlan, frozen: FrozenInputs, chainI
   return plan.steps.map((step) => {
     const from = opts.signers.get(step.id);
     if (step.kind === 'call') {
-      const target = mergeCallTarget(step, chainId);
-      const targetStep = target.kind === 'step' ? plan.steps.find((item): item is DeployStep => item.id === target.stepId && item.kind === 'deploy') : undefined;
-      const fn = callAbiItem(step, chainId, targetStep ? frozen[targetStep.contractId]?.abi : undefined);
+      const fn = callAbiItem(step, chainId, callTargetAbi(plan, step, chainId, frozen));
       const values = resolveStepValues(step, chainId, addresses, fn?.inputs ?? [], { frozen, contracts: plan.contracts });
       const data = fn ? encodeFunctionData({ abi: [fn], functionName: fn.name, args: toConstructorArgs(fn.inputs, values.args) }) : '0x';
       return { stepId: step.id, kind: 'tx', from, to: values.target!, data, value: effectiveValue(step, chainId) };

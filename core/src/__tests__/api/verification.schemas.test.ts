@@ -89,6 +89,11 @@ describe('verification API schemas', () => {
     ).toMatchObject({ contract, chainId: 1 });
   });
 
+  it('accepts a confirmed contract-type verification request', () => {
+    const contractType = { id: 'proxy', origin: 'contract-type' as const, contractName: 'ProxyAdmin', pluginId: 'ct', artifactKey: 'admin', versionLabel: 'v1', contentHash: 'a'.repeat(64) };
+    expect(CreateVerificationRequestSchema.parse({ contract: contractType, chainId: 1, address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', confirmUnverifiedProvenance: true, explorerEntryIds: ['e'] })).toMatchObject({ contract: contractType, confirmUnverifiedProvenance: true });
+  });
+
   it.each([
     () =>
       VerificationTaskSchema.parse({

@@ -18,6 +18,7 @@ import { VerifierProviderService } from '../chains/VerifierProviderService.js';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { RepoService } from '../repos/RepoService.js';
+import { ContractTypeService } from '../deployments/ContractTypeService.js';
 import {
   getCompilerArtifactData,
   getCompilerVerificationBundle,
@@ -39,6 +40,7 @@ export interface VerificationHandlerDeps {
   bundleStore: BundleStore;
   explorers: Parameters<typeof resolveMergedExplorers>[0];
   compiler: Parameters<typeof getCompilerArtifactData>[0];
+  contractTypes: Pick<ContractTypeService, 'getArtifact'>;
 }
 export function createVerificationHandlers(
   deps?: Partial<VerificationHandlerDeps>
@@ -58,6 +60,7 @@ export function createVerificationHandlers(
       registryLoader: PluginRegistryLoader.getInstance(),
       repos: RepoService.getInstance(),
     },
+    contractTypes: deps?.contractTypes ?? ContractTypeService.getInstance(),
   };
   const profile = async () => (await d.getProfileManager()).getCurrentProfile();
   const fail = (reply: FastifyReply, error: unknown) =>
@@ -89,17 +92,18 @@ export function createVerificationHandlers(
       try {
         const profileId = await profile();
         const { contract } = request.body;
-        if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 10)', 'CONTRACT_TYPE_UNSUPPORTED');
-        const [artifact, bundleData] = await Promise.all([
-          getCompilerArtifactData(d.compiler, {
-            contract,
-            profileId,
-          }),
-          getCompilerVerificationBundle(d.compiler, {
-            contract,
-            profileId,
-          }),
-        ]);
+        const [artifact, bundleData] = contract.origin === 'contract-type'
+          ? await (async () => {
+              const value = await d.contractTypes.getArtifact(contract.pluginId, contract.artifactKey);
+              return [
+                { abi: value.abi, creationCode: value.creationBytecode, bytecodeHash: contract.contentHash, evmVersion: undefined, optimizer: false, optimizerRuns: 0, viaIR: false },
+                { standardJsonInput: value.standardJsonInput, solcVersion: value.solcVersion, contractIdentifier: value.sourceIdentifier, creationCode: value.creationBytecode },
+              ] as const;
+            })()
+          : await Promise.all([
+              getCompilerArtifactData(d.compiler, { contract, profileId }),
+              getCompilerVerificationBundle(d.compiler, { contract, profileId }),
+            ]);
         // Same coherence gate as the launch freeze (spec dispositions 2/12):
         // getArtifactData and getVerificationBundle are separate container
         // invocations against a mutable workspace — the ABI used to encode
@@ -114,19 +118,22 @@ export function createVerificationHandlers(
             'The workspace changed during capture — recompile and retry'
           );
         }
+        const contractTypeUnverified = contract.origin === 'contract-type'
+          && (await d.compiler.registryLoader.getPluginConfig(contract.pluginId) as { origin?: string }).origin !== 'builtin';
         const bundleHash = await d.bundleStore.write(profileId, {
           ...bundleData,
           schemaVersion: 1,
           artifactHash: artifact.bytecodeHash,
           compilerSummary: {
-            pluginId: contract.frameworkId,
+            pluginId: contract.origin === 'contract-type' ? contract.pluginId : contract.frameworkId,
             evmVersion: artifact.evmVersion,
             optimizer: artifact.optimizer,
             runs: artifact.optimizerRuns,
             viaIR: artifact.viaIR,
           },
+          ...(contractTypeUnverified ? { unverifiedProvenance: true as const } : {}),
         });
-        const constructor = artifact.abi.find(
+        const constructor = (artifact.abi as Array<{ type?: string; inputs?: AbiParameter[] }>).find(
           (entry: { type?: string }) => entry.type === 'constructor'
         );
         const inputs = (constructor?.inputs ?? []) as AbiParameter[];
@@ -195,17 +202,18 @@ export function createVerificationHandlers(
       try {
         const profileId = await profile();
         const c = request.body.contract;
-        if (c.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 10)', 'CONTRACT_TYPE_UNSUPPORTED');
-        const [artifact, bundle] = await Promise.all([
-          getCompilerArtifactData(d.compiler, {
-            contract: c,
-            profileId,
-          }),
-          getCompilerVerificationBundle(d.compiler, {
-            contract: c,
-            profileId,
-          }),
-        ]);
+        const [artifact, bundle] = c.origin === 'contract-type'
+          ? await (async () => {
+              const value = await d.contractTypes.getArtifact(c.pluginId, c.artifactKey);
+              return [
+                { abi: value.abi },
+                { creationCode: value.creationBytecode },
+              ] as const;
+            })()
+          : await Promise.all([
+              getCompilerArtifactData(d.compiler, { contract: c, profileId }),
+              getCompilerVerificationBundle(d.compiler, { contract: c, profileId }),
+            ]);
         const entries = await resolveMergedExplorers(
           d.explorers,
           request.body.chainId
@@ -233,7 +241,7 @@ export function createVerificationHandlers(
           throw Object.assign(new Error('No verified RPC is configured'), {
             code: 'RPC_UNAVAILABLE',
           });
-        const ctor = artifact.abi.find(
+        const ctor = (artifact.abi as Array<{ type?: string; inputs?: AbiParameter[] }>).find(
           (entry: { type?: string }) => entry.type === 'constructor'
         );
         const data = await guess({

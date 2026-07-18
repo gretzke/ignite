@@ -17,7 +17,9 @@ export async function resolveContractWorkspace(
     pinnedStore: new PinnedStore(),
   }
 ): Promise<string> {
-  if (source.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 7)', 'CONTRACT_TYPE_UNSUPPORTED');
+  // Contract-type sources are resolved by ContractTypeService before a
+  // workspace is needed. Reaching this boundary is an internal routing bug.
+  if (source.origin === 'contract-type') throw new IgniteError('Contract-type source reached workspace resolution', 'CONTRACT_TYPE_OP_FAILED');
   if (!source.pin) return deps.repos.resolveExistingWorkspacePath(source.repoPathOrUrl, profileId);
   const worktree = deps.pinnedStore.worktreePath(profileId, source.pin.url, source.pin.commit);
   if (options.verifyIntegrity) {

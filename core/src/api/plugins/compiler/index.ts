@@ -65,7 +65,9 @@ export async function getCompilerArtifactData(
   input: { contract: ContractSource; profileId: string }
 ): Promise<ArtifactData> {
   const { contract } = input;
-  if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 7)', 'CONTRACT_TYPE_UNSUPPORTED');
+  // Contract-type sources are resolved by ContractTypeService before this
+  // compiler boundary. Reaching it indicates an internal routing bug.
+  if (contract.origin === 'contract-type') throw new IgniteError('Contract-type source reached the compiler boundary', 'CONTRACT_TYPE_OP_FAILED');
   let config;
   try {
     config = await deps.registryLoader.getPluginConfig(contract.frameworkId);
@@ -114,7 +116,9 @@ export async function getCompilerVerificationBundle(
   input: { contract: ContractSource; profileId: string }
 ): Promise<VerificationBundleData> {
   const { contract } = input;
-  if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 7)', 'CONTRACT_TYPE_UNSUPPORTED');
+  // Contract-type sources are resolved by ContractTypeService before this
+  // compiler boundary. Reaching it indicates an internal routing bug.
+  if (contract.origin === 'contract-type') throw new IgniteError('Contract-type source reached the compiler boundary', 'CONTRACT_TYPE_OP_FAILED');
   let config;
   try {
     config = await deps.registryLoader.getPluginConfig(contract.frameworkId);

@@ -6,6 +6,7 @@
 // re-submission; the surface documents it).
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type {
   CreateVerificationRequest,
   ExplorerTargetSnapshot,
@@ -21,6 +22,7 @@ import { FileSystem } from '../filesystem/FileSystem.js';
 import { getLogger } from '../utils/logger.js';
 import { RunStore } from '../deployments/RunStore.js';
 import { writeArtifact } from '../deployments/artifact.js';
+import type { ParsedContractArtifact } from '@ignite/api';
 
 export const SUBMIT_BACKOFF_MS = [
   5_000, 15_000, 45_000, 120_000, 300_000,
@@ -176,10 +178,62 @@ export class VerificationQueue {
           creationTxHash: req.creationTxHash,
           explorer,
           origin: { kind: 'manual' },
-        })
+        }, req.confirmUnverifiedProvenance === true)
       );
     }
     return tasks;
+  }
+
+  /** Queue a verified post-deploy capture. Captures without CREATE provenance
+   * are deliberately left for the ordinary manual verification endpoint. */
+  async enqueueContractTypeCapture(
+    profileId: string,
+    run: RunRecord,
+    chainId: number,
+    stepId: string,
+    contractId: string,
+    captureKey: string,
+    address: string,
+    artifact: ParsedContractArtifact,
+    encodedConstructorArgs: string
+  ): Promise<void> {
+    const wrapperBundle = run.inputs[contractId]?.bundleHash
+      ? await this.bundles.read(profileId, run.inputs[contractId].bundleHash!)
+      : undefined;
+    const wrapperSource = run.plan.contracts.find((entry) => entry.id === contractId);
+    const settings = artifact.standardJsonInput && typeof artifact.standardJsonInput === 'object'
+      ? (artifact.standardJsonInput as { settings?: { optimizer?: { enabled?: boolean; runs?: number }; viaIR?: boolean; evmVersion?: string } }).settings
+      : undefined;
+    const bundleHash = await this.bundles.write(profileId, {
+      schemaVersion: 1,
+      standardJsonInput: artifact.standardJsonInput as never,
+      solcVersion: artifact.solcVersion,
+      contractIdentifier: artifact.sourceIdentifier,
+      creationCode: artifact.creationBytecode,
+      artifactHash: crypto.createHash('sha256').update(JSON.stringify(artifact)).digest('hex'),
+      compilerSummary: {
+        pluginId: wrapperSource?.origin === 'contract-type' ? wrapperSource.pluginId : 'contract-type',
+        optimizer: settings?.optimizer?.enabled ?? false,
+        runs: settings?.optimizer?.runs ?? 0,
+        viaIR: settings?.viaIR ?? false,
+        ...(settings?.evmVersion ? { evmVersion: settings.evmVersion } : {}),
+      },
+      ...(wrapperBundle?.unverifiedProvenance ? { unverifiedProvenance: true as const } : {}),
+    });
+    const bundle = await this.bundles.read(profileId, bundleHash);
+    // Third-party contract-type source bundles need a human confirmation;
+    // automatic capture is intentionally a no-op in that case.
+    if (!bundle || bundle.unverifiedProvenance) return;
+    for (const explorer of run.explorerTargets?.[String(chainId)] ?? []) {
+      await this.enqueue(profileId, {
+        chainId,
+        address,
+        bundleHash,
+        encodedConstructorArgs,
+        explorer,
+        origin: { runId: run.id, stepId, contractId, captureKey },
+      });
+    }
   }
 
   private async enqueue(
@@ -194,8 +248,15 @@ export class VerificationQueue {
       | 'detail'
       | 'nextAttemptAt'
       | 'explorerPageUrl'
-    >
+    >,
+    confirmedUnverifiedProvenance = false
   ): Promise<VerificationTask> {
+    const bundle = await this.bundles.read(profileId, input.bundleHash);
+    if (bundle?.unverifiedProvenance && !confirmedUnverifiedProvenance) {
+      throw Object.assign(new Error('This contract-type verification bundle requires explicit provenance confirmation'), {
+        code: 'UNVERIFIED_PROVENANCE_CONFIRMATION_REQUIRED',
+      });
+    }
     // findLive + supersede + create must be one serialized store operation:
     // two concurrent enqueues for the same key would otherwise both observe
     // "no live task" and double-submit sources (TOCTOU).

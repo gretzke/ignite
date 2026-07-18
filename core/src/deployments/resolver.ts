@@ -156,6 +156,27 @@ export function mergeCallTarget(step: CallStep, chainId: number): CallStep['targ
   return step.targetPerChain?.[String(chainId)] ?? step.target;
 }
 
+/**
+ * Calls sent to a wrapper execute against its implementation's interface.
+ * The wrapper artifact supplies construction bytecode, but its ABI commonly
+ * omits delegated functions (notably ERC1967Proxy and transparent proxies).
+ */
+export function callTargetAbi(plan: DeploymentPlan, step: CallStep, chainId: number, frozen: FrozenInputs): unknown {
+  const target = mergeCallTarget(step, chainId);
+  if (target.kind !== 'step') return undefined;
+  const targetStep = plan.steps.find(
+    (candidate): candidate is DeployStep => candidate.id === target.stepId && candidate.kind === 'deploy'
+  );
+  if (!targetStep) return undefined;
+  const implementation = targetStep.wraps
+    ? plan.steps.find(
+        (candidate): candidate is DeployStep =>
+          candidate.id === targetStep.wraps!.stepId && candidate.kind === 'deploy'
+      )
+    : undefined;
+  return frozen[(implementation ?? targetStep).contractId]?.abi;
+}
+
 // The chain matters: targetPerChain may swap between a plan contract (frozen
 // ABI is authoritative) and an arbitrary address (parsed signature).
 // Signatures compare via viem's canonical form so tuple parameters match.

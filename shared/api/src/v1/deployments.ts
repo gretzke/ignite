@@ -1211,6 +1211,7 @@ export interface DeploymentArtifact {
         libraries?: Array<{ key: string; address: Hex; source: 'literal' | { stepId: string } }>;
         call?: { target: Hex; targetSource: 'literal' | { stepId: string }; signature?: string };
         pointers?: Array<{ path: string; stepId: string; address: Hex; source?: 'step' | 'suggestion' | 'manual'; via?: string }>;
+        proxy?: { implementation: Hex; admin?: Hex; initialOwner?: Hex; contractType: { pluginId: string; versionLabel: string } };
         attempts: DeploymentArtifactAttempt[];
       }>;
     }
@@ -1386,6 +1387,7 @@ export const DeploymentArtifactSchema = z.object({
           libraries: z.array(z.object({ key: z.string().min(1), address: AddressSchema, source: z.union([z.literal('literal'), z.object({ stepId: z.string().min(1) })]) })).optional(),
           call: z.object({ target: AddressSchema, targetSource: z.union([z.literal('literal'), z.object({ stepId: z.string().min(1) })]), signature: z.string().min(1).optional() }).optional(),
           pointers: z.array(z.object({ path: z.string().min(1), stepId: z.string().min(1), address: AddressSchema, source: z.enum(['step', 'suggestion', 'manual']).optional(), via: z.string().max(256).optional() })).optional(),
+          proxy: z.object({ implementation: AddressSchema, admin: AddressSchema.optional(), initialOwner: AddressSchema.optional(), contractType: z.object({ pluginId: z.string().min(1), versionLabel: z.string().min(1) }) }).optional(),
           attempts: z.array(DeploymentArtifactAttemptSchema),
         })
       ),

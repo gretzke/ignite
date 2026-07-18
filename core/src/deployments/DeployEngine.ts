@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { decodeFunctionResult, encodeFunctionData, getContractAddress, keccak256, parseAbiItem, parseTransaction, toFunctionSignature, type Abi, type AbiFunction, type Hex } from 'viem';
+import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, getContractAddress, keccak256, parseAbiItem, parseTransaction, toFunctionSignature, type Abi, type AbiFunction, type AbiParameter, type Hex } from 'viem';
 import type {
   DeploymentPlan,
   Lane,
@@ -28,9 +28,9 @@ import { sanitizeRunError } from './errors.js';
 import { RunEvents, type RunListener } from './events.js';
 import {
   callAbiItem,
+  callTargetAbi,
   collectRefs,
   effectiveValue,
-  mergeCallTarget,
   mergeGas,
   resolveSigner,
   resolveStepValues,
@@ -108,7 +108,7 @@ export interface DeployEngineDeps {
   getStorageAt: (url: string, address: Hex, slot: Hex) => Promise<Hex>;
   call: (url: string, args: { to: Hex; data: Hex }) => Promise<Hex>;
   getTransactionData: (url: string, hash: Hex) => Promise<Hex | undefined>;
-  verificationQueue: Pick<VerificationQueue, 'enqueueForConfirmedStep'>;
+  verificationQueue: Pick<VerificationQueue, 'enqueueForConfirmedStep' | 'enqueueContractTypeCapture'>;
   rebroadcast: (url: string, raw: Hex) => Promise<Hex>;
   chainMetadata: (chainId: number) => Promise<ChainMetadata>;
   deploymentHooks: Pick<DeploymentHookService, 'dispatch' | 'reconcileStartup'>;
@@ -1081,11 +1081,7 @@ export class DeployEngine {
     const attemptId = crypto.randomUUID();
     let jit: { predictedAddress: Hex; salt: Hex; notes: string[] } | undefined;
     if (step.kind === 'call') {
-      const target = mergeCallTarget(step, chainId);
-      const callTarget = target.kind === 'step'
-        ? run.plan.steps.find((candidate): candidate is Extract<typeof candidate, { kind: 'deploy' }> => candidate.id === target.stepId && candidate.kind === 'deploy')
-        : undefined;
-      const fn = callAbiItem(step, chainId, callTarget ? run.inputs[callTarget.contractId]?.abi : undefined);
+      const fn = callAbiItem(step, chainId, callTargetAbi(run.plan, step, chainId, run.inputs));
       const values = resolveStepValues(step, chainId, resolveRef, fn?.inputs ?? [], { frozen: run.inputs, contracts: run.plan.contracts });
       to = values.target!;
       pointers = values.pointers;
@@ -1460,6 +1456,40 @@ export class DeployEngine {
       run.profileId, run, chainId, step.stepId, planStep.contractId,
       step.address, hash, decomposition.constructorData, attempt.expected.libraries
     );
+    await this.enqueueCapturedContractTypeVerifications(run, chainId, planStep, step);
+  }
+
+  private async enqueueCapturedContractTypeVerifications(
+    run: RunRecord,
+    chainId: number,
+    wrapper: Extract<RunRecord['plan']['steps'][number], { kind: 'deploy' }>,
+    laneStep: RunRecord['lanes'][string]['steps'][number]
+  ): Promise<void> {
+    if (!wrapper.wraps || !laneStep.captured) return;
+    const type = run.contractTypes?.[wrapper.wraps.contractTypePluginId];
+    if (!type) return;
+    const ctor = ((run.inputs[wrapper.contractId]?.abi as Abi | undefined)?.find((item) => item.type === 'constructor')?.inputs ?? []) as readonly AbiParameter[];
+    const resolved = resolveStepValues(wrapper, chainId, (stepId) => {
+      const step = run.lanes[String(chainId)]?.steps.find((entry) => entry.stepId === stepId);
+      if (!step?.address) throw new Error(`Pointer ${stepId} is unresolved`);
+      return step.address;
+    }, ctor, { frozen: run.inputs, contracts: run.plan.contracts });
+    for (const capture of type.descriptor.capture) {
+      if (!capture.derivedCreate || !capture.record || !capture.verifyAs) continue;
+      const address = laneStep.captured[capture.record];
+      const artifact = type.artifacts[capture.verifyAs];
+      if (!address || !artifact) continue;
+      const adminCtor = ((artifact.abi as Abi).find((item) => item.type === 'constructor')?.inputs ?? []) as readonly AbiParameter[];
+      const values = (capture.constructorArgs ?? []).map((param) => {
+        const synthesis = type.descriptor.synthesis?.constructorArgs.find((entry) => entry.from === 'param' && entry.param === param);
+        if (!synthesis || !(synthesis.name in resolved.args)) throw new Error(`Capture constructor argument ${param} is unresolved`);
+        return resolved.args[synthesis.name];
+      });
+      await this.deps.verificationQueue.enqueueContractTypeCapture(
+        run.profileId, run, chainId, wrapper.id, wrapper.contractId, capture.record,
+        address, artifact, encodeAbiParameters(adminCtor, values as readonly unknown[])
+      );
+    }
   }
 
   /** Executes only frozen descriptor capture rules; live plugin data is never read. */
@@ -1703,11 +1733,7 @@ export class DeployEngine {
       for (let index = draftLane.currentStepIndex; index < draft.plan.steps.length; index += 1) {
         const step = draft.plan.steps[index];
         if (step.kind === 'call') {
-          const target = step.targetPerChain?.[String(lane.chainId)] ?? step.target;
-          const targetStep = target.kind === 'step'
-            ? draft.plan.steps.find((candidate): candidate is Extract<typeof candidate, { kind: 'deploy' }> => candidate.id === target.stepId && candidate.kind === 'deploy')
-            : undefined;
-          const fn = callAbiItem(step, lane.chainId, targetStep ? draft.inputs[targetStep.contractId]?.abi : undefined);
+          const fn = callAbiItem(step, lane.chainId, callTargetAbi(draft.plan, step, lane.chainId, draft.inputs));
           resolveStepValues(step, lane.chainId, addresses, fn?.inputs ?? [], { frozen: draft.inputs, contracts: draft.plan.contracts });
         } else {
           const input = draft.inputs[step.contractId];

@@ -35,7 +35,8 @@ import {
   toConstructorArgs,
   validateDependencies,
   callAbiItem,
-  mergeCallTarget,} from './resolver.js';
+  callTargetAbi,
+} from './resolver.js';
 import { ackIsFresh, buildChainPredictions, buildInitcode, buildRuntimeCode, hasPredicted, type ChainPredictions } from './schedule.js';
 import {
   simulateChain,
@@ -1273,21 +1274,6 @@ async function validateBalance(
       safeMessage(error, 'Balance check failed')
     );
   }
-}
-
-function callTargetAbi(
-  plan: DeploymentPlan,
-  step: Extract<DeploymentPlan['steps'][number], { kind: 'call' }>,
-  chainId: number,
-  frozen: FrozenInputs
-): unknown {
-  const target = mergeCallTarget(step, chainId);
-  if (target.kind !== 'step') return undefined;
-  const targetStep = plan.steps.find(
-    (candidate): candidate is Extract<typeof candidate, { kind: 'deploy' }> =>
-      candidate.id === target.stepId && candidate.kind === 'deploy'
-  );
-  return targetStep ? frozen[targetStep.contractId]?.abi : undefined;
 }
 
 function constructorInputs(

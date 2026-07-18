@@ -12,18 +12,30 @@ import { FileSystem } from '../filesystem/FileSystem.js';
 import { RepoService } from '../repos/RepoService.js';
 import { RunStore } from './RunStore.js';
 import { getLogger } from '../utils/logger.js';
-import { IgniteError } from '../types/errors.js';
-import { collectRefs, dynamicDeterministicStepIds, effectiveValue, mergeArgs, mergeCallTarget, mergeGas, mergeLibraries, resolveSigner } from './resolver.js';
+import { collectRefs, dynamicDeterministicStepIds, effectiveValue, mergeArgs, mergeCallTarget, mergeGas, mergeLibraries, resolveSigner, resolveStepValues } from './resolver.js';
+import type { Abi, AbiParameter } from 'viem';
 
 export function renderArtifact(
   run: RunRecord,
   verifications: VerificationTask[] = []
 ): DeploymentArtifact {
   const contracts = run.plan.contracts.map((contract) => {
-    if (contract.origin === 'contract-type') throw new IgniteError('contract-type sources are not supported here yet (contract-types plan phase 10)', 'CONTRACT_TYPE_UNSUPPORTED');
     const input = run.inputs[contract.id];
     if (!input) {
       throw new Error(`Frozen input is missing for contract ${contract.id}`);
+    }
+    if (contract.origin === 'contract-type') {
+      const artifact = run.contractTypes?.[contract.pluginId]?.artifacts[contract.artifactKey];
+      const sourcePath = artifact?.sourceIdentifier.split(':')[0] ?? contract.artifactKey;
+      return {
+        id: sanitizeText(contract.id),
+        repoName: sanitizeText(`${contract.pluginId}@${contract.versionLabel}`),
+        sourcePath: portableSourcePath(sourcePath),
+        contractName: sanitizeText(contract.contractName),
+        artifactHash: input.artifactHash,
+        compiler: { ...input.compiler, pluginId: sanitizeText(input.compiler.pluginId), version: sanitizeText(input.compiler.version) },
+        versionLabel: sanitizeText(contract.versionLabel),
+      };
     }
     return {
       id: sanitizeText(contract.id),
@@ -76,6 +88,9 @@ export function renderArtifact(
           const dynamic = step?.kind === 'deploy' && dynamicDeterministicStepIds(run.plan, lane.chainId).has(step.id);
           const effectiveSalt = strategy && strategy.kind !== 'create'
             ? (dynamic ? laneStep.salt : strategy.saltPerChain?.[key] ?? strategy.salt) : undefined;
+          const proxy = step?.kind === 'deploy' && step.wraps
+            ? renderProxy(run, lane.chainId, step, laneStep)
+            : undefined;
           return {
             stepId: sanitizeText(laneStep.stepId),
             kind: step?.kind ?? 'deploy',
@@ -114,6 +129,7 @@ export function renderArtifact(
               return { call: { target: expected.to!, targetSource: target.kind === 'step' ? { stepId: sanitizeText(target.stepId) } : 'literal' as const, ...(step.signature ? { signature: sanitizeText(step.signature) } : {}) } };
             })() : {}),
             ...(pointerEntries.length ? { pointers: pointerEntries } : {}),
+            ...(proxy ? { proxy } : {}),
             attempts: laneStep.attempts.map(renderAttempt),
           };
         }),
@@ -155,6 +171,42 @@ export function renderArtifact(
     lanes,
     ...(Object.keys(outcomes).length ? { verifications: outcomes } : {}),
   });
+}
+
+function renderProxy(
+  run: RunRecord,
+  chainId: number,
+  wrapper: Extract<RunRecord['plan']['steps'][number], { kind: 'deploy' }>,
+  laneStep: RunRecord['lanes'][string]['steps'][number]
+) {
+  const type = wrapper.wraps ? run.contractTypes?.[wrapper.wraps.contractTypePluginId] : undefined;
+  const implementation = wrapper.wraps
+    ? run.lanes[String(chainId)]?.steps.find((entry) => entry.stepId === wrapper.wraps!.stepId)?.address
+    : undefined;
+  if (!type || !implementation) return undefined;
+  const proxy: { implementation: `0x${string}`; admin?: `0x${string}`; initialOwner?: `0x${string}`; contractType: { pluginId: string; versionLabel: string } } = {
+    implementation,
+    contractType: { pluginId: type.pluginId, versionLabel: type.versionLabel },
+  };
+  const adminCapture = type.descriptor.capture.find((capture) => capture.record === 'admin');
+  if (adminCapture?.record && laneStep.captured?.[adminCapture.record]) proxy.admin = laneStep.captured[adminCapture.record];
+  const ownerParam = type.descriptor.params.find((param) => param.key === 'initialOwner');
+  const synth = ownerParam && type.descriptor.synthesis?.constructorArgs.find((entry) => entry.from === 'param' && entry.param === ownerParam.key);
+  if (synth) {
+    try {
+      const ctor = ((run.inputs[wrapper.contractId]?.abi as Abi | undefined)?.find((entry) => entry.type === 'constructor')?.inputs ?? []) as readonly AbiParameter[];
+      const resolved = resolveStepValues(wrapper, chainId, (stepId) => {
+        const item = run.lanes[String(chainId)]?.steps.find((entry) => entry.stepId === stepId);
+        if (!item?.address) throw new Error('unresolved pointer');
+        return item.address;
+      }, ctor, { frozen: run.inputs, contracts: run.plan.contracts });
+      const value = resolved.args[synth.name];
+      if (typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value)) proxy.initialOwner = value as `0x${string}`;
+    } catch {
+      // Artifact rendering remains available for older/incomplete runs.
+    }
+  }
+  return proxy;
 }
 
 export async function writeArtifact(

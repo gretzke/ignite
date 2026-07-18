@@ -2,7 +2,7 @@
 // The run record is authoritative; queue tasks are only a derived work list.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { parseTransaction, type Hex } from 'viem';
+import { encodeAbiParameters, parseTransaction, type Abi, type AbiParameter, type Hex } from 'viem';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { RunStore } from './RunStore.js';
 import { VerificationQueue } from '../verifications/VerificationQueue.js';
@@ -10,6 +10,7 @@ import { getLogger } from '../utils/logger.js';
 import { RpcStore } from '../chains/RpcStore.js';
 import { decomposeCreationCalldata } from './create2.js';
 import { linkBytecode } from './linking.js';
+import { resolveStepValues } from './resolver.js';
 
 export function wireVerificationReconciliation(queue: VerificationQueue): void {
   queue.reconcileRuns = async () => {
@@ -55,6 +56,29 @@ export function wireVerificationReconciliation(queue: VerificationQueue): void {
               continue;
             }
             await queue.enqueueForConfirmedStep(profileId, run, Number(chainKey), step.stepId, planStep.contractId, step.address, attempt.txHash, decomposition.constructorData, attempt.expected.libraries);
+            if (planStep.wraps && step.captured) {
+              const type = run.contractTypes?.[planStep.wraps.contractTypePluginId];
+              if (type) {
+                const ctor = ((input.abi as Abi).find((item) => item.type === 'constructor')?.inputs ?? []) as readonly AbiParameter[];
+                const resolved = resolveStepValues(planStep, Number(chainKey), (stepId) => {
+                  const value = lane.steps.find((entry) => entry.stepId === stepId);
+                  if (!value?.address) throw new Error(`Pointer ${stepId} is unresolved`);
+                  return value.address;
+                }, ctor, { frozen: run.inputs, contracts: run.plan.contracts });
+                for (const capture of type.descriptor.capture) {
+                  if (!capture.derivedCreate || !capture.record || !capture.verifyAs || !step.captured[capture.record]) continue;
+                  const artifact = type.artifacts[capture.verifyAs];
+                  if (!artifact) continue;
+                  const adminCtor = ((artifact.abi as Abi).find((item) => item.type === 'constructor')?.inputs ?? []) as readonly AbiParameter[];
+                  const values = (capture.constructorArgs ?? []).map((param) => {
+                    const synthesis = type.descriptor.synthesis?.constructorArgs.find((entry) => entry.from === 'param' && entry.param === param);
+                    if (!synthesis || !(synthesis.name in resolved.args)) throw new Error(`Capture constructor argument ${param} is unresolved`);
+                    return resolved.args[synthesis.name];
+                  });
+                  await queue.enqueueContractTypeCapture(profileId, run, Number(chainKey), planStep.id, planStep.contractId, capture.record, step.captured[capture.record], artifact, encodeAbiParameters(adminCtor, values as readonly unknown[]));
+                }
+              }
+            }
           }
         }
       }
