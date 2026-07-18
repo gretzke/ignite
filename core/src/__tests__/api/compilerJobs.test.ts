@@ -90,7 +90,10 @@ function makeFakeRepos(
       async (pathOrUrl: string) => `${pathOrUrl}-workspace`
     ),
     ensureVersion: vi.fn(async (_profileId: string, _url: string, _commit: string) => ({ checkout: 'unused-version-workspace' })),
-    withVersionLock: (async <T>(_url: string, _commit: string, fn: () => Promise<T>) => fn()) as CompilerRepoServiceLike['withVersionLock'],
+    withVersionMaterialized: (async <T>(_profileId: string, _url: string, _commit: string, _opts: object, fn: (materialized: { checkout: string; rematerialize: () => Promise<{ checkout: string }> }) => Promise<T>) => fn({
+      checkout: 'unused-version-workspace',
+      rematerialize: async () => ({ checkout: 'unused-version-workspace' }),
+    })) as CompilerRepoServiceLike['withVersionMaterialized'],
     ...overrides,
   };
 }
@@ -454,6 +457,57 @@ describe('compiler API handlers (jobs)', () => {
       expect(res.json().code).toBe(ErrorCodes.VERSION_WORKSPACE_PIN_REQUIRED);
       expect(fakeJobs.start).not.toHaveBeenCalled();
     });
+
+    it('rematerializes a pinned workspace inside the version lock before installing', async () => {
+      const pin = { url: 'https://example.test/repo.git', commit: 'a'.repeat(40), ref: 'v1', refKind: 'tag' };
+      const requestTimeCheckout = '/cache/repo/versions/deleted-' + pin.commit;
+      const rematerializedCheckout = '/cache/repo/versions/' + pin.commit;
+      const withVersionMaterialized = vi.fn(async (
+        _profileId: string,
+        _url: string,
+        _commit: string,
+        _opts: object,
+        fn: (materialized: { checkout: string; rematerialize: () => Promise<{ checkout: string }> }) => Promise<unknown>
+      ) => fn({
+        checkout: rematerializedCheckout,
+        rematerialize: async () => ({ checkout: rematerializedCheckout }),
+      }));
+      repos = makeFakeRepos({
+        ensureVersion: vi.fn(async () => ({ checkout: requestTimeCheckout })),
+        withVersionMaterialized: withVersionMaterialized as never,
+      });
+      const handlers = createCompilerHandlers({
+        jobs: fakeJobs,
+        executor: executor as unknown as CompilerExecutorLike,
+        registryLoader,
+        repos,
+        versionStore: { isCachePath: vi.fn(() => true), checkoutPath: vi.fn(() => requestTimeCheckout) } as never,
+      });
+      const localApp = fastify();
+      localApp.post('/api/v1/install', handlers.install);
+      await localApp.ready();
+      executor.execute.mockResolvedValue({ success: true, data: null });
+
+      const res = await localApp.inject({
+        method: 'POST', url: '/api/v1/install',
+        payload: { pathOrUrl: pin.url, pluginId: 'waffle', pin },
+      });
+      expect(res.statusCode).toBe(200);
+      await fakeJobs.started[0].runner(makeCtx());
+      expect(withVersionMaterialized).toHaveBeenCalledWith(
+        expect.any(String),
+        pin.url,
+        pin.commit,
+        { ref: pin.ref, refLabel: pin.ref, refKind: pin.refKind },
+        expect.any(Function)
+      );
+      expect(executor.execute).toHaveBeenCalledWith(
+        'waffle',
+        'install',
+        { pathOrUrl: pin.url },
+        expect.objectContaining({ workspacePath: rematerializedCheckout })
+      );
+    });
   });
 
   describe('compile', () => {
@@ -511,20 +565,30 @@ describe('compiler API handlers (jobs)', () => {
       });
     });
 
-    it('holds the version lock while compiling a pinned workspace', async () => {
+    it('rematerializes a pinned workspace inside the version lock before compiling', async () => {
       const pin = { url: 'https://example.test/repo.git', commit: 'a'.repeat(40), ref: 'v1', refKind: 'tag' };
-      const checkoutPath = '/cache/repo/versions/' + pin.commit;
-      const withVersionLock = vi.fn(async (_url: string, _commit: string, fn: () => Promise<unknown>) => fn());
+      const requestTimeCheckout = '/cache/repo/versions/deleted-' + pin.commit;
+      const rematerializedCheckout = '/cache/repo/versions/' + pin.commit;
+      const withVersionMaterialized = vi.fn(async (
+        _profileId: string,
+        _url: string,
+        _commit: string,
+        _opts: object,
+        fn: (materialized: { checkout: string; rematerialize: () => Promise<{ checkout: string }> }) => Promise<unknown>
+      ) => fn({
+        checkout: rematerializedCheckout,
+        rematerialize: async () => ({ checkout: rematerializedCheckout }),
+      }));
       repos = makeFakeRepos({
-        ensureVersion: vi.fn(async () => ({ checkout: checkoutPath })),
-        withVersionLock: withVersionLock as never,
+        ensureVersion: vi.fn(async () => ({ checkout: requestTimeCheckout })),
+        withVersionMaterialized: withVersionMaterialized as never,
       });
       const handlers = createCompilerHandlers({
         jobs: fakeJobs,
         executor: executor as unknown as CompilerExecutorLike,
         registryLoader,
         repos,
-        versionStore: { isCachePath: vi.fn(() => true), checkoutPath: vi.fn(() => checkoutPath) } as never,
+        versionStore: { isCachePath: vi.fn(() => true), checkoutPath: vi.fn(() => requestTimeCheckout) } as never,
       });
       const localApp = fastify();
       localApp.post('/api/v1/compile', handlers.compile);
@@ -537,7 +601,19 @@ describe('compiler API handlers (jobs)', () => {
       });
       expect(res.statusCode).toBe(200);
       await fakeJobs.started[0].runner(makeCtx());
-      expect(withVersionLock).toHaveBeenCalledWith(pin.url, pin.commit, expect.any(Function));
+      expect(withVersionMaterialized).toHaveBeenCalledWith(
+        expect.any(String),
+        pin.url,
+        pin.commit,
+        { ref: pin.ref, refLabel: pin.ref, refKind: pin.refKind },
+        expect.any(Function)
+      );
+      expect(executor.execute).toHaveBeenCalledWith(
+        'waffle',
+        'compile',
+        { pathOrUrl: pin.url },
+        expect.objectContaining({ workspacePath: rematerializedCheckout })
+      );
     });
 
     it('returns 400 synchronously for a non-compiler plugin (no job created)', async () => {

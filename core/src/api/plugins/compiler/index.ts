@@ -50,7 +50,7 @@ export interface CompilerRepoServiceLike {
   resolveExistingWorkspacePath: RepoService['resolveExistingWorkspacePath'];
   ensureVersion: RepoService['ensureVersion'];
   assertPinnedIntegrity?: RepoService['assertPinnedIntegrity'];
-  withVersionLock: RepoService['withVersionLock'];
+  withVersionMaterialized: RepoService['withVersionMaterialized'];
 }
 
 export interface CompilerHandlerDeps {
@@ -243,11 +243,16 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
   async function resolveMutableWorkspaceOr400(
     reply: FastifyReply,
     request: MutableCompilerOperationRequest
-  ): Promise<{ workspacePath: string; pin?: ContractSourcePin } | null> {
+  ): Promise<{
+    workspacePath: string;
+    pin?: ContractSourcePin;
+    profileId?: string;
+  } | null> {
     let workspacePath: string;
+    let profileId: string | undefined;
     try {
       if (request.pin) {
-        const profileId = (await ProfileManager.getInstance()).getCurrentProfile();
+        profileId = (await ProfileManager.getInstance()).getCurrentProfile();
         workspacePath = await resolveContractWorkspace(
           {
             id: 'compiler-operation',
@@ -284,7 +289,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
       );
       return null;
     }
-    return { workspacePath, pin: request.pin };
+    return { workspacePath, pin: request.pin, profileId };
   }
 
   return {
@@ -398,13 +403,19 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         'compiler.install',
         { pathOrUrl, pluginId },
         async (ctx): Promise<null> => {
-          const execute = () => d.executor.execute(
+          const execute = (workspacePath: string) => d.executor.execute(
             pluginId, 'install', { pathOrUrl },
-            { onOutput: (t) => ctx.log(t), workspacePath: resolved.workspacePath, signal: ctx.signal }
+            { onOutput: (t) => ctx.log(t), workspacePath, signal: ctx.signal }
           );
           const result = resolved.pin
-            ? await d.repos.withVersionLock(resolved.pin.url, resolved.pin.commit, execute)
-            : await execute();
+            ? await d.repos.withVersionMaterialized(
+              resolved.profileId!,
+              resolved.pin.url,
+              resolved.pin.commit,
+              { ref: resolved.pin.ref, refLabel: resolved.pin.ref, refKind: resolved.pin.refKind },
+              ({ checkout }) => execute(checkout)
+            )
+            : await execute(resolved.workspacePath);
 
           if (!result.success) {
             throw Object.assign(
@@ -444,13 +455,19 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         'compiler.compile',
         { pathOrUrl, pluginId },
         async (ctx): Promise<null> => {
-          const execute = () => d.executor.execute(
+          const execute = (workspacePath: string) => d.executor.execute(
             pluginId, 'compile', { pathOrUrl },
-            { onOutput: (t) => ctx.log(t), workspacePath: resolved.workspacePath, signal: ctx.signal }
+            { onOutput: (t) => ctx.log(t), workspacePath, signal: ctx.signal }
           );
           const result = resolved.pin
-            ? await d.repos.withVersionLock(resolved.pin.url, resolved.pin.commit, execute)
-            : await execute();
+            ? await d.repos.withVersionMaterialized(
+              resolved.profileId!,
+              resolved.pin.url,
+              resolved.pin.commit,
+              { ref: resolved.pin.ref, refLabel: resolved.pin.ref, refKind: resolved.pin.refKind },
+              ({ checkout }) => execute(checkout)
+            )
+            : await execute(resolved.workspacePath);
 
           if (!result.success) {
             throw Object.assign(

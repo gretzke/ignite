@@ -410,6 +410,21 @@ describe('RepoService version materialization', () => {
     });
   });
 
+  it('records opts.ref as the ref label on the fast path', async () => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    const { repos, versions } = await approved(home, remote.remote);
+    await repos.ensureVersion(profileId, remote.remote, remote.first);
+
+    await repos.ensureVersion(profileId, remote.remote, remote.first, {
+      ref: 'release/v4',
+    });
+
+    expect(await versions.get(remote.remote, remote.first)).toMatchObject({
+      refLabel: 'release/v4',
+    });
+  });
+
   it('does not count an ancestor fetched through a moved ref as ref-stage success', async () => {
     const remote = await sourceRepo();
     const home = await temp('ignite-version-home-');

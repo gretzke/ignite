@@ -335,7 +335,9 @@ export class RepoService {
               ...(existing ?? { url, commit, createdAt: now }),
               url,
               commit,
-              ...(opts.refLabel !== undefined ? { refLabel: opts.refLabel } : {}),
+              ...(opts.refLabel !== undefined || opts.ref !== undefined
+                ? { refLabel: opts.refLabel ?? opts.ref }
+                : {}),
               ...(opts.refKind !== undefined ? { refKind: opts.refKind } : {}),
               lastUsedAt: now,
             });
