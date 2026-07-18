@@ -64,6 +64,10 @@ export interface ArtifactLocation {
   contractName: string;
   sourcePath: string; // relative to workspace root
   artifactPath: string; // relative to workspace root
+  variant?: {
+    solcVersion?: string;
+    profile?: string;
+  };
 }
 
 export interface ArtifactListResult {

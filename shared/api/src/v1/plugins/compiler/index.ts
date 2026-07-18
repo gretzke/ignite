@@ -40,6 +40,10 @@ export const ArtifactListResponseSchema =
           contractName: z.string(),
           sourcePath: z.string(),
           artifactPath: z.string(),
+          variant: z.object({
+            solcVersion: z.string().optional(),
+            profile: z.string().optional(),
+          }).optional(),
         }),
       ),
     }),

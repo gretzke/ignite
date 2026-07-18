@@ -104,12 +104,31 @@ export interface RepoRecord {
 export interface RepoListEntry extends RepoRecord {
   initialized: boolean;
   activeJobId?: string; // in-flight repo.lifecycle job, if any
+  versions: RepoVersionSummary[];
+}
+
+export type RepoVersionRefKind = 'tag' | 'branch' | 'commit';
+
+export interface RepoVersionSummary {
+  commit: string;
+  refLabel?: string;
+  refKind?: RepoVersionRefKind;
+  frameworks?: RepoFrameworkState[];
+  lastUsedAt: string;
+  localFallback?: boolean;
+}
+
+export interface OrphanVersionGroup {
+  url: string;
+  versions: RepoVersionSummary[];
 }
 
 export interface RepoList {
   session: RepoListEntry | null;
   local: RepoListEntry[];
   cloned: RepoListEntry[];
+  versionGroups: OrphanVersionGroup[];
+  /** @deprecated Replaced by repo entry versions and versionGroups; kept for response-shape compatibility. */
   pinned: PinnedSummary[];
 }
 
@@ -122,6 +141,18 @@ export interface PinnedSummary {
   frameworks?: Array<{ id: string; name: string }>;
   detectedAt?: string;
   lastUsedAt?: string;
+}
+
+export interface AddRepoVersionRequest {
+  url?: string;
+  repoPathOrUrl?: string;
+  ref?: string;
+  commit?: string;
+}
+
+export interface RemoveRepoVersionRequest {
+  url: string;
+  commit: string;
 }
 
 export const ProfileParamsSchema = createRequestSchema<ProfileParams>(
@@ -242,6 +273,16 @@ export const RepoListEntrySchema = z.object({
   detectedAt: z.string().optional(),
   initialized: z.boolean(),
   activeJobId: z.string().optional(),
+  versions: z.array(
+    z.object({
+      commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
+      refLabel: z.string().optional(),
+      refKind: z.enum(['tag', 'branch', 'commit']).optional(),
+      frameworks: z.array(RepoFrameworkStateSchema).optional(),
+      lastUsedAt: z.string(),
+      localFallback: z.boolean().optional(),
+    }),
+  ).default([]),
 });
 
 export const GetReposResponseSchema = createApiResponseSchema<RepoList>(
@@ -251,6 +292,18 @@ export const GetReposResponseSchema = createApiResponseSchema<RepoList>(
     session: RepoListEntrySchema.nullable(),
     local: z.array(RepoListEntrySchema),
     cloned: z.array(RepoListEntrySchema),
+    versionGroups: z.array(z.object({
+      url: z.string(),
+      versions: z.array(z.object({
+        commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
+        refLabel: z.string().optional(),
+        refKind: z.enum(['tag', 'branch', 'commit']).optional(),
+        frameworks: z.array(RepoFrameworkStateSchema).optional(),
+        lastUsedAt: z.string(),
+        localFallback: z.boolean().optional(),
+      })),
+    })),
+    // Deprecated response-shape compatibility field.
     pinned: z.array(z.object({
       url: z.string(),
       commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
@@ -268,6 +321,29 @@ export const DeletePinnedRepoQuerySchema = z.object({
   url: z.string().min(1),
   commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
 });
+
+export const AddRepoVersionRequestSchema =
+  createRequestSchema<AddRepoVersionRequest>('AddRepoVersionRequestSchema')(
+    z.object({
+      url: z.string().min(1).optional(),
+      repoPathOrUrl: z.string().min(1).optional(),
+      ref: z.string().min(1).optional(),
+      commit: z.string().regex(/^[0-9a-fA-F]{40}$/).optional(),
+    }).superRefine((value, context) => {
+      if ((value.url !== undefined) === (value.repoPathOrUrl !== undefined))
+        context.addIssue({ code: 'custom', message: 'Provide exactly one of url or repoPathOrUrl' });
+      if ((value.ref !== undefined) === (value.commit !== undefined))
+        context.addIssue({ code: 'custom', message: 'Provide exactly one of ref or commit' });
+    }),
+  );
+
+export const RemoveRepoVersionRequestSchema =
+  createRequestSchema<RemoveRepoVersionRequest>('RemoveRepoVersionRequestSchema')(
+    z.object({
+      url: z.string().min(1),
+      commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
+    }),
+  );
 
 // Route definitions
 export const profileRoutes = {
@@ -416,6 +492,26 @@ export const profileRoutes = {
     querystring: DeletePinnedRepoQuerySchema,
     schema: {
       tags: ["profiles"],
+      response: { 204: z.null() },
+    },
+  },
+  addRepoVersion: {
+    method: 'POST' as const,
+    path: `${V1_BASE_PATH}/profiles/:id/repos/versions`,
+    params: ProfileParamsSchema,
+    schema: {
+      tags: ['profiles'],
+      body: AddRepoVersionRequestSchema,
+      response: { 200: JobStartedResponseSchema },
+    },
+  },
+  removeRepoVersion: {
+    method: 'DELETE' as const,
+    path: `${V1_BASE_PATH}/profiles/:id/repos/versions`,
+    params: ProfileParamsSchema,
+    schema: {
+      tags: ['profiles'],
+      body: RemoveRepoVersionRequestSchema,
       response: { 204: z.null() },
     },
   },
