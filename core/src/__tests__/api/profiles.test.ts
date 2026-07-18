@@ -246,6 +246,25 @@ describe('profile handlers', () => {
     expect((listReply.body as { data: { local: Array<{ versions: Array<{ commit: string }> }> } }).data.local[0].versions).toEqual([expect.objectContaining({ commit })]);
   });
 
+  it('groups an SCP remote version under a repository with the canonical SSH origin', async () => {
+    const deps = makeDeps();
+    const scp = 'git@example.com:team/contracts.git';
+    const canonical = 'ssh://git@example.com/team/contracts.git';
+    const commit = 'd'.repeat(40);
+    deps.repoRegistry.list = async () => ({ session: null, local: [{ pathOrUrl: '/repo-a' }], cloned: [] });
+    deps.repos.getVersionSource = vi.fn(async () => ({ url: scp, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
+    deps.versionStore.listMemberships = vi.fn(async () => ({ [canonical]: [{ commit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' as const }] }));
+    deps.versionStore.list = vi.fn(async () => [{ url: canonical, commit, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
+
+    const reply = makeReply();
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
+
+    expect((reply.body as { data: { local: Array<{ versions: Array<{ commit: string }> }>; versionGroups: unknown[] } }).data).toMatchObject({
+      local: [{ versions: [{ commit }] }],
+      versionGroups: [],
+    });
+  });
+
   it('resolves a local ref through RepoService and keeps the local fallback path', async () => {
     const deps = makeDeps(); const url = 'https://example.com/contracts.git'; const commit = 'b'.repeat(40);
     let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
@@ -332,6 +351,38 @@ describe('profile handlers', () => {
     expect(reply.statusCode).toBe(200);
     expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.any(Object));
     expect(deps.versionStore.addMembership).toHaveBeenCalledWith('p1', url, commit, 'user');
+  });
+
+  it('accepts a head prefix when cached history resolves to that same commit', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const commit = 'abcdef0' + '3'.repeat(33);
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: commit }, tagHeads: {}, releases: [] }));
+    deps.repos.resolveCachedVersionCommit = vi.fn(async () => commit) as never;
+
+    const reply = makeReply();
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never, reply as never);
+
+    expect(reply.statusCode).toBe(200);
+  });
+
+  it('rejects a head prefix that resolves to a different cached commit', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const headCommit = 'abcdef0' + '4'.repeat(33);
+    const cachedCommit = 'abcdef0' + '5'.repeat(33);
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: headCommit }, tagHeads: {}, releases: [] }));
+    deps.repos.resolveCachedVersionCommit = vi.fn(async () => cachedCommit) as never;
+
+    const reply = makeReply();
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never, reply as never);
+
+    expect(reply.statusCode).toBe(400);
+    expect(reply.body).toMatchObject({
+      code: 'VERSION_COMMIT_AMBIGUOUS',
+      message: expect.stringContaining('Provide more characters'),
+    });
+    expect(deps.jobs.start).not.toHaveBeenCalled();
   });
 
   it('rejects an unresolvable short commit with a typed error before materialization', async () => {

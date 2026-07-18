@@ -109,6 +109,32 @@ describe('VersionStore', () => {
     await expect(versions.removeUserMembershipAndDeleteIfUnreferenced('p2', ssh, commitA, async () => {})).resolves.toBe(false);
   });
 
+  it('migrates a raw-URL cache group before reconciling a canonicalized record', async () => {
+    const home = await temp('ignite-version-legacy-group-');
+    const { fileSystem, store: versions } = await store(home);
+    const scp = 'git@github.com:org/repo.git';
+    const canonical = 'ssh://git@github.com/org/repo.git';
+    const rawHash = crypto.createHash('sha256').update(scp).digest('hex').slice(0, 8);
+    const rawGroup = path.join(
+      fileSystem.getVersionCachePath(),
+      `github-com-org-repo-${rawHash}`
+    );
+    await fs.mkdir(path.join(rawGroup, 'versions', commitA), { recursive: true });
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.writeFile(
+      fileSystem.getVersionRegistryPath(),
+      JSON.stringify({ versions: [record(scp, commitA)] })
+    );
+
+    await versions.reconcile();
+
+    expect(await versions.list()).toEqual([record(canonical, commitA)]);
+    await expect(fs.stat(versions.checkoutPath(canonical, commitA))).resolves.toMatchObject({
+      isDirectory: expect.any(Function),
+    });
+    await expect(fs.access(rawGroup)).rejects.toThrow();
+  });
+
   it('round-trips global records and only removes registry entries', async () => {
     const home = await temp('ignite-version-home-');
     const { store: versions } = await store(home);

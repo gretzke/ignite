@@ -31,6 +31,7 @@ import { RepoLifecycle } from '../repos/RepoLifecycle.js';
 import { RepoService, type VersionSource } from '../repos/RepoService.js';
 import {
   VersionStore,
+  canonicalGitUrl,
   pinnedOrigin,
   type VersionRecord,
 } from '../repos/VersionStore.js';
@@ -406,7 +407,9 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             try {
               origins.set(
                 record.pathOrUrl,
-                (await d.repos.getVersionSource(record.pathOrUrl, id)).url
+                canonicalGitUrl(
+                  (await d.repos.getVersionSource(record.pathOrUrl, id)).url
+                )
               );
             } catch {
               origins.set(record.pathOrUrl, undefined);
@@ -595,7 +598,18 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           const heads = await d.inspectGitRemote(source.url);
           const matches = [...Object.values(heads.branchHeads ?? {}), ...Object.values(heads.tagHeads ?? {})]
             .filter((sha, index, all) => sha.toLowerCase().startsWith(commit.toLowerCase()) && all.indexOf(sha) === index);
-          if (matches.length === 1) commit = matches[0];
+          if (matches.length === 1) {
+            const cached = await d.repos.resolveCachedVersionCommit(source.url, commit);
+            if (cached && cached.toLowerCase() !== matches[0].toLowerCase()) {
+              return reply.status(400).send({
+                statusCode: 400,
+                error: 'Bad Request',
+                code: 'VERSION_COMMIT_AMBIGUOUS',
+                message: `Commit prefix '${commit}' is ambiguous in cached history. Provide more characters.`,
+              }) as unknown as IApiResponse<JobStartedData>;
+            }
+            commit = matches[0];
+          }
           else {
             const cached = await d.repos.resolveCachedVersionCommit(source.url, commit);
             if (!cached) {

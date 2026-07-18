@@ -34,6 +34,10 @@ interface VersionOrigins {
   origins: Array<{ origin: string; approvedAt: string }>;
 }
 
+// readRegistry canonicalizes URLs for all public operations, but reconcile
+// needs the pre-canonical value once to locate a legacy raw-URL cache group.
+const rawRegistryUrl = Symbol('rawRegistryUrl');
+
 export interface VersionStatePatch {
   frameworks?: RepoFrameworkState[];
   detectedAt?: string;
@@ -141,14 +145,18 @@ export class VersionStore {
   }
 
   groupDir(url: string): string {
+    return this.groupDirForKey(canonicalGitUrl(url));
+  }
+
+  private groupDirForKey(url: string): string {
     const urlHash = crypto
       .createHash('sha256')
-      .update(canonicalGitUrl(url))
+      .update(url)
       .digest('hex')
       .slice(0, 8);
     return path.join(
       this.fileSystem.getVersionCachePath(),
-      `${slug(canonicalGitUrl(url))}-${urlHash}`
+      `${slug(url)}-${urlHash}`
     );
   }
 
@@ -243,6 +251,7 @@ export class VersionStore {
       for (const record of registry.versions) {
         if (!isCommit(record.commit)) continue;
         try {
+          if (!(await this.migrateLegacyGroupDir(record))) continue;
           const checkout = this.checkoutPath(record.url, record.commit);
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- URL is hashed and commit is validated under the version cache root.
           const stats = await fs.stat(checkout);
@@ -473,6 +482,38 @@ export class VersionStore {
     return VersionStore.rmwMutex.run(VersionStore.rmwKey, fn);
   }
 
+  private async migrateLegacyGroupDir(record: VersionRecord): Promise<boolean> {
+    const rawUrl = (record as VersionRecord & { [rawRegistryUrl]?: string })[
+      rawRegistryUrl
+    ];
+    if (!rawUrl || rawUrl === record.url) return true;
+
+    const canonicalGroup = this.groupDir(record.url);
+    const legacyGroup = this.groupDirForKey(rawUrl);
+    if (canonicalGroup === legacyGroup) return true;
+    try {
+      const stats = await fs.stat(canonicalGroup);
+      if (stats.isDirectory()) return true;
+    } catch {
+      // The canonical group has not yet been created; check the legacy path.
+    }
+    try {
+      const stats = await fs.stat(legacyGroup);
+      if (!stats.isDirectory()) return true;
+    } catch {
+      return true;
+    }
+    try {
+      await fs.rename(legacyGroup, canonicalGroup);
+      return true;
+    } catch (error) {
+      getLogger().warn(
+        `Dropping version cache record after legacy group migration failed: ${String(error)}`
+      );
+      return false;
+    }
+  }
+
   private assertCommit(commit: string): void {
     if (!isCommit(commit))
       throw new Error(`Version commits must be full 40-hex strings: ${commit}`);
@@ -489,7 +530,15 @@ export class VersionStore {
         throw new Error('registry does not contain a versions array');
       const versions = registry.versions
         .filter((record) => this.isVersionRecord(record))
-        .map((record) => ({ ...record, url: canonicalGitUrl(record.url) }));
+        .map((record) => {
+          const canonicalUrl = canonicalGitUrl(record.url);
+          const canonicalRecord = { ...record, url: canonicalUrl };
+          if (canonicalUrl !== record.url)
+            Object.defineProperty(canonicalRecord, rawRegistryUrl, {
+              value: record.url,
+            });
+          return canonicalRecord;
+        });
       if (versions.length !== registry.versions.length)
         getLogger().warn('Ignoring invalid version cache registry record(s)');
       return { versions };
