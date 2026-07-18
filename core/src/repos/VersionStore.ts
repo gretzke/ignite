@@ -1,0 +1,442 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import path from 'node:path';
+import type { RepoFrameworkState } from '@ignite/api';
+import { FileSystem } from '../filesystem/FileSystem.js';
+import { KeyedMutex } from '../utils/KeyedMutex.js';
+import { getLogger } from '../utils/logger.js';
+
+export interface VersionRecord {
+  url: string;
+  commit: string;
+  refLabel?: string;
+  refKind?: 'tag' | 'branch' | 'commit';
+  localFallback?: boolean;
+  frameworks?: RepoFrameworkState[];
+  detectedAt?: string;
+  compiledWith?: { pluginId: string; version: string };
+  createdAt: string;
+  lastUsedAt: string;
+}
+
+export interface VersionMembership {
+  commit: string;
+  addedAt: string;
+  source: 'user' | 'workflow';
+}
+
+interface VersionRegistry {
+  versions: VersionRecord[];
+}
+
+interface VersionOrigins {
+  origins: Array<{ origin: string; approvedAt: string }>;
+}
+
+export interface VersionStatePatch {
+  frameworks?: RepoFrameworkState[];
+  detectedAt?: string;
+  compiledWith?: { pluginId: string; version: string };
+}
+
+export function pinnedOrigin(url: string): string {
+  const parsed = new URL(url);
+  // WHATWG reports file URL origin as "null". Its scheme is still the
+  // approval boundary in development fixtures and local-folder workflows.
+  if (parsed.protocol === 'file:') return 'file://';
+  return `${parsed.protocol}//${parsed.host}`;
+}
+
+function slug(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const value = `${parsed.hostname}${parsed.pathname}`.replace(/\.git$/i, '');
+    return (
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'repo'
+    );
+  } catch {
+    return 'repo';
+  }
+}
+
+function isCommit(value: string): boolean {
+  return /^[0-9a-f]{40}$/i.test(value);
+}
+
+function isInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== '..' &&
+      !path.isAbsolute(relative))
+  );
+}
+
+// Resolve a path even when its final components have not been created yet. This
+// catches symlink escapes through an existing ancestor while retaining a useful
+// answer for fresh-install paths.
+function resolveSymlinks(pathToResolve: string): string {
+  const normalized = path.resolve(pathToResolve);
+  const unresolved: string[] = [];
+  let current = normalized;
+
+  while (true) {
+    try {
+      return path.resolve(
+        realpathSync.native(current),
+        ...unresolved.reverse()
+      );
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return normalized;
+      unresolved.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+export class VersionStore {
+  // cache.json is shared by every URL and memberships can be scanned together
+  // for reference counts, so this must be process-wide rather than per store.
+  private static readonly rmwMutex = new KeyedMutex();
+  private static readonly rmwKey = 'version-store-rmw';
+
+  constructor(
+    private readonly fileSystem: FileSystem = FileSystem.getInstance()
+  ) {}
+
+  registryPath(): string {
+    return this.fileSystem.getVersionRegistryPath();
+  }
+
+  originsPath(profileId: string): string {
+    return this.fileSystem.getPinnedOriginsPath(profileId);
+  }
+
+  membershipPath(profileId: string): string {
+    return this.fileSystem.getVersionMembershipPath(profileId);
+  }
+
+  groupDir(url: string): string {
+    const urlHash = crypto
+      .createHash('sha256')
+      .update(url)
+      .digest('hex')
+      .slice(0, 8);
+    return path.join(
+      this.fileSystem.getVersionCachePath(),
+      `${slug(url)}-${urlHash}`
+    );
+  }
+
+  bareRepoPath(url: string): string {
+    return path.join(this.groupDir(url), 'repo.git');
+  }
+
+  checkoutPath(url: string, commit: string): string {
+    this.assertCommit(commit);
+    return path.join(this.groupDir(url), 'versions', commit);
+  }
+
+  isCachePath(candidate: string): boolean {
+    return isInside(
+      resolveSymlinks(this.fileSystem.getVersionCachePath()),
+      resolveSymlinks(candidate)
+    );
+  }
+
+  async upsert(record: VersionRecord): Promise<void> {
+    this.assertCommit(record.commit);
+    await this.withRmwLock(async () => {
+      const registry = await this.readRegistry();
+      const index = registry.versions.findIndex(
+        (entry) => entry.url === record.url && entry.commit === record.commit
+      );
+      if (index === -1) registry.versions.push(record);
+      else
+        registry.versions[index] = { ...registry.versions[index], ...record };
+      await this.fileSystem.writeJsonFile(this.registryPath(), registry);
+    });
+  }
+
+  async get(url: string, commit: string): Promise<VersionRecord | undefined> {
+    return (await this.list()).find(
+      (record) => record.url === url && record.commit === commit
+    );
+  }
+
+  async list(): Promise<VersionRecord[]> {
+    return (await this.readRegistry()).versions;
+  }
+
+  async remove(url: string, commit: string): Promise<void> {
+    await this.withRmwLock(async () => {
+      const registry = await this.readRegistry();
+      registry.versions = registry.versions.filter(
+        (record) => record.url !== url || record.commit !== commit
+      );
+      await this.fileSystem.writeJsonFile(this.registryPath(), registry);
+    });
+  }
+
+  async bumpLastUsed(url: string, commit: string): Promise<void> {
+    await this.withRmwLock(async () => {
+      const registry = await this.readRegistry();
+      const record = registry.versions.find(
+        (entry) => entry.url === url && entry.commit === commit
+      );
+      if (!record) return;
+      record.lastUsedAt = new Date().toISOString();
+      await this.fileSystem.writeJsonFile(this.registryPath(), registry);
+    });
+  }
+
+  async updateState(
+    url: string,
+    commit: string,
+    patch: VersionStatePatch
+  ): Promise<void> {
+    await this.withRmwLock(async () => {
+      const registry = await this.readRegistry();
+      const record = registry.versions.find(
+        (entry) => entry.url === url && entry.commit === commit
+      );
+      if (!record) return;
+      Object.assign(record, patch);
+      await this.fileSystem.writeJsonFile(this.registryPath(), registry);
+    });
+  }
+
+  async reconcile(): Promise<void> {
+    await this.withRmwLock(async () => {
+      const registry = await this.readRegistry();
+      const liveRecords: VersionRecord[] = [];
+      for (const record of registry.versions) {
+        if (!isCommit(record.commit)) continue;
+        try {
+          const checkout = this.checkoutPath(record.url, record.commit);
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- URL is hashed and commit is validated under the version cache root.
+          const stats = await fs.stat(checkout);
+          if (stats.isDirectory()) liveRecords.push(record);
+        } catch {
+          // Missing checkouts are disposable cache entries and must not survive startup.
+        }
+      }
+
+      if (liveRecords.length !== registry.versions.length) {
+        await this.fileSystem.writeJsonFile(this.registryPath(), {
+          versions: liveRecords,
+        });
+      }
+
+      const recordsByGroup = new Map<string, Set<string>>();
+      for (const record of liveRecords) {
+        const group = this.groupDir(record.url);
+        const commits = recordsByGroup.get(group) ?? new Set<string>();
+        commits.add(record.commit);
+        recordsByGroup.set(group, commits);
+      }
+
+      let groups: import('node:fs').Dirent[];
+      try {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- Fixed VersionStore cache root.
+        groups = await fs.readdir(this.fileSystem.getVersionCachePath(), {
+          withFileTypes: true,
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+
+      for (const group of groups) {
+        if (!group.isDirectory()) continue;
+        const groupPath = path.join(
+          this.fileSystem.getVersionCachePath(),
+          group.name
+        );
+        const expectedCommits =
+          recordsByGroup.get(groupPath) ?? new Set<string>();
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- group.name comes from the cache-root directory listing.
+        const entries = await fs.readdir(groupPath, { withFileTypes: true });
+        for (const entry of entries) {
+          const entryPath = path.join(groupPath, entry.name);
+          if (entry.name.startsWith('tmp-')) {
+            await fs.rm(entryPath, { recursive: true, force: true });
+            continue;
+          }
+          if (entry.name !== 'versions' || !entry.isDirectory()) continue;
+          // eslint-disable-next-line security/detect-non-literal-fs-filename -- versions directory is below a cache-root directory listing entry.
+          const versions = await fs.readdir(entryPath, { withFileTypes: true });
+          for (const version of versions) {
+            if (!expectedCommits.has(version.name)) {
+              await fs.rm(path.join(entryPath, version.name), {
+                recursive: true,
+                force: true,
+              });
+            }
+          }
+        }
+      }
+    });
+  }
+
+  async addMembership(
+    profileId: string,
+    url: string,
+    commit: string,
+    source: VersionMembership['source']
+  ): Promise<void> {
+    this.assertCommit(commit);
+    await this.withRmwLock(async () => {
+      const memberships = await this.readMemberships(profileId);
+      const entries = memberships[url] ?? [];
+      if (
+        !entries.some(
+          (entry) => entry.commit === commit && entry.source === source
+        )
+      ) {
+        entries.push({ commit, source, addedAt: new Date().toISOString() });
+      }
+      memberships[url] = entries;
+      await this.fileSystem.writeJsonFile(
+        this.membershipPath(profileId),
+        memberships
+      );
+    });
+  }
+
+  async removeMembership(
+    profileId: string,
+    url: string,
+    commit: string
+  ): Promise<void> {
+    await this.withRmwLock(async () => {
+      const memberships = await this.readMemberships(profileId);
+      const entries = memberships[url];
+      if (!entries) return;
+      const remaining = entries.filter(
+        (entry) => entry.commit !== commit || entry.source !== 'user'
+      );
+      if (remaining.length === 0) delete memberships[url];
+      else memberships[url] = remaining;
+      await this.fileSystem.writeJsonFile(
+        this.membershipPath(profileId),
+        memberships
+      );
+    });
+  }
+
+  async listMemberships(
+    profileId: string
+  ): Promise<Record<string, VersionMembership[]>> {
+    return this.readMemberships(profileId);
+  }
+
+  async referenceCount(url: string, commit: string): Promise<number> {
+    const profiles = await this.fileSystem.listProfiles();
+    let count = 0;
+    for (const profileId of profiles) {
+      count +=
+        (await this.listMemberships(profileId))[url]?.filter(
+          (entry) => entry.commit === commit
+        ).length ?? 0;
+    }
+    return count;
+  }
+
+  async isOriginApproved(profileId: string, url: string): Promise<boolean> {
+    const origin = pinnedOrigin(url);
+    return (await this.readOrigins(profileId)).origins.some(
+      (entry) => entry.origin === origin
+    );
+  }
+
+  async approveOrigins(profileId: string, urls: string[]): Promise<void> {
+    await this.withRmwLock(async () => {
+      const stored = await this.readOrigins(profileId);
+      const now = new Date().toISOString();
+      for (const candidate of urls) {
+        const origin =
+          candidate.includes('://') &&
+          !candidate.includes('/', candidate.indexOf('://') + 3)
+            ? candidate
+            : pinnedOrigin(candidate);
+        if (!stored.origins.some((entry) => entry.origin === origin))
+          stored.origins.push({ origin, approvedAt: now });
+      }
+      await this.fileSystem.writeJsonFile(this.originsPath(profileId), stored);
+    });
+  }
+
+  private async withRmwLock<T>(fn: () => Promise<T>): Promise<T> {
+    return VersionStore.rmwMutex.run(VersionStore.rmwKey, fn);
+  }
+
+  private assertCommit(commit: string): void {
+    if (!isCommit(commit))
+      throw new Error(`Version commits must be full 40-hex strings: ${commit}`);
+  }
+
+  private async readRegistry(): Promise<VersionRegistry> {
+    if (!(await this.fileSystem.fileExists(this.registryPath())))
+      return { versions: [] };
+    try {
+      const registry = await this.fileSystem.readJsonFile<unknown>(
+        this.registryPath()
+      );
+      if (!this.isRegistry(registry))
+        throw new Error('registry does not contain a versions array');
+      return registry;
+    } catch (error) {
+      getLogger().warn(
+        `Ignoring corrupt version cache registry: ${String(error)}`
+      );
+      return { versions: [] };
+    }
+  }
+
+  private isRegistry(value: unknown): value is VersionRegistry {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      Array.isArray((value as VersionRegistry).versions)
+    );
+  }
+
+  private async readMemberships(
+    profileId: string
+  ): Promise<Record<string, VersionMembership[]>> {
+    if (!(await this.fileSystem.fileExists(this.membershipPath(profileId))))
+      return {};
+    try {
+      const memberships = await this.fileSystem.readJsonFile<unknown>(
+        this.membershipPath(profileId)
+      );
+      if (
+        typeof memberships !== 'object' ||
+        memberships === null ||
+        Array.isArray(memberships)
+      )
+        throw new Error('membership registry is not an object');
+      return memberships as Record<string, VersionMembership[]>;
+    } catch (error) {
+      getLogger().warn(
+        `Ignoring corrupt version membership registry for ${profileId}: ${String(error)}`
+      );
+      return {};
+    }
+  }
+
+  private async readOrigins(profileId: string): Promise<VersionOrigins> {
+    if (!(await this.fileSystem.fileExists(this.originsPath(profileId))))
+      return { origins: [] };
+    return this.fileSystem.readJsonFile<VersionOrigins>(
+      this.originsPath(profileId)
+    );
+  }
+}

@@ -130,6 +130,20 @@ export class FileSystem {
     return path.join(this.getReposPath(profileId), 'pinned');
   }
 
+  // Global cache for immutable repository versions. Unlike pinned worktrees,
+  // these paths are shared across profiles.
+  getVersionCachePath(): string {
+    return path.join(this.igniteHome, 'repos', 'cache');
+  }
+
+  getVersionRegistryPath(): string {
+    return path.join(this.igniteHome, 'repos', 'cache.json');
+  }
+
+  getVersionMembershipPath(profileId: string): string {
+    return path.join(this.getProfileReposPath(profileId), 'versions.json');
+  }
+
   // === Archive Paths ===
 
   getArchivedProfilesPath(): string {
