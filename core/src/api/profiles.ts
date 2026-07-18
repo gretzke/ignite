@@ -621,7 +621,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
                 id, source.url, commit,
                 { ...(body.ref ? { ref: body.ref, refLabel, refKind } : { refLabel, refKind }), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}) },
                 async (materialized) => {
-                  ctx.log(`phase: materialize ${commit}\n`);
+                  ctx.log(`phase: install ${commit}\n`);
                   ctx.log('phase: add user membership\n');
                   await d.versionStore.addMembership(id, source.url, commit, 'user');
                   ctx.log('phase: detect and compile\n');
