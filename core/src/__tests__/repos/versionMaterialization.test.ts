@@ -8,6 +8,7 @@ import { RepoService } from '../../repos/RepoService.js';
 import { VersionStore } from '../../repos/VersionStore.js';
 import type { ProfileManager } from '../../filesystem/ProfileManager.js';
 import { runCommand } from '../../utils/runCommand.js';
+import { getLogger } from '../../utils/logger.js';
 
 const profileId = 'profile-1';
 const dirs: string[] = [];
@@ -242,7 +243,7 @@ describe('RepoService version materialization', () => {
       calls.push(args[1] as string[]);
       return runCommand(...args);
     });
-    const { repos } = await approved(
+    const { repos, versions } = await approved(
       home,
       remote.remote,
       run as typeof runCommand
@@ -259,6 +260,19 @@ describe('RepoService version materialization', () => {
     expect(fetches.some((args) => args.includes(remote.first))).toBe(false);
     expect(fetches.flat()).not.toContain('--depth');
     expect(fetches.flat()).not.toContain('--filter');
+    expect(
+      git(versions.bareRepoPath(remote.remote), [
+        'rev-parse',
+        `refs/ignite/versions/${remote.first}`,
+      ])
+    ).toBe(remote.first);
+
+    await repos.removeVersionCheckout(remote.remote, remote.first);
+    calls.length = 0;
+    await repos.ensureVersion(profileId, remote.remote, remote.first);
+    expect(
+      calls.filter((args) => args.includes('fetch') && args.includes('origin'))
+    ).toEqual([]);
   });
 
   it('falls back from a rejected ref fetch to a SHA fetch', async () => {
@@ -364,5 +378,102 @@ describe('RepoService version materialization', () => {
     await held;
     await removing;
     await expect(fs.access(checkout)).rejects.toThrow();
+  });
+
+  it('does not let removal overtake an integrity-checked fast-path return', async () => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    let pauseFastPath = false;
+    let entered!: () => void;
+    let release!: () => void;
+    const fastPathEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const fastPathRelease = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = vi.fn(async (...args: Parameters<typeof runCommand>) => {
+      const gitArgs = args[1] as string[];
+      if (
+        pauseFastPath &&
+        gitArgs.includes('submodule') &&
+        gitArgs.includes('foreach')
+      ) {
+        pauseFastPath = false;
+        entered();
+        await fastPathRelease;
+      }
+      return runCommand(...args);
+    });
+    const { repos } = await approved(
+      home,
+      remote.remote,
+      run as typeof runCommand
+    );
+    const { checkout } = await repos.ensureVersion(
+      profileId,
+      remote.remote,
+      remote.first
+    );
+
+    pauseFastPath = true;
+    const completionOrder: string[] = [];
+    const ensuring = repos
+      .ensureVersion(profileId, remote.remote, remote.first)
+      .then((result) => {
+        completionOrder.push('ensure');
+        return result;
+      });
+    await fastPathEntered;
+    const removing = repos
+      .removeVersionCheckout(remote.remote, remote.first)
+      .then(() => completionOrder.push('remove'));
+    await Promise.resolve();
+    await expect(fs.access(checkout)).resolves.toBeUndefined();
+
+    release();
+    await ensuring;
+    await removing;
+    expect(completionOrder).toEqual(['ensure', 'remove']);
+  });
+
+  it('logs and rebuilds an existing checkout that fails integrity', async () => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    const run = vi.fn(runCommand);
+    const { repos } = await approved(
+      home,
+      remote.remote,
+      run as typeof runCommand
+    );
+    const second = await repos.ensureVersion(
+      profileId,
+      remote.remote,
+      remote.second
+    );
+    git(second.checkout, ['checkout', '-q', '--detach', remote.first]);
+    const clonesBefore = run.mock.calls.filter(([, args]) =>
+      (args as string[]).includes('clone')
+    ).length;
+    const warning = vi
+      .spyOn(getLogger(), 'warn')
+      .mockImplementation(() => undefined);
+
+    await repos.ensureVersion(profileId, remote.remote, remote.second);
+
+    expect(git(second.checkout, ['rev-parse', 'HEAD'])).toBe(remote.second);
+    expect(
+      run.mock.calls.filter(([, args]) => (args as string[]).includes('clone'))
+    ).toHaveLength(clonesBefore + 1);
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining(remote.remote)
+    );
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining(remote.second)
+    );
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('PINNED_INTEGRITY_VIOLATION')
+    );
+    warning.mockRestore();
   });
 });

@@ -206,8 +206,10 @@ export class RepoService {
   }
 
   async removeVersionCheckout(url: string, commit: string): Promise<void> {
-    await this.withVersionLock(url, commit, async () => {
-      await fs.rm(this.versionStore.checkoutPath(url, commit), { recursive: true, force: true });
+    await this.locks.run(`version-group:${this.versionStore.groupDir(url)}`, async () => {
+      await this.withVersionLock(url, commit, async () => {
+        await fs.rm(this.versionStore.checkoutPath(url, commit), { recursive: true, force: true });
+      });
     });
   }
 
@@ -220,20 +222,28 @@ export class RepoService {
     }
     const groupDir = this.versionStore.groupDir(url);
     const checkout = this.versionStore.checkoutPath(url, commit);
-    return this.locks.run(`version-group:${groupDir}`, async () => {
+    return this.locks.run(`version-group:${groupDir}`, () => this.withVersionLock(url, commit, async () => {
       const controller = new AbortController();
       const deadline = Date.now() + this.materializationTimeoutMs;
       const timer = setTimeout(() => controller.abort(Object.assign(new Error('Version repository materialization timed out'), { code: 'VERSION_MATERIALIZATION_TIMEOUT' })), this.materializationTimeoutMs);
       const budget = { signal: controller.signal, remaining: () => Math.max(0, deadline - Date.now()) };
       let temp: string | undefined;
       try {
-        try {
-          await this.assertPinnedIntegrity(checkout, commit, budget);
-          await this.versionStore.bumpLastUsed(url, commit);
-          return { checkout };
-        } catch {
-          if (controller.signal.aborted) throw controller.signal.reason;
-          await fs.rm(checkout, { recursive: true, force: true });
+        const checkoutExists = await fs.stat(checkout).then(() => true).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return false;
+          throw error;
+        });
+        if (checkoutExists) {
+          try {
+            await this.assertPinnedIntegrity(checkout, commit, budget);
+            await this.versionStore.bumpLastUsed(url, commit);
+            return { checkout };
+          } catch (error) {
+            if (controller.signal.aborted) throw controller.signal.reason;
+            const code = (error as { code?: string }).code ?? 'UNKNOWN';
+            getLogger().warn(`Rebuilding version checkout after integrity failure: url=${url} commit=${commit} code=${code}`);
+            await fs.rm(checkout, { recursive: true, force: true });
+          }
         }
 
         await this.ensureBareVersionRepo(groupDir, url, budget);
@@ -261,7 +271,7 @@ export class RepoService {
         clearTimeout(timer);
         if (temp) await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
       }
-    });
+    }));
   }
 
   private async ensureBareVersionRepo(groupDir: string, url: string, budget: { signal: AbortSignal; remaining: () => number }): Promise<void> {
@@ -279,12 +289,26 @@ export class RepoService {
   private async fetchVersionCommit(url: string, commit: string, opts: EnsureVersionOptions, budget: { signal: AbortSignal; remaining: () => number }): Promise<boolean> {
     const bare = this.versionStore.bareRepoPath(url);
     const attemptedStages: string[] = [];
+    const pinCommit = async (): Promise<boolean> => (await this.runPinnedGit(
+      bare,
+      ['update-ref', `refs/ignite/versions/${commit}`, commit],
+      TIMEOUT_LOCAL_MS,
+      budget
+    )).success;
+    const hasCommit = async (): Promise<boolean> => (await this.runPinnedGit(
+      bare,
+      ['rev-parse', `${commit}^{commit}`],
+      TIMEOUT_LOCAL_MS,
+      budget
+    )).success;
+    attemptedStages.push('cached');
+    if (await hasCommit() && await pinCommit()) return false;
     const tryFetch = async (stage: string, args: string[]): Promise<boolean> => {
       attemptedStages.push(stage);
       const fetched = await this.runPinnedGit(bare, args, TIMEOUT_FETCH_MS, budget);
       if (budget.signal.aborted) throw budget.signal.reason;
       if (!fetched.success) return false;
-      return (await this.runPinnedGit(bare, ['rev-parse', `${commit}^{commit}`], TIMEOUT_LOCAL_MS, budget)).success;
+      return await hasCommit() && await pinCommit();
     };
     if (opts.ref && await tryFetch('ref', ['fetch', 'origin', opts.ref])) return false;
     if (await tryFetch('sha', ['fetch', 'origin', commit])) return false;
@@ -294,7 +318,7 @@ export class RepoService {
       const fallbackOrigin = await this.runPinnedGit(opts.localFallbackPath, ['remote', 'get-url', 'origin'], TIMEOUT_LOCAL_MS, budget);
       if (fallbackOrigin.success && pinnedOrigin(fallbackOrigin.data.stdout.trim()) === pinnedOrigin(url) && normalizeVersionRemote(fallbackOrigin.data.stdout.trim()) === normalizeVersionRemote(url)) {
         const fetched = await this.runPinnedGit(bare, ['fetch', opts.localFallbackPath, commit], TIMEOUT_FETCH_MS, budget);
-        if (fetched.success && (await this.runPinnedGit(bare, ['rev-parse', `${commit}^{commit}`], TIMEOUT_LOCAL_MS, budget)).success) return true;
+        if (fetched.success && await hasCommit() && await pinCommit()) return true;
       }
     }
     throw Object.assign(new Error(`Unable to fetch version ${commit} for ${url}`), { code: 'VERSION_FETCH_FAILED', attemptedStages });
