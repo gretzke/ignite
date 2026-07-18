@@ -43,6 +43,7 @@ export interface RepoServiceLike {
   reset: RepoService['reset'];
   getRepoInfo: RepoService['getRepoInfo'];
   getFile: RepoService['getFile'];
+  withVersionMaterialized: RepoService['withVersionMaterialized'];
 }
 
 export interface RepoJobManagerLike {
@@ -271,8 +272,17 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
       request: FastifyRequest<{ Body: GetFileRequest }>,
       reply: FastifyReply
     ): Promise<IApiResponse<RepoGetFileResult>> => {
-      const { pathOrUrl, filePath } = request.body;
-      const result = await d.repos.getFile(pathOrUrl, filePath);
+      const { pathOrUrl, filePath, pin } = request.body;
+      const profileId = pin ? await d.getProfileId() : undefined;
+      const result = pin
+        ? await d.repos.withVersionMaterialized(
+            profileId!,
+            pin.url,
+            pin.commit,
+            { ref: pin.ref },
+            ({ checkout }) => d.repos.getFile(checkout, filePath)
+          )
+        : await d.repos.getFile(pathOrUrl, filePath);
       if (!result.success) {
         // Map specific error codes to appropriate HTTP status codes, exactly
         // matching the old plugin-executor handler.

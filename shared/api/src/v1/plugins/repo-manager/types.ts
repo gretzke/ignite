@@ -2,6 +2,7 @@
 // Plugins do not see pathOrUrl – it's handler-only, carried by API requests
 
 import { PathOptions } from "@ignite/plugin-types";
+import type { ContractSourcePin } from "../../deployments.js";
 
 export interface CheckoutBranchRequest extends PathOptions {
   branch: string;
@@ -13,6 +14,7 @@ export interface CheckoutCommitRequest extends PathOptions {
 
 export interface GetFileRequest extends PathOptions {
   filePath: string;
+  pin?: ContractSourcePin;
 }
 
 // API-response types — previously re-exported from the (now-deleted)

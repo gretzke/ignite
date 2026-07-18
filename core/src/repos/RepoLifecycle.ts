@@ -224,10 +224,11 @@ export class RepoLifecycle {
     materialized?: {
       checkout: string;
       rematerialize: () => Promise<{ checkout: string }>;
-    }
+    },
+    activityAlreadyTracked = false
   ): Promise<LifecycleResult> {
     const worktree = this.deps.versionStore.checkoutPath(url, commit);
-    this.addDirect(worktree);
+    if (!activityAlreadyTracked) this.addDirect(worktree);
     try {
       const run = async ({ checkout, rematerialize }: NonNullable<typeof materialized>) => {
           let workspacePath = checkout;
@@ -245,7 +246,17 @@ export class RepoLifecycle {
       return materialized
         ? await run(materialized)
         : await this.deps.repos.withVersionMaterialized(profileId, url, commit, {}, run);
-    } finally { this.removeDirect(worktree); }
+    } finally { if (!activityAlreadyTracked) this.removeDirect(worktree); }
+  }
+
+  // Keep the direct activity marker for precisely the same scope as a
+  // caller-owned materialization lock. This prevents a waiter from treating
+  // the checkout as idle in the gap between lifecycle completion and lock
+  // release, while still allowing a delete once the add has fully completed.
+  beginPinnedActivity(url: string, commit: string): () => void {
+    const worktree = this.deps.versionStore.checkoutPath(url, commit);
+    this.addDirect(worktree);
+    return () => this.removeDirect(worktree);
   }
 
   activeJobFor(pathOrUrl: string): string | undefined {

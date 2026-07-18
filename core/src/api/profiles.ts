@@ -70,6 +70,7 @@ export interface ProfileHandlerDeps {
     | 'ensureProfileSwept'
     | 'sessionState'
     | 'runPinnedLifecycle'
+    | 'beginPinnedActivity'
   >;
   // Cheap host check for the list endpoint's `initialized` field.
   hasWorkspace: (pathOrUrl: string, profileId: string) => Promise<boolean>;
@@ -87,6 +88,7 @@ export interface ProfileHandlerDeps {
     | 'removeVersionCheckout'
     | 'getVersionSource'
     | 'resolveLocalVersionCommit'
+    | 'resolveCachedVersionCommit'
     | 'ensureVersion'
   > & { withVersionMaterialized?: RepoService['withVersionMaterialized'] };
   jobs: Pick<JobManager, 'start'>;
@@ -587,16 +589,20 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           }) as unknown as IApiResponse<JobStartedData>;
         let { commit, refKind, refLabel } = resolved;
         // The API accepts a convenient short SHA, but VersionStore identities
-        // are always full commits. Resolve it from advertised remote heads;
-        // an ambiguous/unreachable prefix is a clear client error.
+        // are always full commits. Prefer advertised heads, then use cached
+        // bare history for a valid historical commit.
         if (commit.length < 40) {
           const heads = await d.inspectGitRemote(source.url);
           const matches = [...Object.values(heads.branchHeads ?? {}), ...Object.values(heads.tagHeads ?? {})]
             .filter((sha, index, all) => sha.toLowerCase().startsWith(commit.toLowerCase()) && all.indexOf(sha) === index);
-          if (matches.length !== 1) {
-            return reply.status(400).send({ statusCode: 400, error: 'Bad Request', code: 'VERSION_COMMIT_NOT_RESOLVABLE', message: `Commit prefix '${commit}' is not uniquely resolvable from the remote` }) as unknown as IApiResponse<JobStartedData>;
+          if (matches.length === 1) commit = matches[0];
+          else {
+            const cached = await d.repos.resolveCachedVersionCommit(source.url, commit);
+            if (!cached) {
+              return reply.status(400).send({ statusCode: 400, error: 'Bad Request', code: 'VERSION_COMMIT_NOT_RESOLVABLE', message: `Commit prefix '${commit}' is not available in cached history. Provide the full 40-hex commit for commits not at a ref head.` }) as unknown as IApiResponse<JobStartedData>;
+            }
+            commit = cached;
           }
-          commit = matches[0];
           refLabel = commit;
         }
         const job = d.jobs.start(
@@ -609,17 +615,22 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
               await d.repos.ensureVersion(profileId, url, versionCommit, opts);
               return fn({ checkout: d.versionStore.checkoutPath(url, versionCommit), rematerialize: () => d.repos.ensureVersion(profileId, url, versionCommit, opts) }) as Promise<T>;
             });
-            return withMaterialized(
-              id, source.url, commit,
-              { ...(body.ref ? { ref: body.ref, refLabel, refKind } : { refLabel, refKind }), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}) },
-              async (materialized) => {
-                ctx.log(`phase: materialize ${commit}\n`);
-                ctx.log('phase: add user membership\n');
-                await d.versionStore.addMembership(id, source.url, commit, 'user');
-                ctx.log('phase: detect and compile\n');
-                return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized);
-              }
-            );
+            const releaseActivity = d.lifecycle.beginPinnedActivity(source.url, commit);
+            try {
+              return await withMaterialized(
+                id, source.url, commit,
+                { ...(body.ref ? { ref: body.ref, refLabel, refKind } : { refLabel, refKind }), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}) },
+                async (materialized) => {
+                  ctx.log(`phase: materialize ${commit}\n`);
+                  ctx.log('phase: add user membership\n');
+                  await d.versionStore.addMembership(id, source.url, commit, 'user');
+                  ctx.log('phase: detect and compile\n');
+                  return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized, true);
+                }
+              );
+            } finally {
+              releaseActivity();
+            }
           }
         );
         return reply.status(200).send({ data: { jobId: job.id } });

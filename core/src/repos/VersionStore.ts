@@ -47,6 +47,17 @@ export function normalizeGitUrl(url: string): string {
   return scp ? `ssh://${scp[1]}${scp[2]}/${scp[3]}` : url;
 }
 
+/** Stable identity used by every cache registry and membership lookup. */
+export function canonicalGitUrl(url: string): string {
+  try {
+    const parsed = new URL(normalizeGitUrl(url));
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return normalizeGitUrl(url);
+  }
+}
+
 export function pinnedOrigin(url: string): string {
   const parsed = new URL(normalizeGitUrl(url));
   // WHATWG reports file URL origin as "null". Its scheme is still the
@@ -132,12 +143,12 @@ export class VersionStore {
   groupDir(url: string): string {
     const urlHash = crypto
       .createHash('sha256')
-      .update(normalizeGitUrl(url))
+      .update(canonicalGitUrl(url))
       .digest('hex')
       .slice(0, 8);
     return path.join(
       this.fileSystem.getVersionCachePath(),
-      `${slug(url)}-${urlHash}`
+      `${slug(canonicalGitUrl(url))}-${urlHash}`
     );
   }
 
@@ -159,21 +170,24 @@ export class VersionStore {
 
   async upsert(record: VersionRecord): Promise<void> {
     this.assertCommit(record.commit);
+    const canonicalUrl = canonicalGitUrl(record.url);
+    const canonicalRecord = { ...record, url: canonicalUrl };
     await this.withRmwLock(async () => {
       const registry = await this.readRegistry();
       const index = registry.versions.findIndex(
-        (entry) => entry.url === record.url && entry.commit === record.commit
+        (entry) => canonicalGitUrl(entry.url) === canonicalUrl && entry.commit === record.commit
       );
-      if (index === -1) registry.versions.push(record);
+      if (index === -1) registry.versions.push(canonicalRecord);
       else
-        registry.versions[index] = { ...registry.versions[index], ...record };
+        registry.versions[index] = { ...registry.versions[index], ...canonicalRecord };
       await this.fileSystem.writeJsonFile(this.registryPath(), registry);
     });
   }
 
   async get(url: string, commit: string): Promise<VersionRecord | undefined> {
+    const canonicalUrl = canonicalGitUrl(url);
     return (await this.list()).find(
-      (record) => record.url === url && record.commit === commit
+      (record) => canonicalGitUrl(record.url) === canonicalUrl && record.commit === commit
     );
   }
 
@@ -182,20 +196,22 @@ export class VersionStore {
   }
 
   async remove(url: string, commit: string): Promise<void> {
+    const canonicalUrl = canonicalGitUrl(url);
     await this.withRmwLock(async () => {
       const registry = await this.readRegistry();
       registry.versions = registry.versions.filter(
-        (record) => record.url !== url || record.commit !== commit
+        (record) => canonicalGitUrl(record.url) !== canonicalUrl || record.commit !== commit
       );
       await this.fileSystem.writeJsonFile(this.registryPath(), registry);
     });
   }
 
   async bumpLastUsed(url: string, commit: string): Promise<void> {
+    const canonicalUrl = canonicalGitUrl(url);
     await this.withRmwLock(async () => {
       const registry = await this.readRegistry();
       const record = registry.versions.find(
-        (entry) => entry.url === url && entry.commit === commit
+        (entry) => canonicalGitUrl(entry.url) === canonicalUrl && entry.commit === commit
       );
       if (!record) return;
       record.lastUsedAt = new Date().toISOString();
@@ -208,10 +224,11 @@ export class VersionStore {
     commit: string,
     patch: VersionStatePatch
   ): Promise<void> {
+    const canonicalUrl = canonicalGitUrl(url);
     await this.withRmwLock(async () => {
       const registry = await this.readRegistry();
       const record = registry.versions.find(
-        (entry) => entry.url === url && entry.commit === commit
+        (entry) => canonicalGitUrl(entry.url) === canonicalUrl && entry.commit === commit
       );
       if (!record) return;
       Object.assign(record, patch);
@@ -325,9 +342,10 @@ export class VersionStore {
     source: VersionMembership['source']
   ): Promise<void> {
     this.assertCommit(commit);
+    const canonicalUrl = canonicalGitUrl(url);
     await this.withRmwLock(async () => {
       const memberships = await this.readMemberships(profileId);
-      const entries = memberships[url] ?? [];
+      const entries = memberships[canonicalUrl] ?? [];
       if (
         !entries.some(
           (entry) => entry.commit === commit && entry.source === source
@@ -335,7 +353,7 @@ export class VersionStore {
       ) {
         entries.push({ commit, source, addedAt: new Date().toISOString() });
       }
-      memberships[url] = entries;
+      memberships[canonicalUrl] = entries;
       await this.fileSystem.writeJsonFile(
         this.membershipPath(profileId),
         memberships
@@ -348,15 +366,16 @@ export class VersionStore {
     url: string,
     commit: string
   ): Promise<void> {
+    const canonicalUrl = canonicalGitUrl(url);
     await this.withRmwLock(async () => {
       const memberships = await this.readMemberships(profileId);
-      const entries = memberships[url];
+      const entries = memberships[canonicalUrl];
       if (!entries) return;
       const remaining = entries.filter(
         (entry) => entry.commit !== commit || entry.source !== 'user'
       );
-      if (remaining.length === 0) delete memberships[url];
-      else memberships[url] = remaining;
+      if (remaining.length === 0) delete memberships[canonicalUrl];
+      else memberships[canonicalUrl] = remaining;
       await this.fileSystem.writeJsonFile(
         this.membershipPath(profileId),
         memberships
@@ -374,15 +393,16 @@ export class VersionStore {
     commit: string,
     deleteCheckout: () => Promise<void>
   ): Promise<boolean> {
+    const canonicalUrl = canonicalGitUrl(url);
     return this.withRmwLock(async () => {
       const memberships = await this.readMemberships(profileId);
-      const entries = memberships[url];
+      const entries = memberships[canonicalUrl];
       if (entries) {
         const remaining = entries.filter(
           (entry) => entry.commit !== commit || entry.source !== 'user'
         );
-        if (remaining.length === 0) delete memberships[url];
-        else memberships[url] = remaining;
+        if (remaining.length === 0) delete memberships[canonicalUrl];
+        else memberships[canonicalUrl] = remaining;
         await this.fileSystem.writeJsonFile(this.membershipPath(profileId), memberships);
       }
 
@@ -390,7 +410,7 @@ export class VersionStore {
       let count = 0;
       for (const candidateProfile of profiles) {
         count +=
-          (await this.readMemberships(candidateProfile))[url]?.filter(
+          (await this.readMemberships(candidateProfile))[canonicalUrl]?.filter(
             (entry) => entry.commit === commit
           ).length ?? 0;
       }
@@ -399,7 +419,7 @@ export class VersionStore {
       await deleteCheckout();
       const registry = await this.readRegistry();
       registry.versions = registry.versions.filter(
-        (record) => record.url !== url || record.commit !== commit
+        (record) => canonicalGitUrl(record.url) !== canonicalUrl || record.commit !== commit
       );
       await this.fileSystem.writeJsonFile(this.registryPath(), registry);
       return true;
@@ -413,11 +433,12 @@ export class VersionStore {
   }
 
   async referenceCount(url: string, commit: string): Promise<number> {
+    const canonicalUrl = canonicalGitUrl(url);
     const profiles = await this.fileSystem.listProfiles();
     let count = 0;
     for (const profileId of profiles) {
       count +=
-        (await this.listMemberships(profileId))[url]?.filter(
+        (await this.listMemberships(profileId))[canonicalUrl]?.filter(
           (entry) => entry.commit === commit
         ).length ?? 0;
     }
@@ -466,9 +487,9 @@ export class VersionStore {
       );
       if (!this.isRegistry(registry))
         throw new Error('registry does not contain a versions array');
-      const versions = registry.versions.filter((record) =>
-        this.isVersionRecord(record)
-      );
+      const versions = registry.versions
+        .filter((record) => this.isVersionRecord(record))
+        .map((record) => ({ ...record, url: canonicalGitUrl(record.url) }));
       if (versions.length !== registry.versions.length)
         getLogger().warn('Ignoring invalid version cache registry record(s)');
       return { versions };
@@ -515,7 +536,17 @@ export class VersionStore {
         Array.isArray(memberships)
       )
         throw new Error('membership registry is not an object');
-      return memberships as Record<string, VersionMembership[]>;
+      const canonical: Record<string, VersionMembership[]> = {};
+      for (const [url, entries] of Object.entries(memberships)) {
+        if (!Array.isArray(entries)) continue;
+        const key = canonicalGitUrl(url);
+        canonical[key] ??= [];
+        for (const entry of entries) {
+          if (!canonical[key].some((existing) => existing.commit === entry.commit && existing.source === entry.source))
+            canonical[key].push(entry);
+        }
+      }
+      return canonical;
     } catch (error) {
       getLogger().warn(
         `Ignoring corrupt version membership registry for ${profileId}: ${String(error)}`

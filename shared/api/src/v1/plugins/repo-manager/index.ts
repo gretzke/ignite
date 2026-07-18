@@ -16,6 +16,7 @@ import type {
 } from "./types.js";
 import { PathShape, PathRequestSchema } from "../../shared.js";
 import { JobStartedResponseSchema } from "../../jobs.js";
+import { ContractSourcePinSchema } from "../../deployments.js";
 
 export * from "./types.js";
 
@@ -40,6 +41,7 @@ const GetFileRequestSchema = createRequestSchema<GetFileRequest>(
 )(
   PathShape.extend({
     filePath: z.string(),
+    pin: ContractSourcePinSchema.optional(),
   }),
 );
 

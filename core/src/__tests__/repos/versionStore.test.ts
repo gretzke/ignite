@@ -94,6 +94,21 @@ describe('VersionStore', () => {
     await expect(versions.isOriginApproved('p1', ssh)).resolves.toBe(true);
   });
 
+  it('uses one canonical membership key across scp and ssh aliases', async () => {
+    const home = await temp('ignite-version-alias-');
+    const { fileSystem, store: versions } = await store(home);
+    const scp = 'git@github.com:org/repo.git';
+    const ssh = 'ssh://git@github.com/org/repo.git';
+
+    await fs.mkdir(path.dirname(fileSystem.getVersionMembershipPath('p1')), { recursive: true });
+    await fs.writeFile(fileSystem.getVersionMembershipPath('p1'), JSON.stringify({
+      [scp]: [{ commit: commitA, source: 'workflow', addedAt: '2026-07-18T00:00:00.000Z' }],
+    }));
+
+    expect(await versions.referenceCount(ssh, commitA)).toBe(1);
+    await expect(versions.removeUserMembershipAndDeleteIfUnreferenced('p2', ssh, commitA, async () => {})).resolves.toBe(false);
+  });
+
   it('round-trips global records and only removes registry entries', async () => {
     const home = await temp('ignite-version-home-');
     const { store: versions } = await store(home);

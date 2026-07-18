@@ -646,6 +646,27 @@ export class RepoService {
     return { commit, refKind: branch.success ? 'branch' : 'commit' };
   }
 
+  // A cached bare repository commonly retains commits which no longer appear
+  // at an advertised branch or tag head.  This is deliberately best-effort:
+  // callers still reject an unavailable or ambiguous-looking prefix.
+  async resolveCachedVersionCommit(url: string, prefix: string): Promise<string | undefined> {
+    if (!/^[0-9a-f]{7,39}$/i.test(prefix)) return undefined;
+    const bare = this.versionStore.bareRepoPath(url);
+    try {
+      const stats = await fs.stat(bare);
+      if (!stats.isDirectory()) return undefined;
+    } catch {
+      return undefined;
+    }
+    const resolved = await this.runPinnedGit(
+      bare,
+      ['rev-parse', '--verify', '--end-of-options', `${prefix}^{commit}`],
+      TIMEOUT_LOCAL_MS
+    );
+    const commit = resolved.success ? resolved.data.stdout.trim() : '';
+    return /^[0-9a-f]{40}$/i.test(commit) ? commit : undefined;
+  }
+
   // Like resolveWorkspacePath, but throws when the directory doesn't exist.
   // Callers that bind-mount the result MUST use this: Docker auto-creates a
   // missing host path as an empty (root-owned, on Linux) directory instead

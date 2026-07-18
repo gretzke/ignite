@@ -74,6 +74,9 @@ function makeFakeRepos(overrides?: Partial<RepoServiceLike>): RepoServiceLike {
       ok({ branch: 'main', commit: 'abc123', dirty: false, upToDate: true })
     ),
     getFile: vi.fn(async () => ok({ content: 'hello' })),
+    withVersionMaterialized: vi.fn(async (_profileId, _url, _commit, _opts, fn) =>
+      fn({ checkout: '/pinned', rematerialize: async () => ({ checkout: '/pinned' }) })
+    ),
     ...overrides,
   };
 }
@@ -410,6 +413,20 @@ describe('repo-manager API handlers', () => {
         data: { content: 'pragma solidity ^0.8.0;' },
       });
       expect(repos.getFile).toHaveBeenCalledWith('/repo', 'src/A.sol');
+    });
+
+    it('reads from the materialized commit when a pin is supplied', async () => {
+      const repos = makeFakeRepos({
+        getFile: vi.fn(async (workspace: string) => ok({ content: workspace === '/pinned' ? 'pinned' : 'live' })),
+      });
+      const handlers = createRepoHandlers({ repos, jobs: makeFakeJobs(), getProfileId: async () => 'p1' });
+      const reply = makeReply();
+
+      await handlers.getFile({ body: { pathOrUrl: '/live', filePath: 'src/A.sol', pin: { url: 'https://example.test/repo.git', commit: 'a'.repeat(40) } } } as never, reply as never);
+
+      expect(reply.body).toEqual({ data: { content: 'pinned' } });
+      expect(repos.getFile).toHaveBeenCalledWith('/pinned', 'src/A.sol');
+      expect(repos.withVersionMaterialized).toHaveBeenCalledWith('p1', 'https://example.test/repo.git', 'a'.repeat(40), { ref: undefined }, expect.any(Function));
     });
 
     it('maps FILE_NOT_FOUND to 404', async () => {
