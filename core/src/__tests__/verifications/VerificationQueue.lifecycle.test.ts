@@ -16,6 +16,45 @@ import {
 
 const SENTINEL = '<<<IGNITE_RESULT_BEGIN>>>secret<<<IGNITE_RESULT_END>>>';
 
+// The queue uses real filesystem-backed stores even though timers are virtual.
+// Track those promises so scheduler advancement waits for actual I/O, rather
+// than assuming a fixed number of event-loop turns is enough under load.
+const pendingFsOperations = new Set<Promise<unknown>>();
+
+function trackFs<T>(operation: Promise<T>): Promise<T> {
+  let tracked: Promise<T>;
+  tracked = operation.finally(() => pendingFsOperations.delete(tracked));
+  pendingFsOperations.add(tracked);
+  return tracked;
+}
+
+class TrackingVerificationStore extends VerificationStore {
+  override create(...args: Parameters<VerificationStore['create']>) {
+    return trackFs(super.create(...args));
+  }
+  override mutate(...args: Parameters<VerificationStore['mutate']>) {
+    return trackFs(super.mutate(...args));
+  }
+  override list(...args: Parameters<VerificationStore['list']>) {
+    return trackFs(super.list(...args));
+  }
+  override upsertLive(...args: Parameters<VerificationStore['upsertLive']>) {
+    return trackFs(super.upsertLive(...args));
+  }
+  override findLive(...args: Parameters<VerificationStore['findLive']>) {
+    return trackFs(super.findLive(...args));
+  }
+}
+
+class TrackingBundleStore extends BundleStore {
+  override write(...args: Parameters<BundleStore['write']>) {
+    return trackFs(super.write(...args));
+  }
+  override read(...args: Parameters<BundleStore['read']>) {
+    return trackFs(super.read(...args));
+  }
+}
+
 type Call = { op: string; params: Record<string, unknown> };
 
 function makeExecutor(script: Array<unknown | ((call: Call) => unknown)>) {
@@ -51,7 +90,7 @@ async function makeQueue(
   executor: { execute: ReturnType<typeof vi.fn> },
   opts: { random?: () => number } = {}
 ) {
-  const bundles = new BundleStore({ baseDir: dir });
+  const bundles = new TrackingBundleStore({ baseDir: dir });
   const bundleHash = await bundles.write('p', {
     schemaVersion: 1,
     standardJsonInput: {
@@ -71,7 +110,7 @@ async function makeQueue(
     },
   });
   queue = new VerificationQueue({
-    store: new VerificationStore({ baseDir: dir }),
+    store: new TrackingVerificationStore({ baseDir: dir }),
     bundles,
     baseDir: dir,
     executor: executor as never,
@@ -170,8 +209,15 @@ class VirtualScheduler {
 }
 
 async function drain() {
-  for (let i = 0; i < 200; i += 1) {
+  let idleTurns = 0;
+  while (idleTurns < 2) {
+    if (pendingFsOperations.size > 0) {
+      await Promise.allSettled([...pendingFsOperations]);
+      idleTurns = 0;
+      continue;
+    }
     await new Promise<void>((resolve) => setImmediate(resolve));
+    idleTurns = pendingFsOperations.size === 0 ? idleTurns + 1 : 0;
   }
 }
 
@@ -367,8 +413,8 @@ describe('recovery', () => {
 
     const executor2 = makeExecutor([ok('verified')]);
     const q2 = new VerificationQueue({
-      store: new VerificationStore({ baseDir: dir }),
-      bundles: new BundleStore({ baseDir: dir }),
+      store: new TrackingVerificationStore({ baseDir: dir }),
+      bundles: new TrackingBundleStore({ baseDir: dir }),
       baseDir: dir,
       executor: executor2 as never,
       now: () => clock.t,
@@ -394,8 +440,8 @@ describe('recovery', () => {
 
     const executor2 = makeExecutor([ok('verified')]);
     const q2 = new VerificationQueue({
-      store: new VerificationStore({ baseDir: dir }),
-      bundles: new BundleStore({ baseDir: dir }),
+      store: new TrackingVerificationStore({ baseDir: dir }),
+      bundles: new TrackingBundleStore({ baseDir: dir }),
       baseDir: dir,
       executor: executor2 as never,
       now: () => clock.t,
@@ -420,8 +466,8 @@ describe('recovery', () => {
 
     const executor2 = makeExecutor([ok('verified')]);
     const q2 = new VerificationQueue({
-      store: new VerificationStore({ baseDir: dir }),
-      bundles: new BundleStore({ baseDir: dir }),
+      store: new TrackingVerificationStore({ baseDir: dir }),
+      bundles: new TrackingBundleStore({ baseDir: dir }),
       baseDir: dir,
       executor: executor2 as never,
       now: () => clock.t,
