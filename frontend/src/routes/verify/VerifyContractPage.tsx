@@ -51,36 +51,31 @@ function submissionErrorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+export function contractFromSearchParams(params: URLSearchParams): ContractSource | undefined {
+  const contractTypeRequired = ['contractId', 'pluginId', 'artifactKey', 'contractName', 'versionLabel', 'contentHash'];
+  if (contractTypeRequired.every((key) => params.get(key))) return {
+    id: params.get('contractId')!, origin: 'contract-type', pluginId: params.get('pluginId')!,
+    artifactKey: params.get('artifactKey')!, contractName: params.get('contractName')!,
+    versionLabel: params.get('versionLabel')!, contentHash: params.get('contentHash')!,
+  };
+  const required = ['contractId', 'repoPathOrUrl', 'frameworkId', 'artifactPath', 'contractName', 'sourcePath'];
+  if (!required.every((key) => params.get(key))) return undefined;
+  const pinUrl = params.get('pinUrl');
+  const pinCommit = params.get('pinCommit');
+  return {
+    id: params.get('contractId')!, repoPathOrUrl: params.get('repoPathOrUrl')!,
+    frameworkId: params.get('frameworkId')!, artifactPath: params.get('artifactPath')!,
+    contractName: params.get('contractName')!, sourcePath: params.get('sourcePath')!,
+    ...(pinUrl && pinCommit ? { pin: { url: pinUrl, commit: pinCommit, ...(params.get('pinRef') ? { ref: params.get('pinRef')! } : {}) } } : {}),
+  };
+}
+
 export default function VerifyContractPage() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const chains = useAppSelector((state) => state.chains.chains);
-  const [contract, setContract] = useState<ContractSource | undefined>(() => {
-    const contractTypeRequired = ['contractId', 'pluginId', 'artifactKey', 'contractName', 'versionLabel', 'contentHash'];
-    if (contractTypeRequired.every((key) => params.get(key))) return {
-      id: params.get('contractId')!, origin: 'contract-type', pluginId: params.get('pluginId')!,
-      artifactKey: params.get('artifactKey')!, contractName: params.get('contractName')!,
-      versionLabel: params.get('versionLabel')!, contentHash: params.get('contentHash')!,
-    };
-    const required = [
-      'contractId',
-      'repoPathOrUrl',
-      'frameworkId',
-      'artifactPath',
-      'contractName',
-      'sourcePath',
-    ];
-    if (!required.every((key) => params.get(key))) return undefined;
-    return {
-      id: params.get('contractId')!,
-      repoPathOrUrl: params.get('repoPathOrUrl')!,
-      frameworkId: params.get('frameworkId')!,
-      artifactPath: params.get('artifactPath')!,
-      contractName: params.get('contractName')!,
-      sourcePath: params.get('sourcePath')!,
-    };
-  });
+  const [contract, setContract] = useState<ContractSource | undefined>(() => contractFromSearchParams(params));
   const [abi, setAbi] = useState<unknown[]>([]);
   const [chainId, setChainId] = useState(params.get('chainId') ?? '');
   const [chainSearch, setChainSearch] = useState('');
@@ -153,6 +148,7 @@ export default function VerifyContractPage() {
           pathOrUrl: contract.repoPathOrUrl,
           pluginId: contract.frameworkId,
           artifactPath: contract.artifactPath,
+          ...(contract.pin ? { pin: contract.pin } : {}),
         },
       })
       .then((response) => {

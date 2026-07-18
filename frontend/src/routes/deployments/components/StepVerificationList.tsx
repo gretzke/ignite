@@ -123,6 +123,11 @@ export function verifyNowLink(
     params.set('artifactPath', contract.artifactPath);
     params.set('contractName', contract.contractName);
     params.set('sourcePath', contract.sourcePath);
+    if (contract.pin) {
+      params.set('pinUrl', contract.pin.url);
+      params.set('pinCommit', contract.pin.commit);
+      if (contract.pin.ref) params.set('pinRef', contract.pin.ref);
+    }
   }
   if (contract?.origin === 'contract-type') {
     params.set('contractId', contract.id);

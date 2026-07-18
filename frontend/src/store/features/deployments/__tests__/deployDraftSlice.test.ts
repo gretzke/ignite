@@ -241,6 +241,17 @@ describe('deployDraftSlice', () => {
     ]);
   });
 
+  it('retains a pinned source when adding it to a deployment draft', () => {
+    const source = {
+      repoPathOrUrl: 'https://example.test/contracts.git', frameworkId: 'foundry',
+      artifactPath: 'out/Token.sol/Token.json', contractName: 'Token', sourcePath: 'src/Token.sol',
+      pin: { url: 'https://example.test/contracts.git', commit: 'c'.repeat(40), ref: 'v1.2.3' },
+    };
+    const contract = { id: contractSourceId(source), ...source };
+    const state = deployDraftReducer(undefined, addContracts([contract]));
+    expect(state.contracts[0]).toMatchObject({ id: contract.id, pin: source.pin });
+  });
+
   it('sets and clears sparse per-chain argument overrides', () => {
     let state = deployDraftReducer(
       undefined,

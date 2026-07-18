@@ -24,18 +24,21 @@ export function VersionRows({
   versions,
   activeJobId,
   onRemove,
+  onBrowse,
 }: {
   url: string;
   versions: RepoVersionSummary[];
   activeJobId?: string;
   onRemove: (url: string, version: RepoVersionSummary) => void;
+  onBrowse?: (url: string, version: RepoVersionSummary) => void;
 }) {
   return (
     <>
       {versions.map((version) => (
         <div
           key={version.commit}
-          className="list-row flex items-center gap-3 pl-10"
+          className={`list-row flex items-center gap-3 pl-10 ${onBrowse ? 'clickable cursor-pointer' : ''}`}
+          onClick={() => onBrowse?.(url, version)}
         >
           <Pin size={15} className="text-info shrink-0" />
           <div className="min-w-0 flex-1">
@@ -52,7 +55,7 @@ export function VersionRows({
           <button
             type="button"
             className="btn btn-sm btn-secondary"
-            onClick={() => onRemove(url, version)}
+            onClick={(event) => { event.stopPropagation(); onRemove(url, version); }}
           >
             <Trash2 size={14} /> Remove
           </button>
@@ -72,11 +75,13 @@ export function OrphanVersionGroupCard({
   activeJobId,
   onAddVersion,
   onRemove,
+  onBrowse,
 }: {
   group: OrphanVersionGroup;
   activeJobId?: string;
   onAddVersion: (group: OrphanVersionGroup) => void;
   onRemove: (url: string, version: RepoVersionSummary) => void;
+  onBrowse?: (url: string, version: RepoVersionSummary) => void;
 }) {
   return (
     <div className="glass-list">
@@ -98,6 +103,7 @@ export function OrphanVersionGroupCard({
         versions={group.versions}
         activeJobId={activeJobId}
         onRemove={onRemove}
+        onBrowse={onBrowse}
       />
     </div>
   );

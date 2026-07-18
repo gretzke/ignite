@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import TopBar from './ui/TopBar';
 import Sidebar from './ui/Sidebar';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from './store';
 import { startConnect } from './store/features/connection/connectionSlice';
 import { repositoriesApi } from './store/features/repositories/repositoriesApi';
@@ -21,6 +21,9 @@ export default function App() {
   const showDetails = useAppSelector((s) => s.app.showDetails);
   const colorHex = useAppSelector((s) => s.app.colorHex);
   const sidebarCollapsed = useAppSelector((s) => s.app.sidebarCollapsed);
+  const location = useLocation();
+  const versionScopedRoute = location.pathname.startsWith('/repositories/') &&
+    new URLSearchParams(location.search).has('version');
   // Connection state used inside TopBar via its own selectors
 
   const themeClass = darkMode ? 'theme-dark' : 'theme-light';
@@ -54,6 +57,7 @@ export default function App() {
   // incremental recompile jobs for drifted repos. Debounced so alt-tab
   // storms don't spam checks (the server also cools down per repo).
   useEffect(() => {
+    if (versionScopedRoute) return;
     let last = 0;
     const onFocus = () => {
       const now = Date.now();
@@ -63,7 +67,7 @@ export default function App() {
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [dispatch]);
+  }, [dispatch, versionScopedRoute]);
 
   return (
     <div

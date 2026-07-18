@@ -13,6 +13,7 @@ export interface FileNode extends DirectoryNode {
   artifact: ArtifactLocation;
   identity: string;
   variantCount: number;
+  variants: ArtifactLocation[];
 }
 
 /**
@@ -32,12 +33,13 @@ export function buildPathTree(artifacts: ArtifactLocation[]): DirectoryNode {
   // SwapProxy.0.8.17.json) for the same (sourcePath, contractName). Keep the
   // shortest artifactPath — the unversioned, canonical build output.
   const canonical = new Map<string, ArtifactLocation>();
-  const variants = new Map<string, Set<string>>();
+  const variants = new Map<string, ArtifactLocation[]>();
   artifacts.forEach((artifact) => {
     const key = `${artifact.sourcePath}:${artifact.contractName}`;
-    const artifactPaths = variants.get(key) ?? new Set<string>();
-    artifactPaths.add(artifact.artifactPath);
-    variants.set(key, artifactPaths);
+    const entries = variants.get(key) ?? [];
+    if (!entries.some((entry) => entry.artifactPath === artifact.artifactPath))
+      entries.push(artifact);
+    variants.set(key, entries);
 
     const existing = canonical.get(key);
     if (
@@ -55,7 +57,7 @@ export function buildPathTree(artifacts: ArtifactLocation[]): DirectoryNode {
       artifact.sourcePath,
       'source',
       artifact,
-      variants.get(key)?.size ?? 0
+      variants.get(key) ?? []
     );
   });
 
@@ -70,7 +72,7 @@ function addPathToTree(
   filePath: string,
   fileType: 'source' | 'artifact',
   artifact: ArtifactLocation,
-  variantCount: number
+  variants: ArtifactLocation[]
 ): void {
   const pathParts = filePath.split('/').filter((part) => part.length > 0);
   let currentNode = root;
@@ -102,7 +104,8 @@ function addPathToTree(
       children: {},
       artifact,
       identity,
-      variantCount,
+      variantCount: variants.length,
+      variants,
     };
 
     // If a file with this name already exists, we need to handle it

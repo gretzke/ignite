@@ -2,8 +2,10 @@ import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { CheckCircle, Clock, AlertCircle, Loader2, Hammer } from 'lucide-react';
 import { useAppDispatch } from '../../../../store/hooks';
+import type { ContractSourcePin } from '@ignite/api';
 import {
   cleanCompile,
+  compileProject,
   type CompilationStatus,
 } from '../../../../store/features/compiler/compilerSlice';
 import type { IFramework } from '../../../../store/features/repositories/repositoriesSlice';
@@ -12,12 +14,14 @@ interface StatusCardProps {
   repoPath: string;
   frameworks: IFramework[];
   compilations: Record<string, { status: CompilationStatus; error?: string }>;
+  pin?: ContractSourcePin;
 }
 
 export default function StatusCard({
   repoPath,
   frameworks,
   compilations,
+  pin,
 }: StatusCardProps) {
   const dispatch = useAppDispatch();
   // Compilation error shown in the details dialog; null = closed
@@ -27,9 +31,8 @@ export default function StatusCard({
   } | null>(null);
 
   const handleCleanCompile = (frameworkId: string) => {
-    cleanCompile({ pathOrUrl: repoPath, pluginId: frameworkId }).forEach(
-      (action) => dispatch(action)
-    );
+    if (pin) dispatch(compileProject({ pathOrUrl: repoPath, pluginId: frameworkId, pin }));
+    else cleanCompile({ pathOrUrl: repoPath, pluginId: frameworkId }).forEach((action) => dispatch(action));
   };
 
   // Calculate overall status
@@ -222,11 +225,11 @@ export default function StatusCard({
                         type="button"
                         onClick={() => handleCleanCompile(framework.id)}
                         className="btn btn-secondary text-xs flex items-center gap-1 px-2 py-1"
-                        title="Install dependencies and compile from scratch"
-                        aria-label={`Clean compile ${framework.name}`}
+                        title={pin ? 'Compile this read-only version' : 'Install dependencies and compile from scratch'}
+                        aria-label={`${pin ? 'Compile' : 'Clean compile'} ${framework.name}`}
                       >
                         <Hammer size={12} />
-                        Clean compile
+                        {pin ? 'Compile' : 'Clean compile'}
                       </button>
                     )}
                   </div>

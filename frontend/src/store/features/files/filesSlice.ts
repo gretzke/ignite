@@ -3,6 +3,7 @@ import { apiClient } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
 import { formatApiError } from '../../middleware/apiGate';
 import type { ApiError } from '@ignite/api/client';
+import type { ContractSourcePin } from '@ignite/api';
 
 // Types for file content and artifact data
 export interface FileContent {
@@ -194,10 +195,11 @@ export const filesApi = {
     repoPath: string,
     artifactPath: string,
     pluginId: string,
-    filePath: string
+    filePath: string,
+    pin?: ContractSourcePin
   ) => {
     return apiClient.dispatch.getArtifactData({
-      body: { pathOrUrl: repoPath, artifactPath, pluginId },
+      body: { pathOrUrl: repoPath, artifactPath, pluginId, ...(pin ? { pin } : {}) },
       onSuccess: (data) => {
         return setArtifactData({
           repoPath,

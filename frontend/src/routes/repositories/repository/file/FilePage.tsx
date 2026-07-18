@@ -20,7 +20,7 @@ import { getRepoName } from '../../../../utils/repo';
 import type { RootState, AppDispatch } from '../../../../store/store';
 import { filesApi } from '../../../../store/features/files/filesSlice';
 import { useSelector as useCompilerSelector } from 'react-redux';
-import { listArtifacts } from '../../../../store/features/compiler/compilerSlice';
+import { compilerScopeKey, listArtifacts } from '../../../../store/features/compiler/compilerSlice';
 import { SyntaxHighlighter } from '../../../../components/SyntaxHighlighter';
 import Select from '../../../../components/Select';
 import {
@@ -28,6 +28,7 @@ import {
   removeContract,
 } from '../../../../store/features/deployments/deployDraftSlice';
 import { contractSourceId } from '../../../../utils/contractSourceId';
+import type { ContractSourcePin } from '@ignite/api';
 
 interface CopyButtonProps {
   content: string;
@@ -131,6 +132,23 @@ export default function FilePage() {
   const directoryPath = searchParams.get('path');
   const artifactPath = searchParams.get('artifact');
   const contractName = searchParams.get('contract');
+  const versionCommit = searchParams.get('version') ?? undefined;
+  const version = useSelector((state: RootState) => {
+    if (!versionCommit) return undefined;
+    const repositories = state.repositories.repositories;
+    const entry = [
+      ...(repositories?.local ?? []),
+      ...(repositories?.cloned ?? []),
+      ...(repositories?.session ? [repositories.session] : []),
+    ].find((candidate) => candidate.pathOrUrl === decodedRepoPath);
+    return entry?.versions.find((candidate) => candidate.commit === versionCommit) ??
+      repositories?.versionGroups.find((group) => group.url === decodedRepoPath)
+        ?.versions.find((candidate) => candidate.commit === versionCommit);
+  });
+  const pin: ContractSourcePin | undefined = versionCommit && version
+    ? { url: decodedRepoPath, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
+    : undefined;
+  const compilerKey = compilerScopeKey(decodedRepoPath, pin);
 
   // Get file data from store
   const fileKey = `${decodedRepoPath}:${decodedFilePath}`;
@@ -140,7 +158,7 @@ export default function FilePage() {
 
   // Get artifact data for this file from compiler store
   const compilerData = useCompilerSelector(
-    (state: RootState) => state.compiler.compilations[decodedRepoPath]
+    (state: RootState) => state.compiler.compilations[compilerKey]
   );
   const frameworkData = frameworkId ? compilerData?.[frameworkId] : null;
   const selectedArtifact = frameworkData?.artifacts?.find((artifact) =>
@@ -208,10 +226,10 @@ export default function FilePage() {
       (!frameworkData || frameworkData.artifacts === undefined)
     ) {
       dispatch(
-        listArtifacts({ pathOrUrl: decodedRepoPath, pluginId: frameworkId })
+        listArtifacts({ pathOrUrl: decodedRepoPath, pluginId: frameworkId, ...(pin ? { pin } : {}), stateKey: compilerKey })
       );
     }
-  }, [dispatch, decodedRepoPath, frameworkId, frameworkData]);
+  }, [dispatch, decodedRepoPath, frameworkId, frameworkData, pin, compilerKey]);
 
   // Fetch file content
   useEffect(() => {
@@ -243,7 +261,8 @@ export default function FilePage() {
         decodedRepoPath,
         selectedArtifactPath,
         frameworkId,
-        decodedFilePath
+        decodedFilePath,
+        pin
       );
       dispatch(action);
     }
@@ -255,6 +274,7 @@ export default function FilePage() {
     selectedArtifactPath,
     fileData?.artifactData,
     frameworkData?.artifacts,
+    pin,
   ]);
 
   const backToRepoUrl = (() => {
@@ -265,6 +285,7 @@ export default function FilePage() {
     if (directoryPath) {
       params.set('path', directoryPath);
     }
+    if (versionCommit) params.set('version', versionCommit);
     const queryString = params.toString();
     return `/repositories/${urlRepoPath}${queryString ? `?${queryString}` : ''}`;
   })();
@@ -294,6 +315,7 @@ export default function FilePage() {
           artifactPath: selectedArtifact.artifactPath,
           contractName: selectedArtifact.contractName,
           sourcePath: selectedArtifact.sourcePath,
+          ...(pin ? { pin } : {}),
         })
       : undefined;
   const inDraft = Boolean(
@@ -315,6 +337,7 @@ export default function FilePage() {
           artifactPath: selectedArtifact.artifactPath,
           contractName: selectedArtifact.contractName,
           sourcePath: selectedArtifact.sourcePath,
+          ...(pin ? { pin } : {}),
         },
       ])
     );
@@ -329,6 +352,7 @@ export default function FilePage() {
         artifactPath: selectedArtifact.artifactPath,
         contractName: selectedArtifact.contractName,
         sourcePath: selectedArtifact.sourcePath,
+        ...(pin ? { pin } : {}),
       }),
       repoPathOrUrl: decodedRepoPath,
       frameworkId,
@@ -336,6 +360,11 @@ export default function FilePage() {
       contractName: selectedArtifact.contractName,
       sourcePath: selectedArtifact.sourcePath,
     });
+    if (pin) {
+      params.set('pinUrl', pin.url);
+      params.set('pinCommit', pin.commit);
+      if (pin.ref) params.set('pinRef', pin.ref);
+    }
     navigate(`/verify?${params}`);
   };
 
@@ -369,6 +398,7 @@ export default function FilePage() {
                 {frameworkId}
               </span>
             )}
+            {pin && <span className="chip chip-info">{version?.refLabel ?? pin.commit.slice(0, 12)} · {pin.commit.slice(0, 12)}</span>}
           </div>
           <p className="mono-data text-muted mt-1 truncate">
             {decodedFilePath}

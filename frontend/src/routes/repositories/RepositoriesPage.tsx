@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import { repositoriesApi } from '../../store/features/repositories/repositoriesApi';
 import {
@@ -75,6 +76,9 @@ export default function RepositoriesPage() {
     sourceKey: string;
     request: AddRepoVersionRequest;
   } | null>(null);
+  const navigate = useNavigate();
+  const browseVersion = (url: string, version: RepoVersionSummary) =>
+    navigate(`/repositories/${encodeURIComponent(url)}?version=${encodeURIComponent(version.commit)}`);
 
   // Store hooks
   const dispatch = useAppDispatch();
@@ -324,6 +328,7 @@ export default function RepositoriesPage() {
                 onRemove={(url, version) =>
                   setVersionToDelete({ url, version })
                 }
+                onBrowse={browseVersion}
               />
             </div>
           )}
@@ -371,6 +376,7 @@ export default function RepositoriesPage() {
                     onRemove={(url, version) =>
                       setVersionToDelete({ url, version })
                     }
+                    onBrowse={browseVersion}
                   />
                 </div>
               ))}
@@ -420,6 +426,7 @@ export default function RepositoriesPage() {
                     onRemove={(url, version) =>
                       setVersionToDelete({ url, version })
                     }
+                    onBrowse={browseVersion}
                   />
                 </div>
               ))}
@@ -450,6 +457,7 @@ export default function RepositoriesPage() {
                 onRemove={(url, version) =>
                   setVersionToDelete({ url, version })
                 }
+                onBrowse={browseVersion}
               />
             ))}
           </div>

@@ -202,6 +202,14 @@ describe('StepVerificationList helpers', () => {
     expect(link).toContain(`contentHash=${'a'.repeat(64)}`);
   });
 
+  it('carries a pinned source into Verify now', () => {
+    const value = run();
+    value.plan.contracts[0] = { ...(value.plan.contracts[0] as Exclude<typeof value.plan.contracts[number], { origin: 'contract-type' }>), pin: { url: 'https://example.test/contracts.git', commit: 'a'.repeat(40), ref: 'v1.2.3' } };
+    const link = verifyNowLink(value, 1, 'deploy-token');
+    expect(link).toContain('pinUrl=https%3A%2F%2Fexample.test%2Fcontracts.git');
+    expect(link).toContain(`pinCommit=${'a'.repeat(40)}`);
+  });
+
   it('keeps missing explorer targets visible while a lane is active', () => {
     const targets = [
       task().explorer,

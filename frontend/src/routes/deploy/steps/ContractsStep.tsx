@@ -6,6 +6,7 @@ import { decodeUrlEncodingForDisplay } from '../../../utils/displayText';
 import { useAppDispatch, useAppSelector } from '../../../store';
 import { toggleWorkflowStep, workflowDependentsForExclusion } from '../../../store/features/deployments/deployDraftSlice';
 import ConfirmDialog from '../../../components/ConfirmDialog';
+import { artifactVariantFromPath } from '../../../utils/artifactVariants';
 
 interface ContractsStepProps {
   contracts: DraftContract[];
@@ -94,6 +95,9 @@ export default function ContractsStep({
       ) : (
         <div className="glass-list">
           {contracts.map((contract) => {
+            const variant = contract.origin === 'contract-type'
+              ? undefined
+              : artifactVariantFromPath(contract.artifactPath, contract.contractName);
             return (
             <div key={contract.id} className="list-row flex items-center gap-3">
               <Box size={17} className="text-info" />
@@ -104,6 +108,10 @@ export default function ContractsStep({
                 <div className="mono-data text-muted truncate">
                   {contract.origin === 'contract-type' ? `${contract.pluginId} @ ${contract.versionLabel}` : `${decodeUrlEncodingForDisplay(contract.sourcePath)} · ${contract.frameworkId}`}
                 </div>
+                {(contract.origin !== 'contract-type' && (contract.pin || variant)) && <div className="flex flex-wrap gap-1 mt-1">
+                  {contract.pin && <span className="chip chip-info">{contract.pin.ref ?? contract.pin.commit.slice(0, 12)} · {contract.pin.commit.slice(0, 12)}</span>}
+                  {variant && <span className="chip">{variant}</span>}
+                </div>}
                 {checks[contract.id] === 'loading' && (
                   <div className="text-xs text-muted flex items-center gap-1">
                     <Loader2 size={12} className="animate-spin" /> Checking

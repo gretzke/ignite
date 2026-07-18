@@ -6,7 +6,10 @@ import { formatApiError } from '../../middleware/apiGate';
 import { getRepoName } from '../../../utils/repo';
 import { jobStarted } from '../jobs/jobsSlice';
 import { wsSend } from '../../middleware/websocket';
-import type { ArtifactLocation } from '@ignite/api';
+import type { ArtifactLocation, ContractSourcePin } from '@ignite/api';
+
+export const compilerScopeKey = (pathOrUrl: string, pin?: ContractSourcePin) =>
+  pin ? `${pathOrUrl}\u0000${pin.commit}` : pathOrUrl;
 
 // 'loading' = artifact listing in flight (we don't yet know whether a
 // previous compile left artifacts); 'idle' = checked and not compiled;
@@ -126,29 +129,33 @@ export const {
 export const cleanCompile = ({
   pathOrUrl,
   pluginId,
+  pin,
 }: {
   pathOrUrl: string;
   pluginId: string;
+  pin?: ContractSourcePin;
 }) => [
   setCompilationStatus({
-    repoPath: pathOrUrl,
+    repoPath: compilerScopeKey(pathOrUrl, pin),
     frameworkId: pluginId,
     status: 'installing' as const,
   }),
-  installDependencies({ pathOrUrl, pluginId }),
+  installDependencies({ pathOrUrl, pluginId, pin }),
 ];
 
 // API actions
 export const installDependencies = ({
   pathOrUrl,
   pluginId,
+  pin,
 }: {
   pathOrUrl: string;
   pluginId: string;
+  pin?: ContractSourcePin;
 }) =>
   apiDispatchAction({
     endpoint: 'install',
-    body: { pathOrUrl, pluginId },
+    body: { pathOrUrl, pluginId, ...(pin ? { pin } : {}) },
     // Request succeeded means only that the compiler.install job was
     // created — track it and subscribe for its events. The actual
     // 'compiling'/'error' status transition happens in jobsEffects once the
@@ -182,13 +189,15 @@ export const installDependencies = ({
 export const compileProject = ({
   pathOrUrl,
   pluginId,
+  pin,
 }: {
   pathOrUrl: string;
   pluginId: string;
+  pin?: ContractSourcePin;
 }) =>
   apiDispatchAction({
     endpoint: 'compile',
-    body: { pathOrUrl, pluginId },
+    body: { pathOrUrl, pluginId, ...(pin ? { pin } : {}) },
     // Same pattern as installDependencies: 'ready'/'error' transitions are
     // driven by jobsEffects once the compiler.compile job finishes.
     onSuccess: (data: unknown) => {
@@ -220,18 +229,22 @@ export const compileProject = ({
 export const listArtifacts = ({
   pathOrUrl,
   pluginId,
+  pin,
+  stateKey,
 }: {
   pathOrUrl: string;
   pluginId: string;
+  pin?: ContractSourcePin;
+  stateKey?: string;
 }) =>
   apiDispatchAction({
     endpoint: 'listArtifacts',
-    body: { pathOrUrl, pluginId },
+    body: { pathOrUrl, pluginId, ...(pin ? { pin } : {}) },
     onSuccess: (data: unknown) => {
       const typedData = data as { artifacts: ArtifactLocation[] };
       return [
         setArtifacts({
-          repoPath: pathOrUrl,
+          repoPath: stateKey ?? compilerScopeKey(pathOrUrl, pin),
           frameworkId: pluginId,
           artifacts: typedData.artifacts,
         }),

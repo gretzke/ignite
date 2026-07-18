@@ -1,7 +1,7 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
 import { constructorInputs } from '../../../components/ConstructorArgsForm';
-import { verificationSubmitBody } from '../VerifyContractPage';
+import { contractFromSearchParams, verificationSubmitBody } from '../VerifyContractPage';
 
 const contract = {
   id: 'token', repoPathOrUrl: '/repo', frameworkId: 'foundry',
@@ -21,6 +21,14 @@ describe('VerifyContractPage helpers', () => {
   it('includes explicit unverified-provenance consent only when acknowledged', () => {
     const body = verificationSubmitBody({ contract, chainId: 1, address: '0x0000000000000000000000000000000000000001', args: {}, explorerEntryIds: ['scan'], confirmUnverifiedProvenance: true });
     expect(body).toHaveProperty('confirmUnverifiedProvenance', true);
+  });
+
+  it('reconstructs a pinned source from a Verify now deep link', () => {
+    const source = contractFromSearchParams(new URLSearchParams({
+      contractId: 'token', repoPathOrUrl: '/repo', frameworkId: 'foundry', artifactPath: 'out/Token.json', contractName: 'Token', sourcePath: 'src/Token.sol',
+      pinUrl: 'https://example.test/contracts.git', pinCommit: 'a'.repeat(40), pinRef: 'v1.2.3',
+    }));
+    expect(source).toMatchObject({ pin: { url: 'https://example.test/contracts.git', commit: 'a'.repeat(40), ref: 'v1.2.3' } });
   });
 
   it('skips the argument section for a zero-input constructor', () => {

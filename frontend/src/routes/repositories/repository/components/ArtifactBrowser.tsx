@@ -4,7 +4,6 @@ import { Loader2, Folder, FileCode, ChevronRight, Rocket } from 'lucide-react';
 import {
   buildPathTree,
   getDirectoryContents,
-  getFileNodes,
   type DirectoryNode,
   type FileNode,
 } from '../../../../utils/pathTree';
@@ -15,18 +14,22 @@ import {
   removeContract,
 } from '../../../../store/features/deployments/deployDraftSlice';
 import { contractSourceId } from '../../../../utils/contractSourceId';
+import { artifactVariantLabel, requiresExplicitVariantPick } from '../../../../utils/artifactVariants';
+import type { ContractSourcePin } from '@ignite/api';
 
 interface ArtifactBrowserProps {
   artifacts: ArtifactLocation[];
   loading?: boolean;
   error?: string;
   frameworkId?: string;
+  pin?: ContractSourcePin;
 }
 
 export default function ArtifactBrowser({
   artifacts,
   loading = false,
   frameworkId,
+  pin,
 }: ArtifactBrowserProps) {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
@@ -37,14 +40,15 @@ export default function ArtifactBrowser({
     [draftContracts]
   );
   const { repoPath } = useParams<{ repoPath: string }>();
-  const rowId = (file: FileNode): string | undefined =>
+  const rowId = (artifact: ArtifactLocation): string | undefined =>
     frameworkId && repoPath
       ? contractSourceId({
           repoPathOrUrl: repoPath,
           frameworkId,
-          artifactPath: file.artifact.artifactPath,
-          contractName: file.artifact.contractName,
-          sourcePath: file.artifact.sourcePath,
+          artifactPath: artifact.artifactPath,
+          contractName: artifact.contractName,
+          sourcePath: artifact.sourcePath,
+          ...(pin ? { pin } : {}),
         })
       : undefined;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -72,29 +76,6 @@ export default function ArtifactBrowser({
     }
     return buildPathTree(artifacts);
   }, [artifacts]);
-
-  const eligibleIdentities = useMemo(() => {
-    const identities = new Set<string>();
-    if (!pathTree) return identities;
-
-    getFileNodes(pathTree).forEach((file) => {
-      if (file.variantCount === 1) identities.add(file.identity);
-    });
-    return identities;
-  }, [pathTree]);
-
-  useEffect(() => {
-    setSelected((current) => {
-      let next = current;
-      Object.keys(current).forEach((identity) => {
-        if (!eligibleIdentities.has(identity)) {
-          if (next === current) next = { ...current };
-          delete next[identity];
-        }
-      });
-      return next;
-    });
-  }, [eligibleIdentities]);
 
   // Get current directory contents
   const directoryContents = useMemo(() => {
@@ -130,6 +111,8 @@ export default function ArtifactBrowser({
     }
     params.set('artifact', file.artifact.artifactPath);
     params.set('contract', file.artifact.contractName);
+    const version = searchParams.get('version');
+    if (version) params.set('version', version);
     const queryString = params.toString();
     const queryParams = queryString ? `?${queryString}` : '';
 
@@ -193,6 +176,7 @@ export default function ArtifactBrowser({
         artifactPath: artifact.artifactPath,
         contractName: artifact.contractName,
         sourcePath: artifact.sourcePath,
+        ...(pin ? { pin } : {}),
       };
       return { id: contractSourceId(source), ...source };
     });
@@ -260,43 +244,40 @@ export default function ArtifactBrowser({
         ))}
 
         {files.map((file) => {
-          const id = rowId(file);
-          const added = Boolean(id && addedIds.has(id));
+          const selectedArtifact = selected[file.identity];
+          const addedArtifact = file.variants.find((artifact) => {
+            const id = rowId(artifact);
+            return Boolean(id && addedIds.has(id));
+          });
           return (
             <div
               key={file.identity}
               className="list-row clickable flex items-center gap-3"
             >
-              {added && id ? (
+              {addedArtifact ? (
                 <button
                   type="button"
                   className="chip chip-ok"
                   title="Remove from deployment"
                   aria-label={`Remove ${file.artifact.contractName} from deployment`}
-                  onClick={() => dispatch(removeContract(id))}
+                  onClick={() => {
+                    const id = rowId(addedArtifact);
+                    if (id) dispatch(removeContract(id));
+                  }}
                 >
                   Added ✓
                 </button>
-              ) : file.variantCount > 1 ? (
-                <span title="Multiple compiler profiles available. Open the contract to pick one.">
-                  <input
-                    type="checkbox"
-                    checked={false}
-                    disabled
-                    title="Multiple compiler profiles available. Open the contract to pick one."
-                    aria-label={`Select ${file.artifact.contractName} (unavailable: multiple compiler profiles, open the contract to pick one)`}
-                  />
-                </span>
               ) : (
                 <input
                   type="checkbox"
-                  checked={Boolean(selected[file.identity])}
+                  checked={Boolean(selectedArtifact)}
+                  disabled={requiresExplicitVariantPick({ artifacts: file.variants }) && !selectedArtifact}
                   aria-label={`Select ${file.artifact.contractName}`}
                   onChange={(event) =>
                     setSelected((current) => {
                       const next = { ...current };
                       if (event.target.checked)
-                        next[file.identity] = file.artifact;
+                        next[file.identity] = selectedArtifact ?? file.artifact;
                       else delete next[file.identity];
                       return next;
                     })
@@ -315,12 +296,19 @@ export default function ArtifactBrowser({
                 <div className="mono-data text-muted truncate">{file.name}</div>
               </button>
               {file.variantCount > 1 && (
-                <span
-                  className="chip chip-info flex-shrink-0"
-                  title="Multiple compiler profiles available. Open the contract to pick one."
-                >
-                  {file.variantCount} profiles
-                </span>
+                <div className="flex flex-wrap gap-1 justify-end" aria-label={`${file.artifact.contractName} compiler variants`}>
+                  {file.variants.map((artifact) => (
+                    <button
+                      key={artifact.artifactPath}
+                      type="button"
+                      className={selectedArtifact?.artifactPath === artifact.artifactPath ? 'chip chip-info' : 'chip'}
+                      onClick={() => setSelected((current) => ({ ...current, [file.identity]: artifact }))}
+                      title={`Use ${artifactVariantLabel(artifact)}`}
+                    >
+                      {artifactVariantLabel(artifact)}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           );

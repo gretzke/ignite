@@ -4,7 +4,7 @@ import {
   useSearchParams,
   Link,
 } from 'react-router-dom';
-import { ArrowLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Loader2, Pin } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useAppSelector, useAppDispatch } from '../../../store/hooks';
@@ -14,7 +14,9 @@ import ArtifactBrowser from './components/ArtifactBrowser';
 import {
   listArtifacts,
   setCompilationStatus,
+  compilerScopeKey,
 } from '../../../store/features/compiler/compilerSlice';
+import type { ContractSourcePin, RepoVersionSummary } from '@ignite/api';
 
 export default function RepositoryPage() {
   const { repoPath } = useParams<{ repoPath: string }>();
@@ -24,6 +26,7 @@ export default function RepositoryPage() {
 
   // Decode the repository path from the URL
   const decodedPath = repoPath ? decodeURIComponent(repoPath) : '';
+  const versionCommit = searchParams.get('version') ?? undefined;
 
   // Get repository data from store
   const { repositories, repositoriesData } = useAppSelector(
@@ -31,15 +34,37 @@ export default function RepositoryPage() {
   );
   const { compilations } = useAppSelector((state) => state.compiler);
 
+  const version = useMemo<RepoVersionSummary | undefined>(() => {
+    if (!versionCommit || !repositories) return undefined;
+    const entry = [
+      ...(repositories.local ?? []),
+      ...(repositories.cloned ?? []),
+      ...(repositories.session ? [repositories.session] : []),
+    ].find((candidate) => candidate.pathOrUrl === decodedPath);
+    return (
+      entry?.versions.find((candidate) => candidate.commit === versionCommit) ??
+      repositories.versionGroups
+        .find((group) => group.url === decodedPath)
+        ?.versions.find((candidate) => candidate.commit === versionCommit)
+    );
+  }, [decodedPath, repositories, versionCommit]);
+  const pin: ContractSourcePin | undefined = versionCommit && version
+    ? { url: decodedPath, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
+    : undefined;
+  const scopeKey = compilerScopeKey(decodedPath, pin);
   const repoData = repositoriesData[decodedPath];
+  const scopedFrameworks = version?.frameworks?.map(({ id, name }) => ({ id, name })) ?? [];
+  const effectiveRepoData = pin
+    ? { initialized: true, frameworks: scopedFrameworks }
+    : repoData;
   const repoCompilations = useMemo(
-    () => compilations[decodedPath] || {},
-    [compilations, decodedPath]
+    () => compilations[scopeKey] || {},
+    [compilations, scopeKey]
   );
   // Load artifacts for each framework when component mounts
   useEffect(() => {
-    if (repoData?.frameworks && repoData.frameworks.length > 0) {
-      repoData.frameworks.forEach((framework) => {
+    if (effectiveRepoData?.frameworks && effectiveRepoData.frameworks.length > 0) {
+      effectiveRepoData.frameworks.forEach((framework) => {
         // Check if artifacts are already loaded
         const compilationData = repoCompilations[framework.id];
         if (!compilationData || compilationData.artifacts === undefined) {
@@ -47,37 +72,37 @@ export default function RepositoryPage() {
           if (!compilationData) {
             dispatch(
               setCompilationStatus({
-                repoPath: decodedPath,
+                repoPath: scopeKey,
                 frameworkId: framework.id,
                 status: 'loading',
               })
             );
           }
           dispatch(
-            listArtifacts({ pathOrUrl: decodedPath, pluginId: framework.id })
+            listArtifacts({ pathOrUrl: decodedPath, pluginId: framework.id, ...(pin ? { pin } : {}), stateKey: scopeKey })
           );
         }
       });
     }
-  }, [repoData?.frameworks, decodedPath, repoCompilations, dispatch]);
+  }, [effectiveRepoData?.frameworks, decodedPath, pin, repoCompilations, dispatch, scopeKey]);
 
   // On a fresh page load the repo list, initialization, and framework
   // detection all happen asynchronously — show progress instead of jumping
   // straight to "not found".
   const isSaved =
-    repositories !== null &&
-    (repositories.session?.pathOrUrl === decodedPath ||
-      repositories.local.some((r) => r.pathOrUrl === decodedPath) ||
-      repositories.cloned.some((r) => r.pathOrUrl === decodedPath));
+    (Boolean(pin) || repositories !== null) &&
+    (Boolean(pin) || repositories?.session?.pathOrUrl === decodedPath ||
+      (repositories?.local.some((r) => r.pathOrUrl === decodedPath) ?? false) ||
+      (repositories?.cloned.some((r) => r.pathOrUrl === decodedPath) ?? false));
 
   const loadingMessage =
     repositories === null
       ? 'Loading repositories...'
-      : isSaved && (!repoData || repoData.initialized === undefined)
+    : isSaved && (!effectiveRepoData || effectiveRepoData.initialized === undefined)
         ? 'Initializing repository...'
         : isSaved &&
-            repoData?.initialized === true &&
-            repoData.frameworks === undefined
+            effectiveRepoData?.initialized === true &&
+            effectiveRepoData.frameworks === undefined
           ? 'Detecting frameworks...'
           : null;
 
@@ -113,7 +138,7 @@ export default function RepositoryPage() {
 
   // Repo list is loaded but this repo isn't saved, initialization failed, or
   // detection finished without finding frameworks
-  if (!repoData || repoData.initialized === false) {
+  if (!effectiveRepoData || effectiveRepoData.initialized === false) {
     const message = !isSaved
       ? 'Repository not found.'
       : 'Repository failed to initialize.';
@@ -152,14 +177,16 @@ export default function RepositoryPage() {
   }
 
   const repoName = getRepoName(decodedPath);
-  const frameworks = repoData.frameworks ?? [];
+  const frameworks = effectiveRepoData.frameworks ?? [];
 
   // Get current framework from query params, fallback to first framework
   const currentFramework = searchParams.get('framework') || frameworks[0]?.id;
 
   // Handle framework tab change
   const handleFrameworkChange = (frameworkId: string) => {
-    setSearchParams({ framework: frameworkId });
+    const next = new URLSearchParams(searchParams);
+    next.set('framework', frameworkId);
+    setSearchParams(next);
   };
 
   return (
@@ -179,7 +206,10 @@ export default function RepositoryPage() {
             <ChevronRight size={13} className="breadcrumb-sep" />
             <span className="breadcrumb-current">{repoName}</span>
           </nav>
-          <p className="mono-data text-muted mt-1 truncate">{decodedPath}</p>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="mono-data text-muted truncate">{decodedPath}</p>
+            {pin && <span className="chip chip-info shrink-0"><Pin size={12} /> {version?.refLabel ?? pin.commit.slice(0, 12)} · {pin.commit.slice(0, 12)}</span>}
+          </div>
         </div>
       </div>
 
@@ -189,6 +219,7 @@ export default function RepositoryPage() {
           repoPath={decodedPath}
           frameworks={frameworks}
           compilations={repoCompilations}
+          pin={pin}
         />
       </div>
 
@@ -209,6 +240,7 @@ export default function RepositoryPage() {
                 repoCompilations[frameworks[0].id]?.artifacts === undefined
               }
               frameworkId={frameworks[0].id}
+              pin={pin}
             />
           </div>
         ) : (
@@ -242,6 +274,7 @@ export default function RepositoryPage() {
                       repoCompilations[framework.id]?.artifacts === undefined
                     }
                     frameworkId={framework.id}
+                    pin={pin}
                   />
                 </div>
               </Tabs.Content>
