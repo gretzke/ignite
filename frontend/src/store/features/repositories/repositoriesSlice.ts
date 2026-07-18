@@ -31,12 +31,32 @@ const repositoriesSlice = createSlice({
   initialState,
   reducers: {
     setRepositories(state, action: PayloadAction<RepoList>) {
-      state.repositories = action.payload;
+      // Keep version membership with the owning URL-keyed group. Older
+      // persisted list responses did not include these additive fields, so
+      // normalize them here instead of making every repository consumer
+      // defend against an absent version list.
+      const repositories: RepoList = {
+        ...action.payload,
+        local: action.payload.local.map((entry) => ({
+          ...entry,
+          versions: entry.versions ?? [],
+        })),
+        cloned: action.payload.cloned.map((entry) => ({
+          ...entry,
+          versions: entry.versions ?? [],
+        })),
+        session: action.payload.session && {
+          ...action.payload.session,
+          versions: action.payload.session.versions ?? [],
+        },
+        versionGroups: action.payload.versionGroups ?? [],
+      };
+      state.repositories = repositories;
 
       const allEntries: RepoListEntry[] = [
-        ...(action.payload.local || []),
-        ...(action.payload.cloned || []),
-        ...(action.payload.session ? [action.payload.session] : []),
+        ...(repositories.local || []),
+        ...(repositories.cloned || []),
+        ...(repositories.session ? [repositories.session] : []),
       ];
 
       // Seed view state from the server's persisted records: the backend

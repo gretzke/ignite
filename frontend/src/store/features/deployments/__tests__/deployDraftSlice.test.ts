@@ -25,6 +25,7 @@ import {
   setStepSigner,
   storePrepared,
 } from '../deployDraftSlice';
+import { contractSourceId } from '../../../../utils/contractSourceId';
 
 function contract(id: string, contractName: string): ContractSource {
   return {
@@ -208,6 +209,35 @@ describe('deployDraftSlice', () => {
     expect(state.steps).toEqual([
       { id: 'deploy-token', kind: 'deploy', contractId: 'token' },
       { id: 'deploy-vault', kind: 'deploy', contractId: 'vault' },
+    ]);
+  });
+
+  it('keeps two pinned versions of the same contract as separate draft rows', () => {
+    const pinned = (commit: string): ContractSource => {
+      const source = {
+        repoPathOrUrl: 'https://example.test/contracts.git',
+        frameworkId: 'foundry',
+        artifactPath: 'out/Token.sol/Token.json',
+        contractName: 'Token',
+        sourcePath: 'src/Token.sol',
+        pin: { url: 'https://example.test/contracts.git', commit },
+      };
+      return { id: contractSourceId(source), ...source };
+    };
+    const first = pinned('a'.repeat(40));
+    const second = pinned('b'.repeat(40));
+
+    let state = deployDraftReducer(undefined, addContracts([first]));
+    state = deployDraftReducer(state, addContracts([second]));
+
+    expect(state.contracts).toEqual([first, second]);
+    expect(state.contracts.map((contract) => contract.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+    expect(state.steps.map((step) => step.contractId)).toEqual([
+      first.id,
+      second.id,
     ]);
   });
 

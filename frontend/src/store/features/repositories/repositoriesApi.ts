@@ -428,6 +428,29 @@ export const repositoriesApi = {
       },
     }),
 
+  removeRepoVersion: (profileId: string, url: string, commit: string) =>
+    apiClient.dispatch.removeRepoVersion({
+      params: { id: profileId },
+      body: { url, commit },
+      onSuccess: () => [
+        ...repositoriesApi.fetchRepositories(profileId),
+        triggerToast({
+          title: 'Repository version removed',
+          variant: 'success',
+          duration: 3000,
+        }),
+      ],
+      onError: (error) => {
+        const { title, description } = formatApiError(error);
+        return triggerToast({
+          title,
+          description,
+          variant: 'error',
+          duration: 5000,
+        });
+      },
+    }),
+
   // Initialize a single repository. Request success only means the
   // repo.init job was created; the actual init outcome (and the
   // getRepoInfo -> getBranches -> detectFrameworks chain, or the

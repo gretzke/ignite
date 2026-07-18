@@ -111,7 +111,11 @@ const pendingSnapshotFetch = new Set<string>();
 // present" check is needed here — only the two-step delivery via live
 // 'state' events (handled below) can observe a terminal state before the
 // payload exists.
-function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
+function routeTerminalJob(
+  job: JobRecord,
+  dispatch: AppDispatch,
+  getState: () => RootState
+): void {
   if (!isTerminal(job.state)) return;
   if (handledJobIds.has(job.id)) return;
   handledJobIds.add(job.id);
@@ -250,6 +254,19 @@ function routeTerminalJob(job: JobRecord, dispatch: AppDispatch): void {
             duration: 10000,
           })
         );
+      }
+      break;
+    }
+
+    case 'repo.version.add': {
+      // The job materializes and compiles a version outside the live repo
+      // entry. Refresh the authoritative RepoList when it reaches a terminal
+      // state so its version row (or an orphan URL group) appears immediately.
+      const profileId = getState().profiles.currentId;
+      if (profileId) {
+        repositoriesApi
+          .fetchRepositories(profileId)
+          .forEach((action) => dispatch(action));
       }
       break;
     }
@@ -586,7 +603,7 @@ jobsEffects.startListening({
       return;
     }
     for (const job of jobs) {
-      routeTerminalJob(job, dispatch);
+      routeTerminalJob(job, dispatch, () => listenerApi.getState() as RootState);
     }
   },
 });
