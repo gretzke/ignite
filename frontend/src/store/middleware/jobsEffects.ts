@@ -22,6 +22,7 @@ import {
   setRepositoryInitialized,
   setRepositoryInfo,
   setRepositoryBranches,
+  finishRepoVersionJob,
   type IFramework,
 } from '../features/repositories/repositoriesSlice';
 import {
@@ -263,6 +264,7 @@ function routeTerminalJob(
       // entry. Refresh the authoritative RepoList when it reaches a terminal
       // state so its version row (or an orphan URL group) appears immediately.
       const profileId = getState().profiles.currentId;
+      dispatch(finishRepoVersionJob(job.id));
       if (profileId) {
         repositoriesApi
           .fetchRepositories(profileId)

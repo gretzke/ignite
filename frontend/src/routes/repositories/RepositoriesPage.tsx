@@ -5,6 +5,7 @@ import {
   selectRepositories,
   selectRepositoriesData,
   selectFailedRepositories,
+  selectActiveVersionJobs,
 } from '../../store/features/repositories/repositoriesSlice';
 import { triggerToast } from '../../store/middleware/toastListener';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -18,8 +19,27 @@ import {
 } from './components/RepoModals';
 import AddRepoDropdown from './components/AddRepoDropdown';
 import { useRepositoryLists } from './hooks/useRepositoryLists';
-import type { PinnedSummary } from '@ignite/api';
-import PinnedRepoCard from './components/PinnedRepoCard';
+import type {
+  AddRepoVersionRequest,
+  OrphanVersionGroup,
+  RepoVersionSummary,
+} from '@ignite/api';
+import { apiClient } from '../../store/api/client';
+import { formatApiError } from '../../store/middleware/apiGate';
+import AddVersionModal from './components/AddVersionModal';
+import {
+  OrphanVersionGroupCard,
+  VersionRows,
+} from './components/VersionGroupCard';
+import OriginApprovalDialog from '../../components/OriginApprovalDialog';
+
+type VersionSource = {
+  sourceKey: string;
+  label: string;
+  url?: string;
+  repoPathOrUrl?: string;
+  local: boolean;
+};
 
 export default function RepositoriesPage() {
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
@@ -38,15 +58,30 @@ export default function RepositoriesPage() {
   const [selectedRepoPath, setSelectedRepoPath] = useState<string>('');
   // Repo path pending a confirmed `git reset --hard`; '' = dialog closed
   const [resetRepoPath, setResetRepoPath] = useState<string>('');
-  const [pinnedToDelete, setPinnedToDelete] = useState<PinnedSummary | null>(
+  const [versionSource, setVersionSource] = useState<VersionSource | null>(
     null
   );
+  const [addVersionOpen, setAddVersionOpen] = useState(false);
+  const [versionToDelete, setVersionToDelete] = useState<{
+    url: string;
+    version: RepoVersionSummary;
+  } | null>(null);
+  const [branchToSwitch, setBranchToSwitch] = useState<{
+    path: string;
+    branch: string;
+  } | null>(null);
+  const [originApproval, setOriginApproval] = useState<{
+    origins: string[];
+    sourceKey: string;
+    request: AddRepoVersionRequest;
+  } | null>(null);
 
   // Store hooks
   const dispatch = useAppDispatch();
   const repositories = useAppSelector(selectRepositories);
   const repositoriesData = useAppSelector(selectRepositoriesData);
   const failedRepositories = useAppSelector(selectFailedRepositories);
+  const activeVersionJobs = useAppSelector(selectActiveVersionJobs);
   const { currentId } = useAppSelector((state) => state.profiles);
   const { currentWorkspace, localRepos, clonedRepos, sessionPath } =
     useRepositoryLists();
@@ -217,6 +252,35 @@ export default function RepositoriesPage() {
     dispatch(repositoriesApi.pullChanges(path));
   };
 
+  const openVersionModal = (source: VersionSource) => {
+    setVersionSource(source);
+    setAddVersionOpen(true);
+  };
+
+  const submitVersion = (sourceKey: string, request: AddRepoVersionRequest) => {
+    if (!currentId) return;
+    dispatch(
+      repositoriesApi.addRepoVersion(currentId, sourceKey, request, (origins) =>
+        setOriginApproval({ origins, sourceKey, request })
+      )
+    );
+  };
+
+  const handleVersionSubmit = (request: AddRepoVersionRequest) => {
+    if (!versionSource) return;
+    submitVersion(versionSource.sourceKey, request);
+    setAddVersionOpen(false);
+  };
+
+  const handleSwitchBranch = (path: string, branch: string) => {
+    setAddVersionOpen(false);
+    if (repositoriesData[path]?.info?.dirty) {
+      dispatch(repositoriesApi.checkoutBranch(path, branch));
+      return;
+    }
+    setBranchToSwitch({ path, branch });
+  };
+
   return (
     <div className="text-[var(--text)]">
       <div className="flex items-center justify-between mb-4">
@@ -229,18 +293,41 @@ export default function RepositoriesPage() {
 
       {/* Current workspace row */}
       {currentWorkspace && (
-        <RepoCard
-          repo={currentWorkspace}
-          variant="current"
-          onSave={handleSaveWorkspace}
-          onPull={handlePull}
-          showPullButton={shouldShowPullButton(
-            currentWorkspace.path,
-            repositoriesData
+        <div>
+          <RepoCard
+            repo={currentWorkspace}
+            variant="current"
+            onSave={handleSaveWorkspace}
+            onPull={handlePull}
+            showPullButton={shouldShowPullButton(
+              currentWorkspace.path,
+              repositoriesData
+            )}
+            onCheckoutCommit={handleCheckoutCommit}
+            onResetRepo={setResetRepoPath}
+            onAddVersion={(path) =>
+              openVersionModal({
+                sourceKey: path,
+                label: currentWorkspace.path,
+                repoPathOrUrl: path,
+                local: true,
+              })
+            }
+          />
+          {(currentWorkspace.versions.length > 0 ||
+            activeVersionJobs[currentWorkspace.path]) && (
+            <div className="glass-list mt-2">
+              <VersionRows
+                url={currentWorkspace.path}
+                versions={currentWorkspace.versions}
+                activeJobId={activeVersionJobs[currentWorkspace.path]}
+                onRemove={(url, version) =>
+                  setVersionToDelete({ url, version })
+                }
+              />
+            </div>
           )}
-          onCheckoutCommit={handleCheckoutCommit}
-          onResetRepo={setResetRepoPath}
-        />
+        </div>
       )}
 
       {/* Local repos */}
@@ -254,21 +341,38 @@ export default function RepositoriesPage() {
               </div>
             </div>
           ) : (
-            <div className="glass-list">
-              {localRepos.map((r, index) => (
-                <RepoCard
-                  key={`local-${index}`}
-                  repo={r}
-                  variant="local"
-                  onRemove={handleRemoveRepo}
-                  onPull={handlePull}
-                  showPullButton={shouldShowPullButton(
-                    r.path,
-                    repositoriesData
-                  )}
-                  onCheckoutCommit={handleCheckoutCommit}
-                  onResetRepo={setResetRepoPath}
-                />
+            <div className="space-y-3">
+              {localRepos.map((r) => (
+                <div key={`local-${r.path}`} className="glass-list">
+                  <RepoCard
+                    repo={r}
+                    variant="local"
+                    onRemove={handleRemoveRepo}
+                    onPull={handlePull}
+                    showPullButton={shouldShowPullButton(
+                      r.path,
+                      repositoriesData
+                    )}
+                    onCheckoutCommit={handleCheckoutCommit}
+                    onResetRepo={setResetRepoPath}
+                    onAddVersion={(path) =>
+                      openVersionModal({
+                        sourceKey: path,
+                        label: r.path,
+                        repoPathOrUrl: path,
+                        local: true,
+                      })
+                    }
+                  />
+                  <VersionRows
+                    url={r.path}
+                    versions={r.versions}
+                    activeJobId={activeVersionJobs[r.path]}
+                    onRemove={(url, version) =>
+                      setVersionToDelete({ url, version })
+                    }
+                  />
+                </div>
               ))}
             </div>
           )}
@@ -286,38 +390,66 @@ export default function RepositoriesPage() {
               </div>
             </div>
           ) : (
-            <div className="glass-list">
-              {clonedRepos.map((r, index) => (
-                <RepoCard
-                  key={`cloned-${index}`}
-                  repo={r}
-                  variant="cloned"
-                  onRemove={handleRemoveRepo}
-                  onPull={handlePull}
-                  showPullButton={shouldShowPullButton(
-                    r.path,
-                    repositoriesData
-                  )}
-                  onCheckoutCommit={handleCheckoutCommit}
-                  onResetRepo={setResetRepoPath}
-                />
+            <div className="space-y-3">
+              {clonedRepos.map((r) => (
+                <div key={`cloned-${r.path}`} className="glass-list">
+                  <RepoCard
+                    repo={r}
+                    variant="cloned"
+                    onRemove={handleRemoveRepo}
+                    onPull={handlePull}
+                    showPullButton={shouldShowPullButton(
+                      r.path,
+                      repositoriesData
+                    )}
+                    onCheckoutCommit={handleCheckoutCommit}
+                    onResetRepo={setResetRepoPath}
+                    onAddVersion={(path) =>
+                      openVersionModal({
+                        sourceKey: path,
+                        label: r.path,
+                        url: path,
+                        local: false,
+                      })
+                    }
+                  />
+                  <VersionRows
+                    url={r.path}
+                    versions={r.versions}
+                    activeJobId={activeVersionJobs[r.path]}
+                    onRemove={(url, version) =>
+                      setVersionToDelete({ url, version })
+                    }
+                  />
+                </div>
               ))}
             </div>
           )}
         </div>
       )}
 
-      {(repositories?.pinned.length ?? 0) > 0 && (
+      {(repositories?.versionGroups.length ?? 0) > 0 && (
         <div className="mt-5">
           <div className="eyebrow mb-2">
-            Pinned · {repositories!.pinned.length}
+            Repository versions · {repositories!.versionGroups.length}
           </div>
-          <div className="glass-list">
-            {repositories!.pinned.map((pinned) => (
-              <PinnedRepoCard
-                key={`${pinned.url}\0${pinned.commit}`}
-                pinned={pinned}
-                onRemove={setPinnedToDelete}
+          <div className="space-y-3">
+            {repositories!.versionGroups.map((group) => (
+              <OrphanVersionGroupCard
+                key={group.url}
+                group={group}
+                activeJobId={activeVersionJobs[group.url]}
+                onAddVersion={(orphan: OrphanVersionGroup) =>
+                  openVersionModal({
+                    sourceKey: orphan.url,
+                    label: orphan.url,
+                    url: orphan.url,
+                    local: false,
+                  })
+                }
+                onRemove={(url, version) =>
+                  setVersionToDelete({ url, version })
+                }
               />
             ))}
           </div>
@@ -361,25 +493,25 @@ export default function RepositoriesPage() {
       />
 
       <ConfirmDialog
-        open={Boolean(pinnedToDelete)}
+        open={Boolean(versionToDelete)}
         onOpenChange={(open) => {
-          if (!open) setPinnedToDelete(null);
+          if (!open) setVersionToDelete(null);
         }}
-        title="Remove pinned clone?"
+        title="Remove repository version?"
         description={
-          pinnedToDelete
-            ? `Remove ${pinnedToDelete.url}@${pinnedToDelete.refLabel ?? pinnedToDelete.commit.slice(0, 7)} from this profile and delete its local worktree?`
+          versionToDelete
+            ? `Remove ${versionToDelete.url}@${versionToDelete.version.refLabel ?? versionToDelete.version.commit.slice(0, 12)} from this profile and delete its local worktree?`
             : ''
         }
         confirmText="Remove"
         variant="danger"
         onConfirm={() => {
-          if (currentId && pinnedToDelete)
+          if (currentId && versionToDelete)
             dispatch(
-              repositoriesApi.removePinnedRepository(
+              repositoriesApi.removeRepoVersion(
                 currentId,
-                pinnedToDelete.url,
-                pinnedToDelete.commit
+                versionToDelete.url,
+                versionToDelete.version.commit
               )
             );
         }}
@@ -412,6 +544,64 @@ export default function RepositoriesPage() {
         commitHashError={commitHashError}
         onCommitHashChange={handleCommitHashChange}
         onSubmit={handleCommitHashSubmit}
+      />
+
+      <AddVersionModal
+        open={addVersionOpen}
+        onOpenChange={setAddVersionOpen}
+        source={versionSource}
+        onSubmit={handleVersionSubmit}
+        onSwitchBranch={handleSwitchBranch}
+      />
+
+      <ConfirmDialog
+        open={Boolean(branchToSwitch)}
+        onOpenChange={(open) => {
+          if (!open) setBranchToSwitch(null);
+        }}
+        title="Switch local branch?"
+        description={
+          branchToSwitch
+            ? `Switch ${getRepoName(branchToSwitch.path)} to "${branchToSwitch.branch}"?`
+            : ''
+        }
+        confirmText="Switch branch"
+        variant="warning"
+        onConfirm={() => {
+          if (branchToSwitch)
+            dispatch(
+              repositoriesApi.checkoutBranch(
+                branchToSwitch.path,
+                branchToSwitch.branch
+              )
+            );
+        }}
+      />
+
+      <OriginApprovalDialog
+        origins={originApproval?.origins}
+        onOpenChange={(open) => {
+          if (!open) setOriginApproval(null);
+        }}
+        onApprove={() => {
+          if (!originApproval) return;
+          dispatch(
+            apiClient.dispatch.approveWorkflowOrigins({
+              body: { origins: originApproval.origins },
+              onSuccess: () => {
+                submitVersion(originApproval.sourceKey, originApproval.request);
+                setOriginApproval(null);
+              },
+              onError: (error) =>
+                triggerToast({
+                  title: 'Origin approval failed',
+                  description: formatApiError(error).description,
+                  variant: 'error',
+                  duration: 5000,
+                }),
+            })
+          );
+        }}
       />
 
       {/* Discard-changes confirmation (dirty tag) */}

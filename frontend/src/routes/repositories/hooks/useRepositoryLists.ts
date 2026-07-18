@@ -34,6 +34,7 @@ export function useRepositoryLists() {
           path: sessionPath,
           saved: false,
           frameworks: repositoriesData[sessionPath]?.frameworks,
+          versions: repositories?.session?.versions ?? [],
         }
       : null;
 
@@ -48,6 +49,7 @@ export function useRepositoryLists() {
           : getRepoName(entry.pathOrUrl),
         path: entry.pathOrUrl,
         frameworks: repositoriesData[entry.pathOrUrl]?.frameworks,
+        versions: entry.versions,
         isCurrentWorkspace,
         originalIndex: index,
       };
@@ -67,6 +69,7 @@ export function useRepositoryLists() {
         name: getRepoName(entry.pathOrUrl),
         path: entry.pathOrUrl,
         frameworks: repositoriesData[entry.pathOrUrl]?.frameworks,
+        versions: entry.versions,
       })) || [];
 
   return { currentWorkspace, localRepos, clonedRepos, sessionPath };

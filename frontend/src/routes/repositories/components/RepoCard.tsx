@@ -9,6 +9,7 @@ import {
   GitCommit,
   GitPullRequest,
   FileEdit,
+  Plus,
 } from 'lucide-react';
 import { useAppSelector, useAppDispatch } from '../../../store/hooks';
 import { repositoriesApi } from '../../../store/features/repositories/repositoriesApi';
@@ -278,17 +279,7 @@ function CommitHashSelector({
 }
 
 // Framework badges component
-function FrameworkBadges({ path }: { path: string }) {
-  const repositoriesData = useAppSelector(selectRepositoriesData);
-  const repoData = repositoriesData[path];
-  const status = getRepoInitStatus(path, repositoriesData);
-  const frameworks = repoData?.frameworks;
-
-  // Only show framework information if repo is successfully initialized
-  if (status !== 'success') {
-    return null;
-  }
-
+export function FrameworkChips({ frameworks }: { frameworks?: IFramework[] }) {
   if (frameworks === undefined) {
     // Detection in progress
     return (
@@ -323,6 +314,18 @@ function FrameworkBadges({ path }: { path: string }) {
   );
 }
 
+// Framework badges component
+function FrameworkBadges({ path }: { path: string }) {
+  const repositoriesData = useAppSelector(selectRepositoriesData);
+  const repoData = repositoriesData[path];
+  const status = getRepoInitStatus(path, repositoriesData);
+
+  // Only show framework information if repo is successfully initialized
+  if (status !== 'success') return null;
+
+  return <FrameworkChips frameworks={repoData?.frameworks} />;
+}
+
 export interface RepoCardProps {
   repo: {
     name: string;
@@ -337,6 +340,7 @@ export interface RepoCardProps {
   showPullButton: boolean;
   onCheckoutCommit: (path: string) => void;
   onResetRepo: (path: string) => void;
+  onAddVersion?: (path: string) => void;
 }
 
 // Consolidated RepoCard component
@@ -349,6 +353,7 @@ export default function RepoCard({
   showPullButton,
   onCheckoutCommit,
   onResetRepo,
+  onAddVersion,
 }: RepoCardProps) {
   const navigate = useNavigate();
   const repositoriesData = useAppSelector(selectRepositoriesData);
@@ -391,6 +396,15 @@ export default function RepoCard({
       </div>
 
       <div className="flex items-center gap-3 shrink-0">
+        {onAddVersion && (
+          <button
+            type="button"
+            className="row-action btn btn-secondary btn-sm"
+            onClick={() => onAddVersion(repo.path)}
+          >
+            <Plus size={14} /> Add version
+          </button>
+        )}
         {showPullButton && onPull && (
           <Tooltip label="Pull Changes" placement="top">
             <button

@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { getRepoName } from '../../utils/repo';
-import ConfirmDialog from '../../components/ConfirmDialog';
+import OriginApprovalDialog from '../../components/OriginApprovalDialog';
 import WorkflowCard from './components/WorkflowCard';
 import { workflowsApi } from '../../store/features/workflows/workflowsApi';
 import { pluginsApi } from '../../store/features/plugins/pluginsSlice';
@@ -127,29 +127,12 @@ export default function WorkflowsPage() {
         </>
       )}
 
-      <ConfirmDialog
-        open={Boolean(originApproval)}
+      <OriginApprovalDialog
+        origins={originApproval?.origins}
         onOpenChange={(open) => {
           if (!open) dispatch(workflowOriginsApprovalCleared());
         }}
-        title="Approve pinned origins?"
-        description={
-          <>
-            <p className="mb-2">
-              This workflow needs read access to these repository origins:
-            </p>
-            <ul className="list-disc pl-5 space-y-1">
-              {originApproval?.origins.map((origin) => (
-                <li key={origin} className="mono-data break-all">
-                  {origin}
-                </li>
-              ))}
-            </ul>
-          </>
-        }
-        confirmText="Approve and retry"
-        variant="warning"
-        onConfirm={() => {
+        onApprove={() => {
           if (originApproval)
             dispatch(
               workflowsApi.approveOrigins(

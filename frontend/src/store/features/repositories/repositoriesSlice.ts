@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import type { RepoList, RepoListEntry, RepoInfoResult } from '@ignite/api';
+import type { RepoInfoResult, RepoList, RepoListEntry } from '@ignite/api';
 import type { RootState } from '../../store';
 
 export interface IFramework {
@@ -18,12 +18,14 @@ export interface IRepositoriesState {
   repositories: RepoList | null;
   repositoriesData: Record<string, IRepository>;
   failedRepositories: string[]; // List of repositories that failed initialization
+  activeVersionJobs: Record<string, string>;
 }
 
 const initialState: IRepositoriesState = {
   repositories: null,
   failedRepositories: [],
   repositoriesData: {},
+  activeVersionJobs: {},
 };
 
 const repositoriesSlice = createSlice({
@@ -97,6 +99,7 @@ const repositoriesSlice = createSlice({
       state.repositories = null;
       state.repositoriesData = {};
       state.failedRepositories = [];
+      state.activeVersionJobs = {};
     },
     setRepositoryInitialized(
       state,
@@ -240,6 +243,19 @@ const repositoriesSlice = createSlice({
       }
       state.repositoriesData[pathOrUrl].frameworks = frameworks;
     },
+    startRepoVersionJob(
+      state,
+      action: PayloadAction<{ sourceKey: string; jobId: string }>
+    ) {
+      state.activeVersionJobs[action.payload.sourceKey] = action.payload.jobId;
+    },
+    finishRepoVersionJob(state, action: PayloadAction<string>) {
+      for (const [sourceKey, jobId] of Object.entries(
+        state.activeVersionJobs
+      )) {
+        if (jobId === action.payload) delete state.activeVersionJobs[sourceKey];
+      }
+    },
   },
 });
 
@@ -254,6 +270,8 @@ export const {
   setRepositoryBranches,
   startFrameworkDetection,
   setRepositoryFrameworks,
+  startRepoVersionJob,
+  finishRepoVersionJob,
 } = repositoriesSlice.actions;
 
 export const repositoriesReducer = repositoriesSlice.reducer;
@@ -264,3 +282,5 @@ export const selectRepositoriesData = (state: RootState) =>
   state.repositories.repositoriesData;
 export const selectFailedRepositories = (state: RootState) =>
   state.repositories.failedRepositories;
+export const selectActiveVersionJobs = (state: RootState) =>
+  state.repositories.activeVersionJobs;

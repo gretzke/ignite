@@ -1,5 +1,6 @@
 import { apiClient, apiDispatchAction } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
+import type { AddRepoVersionRequest } from '@ignite/api';
 import { ApiError } from '@ignite/api/client';
 import { formatApiError } from '../../middleware/apiGate';
 import { getRepoName } from '../../../utils/repo';
@@ -16,6 +17,7 @@ import {
   setRepositoryBranches,
   startFrameworkDetection,
   setRepositoryFrameworks,
+  startRepoVersionJob,
 } from './repositoriesSlice';
 
 // Fetch live git state (branch/commit/dirty + branch list) for an
@@ -428,6 +430,49 @@ export const repositoriesApi = {
       },
     }),
 
+  addRepoVersion: (
+    profileId: string,
+    sourceKey: string,
+    request: AddRepoVersionRequest,
+    onOriginApproval: (origins: string[]) => void
+  ) =>
+    apiClient.dispatch.addRepoVersion({
+      params: { id: profileId },
+      body: request,
+      onSuccess: ({ jobId }) => [
+        startRepoVersionJob({ sourceKey, jobId }),
+        jobStarted({ jobId, type: 'repo.version.add', params: { ...request } }),
+        wsSend({ type: 'subscribe', jobId }),
+        triggerToast({
+          title: 'Adding repository version',
+          description:
+            'Fetching, detecting, and compiling the selected version…',
+          variant: 'info',
+          duration: 4000,
+        }),
+      ],
+      onError: (error) => {
+        const origins =
+          error.body.code === 'VERSION_ORIGIN_UNAPPROVED'
+            ? (error.body.details as { origins?: unknown } | undefined)?.origins
+            : undefined;
+        if (
+          Array.isArray(origins) &&
+          origins.every((origin) => typeof origin === 'string')
+        ) {
+          onOriginApproval(origins);
+          return;
+        }
+        const { title, description } = formatApiError(error);
+        return triggerToast({
+          title,
+          description,
+          variant: 'error',
+          duration: 5000,
+        });
+      },
+    }),
+
   removeRepoVersion: (profileId: string, url: string, commit: string) =>
     apiClient.dispatch.removeRepoVersion({
       params: { id: profileId },
@@ -441,6 +486,22 @@ export const repositoriesApi = {
         }),
       ],
       onError: (error) => {
+        if (error.body.code === 'VERSION_IN_USE') {
+          return triggerToast({
+            title: 'Version still in use',
+            description: error.body.message,
+            variant: 'warning',
+            duration: 6000,
+          });
+        }
+        if (error.body.code === 'REPO_BUSY') {
+          return triggerToast({
+            title: 'Repository version is busy',
+            description: error.body.message,
+            variant: 'warning',
+            duration: 5000,
+          });
+        }
         const { title, description } = formatApiError(error);
         return triggerToast({
           title,
