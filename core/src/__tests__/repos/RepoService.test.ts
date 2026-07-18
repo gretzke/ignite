@@ -181,6 +181,47 @@ describe('resolveWorkspacePath', () => {
   });
 });
 
+describe('version source resolution', () => {
+  it('classifies local tags, branches, and raw commits without changing the user label', async () => {
+    const dir = await mkTmp('ignite-local-');
+    await initRepo(dir);
+    const commit = git(dir, ['rev-parse', 'HEAD']).trim();
+    git(dir, ['tag', 'v1.0.0']);
+    git(dir, ['checkout', '-q', '-b', 'feature']);
+    git(dir, ['checkout', '-q', 'main']);
+    const svc = await newService();
+
+    await expect(svc.resolveLocalVersionCommit(dir, 'v1.0.0')).resolves.toEqual({
+      commit,
+      refKind: 'tag',
+    });
+    await expect(svc.resolveLocalVersionCommit(dir, 'feature')).resolves.toEqual({
+      commit,
+      refKind: 'branch',
+    });
+    await expect(svc.resolveLocalVersionCommit(dir, commit)).resolves.toEqual({
+      commit,
+      refKind: 'commit',
+    });
+  });
+
+  it('caches a version source origin lookup for 30 seconds per profile and repository', async () => {
+    const dir = await mkTmp('ignite-local-');
+    await initRepo(dir);
+    const { spy, calls } = makeRunSpy();
+    const svc = await newService({ run: spy, profileId: 'p1' });
+
+    await svc.getVersionSource(dir, 'p1');
+    await svc.getVersionSource(dir, 'p1');
+
+    expect(
+      calls.filter((call) =>
+        call.args.slice(2).join(' ') === 'remote get-url origin'
+      )
+    ).toHaveLength(1);
+  });
+});
+
 describe('git invocation safety', () => {
   function assertRailsOnEveryCall(
     calls: { cmd: string; args: string[]; opts: Parameters<typeof runCommand>[2] }[]

@@ -557,12 +557,11 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         const resolved = body.ref
           ? source.localFallbackPath
             ? {
-                commit: await d.repos.resolveLocalVersionCommit(
+                ...(await d.repos.resolveLocalVersionCommit(
                   body.repoPathOrUrl!,
                   body.ref,
                   id
-                ),
-                refKind: 'branch' as const,
+                )),
                 refLabel: body.ref,
               }
             : remoteRef(await d.inspectGitRemote(source.url), body.ref)
@@ -592,6 +591,8 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
                 ? { localFallbackPath: source.localFallbackPath }
                 : {}),
             });
+            ctx.log('phase: add user membership\n');
+            await d.versionStore.addMembership(id, source.url, commit, 'user');
             ctx.log('phase: detect and compile\n');
             const result = await d.lifecycle.runPinnedLifecycle(
               source.url,
@@ -599,8 +600,6 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
               id,
               ctx
             );
-            ctx.log('phase: add user membership\n');
-            await d.versionStore.addMembership(id, source.url, commit, 'user');
             return result;
           }
         );

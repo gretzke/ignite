@@ -79,6 +79,13 @@ export interface VersionSource {
   localFallbackPath?: string;
 }
 
+export interface LocalVersionResolution {
+  commit: string;
+  refKind: RefKind;
+}
+
+const VERSION_SOURCE_CACHE_TTL_MS = 30_000;
+
 // Mirrors the old PluginResponse contract so handlers built on top of this
 // service stay thin (map straight to IApiResponse/IApiError).
 export type RepoResult<T> =
@@ -201,6 +208,10 @@ export class RepoService {
   private readonly locks = new KeyedMutex();
   private readonly versionStore: VersionStore;
   private readonly materializationTimeoutMs: number;
+  private readonly versionSourceCache = new Map<
+    string,
+    { source: VersionSource; expiresAt: number }
+  >();
 
   constructor(deps?: RepoServiceDeps) {
     this.fileSystem = deps?.fileSystem ?? FileSystem.getInstance();
@@ -558,9 +569,14 @@ export class RepoService {
     pathOrUrl: string,
     profileId?: string
   ): Promise<VersionSource> {
+    const resolvedProfileId = profileId ?? (await this.getProfileId());
+    const cacheKey = `${resolvedProfileId}\u0000${pathOrUrl}`;
+    const cached = this.versionSourceCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.source;
+
     const workspacePath = await this.resolveExistingWorkspacePath(
       pathOrUrl,
-      profileId
+      resolvedProfileId
     );
     const origin = await this.runGit(
       workspacePath,
@@ -577,11 +593,16 @@ export class RepoService {
       throw Object.assign(new Error('Repository origin remote is required'), {
         code: 'VERSION_ORIGIN_REQUIRED',
       });
-    return {
+    const source = {
       url,
       workspacePath,
       ...(local ? { localFallbackPath: path.resolve(workspacePath) } : {}),
     };
+    this.versionSourceCache.set(cacheKey, {
+      source,
+      expiresAt: Date.now() + VERSION_SOURCE_CACHE_TTL_MS,
+    });
+    return source;
   }
 
   // Resolve a local ref using the same constrained host-git boundary as the
@@ -591,7 +612,7 @@ export class RepoService {
     pathOrUrl: string,
     revision: string,
     profileId?: string
-  ): Promise<string> {
+  ): Promise<LocalVersionResolution> {
     const workspacePath = await this.resolveExistingWorkspacePath(
       pathOrUrl,
       profileId
@@ -610,7 +631,19 @@ export class RepoService {
       throw Object.assign(new Error(`Local ref '${revision}' did not resolve to a commit`), {
         code: 'VERSION_REF_NOT_FOUND',
       });
-    return commit;
+    const tag = await this.runGit(
+      workspacePath,
+      ['rev-parse', '--verify', '--end-of-options', `refs/tags/${revision}`],
+      TIMEOUT_LOCAL_MS
+    );
+    if (tag.success) return { commit, refKind: 'tag' };
+
+    const branch = await this.runGit(
+      workspacePath,
+      ['rev-parse', '--verify', '--end-of-options', `refs/heads/${revision}`],
+      TIMEOUT_LOCAL_MS
+    );
+    return { commit, refKind: branch.success ? 'branch' : 'commit' };
   }
 
   // Like resolveWorkspacePath, but throws when the directory doesn't exist.

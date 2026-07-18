@@ -79,7 +79,7 @@ function makeDeps() {
     repos: {
       removeVersionCheckout: vi.fn(async (_url: string, _commit: string, beforeDelete: (remove: () => Promise<void>) => Promise<boolean>) => beforeDelete(async () => {})),
       getVersionSource: vi.fn(async (pathOrUrl: string) => ({ url: `file://${pathOrUrl}`, workspacePath: pathOrUrl, localFallbackPath: pathOrUrl })),
-      resolveLocalVersionCommit: vi.fn(async () => 'a'.repeat(40)),
+      resolveLocalVersionCommit: vi.fn(async () => ({ commit: 'a'.repeat(40), refKind: 'branch' as 'branch' | 'tag' | 'commit' })),
       ensureVersion: vi.fn(async () => ({ checkout: '/versions/version' })),
     },
     jobs: { start: vi.fn((type: string, params: Record<string, unknown>) => ({ id: 'job-version-0', type, params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] })) },
@@ -248,13 +248,42 @@ describe('profile handlers', () => {
     const deps = makeDeps(); const url = 'https://example.com/contracts.git'; const commit = 'b'.repeat(40);
     let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
     deps.repos.getVersionSource = vi.fn(async () => ({ url, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
-    deps.repos.resolveLocalVersionCommit = vi.fn(async () => commit);
+    deps.repos.resolveLocalVersionCommit = vi.fn(async () => ({ commit, refKind: 'tag' as const }));
     deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => { runner = value; return { id: 'job-local', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] }; }) };
     const handlers = createProfileHandlers(deps);
     await handlers.addRepoVersion({ params: { id: 'p1' }, body: { repoPathOrUrl: '/repo-a', ref: 'feature' } } as never, makeReply() as never);
     await runner({ log: () => {}, signal: new AbortController().signal });
     expect(deps.repos.resolveLocalVersionCommit).toHaveBeenCalledWith('/repo-a', 'feature', 'p1');
-    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.objectContaining({ localFallbackPath: '/repo-a' }));
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.objectContaining({ localFallbackPath: '/repo-a', refKind: 'tag', refLabel: 'feature' }));
+  });
+
+  it('adds user membership before lifecycle failure so the version remains visible', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const commit = 'c'.repeat(40);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.jobs = {
+      start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => {
+        runner = value;
+        return { id: 'job-fail', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
+    };
+    deps.lifecycle.runPinnedLifecycle = vi.fn(async () => {
+      throw new Error('compile failed');
+    });
+
+    await createProfileHandlers(deps).addRepoVersion(
+      { params: { id: 'p1' }, body: { url, commit } } as never,
+      makeReply() as never
+    );
+    await expect(runner({ log: () => {}, signal: new AbortController().signal })).rejects.toThrow('compile failed');
+    expect(deps.versionStore.addMembership).toHaveBeenCalledWith('p1', url, commit, 'user');
+    expect((deps.repos.ensureVersion as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
+      (deps.versionStore.addMembership as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+    );
+    expect((deps.versionStore.addMembership as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
+      (deps.lifecycle.runPinnedLifecycle as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+    );
   });
 
   it('returns the reusable origin-approval error shape before starting a version job', async () => {
