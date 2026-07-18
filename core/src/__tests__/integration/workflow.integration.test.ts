@@ -45,6 +45,8 @@ const { validatePlan } = await import('../../deployments/validation.js');
 const { renderArtifact } = await import('../../deployments/artifact.js');
 const { createDeploymentHandlers } = await import('../../api/deployments.js');
 const { createWorkflowHandlers } = await import('../../api/workflows.js');
+const { createWorkflowPromotionHandlers } = await import('../../api/workflowPromotion.js');
+const { createProfileHandlers } = await import('../../api/profiles.js');
 const { createPointerSuggestionHandlers } = await import('../../api/pointerSuggestions.js');
 const { SignerProviderService } = await import('../../signers/SignerProviderService.js');
 const { VaultStore } = await import('../../plugins/vault/VaultStore.js');
@@ -56,6 +58,7 @@ const { LocalFolderBuildBackend } = await import('../../plugins/install/LocalFol
 const { TrustManager } = await import('../../plugins/trust/TrustManager.js');
 const { RepoService } = await import('../../repos/RepoService.js');
 const { VersionStore, pinnedOrigin } = await import('../../repos/VersionStore.js');
+const { WorkflowPromotionService } = await import('../../workflows/WorkflowPromotionService.js');
 const { JobManager } = await import('../../jobs/JobManager.js');
 const { DeploymentHookService } = await import('../../deployments/DeploymentHookService.js');
 const { PointerSuggestionService } = await import('../../deployments/PointerSuggestionService.js');
@@ -179,6 +182,78 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
     await fs.writeFile(path.join(v1Path, 'src', 'VersionedBox.sol'), '// hostile tracked mutation\n');
     await repos.ensureVersion(PROFILE, remote.url, remote.v1);
     expect(await fs.readFile(path.join(v1Path, 'src', 'VersionedBox.sol'), 'utf8')).toContain('contract VersionedBox');
+  }, 180_000);
+
+  it('retains workflow versions across promotion, cache eviction, resolution, deletion, and reconciliation', async () => {
+    const retentionRoot = path.join(temp, 'retention');
+    await fs.mkdir(retentionRoot, { recursive: true });
+    const retentionRemote = await makeVersionedRemote(retentionRoot);
+    const pins = new VersionStore();
+    const repos = RepoService.getInstance();
+    const jobs = JobManager.getInstance();
+    const name = 'retention-release';
+    const plan: DeploymentPlan = {
+      schemaVersion: 1,
+      chains: [CHAIN_ID],
+      signers: {},
+      contracts: [{
+        id: 'draft-box', repoPathOrUrl: retentionRemote.url, frameworkId: 'foundry', sourcePath: 'src/VersionedBox.sol',
+        contractName: 'VersionedBox', artifactPath: 'out/VersionedBox.sol/VersionedBox.json',
+        pin: { url: retentionRemote.url, commit: retentionRemote.v1, ref: 'v1.0.0', refKind: 'tag' },
+      }],
+      steps: [{ id: 'deploy', kind: 'deploy', contractId: 'draft-box' }],
+    };
+    await pins.approveOrigins(PROFILE, [retentionRemote.url]);
+    await repos.ensureVersion(PROFILE, retentionRemote.url, retentionRemote.v1);
+    await pins.addMembership(PROFILE, retentionRemote.url, retentionRemote.v1, 'user');
+
+    const promotions = new WorkflowPromotionService({ getRequiredPlugin: async (id) => ({ id, version: '1.0.0' }) });
+    const promotionHandlers = createWorkflowPromotionHandlers(promotions, { check: async () => ({ sources: [], plugins: [] }) } as never, async () => PROFILE);
+    const previewReply = reply();
+    await promotionHandlers.promoteWorkflow({ body: { mode: 'preview', target: { repoPathOrUrl: workspace, name }, plan } } as never, previewReply);
+    const previewId = (previewReply.body as { data: { previewId: string } }).data.previewId;
+    const applyReply = reply();
+    await promotionHandlers.promoteWorkflow({ body: { mode: 'apply', previewId, target: { repoPathOrUrl: workspace, name }, plan, hooks: [] } } as never, applyReply);
+    expect(applyReply.statusCode).toBe(200);
+
+    const profileHandlers = createProfileHandlers({ repos, versionStore: pins, lifecycle: { activeJobFor: () => undefined } as never });
+    const wipeReply = reply();
+    await profileHandlers.removeRepoVersion({ params: { id: PROFILE }, body: { url: retentionRemote.url, commit: retentionRemote.v1 } } as never, wipeReply);
+    expect(wipeReply.statusCode).toBe(204);
+    await expect(fs.access(pins.checkoutPath(retentionRemote.url, retentionRemote.v1))).rejects.toThrow();
+
+    const workflowHandlers = createWorkflowHandlers({
+      repos,
+      devMode: () => true,
+      jobs,
+      versionStore: pins,
+      getProfileId: async () => PROFILE,
+      lifecycle: { runPinnedLifecycle: async (url, commit, profileId) => {
+        const clone = await repos.ensureVersion(profileId, url, commit);
+        return { pathOrUrl: clone.checkout, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
+      } },
+      artifactReadable: async () => true,
+      pluginStatus: async (id, requiredVersion) => ({ id, status: 'installed', installedVersion: requiredVersion }),
+    });
+    const resolveReply = reply();
+    await workflowHandlers.resolveWorkflow({ body: { repoPathOrUrl: workspace, name } } as never, resolveReply);
+    const resolved = await waitForJob(jobs, (resolveReply.body as { data: { jobId: string } }).data.jobId);
+    expect(resolved).toMatchObject({ state: 'succeeded', result: { sources: [{ status: 'ready' }] } });
+    expect(await fs.stat(pins.checkoutPath(retentionRemote.url, retentionRemote.v1))).toBeTruthy();
+    expect((await pins.listMemberships(PROFILE))[retentionRemote.url]).toEqual([
+      expect.objectContaining({ commit: retentionRemote.v1, source: 'workflow' }),
+    ]);
+
+    const blockedDelete = reply();
+    await profileHandlers.removeRepoVersion({ params: { id: PROFILE }, body: { url: retentionRemote.url, commit: retentionRemote.v1 } } as never, blockedDelete);
+    expect(blockedDelete.statusCode).toBe(409);
+    expect(blockedDelete.body).toMatchObject({ code: 'VERSION_IN_USE' });
+
+    await fs.rm(path.join(workspace, 'ignite', 'workflows', `${name}.json`));
+    await fs.rm(pins.checkoutPath(retentionRemote.url, retentionRemote.v1), { recursive: true, force: true });
+    await pins.reconcile();
+    expect(await pins.get(retentionRemote.url, retentionRemote.v1)).toBeUndefined();
+    expect((await pins.listMemberships(PROFILE))[retentionRemote.url]).toBeUndefined();
   }, 180_000);
 
   it('deploys both versions and a pointer, copies the artifact, and delivers chronicles idempotently', async () => {
