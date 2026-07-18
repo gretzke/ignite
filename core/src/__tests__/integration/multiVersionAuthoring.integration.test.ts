@@ -52,7 +52,6 @@ const { PluginExecutor } = await import(
   '../../plugins/containers/PluginExecutor.js'
 );
 const { PluginInvoker } = await import('../../plugins/invoke/PluginInvoker.js');
-const { TrustManager } = await import('../../plugins/trust/TrustManager.js');
 const { RepoService } = await import('../../repos/RepoService.js');
 const { VersionStore } = await import('../../repos/VersionStore.js');
 const { JobManager } = await import('../../jobs/JobManager.js');
@@ -463,11 +462,6 @@ async function configureSigner(): Promise<
     { id: KEY_ID, values: { label: 'multi-version' } },
   ]);
   await vault.setSecret('private-key', `keys.${KEY_ID}.private-key`, KEY);
-  await TrustManager.getInstance().setTrust('private-key', 'trusted', {
-    repoWrite: false,
-    net: false,
-    secrets: ['keys'],
-  });
   const executor = new PluginExecutor({ vaultStore: vault });
   const invoker = new PluginInvoker({
     executeContainer: (id, operation, options, opts) =>
