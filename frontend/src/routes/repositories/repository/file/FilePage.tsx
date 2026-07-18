@@ -35,6 +35,14 @@ interface CopyButtonProps {
   label: string;
 }
 
+export function canDeploySelectedArtifact(
+  selected: { artifactPath: string } | undefined,
+  explicitArtifactPath: string | null,
+  variantCount: number
+): boolean {
+  return Boolean(selected && (variantCount <= 1 || explicitArtifactPath));
+}
+
 function CopyButton({ content, label }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
 
@@ -316,9 +324,13 @@ export default function FilePage() {
   const inDraft = Boolean(
     selectedContractId && draftContracts.some((c) => c.id === selectedContractId)
   );
+  const canDeploy = canDeploySelectedArtifact(
+    selectedArtifact,
+    artifactPath,
+    versionVariants.length
+  );
   const deploy = () => {
-    if (!frameworkId || !selectedArtifact || !selectedContractId) return;
-    if (versionVariants.length > 1 && !artifactPath) return;
+    if (!frameworkId || !selectedArtifact || !selectedContractId || !canDeploy) return;
     if (inDraft) {
       dispatch(removeContract(selectedContractId));
       return;
@@ -423,7 +435,7 @@ export default function FilePage() {
                 className={inDraft ? 'btn btn-secondary' : 'btn btn-primary'}
                 // Deployability gates adding; removal must stay possible even
                 // when the artifact no longer loads or needs linking.
-                disabled={!inDraft && (!artifactData || (versionVariants.length > 1 && !artifactPath))}
+                disabled={!inDraft && (!artifactData || !canDeploy)}
                 title={inDraft ? 'Remove from deployment' : undefined}
                 onClick={deploy}
               >

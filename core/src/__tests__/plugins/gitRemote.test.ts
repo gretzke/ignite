@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -53,6 +53,48 @@ describe('gitRemote', () => {
       const inspected = await inspectGitRemote(`file://${dir}`);
       expect(inspected.branchHeads).toEqual({ main: head });
     } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('inspects an scp remote through the same ssh URL identity used by the version store', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-git-scp-'));
+    const saved = {
+      count: process.env.GIT_CONFIG_COUNT,
+      key: process.env.GIT_CONFIG_KEY_0,
+      value: process.env.GIT_CONFIG_VALUE_0,
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      return {
+        ok: true,
+        json: async () => url.includes('/releases?') ? [] : { description: 'fixture' },
+      } as Response;
+    });
+    try {
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+      await fs.writeFile(path.join(dir, 'README.md'), 'scp fixture\n');
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: dir });
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+      process.env.GIT_CONFIG_COUNT = '1';
+      process.env.GIT_CONFIG_KEY_0 = `url.file://${dir}/.insteadOf`;
+      process.env.GIT_CONFIG_VALUE_0 = 'ssh://git@github.com/org/repo.git';
+      clearGitRemoteCaches();
+
+      const inspected = await inspectGitRemote('git@github.com:org/repo.git');
+
+      expect(inspected.branchHeads).toEqual({ main: head });
+      expect(inspected.github).toMatchObject({ owner: 'org', repo: 'repo' });
+    } finally {
+      fetchSpy.mockRestore();
+      for (const [name, value] of Object.entries({ GIT_CONFIG_COUNT: saved.count, GIT_CONFIG_KEY_0: saved.key, GIT_CONFIG_VALUE_0: saved.value })) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      clearGitRemoteCaches();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('orders semver correctly, including double-digit segments and prereleases', () => {

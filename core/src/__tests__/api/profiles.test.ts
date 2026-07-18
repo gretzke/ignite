@@ -286,6 +286,116 @@ describe('profile handlers', () => {
     );
   });
 
+  it('resolves a seven-character commit prefix to the full remote commit before materialization', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const commit = 'abcdef0' + '1'.repeat(33);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: commit }, tagHeads: {}, releases: [] }));
+    deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => {
+      runner = value;
+      return { id: 'job-short', type: 'repo.version.add', params: _params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+    }) };
+    const reply = makeReply();
+
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never, reply as never);
+    await runner({ log: () => {}, signal: new AbortController().signal });
+
+    expect(reply.statusCode).toBe(200);
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.any(Object));
+    expect(deps.versionStore.addMembership).toHaveBeenCalledWith('p1', url, commit, 'user');
+  });
+
+  it('rejects an unresolvable short commit with a typed error before materialization', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: 'b'.repeat(40) }, tagHeads: {}, releases: [] }));
+    const reply = makeReply();
+
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never, reply as never);
+
+    expect(reply.statusCode).toBe(400);
+    expect(reply.body).toMatchObject({ code: 'VERSION_COMMIT_NOT_RESOLVABLE', message: expect.stringContaining('abcdef0') });
+    expect(deps.jobs.start).not.toHaveBeenCalled();
+    expect(deps.repos.ensureVersion).not.toHaveBeenCalled();
+  });
+
+  it('uses the tag commit when refKind=tag and a branch has the same name', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const branchCommit = 'a'.repeat(40);
+    const tagCommit = 'b'.repeat(40);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main', 'release'], branchHeads: { main: branchCommit, release: branchCommit }, tagHeads: { release: tagCommit }, releases: [] }));
+    deps.jobs = { start: vi.fn((_type: string, params: Record<string, unknown>, value: typeof runner) => {
+      runner = value;
+      return { id: 'job-tag', type: 'repo.version.add', params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+    }) };
+
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, ref: 'release', refKind: 'tag' } } as never, makeReply() as never);
+    await runner({ log: () => {}, signal: new AbortController().signal });
+
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, tagCommit, expect.objectContaining({ ref: 'release', refKind: 'tag' }));
+    expect(deps.repos.ensureVersion).not.toHaveBeenCalledWith('p1', url, branchCommit, expect.any(Object));
+  });
+
+  it('rechecks REPO_BUSY under the delete lock while a version-add lifecycle is mid-flight', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const commit = 'c'.repeat(40);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    let releaseMembership!: () => void;
+    let releaseLifecycle!: () => void;
+    let membershipAdded!: () => void;
+    let lifecycleStarted!: () => void;
+    const membershipAddedPromise = new Promise<void>((resolve) => { membershipAdded = resolve; });
+    const lifecycleStartedPromise = new Promise<void>((resolve) => { lifecycleStarted = resolve; });
+    const membershipGate = new Promise<void>((resolve) => { releaseMembership = resolve; });
+    const lifecycleGate = new Promise<void>((resolve) => { releaseLifecycle = resolve; });
+    let active = false;
+    let membershipPresent = false;
+    deps.jobs = { start: vi.fn((_type: string, params: Record<string, unknown>, value: typeof runner) => {
+      runner = value;
+      return { id: 'job-race', type: 'repo.version.add', params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+    }) };
+    deps.versionStore.addMembership = vi.fn(async () => {
+      membershipPresent = true;
+      membershipAdded();
+      await membershipGate;
+    });
+    deps.lifecycle.activeJobFor = vi.fn(() => active ? 'direct:version' : undefined);
+    deps.lifecycle.runPinnedLifecycle = vi.fn(async () => {
+      active = true;
+      lifecycleStarted();
+      await lifecycleGate;
+      active = false;
+      return { pathOrUrl: '/versions/version', frameworks: [] };
+    });
+    (deps.repos as typeof deps.repos & { withVersionMaterialized: Function }).withVersionMaterialized = vi.fn(async (_profileId: string, _url: string, _commit: string, _opts: object, fn: (materialized: { checkout: string; rematerialize: () => Promise<{ checkout: string }> }) => Promise<unknown>) => fn({ checkout: '/versions/version', rematerialize: async () => ({ checkout: '/versions/version' }) }));
+    deps.repos.removeVersionCheckout = vi.fn(async (_url, _commit, beforeDelete) => {
+      await lifecycleStartedPromise;
+      return beforeDelete(async () => { membershipPresent = false; });
+    });
+    const handlers = createProfileHandlers(deps);
+    await handlers.addRepoVersion({ params: { id: 'p1' }, body: { url, commit } } as never, makeReply() as never);
+    const runningAdd = runner({ log: () => {}, signal: new AbortController().signal });
+    await membershipAddedPromise;
+
+    const deleteReply = makeReply();
+    const deleting = handlers.removeRepoVersion({ params: { id: 'p1' }, body: { url, commit } } as never, deleteReply as never);
+    releaseMembership();
+    await lifecycleStartedPromise;
+    await deleting;
+
+    expect(deleteReply.statusCode).toBe(409);
+    expect(deleteReply.body).toMatchObject({ code: 'REPO_BUSY' });
+    expect(membershipPresent).toBe(true);
+    expect(deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced).not.toHaveBeenCalled();
+
+    releaseLifecycle();
+    await runningAdd;
+  });
+
   it('returns the reusable origin-approval error shape before starting a version job', async () => {
     const deps = makeDeps(); deps.versionStore.isOriginApproved = vi.fn(async () => false);
     const reply = makeReply(); await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'c'.repeat(40) } } as never, reply as never);

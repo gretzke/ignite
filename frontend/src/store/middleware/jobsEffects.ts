@@ -112,7 +112,7 @@ const pendingSnapshotFetch = new Set<string>();
 // present" check is needed here — only the two-step delivery via live
 // 'state' events (handled below) can observe a terminal state before the
 // payload exists.
-function routeTerminalJob(
+export function routeTerminalJob(
   job: JobRecord,
   dispatch: AppDispatch,
   getState: () => RootState

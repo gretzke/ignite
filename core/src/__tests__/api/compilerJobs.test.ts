@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { PluginType } from '@ignite/plugin-types/types';
 import {
   createCompilerHandlers,
@@ -675,6 +679,58 @@ describe('compiler API handlers (jobs)', () => {
       expect(res.statusCode).toBe(400);
       expect(res.json().code).toBe(ErrorCodes.INIT_ERROR);
       expect(executor.execute).not.toHaveBeenCalled();
+    });
+
+    it('lists artifacts from the materialized pinned commit instead of the live workspace', async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-list-pinned-'));
+      const live = path.join(root, 'live');
+      const pinned = path.join(root, 'pinned');
+      try {
+        await fs.mkdir(path.join(live, 'contracts'), { recursive: true });
+        execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: live });
+        execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: live });
+        execFileSync('git', ['config', 'user.name', 'Test'], { cwd: live });
+        await fs.writeFile(path.join(live, 'contracts', 'PinnedOnly.sol'), 'contract PinnedOnly {}\n');
+        execFileSync('git', ['add', '.'], { cwd: live });
+        execFileSync('git', ['commit', '-q', '-m', 'pinned'], { cwd: live });
+        const pinnedCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: live, encoding: 'utf8' }).trim();
+        await fs.rm(path.join(live, 'contracts', 'PinnedOnly.sol'));
+        await fs.writeFile(path.join(live, 'contracts', 'LiveOnly.sol'), 'contract LiveOnly {}\n');
+        execFileSync('git', ['add', '-A'], { cwd: live });
+        execFileSync('git', ['commit', '-q', '-m', 'live'], { cwd: live });
+        execFileSync('git', ['worktree', 'add', '--quiet', '--detach', pinned, pinnedCommit], { cwd: live });
+
+        const pinnedRepos = makeFakeRepos({
+          resolveExistingWorkspacePath: vi.fn(async () => live),
+          withVersionMaterialized: vi.fn(async (_profileId, _url, _commit, _opts, fn) => fn({
+            checkout: pinned,
+            rematerialize: async () => ({ checkout: pinned }),
+          })) as never,
+        });
+        const pinnedExecutor = {
+          execute: vi.fn(async (_pluginId: string, operation: string, _input: unknown, options: { workspacePath: string }) => {
+            const names = await fs.readdir(path.join(options.workspacePath, 'contracts'));
+            return { success: true, data: { artifacts: names.map((name) => ({ contractName: name.replace(/\.sol$/, ''), sourcePath: `contracts/${name}`, artifactPath: `out/${name}.json` })) }, operation };
+          }),
+        };
+        const handlers = createCompilerHandlers({
+          jobs: fakeJobs,
+          executor: pinnedExecutor as unknown as CompilerExecutorLike,
+          registryLoader,
+          repos: pinnedRepos,
+        });
+        const localApp = fastify();
+        localApp.post('/api/v1/artifacts/list', handlers.listArtifacts);
+        await localApp.ready();
+        const pin = { url: 'https://example.test/contracts.git', commit: pinnedCommit };
+        const res = await localApp.inject({ method: 'POST', url: '/api/v1/artifacts/list', payload: { pathOrUrl: pin.url, pluginId: 'waffle', pin } });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data.artifacts.map((item: { contractName: string }) => item.contractName)).toEqual(['PinnedOnly']);
+        expect(pinnedExecutor.execute).toHaveBeenCalledWith('waffle', 'listArtifacts', { pathOrUrl: pin.url }, { workspacePath: pinned });
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
+      }
     });
   });
 

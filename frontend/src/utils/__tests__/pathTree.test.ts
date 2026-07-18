@@ -1,7 +1,7 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
 import type { ArtifactLocation } from '@ignite/api';
-import { buildPathTree, getDirectoryContents } from '../pathTree';
+import { buildPathTree, directArtifactForFile, getDirectoryContents } from '../pathTree';
 
 const artifact = (
   contractName: string,
@@ -34,6 +34,18 @@ describe('buildPathTree', () => {
     expect(files).toHaveLength(1);
     expect(files[0].variantCount).toBe(3);
     expect(files[0].artifact).toBe(canonical);
+  });
+
+  it('refuses to expose the canonical artifact as a direct pick for a multi-variant row', () => {
+    const tree = buildPathTree([
+      artifact('Foo', 'src/Foo.sol', 'out/Foo.json'),
+      artifact('Foo', 'src/Foo.sol', 'out/Foo.0.8.17.optimized.json'),
+    ]);
+
+    const { files } = getDirectoryContents(tree, 'src');
+
+    expect(files[0].variantCount).toBe(2);
+    expect(directArtifactForFile(files[0])).toBeUndefined();
   });
 
   it('counts exact duplicate artifact paths once', () => {

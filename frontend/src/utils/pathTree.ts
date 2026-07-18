@@ -16,6 +16,11 @@ export interface FileNode extends DirectoryNode {
   variants: ArtifactLocation[];
 }
 
+/** A multi-variant row has no safe implicit artifact for direct actions. */
+export function directArtifactForFile(file: FileNode): ArtifactLocation | undefined {
+  return file.variantCount === 1 ? file.artifact : undefined;
+}
+
 /**
  * Build a hierarchical directory tree from flat artifact paths
  * Only includes source files (contracts), not artifacts

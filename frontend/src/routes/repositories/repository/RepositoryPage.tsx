@@ -18,6 +18,15 @@ import {
 } from '../../../store/features/compiler/compilerSlice';
 import type { ContractSourcePin, RepoVersionSummary } from '@ignite/api';
 
+export function pinForInstalledVersion(
+  versionCommit: string | undefined,
+  version: RepoVersionSummary | undefined
+): ContractSourcePin | undefined {
+  return versionCommit && version
+    ? { url: version.url, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
+    : undefined;
+}
+
 export default function RepositoryPage() {
   const { repoPath } = useParams<{ repoPath: string }>();
   const navigate = useNavigate();
@@ -45,9 +54,7 @@ export default function RepositoryPage() {
         ?.versions.find((candidate) => candidate.commit === versionCommit)
     );
   }, [decodedPath, repositories, versionCommit]);
-  const pin: ContractSourcePin | undefined = versionCommit && version
-    ? { url: version.url, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
-    : undefined;
+  const pin = pinForInstalledVersion(versionCommit, version);
   const scopeKey = compilerScopeKey(decodedPath, pin);
   const repoData = repositoriesData[decodedPath];
   const scopedFrameworks = version?.frameworks?.map(({ id, name }) => ({ id, name })) ?? [];

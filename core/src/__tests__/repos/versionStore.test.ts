@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { FileSystem } from '../../filesystem/FileSystem.js';
-import { VersionStore, type VersionRecord } from '../../repos/VersionStore.js';
+import { VersionStore, pinnedOrigin, type VersionRecord } from '../../repos/VersionStore.js';
 import { getLogger } from '../../utils/logger.js';
 
 const dirs: string[] = [];
@@ -77,6 +77,21 @@ describe('VersionStore', () => {
     expect(path.basename(versions.checkoutPath(urlA, commitA))).toHaveLength(
       40
     );
+  });
+
+  it('normalizes scp remotes consistently for group identity and origin approval', async () => {
+    const home = await temp('ignite-version-scp-');
+    const { store: versions } = await store(home);
+    const scp = 'git@github.com:org/repo.git';
+    const ssh = 'ssh://git@github.com/org/repo.git';
+
+    expect(versions.groupDir(scp)).toBe(versions.groupDir(ssh));
+    expect(pinnedOrigin(scp)).toBe('ssh://github.com');
+    expect(pinnedOrigin(scp)).toBe(pinnedOrigin(ssh));
+
+    await versions.approveOrigins('p1', [scp]);
+    await expect(versions.isOriginApproved('p1', scp)).resolves.toBe(true);
+    await expect(versions.isOriginApproved('p1', ssh)).resolves.toBe(true);
   });
 
   it('round-trips global records and only removes registry entries', async () => {

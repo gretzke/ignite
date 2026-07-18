@@ -6,6 +6,7 @@ import {
   getDirectoryContents,
   type DirectoryNode,
   type FileNode,
+  directArtifactForFile,
 } from '../../../../utils/pathTree';
 import type { ArtifactLocation } from '@ignite/api';
 import { useAppDispatch, useAppSelector } from '../../../../store';
@@ -109,9 +110,10 @@ export default function ArtifactBrowser({
     if (currentPath) {
       params.set('path', currentPath);
     }
-    if (file.variantCount === 1) {
-      params.set('artifact', file.artifact.artifactPath);
-      params.set('contract', file.artifact.contractName);
+    const directArtifact = directArtifactForFile(file);
+    if (directArtifact) {
+      params.set('artifact', directArtifact.artifactPath);
+      params.set('contract', directArtifact.contractName);
     }
     const version = searchParams.get('version');
     if (version) params.set('version', version);
