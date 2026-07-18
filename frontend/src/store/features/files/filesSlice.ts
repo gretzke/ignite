@@ -158,14 +158,15 @@ export const filesReducer = filesSlice.reducer;
 // API actions for file operations
 export const filesApi = {
   // Fetch file content
-  fetchFileContent: (repoPath: string, filePath: string) => {
+  fetchFileContent: (repoPath: string, filePath: string, pin?: ContractSourcePin) => {
+    const scopedRepoPath = `${repoPath}${pin ? `\u0000${pin.commit.slice(0, 12)}` : ''}`;
     return [
-      setFileLoading({ repoPath, filePath, loading: true }),
+      setFileLoading({ repoPath: scopedRepoPath, filePath, loading: true }),
       apiClient.dispatch.getFile({
-        body: { pathOrUrl: repoPath, filePath },
+        body: { pathOrUrl: repoPath, filePath, ...(pin ? { pin } : {}) },
         onSuccess: (data) => {
           return setFileContent({
-            repoPath,
+            repoPath: scopedRepoPath,
             filePath,
             content: data,
           });
@@ -174,7 +175,7 @@ export const filesApi = {
           const { description } = formatApiError(error);
           return [
             setFileError({
-              repoPath,
+              repoPath: scopedRepoPath,
               filePath,
               error: description,
             }),
@@ -198,11 +199,12 @@ export const filesApi = {
     filePath: string,
     pin?: ContractSourcePin
   ) => {
+    const scopedRepoPath = `${repoPath}${pin ? `\u0000${pin.commit.slice(0, 12)}` : ''}`;
     return apiClient.dispatch.getArtifactData({
       body: { pathOrUrl: repoPath, artifactPath, pluginId, ...(pin ? { pin } : {}) },
       onSuccess: (data) => {
         return setArtifactData({
-          repoPath,
+          repoPath: scopedRepoPath,
           filePath, // Use the source file path as the key
           frameworkId: pluginId,
           artifactPath,

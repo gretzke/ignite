@@ -29,7 +29,7 @@ import {
   repositoriesApi,
   hydrateRepoGitState,
 } from '../features/repositories/repositoriesApi';
-import { setCompilationStatus } from '../features/compiler/compilerSlice';
+import { setCompilationStatus, compilerScopeKey } from '../features/compiler/compilerSlice';
 import {
   permissionRequired,
   approvalCancelled,
@@ -265,6 +265,7 @@ function routeTerminalJob(
       // state so its version row (or an orphan URL group) appears immediately.
       const profileId = getState().profiles.currentId;
       dispatch(finishRepoVersionJob(job.id));
+      if (!succeeded) dispatch(triggerToast({ title: 'Adding repository version failed', description: errorMessage, variant: 'error', duration: 5000 }));
       if (profileId) {
         repositoriesApi
           .fetchRepositories(profileId)
@@ -303,9 +304,11 @@ function routeTerminalJob(
     case 'compiler.install': {
       const repoPath = job.params.pathOrUrl as string;
       const frameworkId = job.params.pluginId as string;
+      const pin = job.params.pin as import('@ignite/api').ContractSourcePin | undefined;
+      const scopeKey = compilerScopeKey(repoPath, pin);
       if (succeeded) {
         dispatch(
-          setCompilationStatus({ repoPath, frameworkId, status: 'compiling' })
+          setCompilationStatus({ repoPath: scopeKey, frameworkId, status: 'compiling' })
         );
         break;
       }
@@ -324,7 +327,7 @@ function routeTerminalJob(
             permission: perm.permission,
             retry: {
               endpoint: 'install',
-              body: { pathOrUrl: repoPath, pluginId: frameworkId },
+              body: { pathOrUrl: repoPath, pluginId: frameworkId, ...(pin ? { pin } : {}) },
             },
           })
         );
@@ -333,7 +336,7 @@ function routeTerminalJob(
 
       dispatch(
         setCompilationStatus({
-          repoPath,
+          repoPath: scopeKey,
           frameworkId,
           status: 'error',
           error: errorMessage,
@@ -352,9 +355,11 @@ function routeTerminalJob(
     case 'compiler.compile': {
       const repoPath = job.params.pathOrUrl as string;
       const frameworkId = job.params.pluginId as string;
+      const pin = job.params.pin as import('@ignite/api').ContractSourcePin | undefined;
+      const scopeKey = compilerScopeKey(repoPath, pin);
       if (succeeded) {
         dispatch(
-          setCompilationStatus({ repoPath, frameworkId, status: 'ready' })
+          setCompilationStatus({ repoPath: scopeKey, frameworkId, status: 'ready' })
         );
         break;
       }
@@ -369,7 +374,7 @@ function routeTerminalJob(
             permission: perm.permission,
             retry: {
               endpoint: 'compile',
-              body: { pathOrUrl: repoPath, pluginId: frameworkId },
+              body: { pathOrUrl: repoPath, pluginId: frameworkId, ...(pin ? { pin } : {}) },
             },
           })
         );
@@ -378,7 +383,7 @@ function routeTerminalJob(
 
       dispatch(
         setCompilationStatus({
-          repoPath,
+          repoPath: scopeKey,
           frameworkId,
           status: 'error',
           error: errorMessage,

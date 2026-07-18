@@ -36,20 +36,17 @@ export default function RepositoryPage() {
 
   const version = useMemo<RepoVersionSummary | undefined>(() => {
     if (!versionCommit || !repositories) return undefined;
-    const entry = [
-      ...(repositories.local ?? []),
-      ...(repositories.cloned ?? []),
-      ...(repositories.session ? [repositories.session] : []),
-    ].find((candidate) => candidate.pathOrUrl === decodedPath);
     return (
-      entry?.versions.find((candidate) => candidate.commit === versionCommit) ??
+      [...(repositories.local ?? []), ...(repositories.cloned ?? []), ...(repositories.session ? [repositories.session] : [])]
+        .flatMap((entry) => entry.versions)
+        .find((candidate) => candidate.url === decodedPath && candidate.commit === versionCommit) ??
       repositories.versionGroups
         .find((group) => group.url === decodedPath)
         ?.versions.find((candidate) => candidate.commit === versionCommit)
     );
   }, [decodedPath, repositories, versionCommit]);
   const pin: ContractSourcePin | undefined = versionCommit && version
-    ? { url: decodedPath, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
+    ? { url: version.url, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
     : undefined;
   const scopeKey = compilerScopeKey(decodedPath, pin);
   const repoData = repositoriesData[decodedPath];
@@ -89,8 +86,9 @@ export default function RepositoryPage() {
   // On a fresh page load the repo list, initialization, and framework
   // detection all happen asynchronously — show progress instead of jumping
   // straight to "not found".
+  const invalidVersion = Boolean(versionCommit && repositories && !version);
   const isSaved =
-    (Boolean(pin) || repositories !== null) &&
+    (!invalidVersion && (Boolean(pin) || repositories !== null)) &&
     (Boolean(pin) || repositories?.session?.pathOrUrl === decodedPath ||
       (repositories?.local.some((r) => r.pathOrUrl === decodedPath) ?? false) ||
       (repositories?.cloned.some((r) => r.pathOrUrl === decodedPath) ?? false));
@@ -139,7 +137,9 @@ export default function RepositoryPage() {
   // Repo list is loaded but this repo isn't saved, initialization failed, or
   // detection finished without finding frameworks
   if (!effectiveRepoData || effectiveRepoData.initialized === false) {
-    const message = !isSaved
+    const message = invalidVersion
+      ? 'This version is not installed for this repository.'
+      : !isSaved
       ? 'Repository not found.'
       : 'Repository failed to initialize.';
     return (
@@ -156,7 +156,7 @@ export default function RepositoryPage() {
             <Link to="/repositories">Repositories</Link>
             <ChevronRight size={13} className="breadcrumb-sep" />
             <span className="breadcrumb-current">
-              {isSaved ? getRepoName(decodedPath) : 'Repository Not Found'}
+              {isSaved ? getRepoName(decodedPath) : invalidVersion ? 'Version Not Installed' : 'Repository Not Found'}
             </span>
           </nav>
         </div>

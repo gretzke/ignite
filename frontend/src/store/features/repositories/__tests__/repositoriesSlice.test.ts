@@ -16,6 +16,7 @@ describe('repositoriesSlice', () => {
           initialized: true,
           versions: [
             {
+              url: 'https://example.test/contracts.git',
               commit: 'a'.repeat(40),
               refLabel: 'v1.0.0',
               refKind: 'tag',
@@ -30,6 +31,7 @@ describe('repositoriesSlice', () => {
           url: 'https://example.test/orphan.git',
           versions: [
             {
+              url: 'https://example.test/orphan.git',
               commit: 'b'.repeat(40),
               lastUsedAt: '2026-07-18T00:00:00.000Z',
             },

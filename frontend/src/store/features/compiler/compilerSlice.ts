@@ -166,14 +166,14 @@ export const installDependencies = ({
         jobStarted({
           jobId,
           type: 'compiler.install',
-          params: { pathOrUrl, pluginId },
+          params: { pathOrUrl, pluginId, ...(pin ? { pin } : {}) },
         }),
         wsSend({ type: 'subscribe', jobId }),
       ];
     },
     onError: (error: ApiError) => [
       setCompilationStatus({
-        repoPath: pathOrUrl,
+        repoPath: compilerScopeKey(pathOrUrl, pin),
         frameworkId: pluginId,
         status: 'error',
         error: formatApiError(error).description,
@@ -206,14 +206,14 @@ export const compileProject = ({
         jobStarted({
           jobId,
           type: 'compiler.compile',
-          params: { pathOrUrl, pluginId },
+          params: { pathOrUrl, pluginId, ...(pin ? { pin } : {}) },
         }),
         wsSend({ type: 'subscribe', jobId }),
       ];
     },
     onError: (error: ApiError) => [
       setCompilationStatus({
-        repoPath: pathOrUrl,
+        repoPath: compilerScopeKey(pathOrUrl, pin),
         frameworkId: pluginId,
         status: 'error',
         error: formatApiError(error).description,

@@ -136,22 +136,19 @@ export default function FilePage() {
   const version = useSelector((state: RootState) => {
     if (!versionCommit) return undefined;
     const repositories = state.repositories.repositories;
-    const entry = [
-      ...(repositories?.local ?? []),
-      ...(repositories?.cloned ?? []),
-      ...(repositories?.session ? [repositories.session] : []),
-    ].find((candidate) => candidate.pathOrUrl === decodedRepoPath);
-    return entry?.versions.find((candidate) => candidate.commit === versionCommit) ??
+    return [...(repositories?.local ?? []), ...(repositories?.cloned ?? []), ...(repositories?.session ? [repositories.session] : [])]
+      .flatMap((entry) => entry.versions)
+      .find((candidate) => candidate.url === decodedRepoPath && candidate.commit === versionCommit) ??
       repositories?.versionGroups.find((group) => group.url === decodedRepoPath)
         ?.versions.find((candidate) => candidate.commit === versionCommit);
   });
   const pin: ContractSourcePin | undefined = versionCommit && version
-    ? { url: decodedRepoPath, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
+    ? { url: version.url, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
     : undefined;
   const compilerKey = compilerScopeKey(decodedRepoPath, pin);
 
   // Get file data from store
-  const fileKey = `${decodedRepoPath}:${decodedFilePath}`;
+  const fileKey = `${decodedRepoPath}:${decodedFilePath}${pin ? `\u0000${pin.commit.slice(0, 12)}` : ''}`;
   const fileData = useSelector(
     (state: RootState) => state.files.files[fileKey]
   );
@@ -162,10 +159,7 @@ export default function FilePage() {
   );
   const frameworkData = frameworkId ? compilerData?.[frameworkId] : null;
   const selectedArtifact = frameworkData?.artifacts?.find((artifact) =>
-    artifactPath
-      ? artifact.artifactPath === artifactPath &&
-        artifact.contractName === contractName
-      : artifact.sourcePath === decodedFilePath
+    artifactPath && artifact.artifactPath === artifactPath && artifact.contractName === contractName
   );
   const selectedArtifactPath = selectedArtifact?.artifactPath;
 
@@ -236,7 +230,8 @@ export default function FilePage() {
     if (!fileData?.content && !fileData?.loading) {
       const actions = filesApi.fetchFileContent(
         decodedRepoPath,
-        decodedFilePath
+        decodedFilePath,
+        pin
       );
       actions.forEach((action) => dispatch(action));
     }
@@ -323,6 +318,7 @@ export default function FilePage() {
   );
   const deploy = () => {
     if (!frameworkId || !selectedArtifact || !selectedContractId) return;
+    if (versionVariants.length > 1 && !artifactPath) return;
     if (inDraft) {
       dispatch(removeContract(selectedContractId));
       return;
@@ -427,7 +423,7 @@ export default function FilePage() {
                 className={inDraft ? 'btn btn-secondary' : 'btn btn-primary'}
                 // Deployability gates adding; removal must stay possible even
                 // when the artifact no longer loads or needs linking.
-                disabled={!inDraft && !artifactData}
+                disabled={!inDraft && (!artifactData || (versionVariants.length > 1 && !artifactPath))}
                 title={inDraft ? 'Remove from deployment' : undefined}
                 onClick={deploy}
               >

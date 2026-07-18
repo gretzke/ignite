@@ -20,7 +20,7 @@ function VersionFrameworkStatus({ version }: { version: RepoVersionSummary }) {
 }
 
 export function VersionRows({
-  url,
+  url: _url,
   versions,
   activeJobId,
   onRemove,
@@ -38,7 +38,7 @@ export function VersionRows({
         <div
           key={version.commit}
           className={`list-row flex items-center gap-3 pl-10 ${onBrowse ? 'clickable cursor-pointer' : ''}`}
-          onClick={() => onBrowse?.(url, version)}
+          onClick={() => onBrowse?.(version.url, version)}
         >
           <Pin size={15} className="text-info shrink-0" />
           <div className="min-w-0 flex-1">
@@ -55,7 +55,7 @@ export function VersionRows({
           <button
             type="button"
             className="btn btn-sm btn-secondary"
-            onClick={(event) => { event.stopPropagation(); onRemove(url, version); }}
+            onClick={(event) => { event.stopPropagation(); onRemove(version.url, version); }}
           >
             <Trash2 size={14} /> Remove
           </button>

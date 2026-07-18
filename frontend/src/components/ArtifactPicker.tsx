@@ -8,6 +8,7 @@ import { contractSourceId } from '../utils/contractSourceId';
 import { artifactVariantLabel, groupArtifactVariants, requiresExplicitVariantPick } from '../utils/artifactVariants';
 import AddVersionModal from '../routes/repositories/components/AddVersionModal';
 import { repositoriesApi } from '../store/features/repositories/repositoriesApi';
+import OriginApprovalDialog from './OriginApprovalDialog';
 
 export interface PickedArtifact {
   contract: ContractSource;
@@ -43,6 +44,7 @@ export default function ArtifactPicker({
   const [contractTypeId, setContractTypeId] = useState(value?.origin === 'contract-type' ? value.pluginId : '');
   const [versionSource, setVersionSource] = useState<{ sourceKey: string; label: string; url?: string; repoPathOrUrl?: string; local: boolean } | null>(null);
   const [addVersionOpen, setAddVersionOpen] = useState(false);
+  const [originApproval, setOriginApproval] = useState<{ origins: string[]; request: AddRepoVersionRequest } | null>(null);
 
   const repoChoices = useMemo(
     () => {
@@ -52,8 +54,8 @@ export default function ArtifactPicker({
         ...repo.versions.map((version) => ({
           value: `version:${repo.pathOrUrl}\u0000${version.commit}`,
           label: `  ↳ ${version.refLabel ?? version.commit.slice(0, 12)} · ${version.commit.slice(0, 12)}`,
-          path: repo.pathOrUrl,
-          pin: { url: repo.pathOrUrl, commit: version.commit, ...(version.refLabel ? { ref: version.refLabel } : {}) },
+          path: version.url,
+          pin: { url: version.url, commit: version.commit, ...(version.refLabel ? { ref: version.refLabel } : {}) },
         })),
         { value: `new:${repo.pathOrUrl}`, label: `  + new version… (${repo.pathOrUrl})`, path: repo.pathOrUrl, newVersion: true, local: (repositories?.local ?? []).some((local) => local.pathOrUrl === repo.pathOrUrl) },
       ]);
@@ -74,7 +76,7 @@ export default function ArtifactPicker({
   const repoOptions = repoChoices.map(({ value, label }) => ({ value, label }));
   const frameworks = pin
     ? (repositories?.versionGroups.find((group) => group.url === pin.url)?.versions.find((version) => version.commit === pin.commit)?.frameworks ??
-      [...(repositories?.local ?? []), ...(repositories?.cloned ?? [])].find((repo) => repo.pathOrUrl === repoPath)?.versions.find((version) => version.commit === pin.commit)?.frameworks ?? [])
+      [...(repositories?.local ?? []), ...(repositories?.cloned ?? [])].flatMap((repo) => repo.versions).find((version) => version.url === pin.url && version.commit === pin.commit)?.frameworks ?? [])
         .map(({ id, name }) => ({ id, name }))
     : repositoryData[repoPath]?.frameworks ?? [];
   const effectiveFramework = frameworkId || frameworks[0]?.id || '';
@@ -155,7 +157,7 @@ export default function ArtifactPicker({
   };
   const addVersion = (request: AddRepoVersionRequest) => {
     if (currentId && versionSource)
-      dispatch(repositoriesApi.addRepoVersion(currentId, versionSource.sourceKey, request, () => undefined));
+      dispatch(repositoriesApi.addRepoVersion(currentId, versionSource.sourceKey, request, (origins) => setOriginApproval({ origins, request })));
     setAddVersionOpen(false);
   };
 
@@ -185,6 +187,20 @@ export default function ArtifactPicker({
         {requiresGrant.map((pluginId) => <button key={pluginId} type="button" disabled className="input-glass text-sm text-muted opacity-60 text-left">{pluginId} — grant contract bytecode access to select its artifacts.</button>)}
       </section>
       <AddVersionModal open={addVersionOpen} onOpenChange={setAddVersionOpen} source={versionSource} onSubmit={addVersion} onSwitchBranch={(path, branch) => { dispatch(repositoriesApi.checkoutBranch(path, branch)); setAddVersionOpen(false); }} />
+      <OriginApprovalDialog
+        origins={originApproval?.origins}
+        onOpenChange={(open) => { if (!open) setOriginApproval(null); }}
+        onApprove={() => {
+          if (!originApproval || !currentId || !versionSource) return;
+          dispatch(apiClient.dispatch.approveWorkflowOrigins({
+            body: { origins: originApproval.origins },
+            onSuccess: () => {
+              dispatch(repositoriesApi.addRepoVersion(currentId, versionSource.sourceKey, originApproval.request, (origins) => setOriginApproval({ origins, request: originApproval.request })));
+              setOriginApproval(null);
+            },
+          }));
+        }}
+      />
     </div>
   );
 }

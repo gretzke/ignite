@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { OrphanVersionGroupCard, VersionRows } from '../VersionGroupCard';
 
 const version = {
+  url: 'https://example.test/contracts.git',
   commit: 'abcdef0123456789abcdef0123456789abcdef01',
   refLabel: 'v1.2.3',
   refKind: 'tag' as const,

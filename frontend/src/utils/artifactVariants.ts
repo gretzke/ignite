@@ -46,9 +46,7 @@ export function artifactVariantFromPath(
   contractName: string
 ): string | undefined {
   const filename = artifactPath.split('/').pop() ?? '';
-  const match = filename.match(
-    new RegExp(`^${escapeRegExp(contractName)}\\.((?:\\d+\\.\\d+\\.\\d+)(?:\\.[^.]+)?)\\.json$`)
-  );
+  const match = filename.match(new RegExp(`^${escapeRegExp(contractName)}\\.((?:(?:\\d+\\.\\d+\\.\\d+)(?:\\.[^.]+)?|[^.]+))\\.json$`));
   return match?.[1];
 }
 

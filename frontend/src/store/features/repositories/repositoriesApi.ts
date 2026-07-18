@@ -20,6 +20,8 @@ import {
   startRepoVersionJob,
 } from './repositoriesSlice';
 
+let repositoriesRequestGeneration = 0;
+
 // Fetch live git state (branch/commit/dirty + branch list) for an
 // already-initialized repo. listRepos only carries persisted lifecycle
 // state, so every code path that renders a card from a fresh store must
@@ -50,6 +52,7 @@ export const hydrateRepoGitState = (pathOrUrl: string) =>
 export const repositoriesApi = {
   // Fetch repositories for a specific profile
   fetchRepositories: (profileId: string) => {
+    const generation = ++repositoriesRequestGeneration;
     // Clear repositories immediately (flash of empty content)
     const clearAction = clearRepositories();
 
@@ -57,6 +60,9 @@ export const repositoriesApi = {
     const apiAction = apiClient.dispatch.listRepos({
       params: { id: profileId },
       onSuccess: (data) => {
+        // A slower response for a previously selected profile must never
+        // overwrite the shared list for the current profile.
+        if (generation !== repositoriesRequestGeneration) return [];
         // Render persisted server state; for repos whose lifecycle job is
         // still in flight (startup sweep / add pipeline), attach to the job
         // stream so the terminal event routes into the card state.

@@ -109,8 +109,10 @@ export default function ArtifactBrowser({
     if (currentPath) {
       params.set('path', currentPath);
     }
-    params.set('artifact', file.artifact.artifactPath);
-    params.set('contract', file.artifact.contractName);
+    if (file.variantCount === 1) {
+      params.set('artifact', file.artifact.artifactPath);
+      params.set('contract', file.artifact.contractName);
+    }
     const version = searchParams.get('version');
     if (version) params.set('version', version);
     const queryString = params.toString();

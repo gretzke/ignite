@@ -34,6 +34,7 @@ export default function AddVersionModal({
   const [localBranches, setLocalBranches] = useState<string[]>([]);
   const [branch, setBranch] = useState('');
   const [release, setRelease] = useState('');
+  const [tag, setTag] = useState('');
   const [commit, setCommit] = useState('');
   const [mode, setMode] = useState<'copy' | 'switch'>('copy');
 
@@ -44,6 +45,7 @@ export default function AddVersionModal({
     setLocalBranches([]);
     setBranch('');
     setRelease('');
+    setTag('');
     setCommit('');
     setMode('copy');
 
@@ -81,7 +83,7 @@ export default function AddVersionModal({
   }, [dispatch, open, source]);
 
   const commitValid = !commit.trim() || /^[0-9a-f]{7,40}$/i.test(commit.trim());
-  const selectedRef = branch || release;
+  const selectedRef = branch || release || tag;
   const canSubmit = Boolean(
     source && commitValid && (commit.trim() || selectedRef)
   );
@@ -96,7 +98,7 @@ export default function AddVersionModal({
     }
     const target = commit.trim()
       ? { commit: commit.trim() }
-      : { ref: selectedRef };
+      : { ref: selectedRef, ...(release || tag ? { refKind: 'tag' as const } : { refKind: 'branch' as const }) };
     onSubmit(
       source.local
         ? { repoPathOrUrl: source.repoPathOrUrl!, ...target }
@@ -105,6 +107,7 @@ export default function AddVersionModal({
   };
 
   const releases = inspect?.releases ?? [];
+  const tags = (inspect ? Object.keys(inspect.tagHeads ?? {}).filter((name) => !releases.some((release) => release.tag === name)).sort() : []);
   const branches = source?.local ? localBranches : (inspect?.branches ?? []);
 
   return (
@@ -143,6 +146,7 @@ export default function AddVersionModal({
                 onValueChange={(value) => {
                   setRelease(value);
                   setBranch('');
+                  setTag('');
                 }}
                 anchor="left"
               />
@@ -164,6 +168,7 @@ export default function AddVersionModal({
               onValueChange={(value) => {
                 setBranch(value);
                 if (value) setRelease('');
+                if (value) setTag('');
               }}
               placeholder={source?.local ? 'Choose branch' : 'Choose branch'}
               anchor="left"
@@ -185,8 +190,15 @@ export default function AddVersionModal({
             {!commitValid && (
               <div className="text-xs text-err mt-1">
                 Enter 7–40 hexadecimal characters.
-              </div>
-            )}
+          </div>
+        )}
+
+          {!source?.local && tags.length > 0 && (
+            <div className="mb-3">
+              <label className="block text-sm font-medium mb-2">Tags</label>
+              <Select options={[{ value: '', label: '— none —' }, ...tags.map((name) => ({ value: name, label: name }))]} value={tag} onValueChange={(value) => { setTag(value); if (value) { setRelease(''); setBranch(''); } }} anchor="left" />
+            </div>
+          )}
           </div>
 
           {source?.local && (
