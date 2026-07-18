@@ -19,15 +19,25 @@ import type {
   ProfileConfig,
   ProfileParams,
   RepoList,
+  RepoVersionSummary,
+  AddRepoVersionRequest,
+  RemoveRepoVersionRequest,
+  InspectGitRemoteData,
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { RepoLifecycle } from '../repos/RepoLifecycle.js';
-import { RepoService } from '../repos/RepoService.js';
-import { VersionStore } from '../repos/VersionStore.js';
+import { RepoService, type VersionSource } from '../repos/RepoService.js';
+import {
+  VersionStore,
+  pinnedOrigin,
+  type VersionRecord,
+} from '../repos/VersionStore.js';
 import { ErrorCodes } from '../types/errors.js';
 import { sendCaughtError } from './utils/errors.js';
+import { JobManager, type JobContext } from '../jobs/JobManager.js';
+import { inspectGitRemote } from '../plugins/install/gitRemote.js';
 
 // The subset of ProfileManager the handlers use (tests pass fakes).
 export interface ProfileManagerLike {
@@ -55,12 +65,59 @@ export interface ProfileHandlerDeps {
   repoRegistry: Pick<ProfileRepoRegistry, 'list' | 'save' | 'remove'>;
   lifecycle: Pick<
     RepoLifecycle,
-    'startLifecycle' | 'activeJobFor' | 'ensureProfileSwept' | 'sessionState'
+    | 'startLifecycle'
+    | 'activeJobFor'
+    | 'ensureProfileSwept'
+    | 'sessionState'
+    | 'runPinnedLifecycle'
   >;
   // Cheap host check for the list endpoint's `initialized` field.
   hasWorkspace: (pathOrUrl: string, profileId: string) => Promise<boolean>;
-  versionStore: Pick<VersionStore, 'removeUserMembershipAndDeleteIfUnreferenced' | 'checkoutPath'>;
-  repos: Pick<RepoService, 'removeVersionCheckout'>;
+  versionStore: Pick<
+    VersionStore,
+    | 'removeUserMembershipAndDeleteIfUnreferenced'
+    | 'checkoutPath'
+    | 'list'
+    | 'listMemberships'
+    | 'isOriginApproved'
+    | 'addMembership'
+  >;
+  repos: Pick<
+    RepoService,
+    | 'removeVersionCheckout'
+    | 'getVersionSource'
+    | 'resolveLocalVersionCommit'
+    | 'ensureVersion'
+  >;
+  jobs: Pick<JobManager, 'start'>;
+  inspectGitRemote: (url: string) => Promise<InspectGitRemoteData>;
+}
+
+function versionSummary(record: VersionRecord): RepoVersionSummary {
+  return {
+    commit: record.commit,
+    ...(record.refLabel ? { refLabel: record.refLabel } : {}),
+    ...(record.refKind ? { refKind: record.refKind } : {}),
+    ...(record.frameworks ? { frameworks: record.frameworks } : {}),
+    lastUsedAt: record.lastUsedAt,
+    ...(record.localFallback ? { localFallback: true } : {}),
+  };
+}
+
+function remoteRef(
+  inspected: InspectGitRemoteData,
+  ref: string
+): { commit: string; refKind: 'branch' | 'tag'; refLabel: string } | undefined {
+  const branch = ref.replace(/^refs\/heads\//, '');
+  const branchCommit = inspected.branchHeads?.[branch];
+  if (branchCommit)
+    return { commit: branchCommit, refKind: 'branch', refLabel: branch };
+  const tag = ref.replace(/^refs\/tags\//, '');
+  const tagCommit =
+    inspected.tagHeads?.[tag] ??
+    inspected.releases.find((release) => release.tag === tag)?.sha;
+  if (tagCommit) return { commit: tagCommit, refKind: 'tag', refLabel: tag };
+  return undefined;
 }
 
 export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
@@ -75,16 +132,20 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         RepoService.getInstance().hasWorkspace(pathOrUrl, profileId)),
     versionStore: deps?.versionStore ?? new VersionStore(),
     repos: deps?.repos ?? RepoService.getInstance(),
+    jobs: deps?.jobs ?? JobManager.getInstance(),
+    inspectGitRemote: deps?.inspectGitRemote ?? inspectGitRemote,
   };
 
   // Enrich a persisted record with computed state for the list response.
   const enrich = async (
     record: RepoRecord,
-    profileId: string
+    profileId: string,
+    versions: RepoVersionSummary[] = []
   ): Promise<RepoListEntry> => ({
     ...record,
     initialized: await d.hasWorkspace(record.pathOrUrl, profileId),
     activeJobId: d.lifecycle.activeJobFor(record.pathOrUrl),
+    versions,
   });
 
   return {
@@ -297,12 +358,72 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         const { id } = request.params;
         const { local, cloned } = await d.repoRegistry.list(id);
         const sessionRecord = d.lifecycle.sessionState();
+        const records = [
+          ...(sessionRecord ? [sessionRecord] : []),
+          ...local,
+          ...cloned,
+        ];
+        const [memberships, versions] = await Promise.all([
+          d.versionStore.listMemberships(id),
+          d.versionStore.list(),
+        ]);
+        const recordsByKey = new Map(
+          versions.map((record) => [
+            `${record.url}\u0000${record.commit}`,
+            record,
+          ])
+        );
+        const versionsByUrl = new Map<string, RepoVersionSummary[]>();
+        for (const [url, entries] of Object.entries(memberships)) {
+          const summaries: RepoVersionSummary[] = [];
+          const seen = new Set<string>();
+          for (const entry of entries) {
+            if (seen.has(entry.commit)) continue;
+            const record = recordsByKey.get(`${url}\u0000${entry.commit}`);
+            if (!record) continue;
+            seen.add(entry.commit);
+            summaries.push(versionSummary(record));
+          }
+          if (summaries.length > 0) versionsByUrl.set(url, summaries);
+        }
+
+        // Cache one origin lookup per registered record for this response.
+        // Repositories whose origin cannot be read do not absorb a version
+        // group; retaining it as an orphan is safer than associating it with
+        // the wrong checkout.
+        const origins = new Map<string, string | undefined>();
+        await Promise.all(
+          records.map(async (record) => {
+            try {
+              origins.set(
+                record.pathOrUrl,
+                (await d.repos.getVersionSource(record.pathOrUrl, id)).url
+              );
+            } catch {
+              origins.set(record.pathOrUrl, undefined);
+            }
+          })
+        );
+        const matchedUrls = new Set(
+          [...origins.values()].filter((url): url is string => Boolean(url))
+        );
+        const withVersions = (record: RepoRecord) =>
+          enrich(
+            record,
+            id,
+            versionsByUrl.get(origins.get(record.pathOrUrl) ?? '') ?? []
+          );
         const data: RepoList = {
-          session: sessionRecord ? await enrich(sessionRecord, id) : null,
-          local: await Promise.all(local.map((r) => enrich(r, id))),
-          cloned: await Promise.all(cloned.map((r) => enrich(r, id))),
-          // Kept for one response-shape-compatible release. Version groups
-          // replace this legacy summary in Task 2.2.
+          session: sessionRecord ? await withVersions(sessionRecord) : null,
+          local: await Promise.all(local.map(withVersions)),
+          cloned: await Promise.all(cloned.map(withVersions)),
+          versionGroups: [...versionsByUrl.entries()]
+            .filter(([url]) => !matchedUrls.has(url))
+            .map(([url, groupedVersions]) => ({
+              url,
+              versions: groupedVersions,
+            })),
+          // Deprecated response-shape compatibility field.
           pinned: [],
         };
         return reply.status(200).send({ data });
@@ -407,6 +528,141 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           error,
           ErrorCodes.PROFILE_REPO_DELETE_ERROR,
           'Failed to delete pinned repository from profile'
+        ) as unknown as null;
+      }
+    },
+
+    addRepoVersion: async (
+      request: FastifyRequest<{
+        Params: ProfileParams;
+        Body: AddRepoVersionRequest;
+      }>,
+      reply: FastifyReply
+    ): Promise<IApiResponse<JobStartedData>> => {
+      try {
+        const { id } = request.params;
+        const body = request.body;
+        const source: VersionSource = body.repoPathOrUrl
+          ? await d.repos.getVersionSource(body.repoPathOrUrl, id)
+          : { url: body.url!, workspacePath: '' };
+        if (!(await d.versionStore.isOriginApproved(id, source.url))) {
+          return reply.status(409).send({
+            statusCode: 409,
+            error: 'Conflict',
+            code: ErrorCodes.VERSION_ORIGIN_UNAPPROVED,
+            message: 'Version origin approval required',
+            details: { origins: [pinnedOrigin(source.url)] },
+          }) as unknown as IApiResponse<JobStartedData>;
+        }
+        const resolved = body.ref
+          ? source.localFallbackPath
+            ? {
+                commit: await d.repos.resolveLocalVersionCommit(
+                  body.repoPathOrUrl!,
+                  body.ref,
+                  id
+                ),
+                refKind: 'branch' as const,
+                refLabel: body.ref,
+              }
+            : remoteRef(await d.inspectGitRemote(source.url), body.ref)
+          : {
+              commit: body.commit!,
+              refKind: 'commit' as const,
+              refLabel: body.commit!,
+            };
+        if (!resolved)
+          return reply.status(400).send({
+            statusCode: 400,
+            error: 'Bad Request',
+            code: 'VERSION_REF_NOT_FOUND',
+            message: `Remote ref '${body.ref}' was not found`,
+          }) as unknown as IApiResponse<JobStartedData>;
+        const { commit, refKind, refLabel } = resolved;
+        const job = d.jobs.start(
+          'repo.version.add',
+          { url: source.url, commit, ref: body.ref },
+          async (ctx: JobContext) => {
+            ctx.log(`phase: materialize ${commit}\n`);
+            await d.repos.ensureVersion(id, source.url, commit, {
+              ...(body.ref
+                ? { ref: body.ref, refLabel, refKind }
+                : { refLabel, refKind }),
+              ...(source.localFallbackPath
+                ? { localFallbackPath: source.localFallbackPath }
+                : {}),
+            });
+            ctx.log('phase: detect and compile\n');
+            const result = await d.lifecycle.runPinnedLifecycle(
+              source.url,
+              commit,
+              id,
+              ctx
+            );
+            ctx.log('phase: add user membership\n');
+            await d.versionStore.addMembership(id, source.url, commit, 'user');
+            return result;
+          }
+        );
+        return reply.status(200).send({ data: { jobId: job.id } });
+      } catch (error) {
+        return sendCaughtError(
+          reply,
+          error,
+          ErrorCodes.PROFILE_REPO_SAVE_ERROR,
+          'Failed to add repository version'
+        ) as unknown as IApiResponse<JobStartedData>;
+      }
+    },
+
+    removeRepoVersion: async (
+      request: FastifyRequest<{
+        Params: ProfileParams;
+        Body: RemoveRepoVersionRequest;
+      }>,
+      reply: FastifyReply
+    ): Promise<null> => {
+      const { id } = request.params;
+      const { url, commit } = request.body;
+      const checkout = d.versionStore.checkoutPath(url, commit);
+      if (d.lifecycle.activeJobFor(checkout)) {
+        return reply.status(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          code: ErrorCodes.REPO_BUSY,
+          message: 'Repository version is busy',
+          details: { url, commit },
+        }) as unknown as null;
+      }
+      try {
+        const deleted = await d.repos.removeVersionCheckout(
+          url,
+          commit,
+          (deleteLocked) =>
+            d.versionStore.removeUserMembershipAndDeleteIfUnreferenced(
+              id,
+              url,
+              commit,
+              deleteLocked
+            )
+        );
+        if (!deleted) {
+          return reply.status(409).send({
+            statusCode: 409,
+            error: 'Conflict',
+            code: ErrorCodes.VERSION_IN_USE,
+            message:
+              'Repository version is still referenced by a workflow or another profile',
+            details: { url, commit },
+          }) as unknown as null;
+        }
+        return reply.status(204).send(null);
+      } catch (error) {
+        return sendCaughtError(
+          reply,
+          error,
+          ErrorCodes.PROFILE_REPO_DELETE_ERROR,
+          'Failed to remove repository version'
         ) as unknown as null;
       }
     },

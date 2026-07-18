@@ -119,6 +119,7 @@ const repositoriesSlice = createSlice({
         pathOrUrl,
         initialized: false,
         activeJobId: jobId,
+        versions: [],
       };
 
       // Add to appropriate list if not already there

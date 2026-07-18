@@ -365,7 +365,7 @@ describe('getBranches', () => {
 });
 
 describe('checkoutBranch', () => {
-  it('LOCAL: rejects with DIRTY_REPO when there are uncommitted changes', async () => {
+  it('LOCAL: rejects with DIRTY_WORKTREE when there are uncommitted changes', async () => {
     const dir = await mkTmp('ignite-local-');
     await initRepo(dir);
     git(dir, ['checkout', '-q', '-b', 'feature']);
@@ -376,7 +376,7 @@ describe('checkoutBranch', () => {
     const result = await svc.checkoutBranch(dir, 'feature');
 
     expect(result.success).toBe(false);
-    if (!result.success) expect(result.error.code).toBe('DIRTY_REPO');
+    if (!result.success) expect(result.error.code).toBe('DIRTY_WORKTREE');
   });
 
   it('LOCAL: checks out an existing local branch by plain name', async () => {
@@ -458,7 +458,7 @@ describe('checkoutCommit', () => {
     if (info.success) expect(info.data.branch).toBeNull();
   });
 
-  it('LOCAL: rejects with DIRTY_REPO on uncommitted changes', async () => {
+  it('LOCAL: rejects with DIRTY_WORKTREE on uncommitted changes', async () => {
     const dir = await mkTmp('ignite-local-');
     await initRepo(dir);
     const first = git(dir, ['rev-parse', 'HEAD']).trim();
@@ -468,7 +468,7 @@ describe('checkoutCommit', () => {
     const result = await svc.checkoutCommit(dir, first);
 
     expect(result.success).toBe(false);
-    if (!result.success) expect(result.error.code).toBe('DIRTY_REPO');
+    if (!result.success) expect(result.error.code).toBe('DIRTY_WORKTREE');
   });
 
   it('CLONED: force-resets before detaching', async () => {
@@ -504,7 +504,7 @@ describe('pullChanges', () => {
     const result = await svc.pullChanges(localDir);
 
     expect(result.success).toBe(false);
-    if (!result.success) expect(result.error.code).toBe('DIRTY_REPO');
+    if (!result.success) expect(result.error.code).toBe('DIRTY_WORKTREE');
   });
 
   it('LOCAL: fast-forwards to the upstream commit', async () => {

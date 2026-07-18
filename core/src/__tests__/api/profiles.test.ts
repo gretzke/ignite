@@ -66,12 +66,24 @@ function makeDeps() {
       ),
       ensureProfileSwept: vi.fn(),
       sessionState: vi.fn((): RepoRecord | null => null),
+      runPinnedLifecycle: vi.fn(async () => ({ pathOrUrl: '/versions/version', frameworks: [] })),
     },
     versionStore: {
       removeUserMembershipAndDeleteIfUnreferenced: vi.fn(async (_profileId: string, _url: string, _commit: string, remove: () => Promise<void>) => { await remove(); return true; }),
       checkoutPath: vi.fn((url: string, commit: string) => `/versions/${encodeURIComponent(url)}/${commit}`),
+      list: vi.fn(async () => []),
+      listMemberships: vi.fn(async () => ({})),
+      isOriginApproved: vi.fn(async () => true),
+      addMembership: vi.fn(async () => {}),
     },
-    repos: { removeVersionCheckout: vi.fn(async (_url: string, _commit: string, beforeDelete: (remove: () => Promise<void>) => Promise<boolean>) => beforeDelete(async () => {})) },
+    repos: {
+      removeVersionCheckout: vi.fn(async (_url: string, _commit: string, beforeDelete: (remove: () => Promise<void>) => Promise<boolean>) => beforeDelete(async () => {})),
+      getVersionSource: vi.fn(async (pathOrUrl: string) => ({ url: `file://${pathOrUrl}`, workspacePath: pathOrUrl, localFallbackPath: pathOrUrl })),
+      resolveLocalVersionCommit: vi.fn(async () => 'a'.repeat(40)),
+      ensureVersion: vi.fn(async () => ({ checkout: '/versions/version' })),
+    },
+    jobs: { start: vi.fn((type: string, params: Record<string, unknown>) => ({ id: 'job-version-0', type, params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] })) },
+    inspectGitRemote: vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: 'a'.repeat(40) }, tagHeads: {}, releases: [] })),
     hasWorkspace: vi.fn(async () => true),
   };
 }
@@ -168,14 +180,17 @@ describe('profile handlers', () => {
             detectedAt: '2026-07-06T00:00:00.000Z',
             initialized: true,
             activeJobId: undefined,
+            versions: [],
           },
           {
             pathOrUrl: '/repo-b',
             initialized: false,
             activeJobId: 'job-9',
+            versions: [],
           },
         ],
         cloned: [],
+        versionGroups: [],
         pinned: [],
       },
     });
@@ -205,6 +220,70 @@ describe('profile handlers', () => {
     const reply = makeReply();
     await handlers.listRepos({ params: { id: 'p1' } } as never, reply as never);
     expect((reply.body as { data: { pinned: unknown[] } }).data.pinned).toEqual([]);
+  });
+
+  it('adds a remote ref version through a job, then lists it under its matching repository', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git'; const commit = 'a'.repeat(40);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => { runner = value; return { id: 'job-version-1', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] }; }) };
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: commit }, tagHeads: {}, releases: [] }));
+    deps.repoRegistry.list = async () => ({ session: null, local: [{ pathOrUrl: '/repo-a' }], cloned: [] });
+    deps.repos.getVersionSource = vi.fn(async () => ({ url, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
+    const memberships: Record<string, Array<{ commit: string; addedAt: string; source: 'user' | 'workflow' }>> = {};
+    deps.versionStore.addMembership = vi.fn(async (_profileId: string, membershipUrl: string, membershipCommit: string) => { memberships[membershipUrl] = [{ commit: membershipCommit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' }]; });
+    deps.versionStore.listMemberships = vi.fn(async () => memberships);
+    deps.versionStore.list = vi.fn(async () => [{ url, commit, refLabel: 'main', refKind: 'branch' as const, frameworks: [{ id: 'foundry', name: 'Foundry' }], createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
+    const handlers = createProfileHandlers(deps); const addReply = makeReply();
+    await handlers.addRepoVersion({ params: { id: 'p1' }, body: { url, ref: 'main' } } as never, addReply as never);
+    expect(addReply.body).toEqual({ data: { jobId: 'job-version-1' } });
+    await runner({ log: () => {}, signal: new AbortController().signal });
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.objectContaining({ ref: 'main', refKind: 'branch' }));
+    expect(deps.lifecycle.runPinnedLifecycle).toHaveBeenCalledWith(url, commit, 'p1', expect.any(Object));
+    const listReply = makeReply(); await handlers.listRepos({ params: { id: 'p1' } } as never, listReply as never);
+    expect((listReply.body as { data: { local: Array<{ versions: Array<{ commit: string }> }> } }).data.local[0].versions).toEqual([expect.objectContaining({ commit })]);
+  });
+
+  it('resolves a local ref through RepoService and keeps the local fallback path', async () => {
+    const deps = makeDeps(); const url = 'https://example.com/contracts.git'; const commit = 'b'.repeat(40);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.repos.getVersionSource = vi.fn(async () => ({ url, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
+    deps.repos.resolveLocalVersionCommit = vi.fn(async () => commit);
+    deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => { runner = value; return { id: 'job-local', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] }; }) };
+    const handlers = createProfileHandlers(deps);
+    await handlers.addRepoVersion({ params: { id: 'p1' }, body: { repoPathOrUrl: '/repo-a', ref: 'feature' } } as never, makeReply() as never);
+    await runner({ log: () => {}, signal: new AbortController().signal });
+    expect(deps.repos.resolveLocalVersionCommit).toHaveBeenCalledWith('/repo-a', 'feature', 'p1');
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.objectContaining({ localFallbackPath: '/repo-a' }));
+  });
+
+  it('returns the reusable origin-approval error shape before starting a version job', async () => {
+    const deps = makeDeps(); deps.versionStore.isOriginApproved = vi.fn(async () => false);
+    const reply = makeReply(); await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'c'.repeat(40) } } as never, reply as never);
+    expect(reply.statusCode).toBe(409);
+    expect(reply.body).toMatchObject({ code: 'VERSION_ORIGIN_UNAPPROVED', details: { origins: ['https://example.com'] } });
+    expect(deps.jobs.start).not.toHaveBeenCalled();
+  });
+
+  it('removes the last user reference and its checkout through the atomic version path', async () => {
+    const deps = makeDeps(); const reply = makeReply();
+    await createProfileHandlers(deps).removeRepoVersion({ params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'd'.repeat(40) } } as never, reply as never);
+    expect(reply.statusCode).toBe(204);
+    expect(deps.repos.removeVersionCheckout).toHaveBeenCalledWith('https://example.com/contracts.git', 'd'.repeat(40), expect.any(Function));
+  });
+
+  it('returns VERSION_IN_USE after removing the user membership when a workflow still references it', async () => {
+    const deps = makeDeps(); deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced = vi.fn(async () => false);
+    const reply = makeReply(); await createProfileHandlers(deps).removeRepoVersion({ params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'e'.repeat(40) } } as never, reply as never);
+    expect(reply.statusCode).toBe(409); expect(reply.body).toMatchObject({ code: 'VERSION_IN_USE' });
+  });
+
+  it('returns memberships without a registered-origin match as orphan version groups', async () => {
+    const deps = makeDeps(); const url = 'https://orphan.example/contracts.git'; const commit = 'f'.repeat(40);
+    deps.versionStore.listMemberships = vi.fn(async () => ({ [url]: [{ commit, addedAt: '2026-07-18T00:00:00.000Z', source: 'workflow' as const }] }));
+    deps.versionStore.list = vi.fn(async () => [{ url, commit, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
+    const reply = makeReply(); await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
+    expect((reply.body as { data: { versionGroups: unknown[] } }).data.versionGroups).toEqual([{ url, versions: [expect.objectContaining({ commit })] }]);
   });
 
   it('deletePinnedRepo removes the checkout and registry entry under the version lock', async () => {

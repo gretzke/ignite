@@ -7,7 +7,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
-import { URL } from 'node:url';
+import { URL, pathToFileURL } from 'node:url';
 import {
   parseGitHubUrl,
   normalizeRepoUrl,
@@ -71,6 +71,12 @@ export interface PromotionSourceInspection {
   tags: string[];
   branch: string | null;
   dirty: boolean;
+}
+
+export interface VersionSource {
+  url: string;
+  workspacePath: string;
+  localFallbackPath?: string;
 }
 
 // Mirrors the old PluginResponse contract so handlers built on top of this
@@ -540,6 +546,69 @@ export class RepoService {
     } catch {
       return false;
     }
+  }
+
+  // Resolve a registered repository to the URL key used by VersionStore. A
+  // local repo without an origin is deliberately keyed by its absolute file
+  // URL; a local repo with an origin may still supply itself as a fallback for
+  // commits that have not been pushed to that origin yet.
+  async getVersionSource(
+    pathOrUrl: string,
+    profileId?: string
+  ): Promise<VersionSource> {
+    const workspacePath = await this.resolveExistingWorkspacePath(
+      pathOrUrl,
+      profileId
+    );
+    const origin = await this.runGit(
+      workspacePath,
+      ['remote', 'get-url', 'origin'],
+      TIMEOUT_LOCAL_MS
+    );
+    const local = deriveRepoKind(pathOrUrl) === RepoKind.LOCAL;
+    const url = origin.success && origin.data.stdout.trim()
+      ? origin.data.stdout.trim()
+      : local
+        ? pathToFileURL(path.resolve(workspacePath)).href
+        : undefined;
+    if (!url)
+      throw Object.assign(new Error('Repository origin remote is required'), {
+        code: 'VERSION_ORIGIN_REQUIRED',
+      });
+    return {
+      url,
+      workspacePath,
+      ...(local ? { localFallbackPath: path.resolve(workspacePath) } : {}),
+    };
+  }
+
+  // Resolve a local ref using the same constrained host-git boundary as the
+  // rest of RepoService. `--end-of-options` makes a ref beginning with '-'
+  // data rather than an option.
+  async resolveLocalVersionCommit(
+    pathOrUrl: string,
+    revision: string,
+    profileId?: string
+  ): Promise<string> {
+    const workspacePath = await this.resolveExistingWorkspacePath(
+      pathOrUrl,
+      profileId
+    );
+    const resolved = await this.runGit(
+      workspacePath,
+      ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`],
+      TIMEOUT_LOCAL_MS
+    );
+    if (!resolved.success)
+      throw Object.assign(new Error(`Unable to resolve local ref '${revision}'`), {
+        code: 'VERSION_REF_NOT_FOUND',
+      });
+    const commit = resolved.data.stdout.trim();
+    if (!/^[0-9a-f]{40}$/i.test(commit))
+      throw Object.assign(new Error(`Local ref '${revision}' did not resolve to a commit`), {
+        code: 'VERSION_REF_NOT_FOUND',
+      });
+    return commit;
   }
 
   // Like resolveWorkspacePath, but throws when the directory doesn't exist.
@@ -1469,7 +1538,7 @@ export class RepoService {
       return {
         success: false,
         error: {
-          code: 'DIRTY_REPO',
+          code: 'DIRTY_WORKTREE',
           message: 'Repository has uncommitted changes',
         },
       };
