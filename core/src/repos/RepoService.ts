@@ -244,7 +244,7 @@ export class RepoService {
   async assertPinnedIntegrity(worktree: string, commit: string, budget?: { signal: AbortSignal; remaining: () => number }): Promise<void> {
     const head = await this.runPinnedGit(worktree, ['rev-parse', 'HEAD'], TIMEOUT_LOCAL_MS, budget);
     const status = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS, budget);
-    const submoduleStatus = await this.runPinnedGit(worktree, ['submodule', 'foreach', '--recursive', 'git status --porcelain'], TIMEOUT_LOCAL_MS, budget);
+    const submoduleStatus = await this.runPinnedGit(worktree, ['submodule', 'foreach', '--quiet', '--recursive', 'git status --porcelain'], TIMEOUT_LOCAL_MS, budget);
     if (!head.success)
       throw Object.assign(new Error(head.error.message), { code: head.error.code });
     if (!status.success)

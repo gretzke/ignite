@@ -97,6 +97,26 @@ describe('PinnedStore', () => {
     expect(await store.list(profileId)).toHaveLength(1);
   });
 
+  it('accepts a clean pinned checkout containing submodules', async () => {
+    const submodule = await temp('ignite-pinned-submodule-source-');
+    git(submodule, ['init', '-q', '-b', 'main']); git(submodule, ['config', 'user.email', 'test@example.com']); git(submodule, ['config', 'user.name', 'Test']);
+    await fs.writeFile(path.join(submodule, 'submodule.txt'), 'clean\n'); git(submodule, ['add', '.']); git(submodule, ['commit', '-q', '-m', 'initial submodule']);
+    const parent = await temp('ignite-pinned-parent-source-');
+    git(parent, ['init', '-q', '-b', 'main']); git(parent, ['config', 'user.email', 'test@example.com']); git(parent, ['config', 'user.name', 'Test']);
+    git(parent, ['-c', 'protocol.file.allow=always', 'submodule', 'add', `file://${submodule}`, 'deps/submodule']);
+    git(parent, ['commit', '-q', '-am', 'add submodule']);
+    const commit = git(parent, ['rev-parse', 'HEAD']);
+    const remote = await temp('ignite-pinned-parent-remote-');
+    git(remote, ['init', '-q', '--bare']); git(parent, ['remote', 'add', 'origin', `file://${remote}`]); git(parent, ['push', '-q', 'origin', 'main']);
+    const checkout = await temp('ignite-pinned-submodule-checkout-');
+    await fs.rm(checkout, { recursive: true, force: true });
+    git(parent, ['clone', '-q', '--branch', 'main', `file://${remote}`, checkout]);
+    git(checkout, ['-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--recursive']);
+
+    const home = await temp('ignite-pinned-home-'); const { repos } = await service(home);
+    await expect(repos.assertPinnedIntegrity(checkout, commit)).resolves.toBeUndefined();
+  });
+
   it('falls back to full fetch when the shallow sha fetch fails', async () => {
     const home = await temp('ignite-pinned-home-'); FileSystem.resetInstance(); const fileSystem = FileSystem.getInstance(home); const store = new PinnedStore(fileSystem); const remote = await fixture(); await store.approveOrigins(profileId, [remote.remote]);
     let rejected = false;
