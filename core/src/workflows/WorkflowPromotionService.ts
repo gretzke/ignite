@@ -13,6 +13,7 @@ import type {
 import { makeWorkflowDocumentSchema, WorkflowNamePattern } from '@ignite/api';
 import { normalizeRepoUrl } from '@ignite/plugin-types';
 import { RepoService, type PromotionSourceInspection } from '../repos/RepoService.js';
+import { VersionStore, type VersionRecord } from '../repos/VersionStore.js';
 import { RunStore } from '../deployments/RunStore.js';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { PluginManager } from '../filesystem/PluginManager.js';
@@ -45,6 +46,7 @@ export interface WorkflowPromotionServiceDeps {
   renderRunArtifact: (profileId: string, runId: string) => Promise<unknown>;
   freezeInputs: (profileId: string, plan: DeploymentPlan) => Promise<FrozenInputs>;
   validateTargetRepo: (repo: string) => Promise<boolean>;
+  getVersionRecord: (url: string, commit: string) => Promise<VersionRecord | undefined>;
 }
 
 export class WorkflowPromotionError extends Error {
@@ -76,6 +78,7 @@ export class WorkflowPromotionService {
       }),
       freezeInputs: deps?.freezeInputs ?? ((profileId, plan) => new ArtifactFreezeService().freezeInputs(profileId, plan.contracts)),
       validateTargetRepo: deps?.validateTargetRepo ?? ((repo) => repos.isExistingGitRepository(repo)),
+      getVersionRecord: deps?.getVersionRecord ?? ((url, commit) => new VersionStore().get(url, commit)),
     };
   }
 
@@ -156,6 +159,7 @@ export class WorkflowPromotionService {
       if (error instanceof WorkflowPromotionError) throw error;
       throw new WorkflowPromotionError(422, 'PROMOTION_DOCUMENT_INVALID', error instanceof Error ? error.message : String(error));
     }
+    const warnings = await this.localFallbackWarnings(plan, pins);
     const raw = `${JSON.stringify(document, null, 2)}\n`;
     const docHash = crypto.createHash('sha256').update(raw).digest('hex');
     const uniqueAdoptions = [...new Set(request.adoptRunIds ?? [])];
@@ -179,19 +183,23 @@ export class WorkflowPromotionService {
       }
     });
     this.previews.delete(request.previewId);
-    return { mode: 'apply', workflow: summary(request.target.name, document), docHash };
+    return { mode: 'apply', workflow: summary(request.target.name, document), docHash, ...(warnings.length ? { warnings } : {}) };
   }
 
   private async buildDocument(plan: DeploymentPlan, run: RunRecord | undefined, pins: Map<string, RepoWorkflowSource['repo']>, hooks: string[], profileId: string): Promise<WorkflowDocument> {
     const frozen = run?.inputs ?? await this.deps.freezeInputs(profileId, plan).catch(() => undefined);
+    const sourceIdMap = new Map<string, string>();
+    const sourceIds = new Set<string>();
     const sources: WorkflowSource[] = plan.contracts.map((source) => {
+      const id = mintWorkflowSourceId(source.contractName, sourceIds);
+      sourceIdMap.set(source.id, id);
       if (source.origin === 'contract-type') return {
-        id: source.id, origin: 'contract-type', contractName: source.contractName,
+        id, origin: 'contract-type', contractName: source.contractName,
         pluginId: source.pluginId, artifactKey: source.artifactKey,
         versionLabel: source.versionLabel, contentHash: source.contentHash,
       };
       return {
-        id: source.id, repo: pins.get(source.id)!, frameworkId: source.frameworkId, sourcePath: source.sourcePath,
+        id, repo: pins.get(source.id)!, frameworkId: source.frameworkId, sourcePath: source.sourcePath,
         contractName: source.contractName, artifactPath: source.artifactPath,
         ...(frozen?.[source.id]?.artifactHash ? { artifactHash: frozen[source.id].artifactHash } : {}),
       };
@@ -203,10 +211,22 @@ export class WorkflowPromotionService {
     const steps = plan.steps.map((step) => {
       const copy = globalThis.structuredClone(step) as typeof step & { signerOverride?: unknown };
       delete copy.signerOverride;
+      remapStepContractIds(copy, sourceIdMap);
       return copy;
     });
     const candidate = { schemaVersion: 1 as const, sources, steps, requiredPlugins, outputs: { hooks: [...hooks] } };
     return makeWorkflowDocumentSchema({ allowFileUrls: process.env.NODE_ENV === 'development' }).parse(candidate);
+  }
+
+  private async localFallbackWarnings(plan: DeploymentPlan, pins: Map<string, RepoWorkflowSource['repo']>): Promise<string[]> {
+    const warnings: string[] = [];
+    for (const source of plan.contracts) {
+      if (source.origin === 'contract-type') continue;
+      const pin = pins.get(source.id);
+      if (!pin || !(await this.deps.getVersionRecord(pin.url, pin.commit))?.localFallback) continue;
+      warnings.push(`The commit for ${source.contractName} is not on the remote and teammates cannot install it.`);
+    }
+    return warnings;
   }
 
   private async resolveInput(request: Pick<WorkflowPromoteRequest, 'plan' | 'runId'>, profileId: string): Promise<{ plan: DeploymentPlan; run?: RunRecord }> {
@@ -249,4 +269,40 @@ function promotionOrigin(origin: string): string {
     if (error instanceof WorkflowPromotionError) throw error;
   }
   throw new WorkflowPromotionError(422, 'PROMOTION_ORIGIN_UNSUPPORTED', 'origin must be a credential-free HTTPS URL (or file:// in development)');
+}
+
+function mintWorkflowSourceId(contractName: string, used: Set<string>): string {
+  const name = contractName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'contract';
+  let counter = 1;
+  while (used.has(`${name}-${counter}`)) counter += 1;
+  const id = `${name}-${counter}`;
+  used.add(id);
+  return id;
+}
+
+function remapStepContractIds(step: unknown, sourceIds: Map<string, string>): void {
+  if (!step || typeof step !== 'object') return;
+  const record = step as Record<string, unknown>;
+  if (record.kind === 'deploy' && typeof record.contractId === 'string')
+    record.contractId = sourceIds.get(record.contractId) ?? record.contractId;
+  remapEncodeContractIds(record, sourceIds);
+}
+
+function remapEncodeContractIds(value: unknown, sourceIds: Map<string, string>): void {
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    value.forEach((entry) => remapEncodeContractIds(entry, sourceIds));
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  const encoded = record.$encode;
+  if (encoded && typeof encoded === 'object' && !Array.isArray(encoded)) {
+    const encode = encoded as Record<string, unknown>;
+    if (typeof encode.contractId === 'string')
+      encode.contractId = sourceIds.get(encode.contractId) ?? encode.contractId;
+  }
+  Object.values(record).forEach((entry) => remapEncodeContractIds(entry, sourceIds));
 }

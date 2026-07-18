@@ -126,9 +126,9 @@ describe.skipIf(!ready)('workflow promotion integration (offline)', () => {
 
     const document = JSON.parse(await fs.readFile(path.join(target, 'ignite', 'workflows', `${WORKFLOW}.json`), 'utf8')) as WorkflowDocument;
     expect(document).not.toHaveProperty('signers');
-    expect(document.steps).toEqual([{ id: 'deploy', kind: 'deploy', contractId: 'box', args: { owner_: SIGNER } }]);
+    expect(document.steps).toEqual([{ id: 'deploy', kind: 'deploy', contractId: 'versionedbox-1', args: { owner_: SIGNER } }]);
     expect(document.sources).toEqual([{
-      id: 'box', repo: { url: origin, commit, ref: 'v2.0.0', refKind: 'tag' }, frameworkId: 'foundry',
+      id: 'versionedbox-1', repo: { url: origin, commit, ref: 'v2.0.0', refKind: 'tag' }, frameworkId: 'foundry',
       sourcePath: 'src/VersionedBox.sol', contractName: 'VersionedBox', artifactPath: 'out/VersionedBox.sol/VersionedBox.json',
       artifactHash: completed.inputs.box.artifactHash,
     }]);

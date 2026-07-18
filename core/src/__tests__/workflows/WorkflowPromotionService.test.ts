@@ -64,11 +64,11 @@ describe('WorkflowPromotionService', () => {
     expect(applied).toMatchObject({ mode: 'apply', workflow: { name: 'release', valid: true } });
     expect(lockCalls).toBe(1);
     const document = JSON.parse(files.get('ignite/workflows/release.json')!) as WorkflowDocument;
-    const pinnedSource = document.sources.find((source) => source.id === 'pinned')!;
+    const pinnedSource = document.sources[0];
     const pinnedContract = run.plan.contracts[0];
     if (pinnedSource.origin === 'contract-type' || pinnedContract.origin === 'contract-type') throw new Error('test fixture must use repo sources');
     expect(pinnedSource.repo).toEqual(pinnedContract.pin);
-    expect(document.sources.find((source) => source.id === 'unpinned')).toMatchObject({ repo: { url: 'https://example.test/unpinned', commit: SHA, ref: 'v2.0.0', refKind: 'tag' }, artifactHash: HASH });
+    expect(document.sources[1]).toMatchObject({ repo: { url: 'https://example.test/unpinned', commit: SHA, ref: 'v2.0.0', refKind: 'tag' }, artifactHash: HASH });
     expect(document.steps.every((step) => !('signerOverride' in step))).toBe(true);
     expect(document).not.toHaveProperty('signers');
     expect(document).not.toHaveProperty('defaultChains');
@@ -117,6 +117,43 @@ describe('WorkflowPromotionService', () => {
     expect(inspectSource).not.toHaveBeenCalled();
     expect(document.sources[0]).toMatchObject({ origin: 'contract-type', pluginId: 'proxy-plugin', contentHash: 'a'.repeat(64) });
     expect(document.requiredPlugins).toContainEqual({ id: 'proxy-plugin', version: '1.2.3' });
+  });
+
+  it('mints opaque source ids, remaps every contract reference, skips pinned inspection, and warns for local-only commits', async () => {
+    const inspectSource = vi.fn();
+    const source = { repoPathOrUrl: 'https://example.test/repo.git', frameworkId: 'foundry', sourcePath: 'src/C.sol', contractName: 'C', artifactPath: 'out/C.json' };
+    const promoted: DeploymentPlan = {
+      schemaVersion: 1,
+      chains: [1],
+      signers: {},
+      contracts: [
+        { id: 'legacy-first', ...source, pin: { url: source.repoPathOrUrl, commit: SHA, ref: 'v1', refKind: 'tag' as const } },
+        { id: 'legacy-second', ...source, pin: { url: source.repoPathOrUrl, commit: SHA2, ref: 'v2', refKind: 'tag' as const } },
+      ],
+      steps: [
+        { id: 'first', kind: 'deploy', contractId: 'legacy-first', args: { initializer: { $encode: { contractId: 'legacy-first', fn: 'initialize()' } } } },
+        { id: 'second', kind: 'deploy', contractId: 'legacy-second', args: { nested: [{ $encode: { contractId: 'legacy-second', fn: 'initialize()' } }] } },
+      ],
+    };
+    const service = makeService({
+      inspectSource,
+      getVersionRecord: async (_url, commit) => commit === SHA2 ? { url: source.repoPathOrUrl, commit, localFallback: true, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' } : undefined,
+    });
+    const target = { repoPathOrUrl: '/target', name: 'opaque-ids' };
+    const preview = await service.promote({ mode: 'preview', target, plan: promoted }, 'p1');
+    const applied = await service.promote({ mode: 'apply', previewId: preview.previewId, target, plan: promoted, hooks: [] }, 'p1');
+    const raw = files.get('ignite/workflows/opaque-ids.json')!;
+    const document = JSON.parse(raw) as WorkflowDocument;
+
+    expect(document.sources.map((entry) => entry.id)).toEqual(['c-1', 'c-2']);
+    expect(document.steps).toMatchObject([
+      { contractId: 'c-1', args: { initializer: { $encode: { contractId: 'c-1' } } } },
+      { contractId: 'c-2', args: { nested: [{ $encode: { contractId: 'c-2' } }] } },
+    ]);
+    expect(raw).not.toContain('legacy-first');
+    expect(raw).not.toContain('legacy-second');
+    expect(inspectSource).not.toHaveBeenCalled();
+    expect(applied).toMatchObject({ mode: 'apply', warnings: ['The commit for C is not on the remote and teammates cannot install it.'] });
   });
 
   function makeService(overrides: Partial<WorkflowPromotionServiceDeps> = {}) {

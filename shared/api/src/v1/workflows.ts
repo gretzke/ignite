@@ -108,7 +108,7 @@ export type WorkflowPromoteRequest =
   | { mode: 'apply'; previewId: string; target: { repoPathOrUrl: string; name: string }; plan?: DeploymentPlan; runId?: string; tagChoiceBySourceId?: Record<string, string>; overwrite?: boolean; hooks: string[]; adoptRunIds?: string[] };
 export type WorkflowPromoteData =
   | { mode: 'preview'; previewId: string; sources: WorkflowPromotionSourcePreview[]; nameCollision: boolean }
-  | { mode: 'apply'; workflow: WorkflowSummary; docHash: string };
+  | { mode: 'apply'; workflow: WorkflowSummary; docHash: string; warnings?: string[] };
 export interface WorkflowCheckUpdatesRequest { repoPathOrUrl: string; name: string }
 export type WorkflowSourceUpdate = {
   sourceId: string;
@@ -271,7 +271,7 @@ const PromotionSourcePreviewSchema = z.object({ sourceId: z.string().min(1), ori
 export const WorkflowPromoteResponseSchema = createApiResponseSchema<WorkflowPromoteData>('WorkflowPromoteResponseSchema')(
   z.discriminatedUnion('mode', [
     z.object({ mode: z.literal('preview'), previewId: z.string().min(1), sources: z.array(PromotionSourcePreviewSchema), nameCollision: z.boolean() }).strict(),
-    z.object({ mode: z.literal('apply'), workflow: WorkflowSummarySchema, docHash: z.string().regex(SHA256_HEX) }).strict(),
+    z.object({ mode: z.literal('apply'), workflow: WorkflowSummarySchema, docHash: z.string().regex(SHA256_HEX), warnings: z.array(z.string().min(1)).max(64).optional() }).strict(),
   ]),
 );
 export const WorkflowCheckUpdatesRequestSchema = z.object({ repoPathOrUrl: z.string().min(1), name: z.string().regex(WorkflowNamePattern) }).strict();
