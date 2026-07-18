@@ -22,6 +22,7 @@ import { KeyedMutex } from '../utils/KeyedMutex.js';
 import { redactUrlCredentials } from '../utils/redact.js';
 import { getLogger } from '../utils/logger.js';
 import { PinnedStore, pinnedOrigin } from './PinnedStore.js';
+import { VersionStore, type VersionRecord } from './VersionStore.js';
 
 export enum RepoKind {
   LOCAL = 'local',
@@ -57,6 +58,13 @@ export interface RepoServiceDeps {
   profiles?: ProfileManager;
   run?: typeof runCommand;
   materializationTimeoutMs?: number;
+}
+export type RefKind = NonNullable<VersionRecord['refKind']>;
+export interface EnsureVersionOptions {
+  ref?: string;
+  localFallbackPath?: string;
+  refLabel?: string;
+  refKind?: RefKind;
 }
 export interface PromotionSourceInspection {
   origin: string;
@@ -135,6 +143,17 @@ function errMsg(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// Approval is origin-scoped, but a local fallback may replenish only its
+// exact URL group. All file:// repositories share an approval origin, so an
+// origin-only comparison would let one file repository poison another cache.
+function normalizeVersionRemote(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'file:') return `file://${path.resolve(decodeURIComponent(parsed.pathname))}`.replace(/\.git$/i, '');
+  } catch { /* preserve non-URL remotes below */ }
+  return normalizeRepoUrl(url).replace(/\/$/, '');
+}
+
 // Host-side replacement for the containerized repo-manager plugins. Every op
 // mirrors the exact behavioral contract of plugins/src/repo-manager/{local,
 // cloned}-repo (dirty guards, force-reset, origin/-prefix checkout, shallow
@@ -154,6 +173,7 @@ export class RepoService {
   // race; this is its host-side equivalent).
   private readonly locks = new KeyedMutex();
   private readonly pinnedStore: PinnedStore;
+  private readonly versionStore: VersionStore;
   private readonly materializationTimeoutMs: number;
 
   constructor(deps?: RepoServiceDeps) {
@@ -161,6 +181,7 @@ export class RepoService {
     this.injectedProfiles = deps?.profiles;
     this.run = deps?.run ?? runCommand;
     this.pinnedStore = new PinnedStore(this.fileSystem);
+    this.versionStore = new VersionStore(this.fileSystem);
     this.materializationTimeoutMs = deps?.materializationTimeoutMs ?? PINNED_MATERIALIZATION_TIMEOUT_MS;
   }
 
@@ -178,6 +199,109 @@ export class RepoService {
       RepoService.instance = new RepoService();
     }
     return RepoService.instance;
+  }
+
+  async withVersionLock<T>(url: string, commit: string, fn: () => Promise<T>): Promise<T> {
+    return this.locks.run(`version:${this.versionStore.checkoutPath(url, commit)}`, fn);
+  }
+
+  async removeVersionCheckout(url: string, commit: string): Promise<void> {
+    await this.withVersionLock(url, commit, async () => {
+      await fs.rm(this.versionStore.checkoutPath(url, commit), { recursive: true, force: true });
+    });
+  }
+
+  // A normal clone rather than a worktree gives every version a real .git
+  // directory and independent submodule configuration.
+  async ensureVersion(profileId: string, url: string, commit: string, opts: EnsureVersionOptions = {}): Promise<{ checkout: string }> {
+    const origin = pinnedOrigin(url);
+    if (!(await this.versionStore.isOriginApproved(profileId, url))) {
+      throw Object.assign(new Error(`Version origin approval required: ${origin}`), { code: 'VERSION_ORIGIN_UNAPPROVED', origins: [origin] });
+    }
+    const groupDir = this.versionStore.groupDir(url);
+    const checkout = this.versionStore.checkoutPath(url, commit);
+    return this.locks.run(`version-group:${groupDir}`, async () => {
+      const controller = new AbortController();
+      const deadline = Date.now() + this.materializationTimeoutMs;
+      const timer = setTimeout(() => controller.abort(Object.assign(new Error('Version repository materialization timed out'), { code: 'VERSION_MATERIALIZATION_TIMEOUT' })), this.materializationTimeoutMs);
+      const budget = { signal: controller.signal, remaining: () => Math.max(0, deadline - Date.now()) };
+      let temp: string | undefined;
+      try {
+        try {
+          await this.assertPinnedIntegrity(checkout, commit, budget);
+          await this.versionStore.bumpLastUsed(url, commit);
+          return { checkout };
+        } catch {
+          if (controller.signal.aborted) throw controller.signal.reason;
+          await fs.rm(checkout, { recursive: true, force: true });
+        }
+
+        await this.ensureBareVersionRepo(groupDir, url, budget);
+        const localFallback = await this.fetchVersionCommit(url, commit, opts, budget);
+        temp = path.join(groupDir, `tmp-${crypto.randomUUID()}`);
+        await fs.mkdir(path.join(groupDir, 'versions'), { recursive: true });
+        const clone = await this.runPinnedGit(groupDir, ['clone', '--no-hardlinks', this.versionStore.bareRepoPath(url), temp], TIMEOUT_CLONE_MS, budget);
+        this.throwGitFailure(clone);
+        const detached = await this.runPinnedGit(temp, ['checkout', '--detach', commit], TIMEOUT_LOCAL_MS, budget);
+        this.throwGitFailure(detached);
+        // Local fixture submodules need Git's explicit file-transport opt-in.
+        const submodules = await this.runPinnedGit(temp, ['-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--recursive'], TIMEOUT_SUBMODULES_MS, budget);
+        this.throwGitFailure(submodules);
+        await this.assertPinnedIntegrity(temp, commit, budget);
+        if (controller.signal.aborted) throw controller.signal.reason;
+        await fs.rename(temp, checkout);
+        temp = undefined;
+        const now = new Date().toISOString();
+        await this.versionStore.upsert({
+          url, commit, refLabel: opts.refLabel ?? opts.ref, refKind: opts.refKind,
+          ...(localFallback ? { localFallback: true } : {}), createdAt: now, lastUsedAt: now,
+        });
+        return { checkout };
+      } finally {
+        clearTimeout(timer);
+        if (temp) await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
+      }
+    });
+  }
+
+  private async ensureBareVersionRepo(groupDir: string, url: string, budget: { signal: AbortSignal; remaining: () => number }): Promise<void> {
+    const bare = this.versionStore.bareRepoPath(url);
+    try { await fs.access(bare); }
+    catch {
+      await fs.mkdir(groupDir, { recursive: true });
+      this.throwGitFailure(await this.runPinnedGit(groupDir, ['init', '--bare', bare], TIMEOUT_LOCAL_MS, budget));
+    }
+    const remote = await this.runPinnedGit(bare, ['remote', 'get-url', 'origin'], TIMEOUT_LOCAL_MS, budget);
+    if (!remote.success) this.throwGitFailure(await this.runPinnedGit(bare, ['remote', 'add', 'origin', url], TIMEOUT_LOCAL_MS, budget));
+  }
+
+  // Returns whether the local-only fallback supplied the commit.
+  private async fetchVersionCommit(url: string, commit: string, opts: EnsureVersionOptions, budget: { signal: AbortSignal; remaining: () => number }): Promise<boolean> {
+    const bare = this.versionStore.bareRepoPath(url);
+    const attemptedStages: string[] = [];
+    const tryFetch = async (stage: string, args: string[]): Promise<boolean> => {
+      attemptedStages.push(stage);
+      const fetched = await this.runPinnedGit(bare, args, TIMEOUT_FETCH_MS, budget);
+      if (budget.signal.aborted) throw budget.signal.reason;
+      if (!fetched.success) return false;
+      return (await this.runPinnedGit(bare, ['rev-parse', `${commit}^{commit}`], TIMEOUT_LOCAL_MS, budget)).success;
+    };
+    if (opts.ref && await tryFetch('ref', ['fetch', 'origin', opts.ref])) return false;
+    if (await tryFetch('sha', ['fetch', 'origin', commit])) return false;
+    if (await tryFetch('tags', ['fetch', 'origin', '--tags'])) return false;
+    if (opts.localFallbackPath) {
+      attemptedStages.push('localFallback');
+      const fallbackOrigin = await this.runPinnedGit(opts.localFallbackPath, ['remote', 'get-url', 'origin'], TIMEOUT_LOCAL_MS, budget);
+      if (fallbackOrigin.success && pinnedOrigin(fallbackOrigin.data.stdout.trim()) === pinnedOrigin(url) && normalizeVersionRemote(fallbackOrigin.data.stdout.trim()) === normalizeVersionRemote(url)) {
+        const fetched = await this.runPinnedGit(bare, ['fetch', opts.localFallbackPath, commit], TIMEOUT_FETCH_MS, budget);
+        if (fetched.success && (await this.runPinnedGit(bare, ['rev-parse', `${commit}^{commit}`], TIMEOUT_LOCAL_MS, budget)).success) return true;
+      }
+    }
+    throw Object.assign(new Error(`Unable to fetch version ${commit} for ${url}`), { code: 'VERSION_FETCH_FAILED', attemptedStages });
+  }
+
+  private throwGitFailure(result: RepoResult<GitOutput>): asserts result is { success: true; data: GitOutput } {
+    if (!result.success) throw Object.assign(new Error(result.error.message), { code: result.error.code });
   }
 
   // Materialize a collaborator-authored URL only after first-contact origin
