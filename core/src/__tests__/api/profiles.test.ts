@@ -239,7 +239,7 @@ describe('profile handlers', () => {
     expect(addReply.body).toEqual({ data: { jobId: 'job-version-1' } });
     await runner({ log: () => {}, signal: new AbortController().signal });
     expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.objectContaining({ ref: 'main', refKind: 'branch' }));
-    expect(deps.lifecycle.runPinnedLifecycle).toHaveBeenCalledWith(url, commit, 'p1', expect.any(Object));
+    expect(deps.lifecycle.runPinnedLifecycle).toHaveBeenCalledWith(url, commit, 'p1', expect.any(Object), expect.any(Object));
     const listReply = makeReply(); await handlers.listRepos({ params: { id: 'p1' } } as never, listReply as never);
     expect((listReply.body as { data: { local: Array<{ versions: Array<{ commit: string }> }> } }).data.local[0].versions).toEqual([expect.objectContaining({ commit })]);
   });

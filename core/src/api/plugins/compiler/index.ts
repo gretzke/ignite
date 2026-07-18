@@ -90,25 +90,19 @@ export async function getCompilerArtifactData(
       { code: ErrorCodes.NOT_A_COMPILER_PLUGIN }
     );
   }
-  let workspacePath: string;
-  try {
-    workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, versionStore: new VersionStore() });
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error)
-      throw error;
-    throw Object.assign(
-      new Error(
-        error instanceof Error ? error.message : 'Failed to resolve workspace'
-      ),
-      { code: ErrorCodes.INIT_ERROR }
-    );
-  }
-  const result = await deps.executor.execute(
-    contract.frameworkId,
-    'getArtifactData',
-    { pathOrUrl: contract.repoPathOrUrl, artifactPath: contract.artifactPath },
-    { workspacePath }
+  const execute = (workspacePath: string) => deps.executor.execute(
+    contract.frameworkId, 'getArtifactData',
+    { pathOrUrl: contract.repoPathOrUrl, artifactPath: contract.artifactPath }, { workspacePath }
   );
+  let result;
+  try {
+    result = contract.pin
+      ? await deps.repos.withVersionMaterialized(input.profileId, contract.pin.url, contract.pin.commit, { ref: contract.pin.ref }, ({ checkout }) => execute(checkout))
+      : await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, versionStore: new VersionStore() }).then(execute);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error) throw error;
+    throw Object.assign(new Error(error instanceof Error ? error.message : 'Failed to resolve workspace'), { code: ErrorCodes.INIT_ERROR });
+  }
   if (!result.success) {
     throw Object.assign(new Error('Failed to get artifact data'), {
       code: result.error?.code ?? ErrorCodes.ARTIFACT_DATA_ERROR,
@@ -143,25 +137,19 @@ export async function getCompilerVerificationBundle(
       { code: ErrorCodes.NOT_A_COMPILER_PLUGIN }
     );
   }
-  let workspacePath: string;
-  try {
-    workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, versionStore: new VersionStore() });
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error)
-      throw error;
-    throw Object.assign(
-      new Error(
-        error instanceof Error ? error.message : 'Failed to resolve workspace'
-      ),
-      { code: ErrorCodes.INIT_ERROR }
-    );
-  }
-  const result = await deps.executor.execute(
-    contract.frameworkId,
-    'getVerificationBundle',
-    { pathOrUrl: contract.repoPathOrUrl, artifactPath: contract.artifactPath },
-    { workspacePath }
+  const execute = (workspacePath: string) => deps.executor.execute(
+    contract.frameworkId, 'getVerificationBundle',
+    { pathOrUrl: contract.repoPathOrUrl, artifactPath: contract.artifactPath }, { workspacePath }
   );
+  let result;
+  try {
+    result = contract.pin
+      ? await deps.repos.withVersionMaterialized(input.profileId, contract.pin.url, contract.pin.commit, { ref: contract.pin.ref }, ({ checkout }) => execute(checkout))
+      : await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, versionStore: new VersionStore() }).then(execute);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error) throw error;
+    throw Object.assign(new Error(error instanceof Error ? error.message : 'Failed to resolve workspace'), { code: ErrorCodes.INIT_ERROR });
+  }
   if (!result.success) {
     throw Object.assign(new Error('Failed to get verification bundle'), {
       code: result.error?.code ?? ErrorCodes.ARTIFACT_DATA_ERROR,
@@ -401,7 +389,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
 
       const job = d.jobs.start(
         'compiler.install',
-        { pathOrUrl, pluginId },
+        { pathOrUrl, pluginId, ...(resolved.pin ? { pin: resolved.pin } : {}) },
         async (ctx): Promise<null> => {
           const execute = (workspacePath: string) => d.executor.execute(
             pluginId, 'install', { pathOrUrl },
@@ -453,7 +441,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
 
       const job = d.jobs.start(
         'compiler.compile',
-        { pathOrUrl, pluginId },
+        { pathOrUrl, pluginId, ...(resolved.pin ? { pin: resolved.pin } : {}) },
         async (ctx): Promise<null> => {
           const execute = (workspacePath: string) => d.executor.execute(
             pluginId, 'compile', { pathOrUrl },
@@ -503,17 +491,14 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         const hostPath =
           pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
 
-        const workspacePath = await resolveWorkspaceOr400(reply, hostPath);
-        if (workspacePath === null) {
+        const resolved = await resolveMutableWorkspaceOr400(reply, request.body);
+        if (resolved === null) {
           return reply as unknown as IApiResponse<ArtifactListResult>;
         }
-
-        const result = await d.executor.execute(
-          pluginId,
-          'listArtifacts',
-          { pathOrUrl: hostPath },
-          { workspacePath }
-        );
+        const execute = (workspacePath: string) => d.executor.execute(pluginId, 'listArtifacts', { pathOrUrl: hostPath }, { workspacePath });
+        const result = resolved.pin
+          ? await d.repos.withVersionMaterialized(resolved.profileId!, resolved.pin.url, resolved.pin.commit, { ref: resolved.pin.ref }, ({ checkout }) => execute(checkout))
+          : await execute(resolved.workspacePath);
 
         if (!result.success) {
           return sendPluginError(

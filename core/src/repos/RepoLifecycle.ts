@@ -220,17 +220,16 @@ export class RepoLifecycle {
     url: string,
     commit: string,
     profileId: string,
-    ctx: JobContext
+    ctx: JobContext,
+    materialized?: {
+      checkout: string;
+      rematerialize: () => Promise<{ checkout: string }>;
+    }
   ): Promise<LifecycleResult> {
     const worktree = this.deps.versionStore.checkoutPath(url, commit);
     this.addDirect(worktree);
     try {
-      return await this.deps.repos.withVersionMaterialized(
-        profileId,
-        url,
-        commit,
-        {},
-        async ({ checkout, rematerialize }) => {
+      const run = async ({ checkout, rematerialize }: NonNullable<typeof materialized>) => {
           let workspacePath = checkout;
           const compilers = await this.deps.registryLoader.getPluginsByType(PluginType.COMPILER);
           if (compilers.length === 0) {
@@ -242,8 +241,10 @@ export class RepoLifecycle {
             workspacePath = (await rematerialize()).checkout;
           }
           return this.runLifecycle(workspacePath, profileId, 'pinned', ctx, { url, commit }, workspacePath, compilers);
-        }
-      );
+        };
+      return materialized
+        ? await run(materialized)
+        : await this.deps.repos.withVersionMaterialized(profileId, url, commit, {}, run);
     } finally { this.removeDirect(worktree); }
   }
 

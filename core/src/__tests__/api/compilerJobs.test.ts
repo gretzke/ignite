@@ -738,7 +738,7 @@ describe('compiler API handlers (jobs)', () => {
 
     it('returns VERSION_ORIGIN_UNAPPROVED from getArtifactData instead of INIT_ERROR', async () => {
       repos = makeFakeRepos({
-        ensureVersion: vi.fn(async () => {
+        withVersionMaterialized: vi.fn(async () => {
           throw Object.assign(new Error('origin approval required'), {
             code: ErrorCodes.VERSION_ORIGIN_UNAPPROVED,
           });

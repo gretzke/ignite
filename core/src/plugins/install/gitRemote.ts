@@ -9,6 +9,7 @@ import { parseGitHubUrl } from '@ignite/plugin-types';
 import type { InspectGitRemoteData, GitReleaseData } from '@ignite/api';
 import { runCommand } from '../../utils/runCommand.js';
 import { getLogger } from '../../utils/logger.js';
+import { normalizeGitUrl } from '../../repos/VersionStore.js';
 
 const LS_REMOTE_TIMEOUT_MS = 20_000;
 const LS_REMOTE_CACHE_TTL_MS = 60_000;
@@ -20,7 +21,7 @@ const GITHUB_TIMEOUT_MS = 8_000;
 const ALLOWED_URL_SCHEMES = ['https://', 'git://', 'ssh://', 'file://'];
 
 export function assertAllowedGitUrl(url: string): void {
-  const lower = url.toLowerCase();
+  const lower = normalizeGitUrl(url).toLowerCase();
   if (!ALLOWED_URL_SCHEMES.some((scheme) => lower.startsWith(scheme))) {
     throw new Error(
       `Unsupported git URL scheme in '${url}'. Only ${ALLOWED_URL_SCHEMES.join(', ')} are allowed.`
@@ -64,9 +65,10 @@ export function clearGitRemoteCaches(): void {
 }
 
 export function fetchRemoteRefs(url: string): Promise<RemoteRefs> {
-  assertAllowedGitUrl(url);
-  return cached(lsRemoteCache, url, LS_REMOTE_CACHE_TTL_MS, async () => {
-    const result = await runCommand('git', ['ls-remote', '--symref', url], {
+  const normalizedUrl = normalizeGitUrl(url);
+  assertAllowedGitUrl(normalizedUrl);
+  return cached(lsRemoteCache, normalizedUrl, LS_REMOTE_CACHE_TTL_MS, async () => {
+    const result = await runCommand('git', ['ls-remote', '--symref', normalizedUrl], {
       env: {
         ...process.env,
         GIT_TERMINAL_PROMPT: '0',

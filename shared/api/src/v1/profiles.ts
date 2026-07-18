@@ -110,6 +110,7 @@ export interface RepoListEntry extends RepoRecord {
 export type RepoVersionRefKind = 'tag' | 'branch' | 'commit';
 
 export interface RepoVersionSummary {
+  url: string;
   commit: string;
   refLabel?: string;
   refKind?: RepoVersionRefKind;
@@ -147,6 +148,7 @@ export interface AddRepoVersionRequest {
   url?: string;
   repoPathOrUrl?: string;
   ref?: string;
+  refKind?: 'tag' | 'branch';
   commit?: string;
 }
 
@@ -275,6 +277,7 @@ export const RepoListEntrySchema = z.object({
   activeJobId: z.string().optional(),
   versions: z.array(
     z.object({
+      url: z.string().min(1),
       commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
       refLabel: z.string().optional(),
       refKind: z.enum(['tag', 'branch', 'commit']).optional(),
@@ -295,6 +298,7 @@ export const GetReposResponseSchema = createApiResponseSchema<RepoList>(
     versionGroups: z.array(z.object({
       url: z.string(),
       versions: z.array(z.object({
+        url: z.string().min(1),
         commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
         refLabel: z.string().optional(),
         refKind: z.enum(['tag', 'branch', 'commit']).optional(),
@@ -328,12 +332,15 @@ export const AddRepoVersionRequestSchema =
       url: z.string().min(1).optional(),
       repoPathOrUrl: z.string().min(1).optional(),
       ref: z.string().min(1).optional(),
-      commit: z.string().regex(/^[0-9a-fA-F]{40}$/).optional(),
+      refKind: z.enum(['tag', 'branch']).optional(),
+      commit: z.string().regex(/^[0-9a-fA-F]{7,40}$/).optional(),
     }).superRefine((value, context) => {
       if ((value.url !== undefined) === (value.repoPathOrUrl !== undefined))
         context.addIssue({ code: 'custom', message: 'Provide exactly one of url or repoPathOrUrl' });
       if ((value.ref !== undefined) === (value.commit !== undefined))
         context.addIssue({ code: 'custom', message: 'Provide exactly one of ref or commit' });
+      if (value.refKind !== undefined && value.ref === undefined)
+        context.addIssue({ code: 'custom', message: 'refKind requires ref' });
     }),
   );
 

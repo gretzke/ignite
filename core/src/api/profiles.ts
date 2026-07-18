@@ -88,13 +88,14 @@ export interface ProfileHandlerDeps {
     | 'getVersionSource'
     | 'resolveLocalVersionCommit'
     | 'ensureVersion'
-  >;
+  > & { withVersionMaterialized?: RepoService['withVersionMaterialized'] };
   jobs: Pick<JobManager, 'start'>;
   inspectGitRemote: (url: string) => Promise<InspectGitRemoteData>;
 }
 
 function versionSummary(record: VersionRecord): RepoVersionSummary {
   return {
+    url: record.url,
     commit: record.commit,
     ...(record.refLabel ? { refLabel: record.refLabel } : {}),
     ...(record.refKind ? { refKind: record.refKind } : {}),
@@ -106,16 +107,22 @@ function versionSummary(record: VersionRecord): RepoVersionSummary {
 
 function remoteRef(
   inspected: InspectGitRemoteData,
-  ref: string
-): { commit: string; refKind: 'branch' | 'tag'; refLabel: string } | undefined {
+  ref: string,
+  preferredKind?: 'tag' | 'branch'
+): { commit: string; refKind: 'branch' | 'tag'; refLabel: string; ambiguous?: boolean } | undefined {
   const branch = ref.replace(/^refs\/heads\//, '');
   const branchCommit = inspected.branchHeads?.[branch];
-  if (branchCommit)
-    return { commit: branchCommit, refKind: 'branch', refLabel: branch };
   const tag = ref.replace(/^refs\/tags\//, '');
   const tagCommit =
     inspected.tagHeads?.[tag] ??
     inspected.releases.find((release) => release.tag === tag)?.sha;
+  const ambiguous = Boolean(branchCommit && tagCommit);
+  if (preferredKind === 'tag' && tagCommit)
+    return { commit: tagCommit, refKind: 'tag', refLabel: tag, ambiguous };
+  if (preferredKind === 'branch' && branchCommit)
+    return { commit: branchCommit, refKind: 'branch', refLabel: branch, ambiguous };
+  if (branchCommit)
+    return { commit: branchCommit, refKind: 'branch', refLabel: branch, ambiguous };
   if (tagCommit) return { commit: tagCommit, refKind: 'tag', refLabel: tag };
   return undefined;
 }
@@ -513,14 +520,15 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         }) as unknown as null;
       }
       try {
-        await d.repos.removeVersionCheckout(url, commit, (deleteLocked) =>
-          d.versionStore.removeUserMembershipAndDeleteIfUnreferenced(
-            id,
-            url,
-            commit,
-            deleteLocked
-          )
-        );
+        let busy = false;
+        await d.repos.removeVersionCheckout(url, commit, (deleteLocked) => {
+          if (d.lifecycle.activeJobFor(worktreePath)) {
+            busy = true;
+            return Promise.resolve(false);
+          }
+          return d.versionStore.removeUserMembershipAndDeleteIfUnreferenced(id, url, commit, deleteLocked);
+        });
+        if (busy) return reply.status(409).send({ statusCode: 409, error: 'Conflict', code: ErrorCodes.REPO_BUSY, message: 'Pinned repository is busy', details: { url, commit } }) as unknown as null;
         return reply.status(204).send(null);
       } catch (error) {
         return sendCaughtError(
@@ -564,7 +572,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
                 )),
                 refLabel: body.ref,
               }
-            : remoteRef(await d.inspectGitRemote(source.url), body.ref)
+          : remoteRef(await d.inspectGitRemote(source.url), body.ref, body.refKind)
           : {
               commit: body.commit!,
               refKind: 'commit' as const,
@@ -577,30 +585,41 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             code: 'VERSION_REF_NOT_FOUND',
             message: `Remote ref '${body.ref}' was not found`,
           }) as unknown as IApiResponse<JobStartedData>;
-        const { commit, refKind, refLabel } = resolved;
+        let { commit, refKind, refLabel } = resolved;
+        // The API accepts a convenient short SHA, but VersionStore identities
+        // are always full commits. Resolve it from advertised remote heads;
+        // an ambiguous/unreachable prefix is a clear client error.
+        if (commit.length < 40) {
+          const heads = await d.inspectGitRemote(source.url);
+          const matches = [...Object.values(heads.branchHeads ?? {}), ...Object.values(heads.tagHeads ?? {})]
+            .filter((sha, index, all) => sha.toLowerCase().startsWith(commit.toLowerCase()) && all.indexOf(sha) === index);
+          if (matches.length !== 1) {
+            return reply.status(400).send({ statusCode: 400, error: 'Bad Request', code: 'VERSION_COMMIT_NOT_RESOLVABLE', message: `Commit prefix '${commit}' is not uniquely resolvable from the remote` }) as unknown as IApiResponse<JobStartedData>;
+          }
+          commit = matches[0];
+          refLabel = commit;
+        }
         const job = d.jobs.start(
           'repo.version.add',
           { url: source.url, commit, ref: body.ref },
           async (ctx: JobContext) => {
-            ctx.log(`phase: materialize ${commit}\n`);
-            await d.repos.ensureVersion(id, source.url, commit, {
-              ...(body.ref
-                ? { ref: body.ref, refLabel, refKind }
-                : { refLabel, refKind }),
-              ...(source.localFallbackPath
-                ? { localFallbackPath: source.localFallbackPath }
-                : {}),
+            if ('ambiguous' in resolved && resolved.ambiguous && !body.refKind)
+              ctx.log(`warning: ref '${body.ref}' matches both a branch and tag; using branch\n`);
+            const withMaterialized = d.repos.withVersionMaterialized ?? (async <T>(profileId: string, url: string, versionCommit: string, opts: Parameters<RepoService['withVersionMaterialized']>[3], fn: Parameters<RepoService['withVersionMaterialized']>[4]): Promise<T> => {
+              await d.repos.ensureVersion(profileId, url, versionCommit, opts);
+              return fn({ checkout: d.versionStore.checkoutPath(url, versionCommit), rematerialize: () => d.repos.ensureVersion(profileId, url, versionCommit, opts) }) as Promise<T>;
             });
-            ctx.log('phase: add user membership\n');
-            await d.versionStore.addMembership(id, source.url, commit, 'user');
-            ctx.log('phase: detect and compile\n');
-            const result = await d.lifecycle.runPinnedLifecycle(
-              source.url,
-              commit,
-              id,
-              ctx
+            return withMaterialized(
+              id, source.url, commit,
+              { ...(body.ref ? { ref: body.ref, refLabel, refKind } : { refLabel, refKind }), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}) },
+              async (materialized) => {
+                ctx.log(`phase: materialize ${commit}\n`);
+                ctx.log('phase: add user membership\n');
+                await d.versionStore.addMembership(id, source.url, commit, 'user');
+                ctx.log('phase: detect and compile\n');
+                return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized);
+              }
             );
-            return result;
           }
         );
         return reply.status(200).send({ data: { jobId: job.id } });
@@ -634,17 +653,21 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         }) as unknown as null;
       }
       try {
+        let busy = false;
         const deleted = await d.repos.removeVersionCheckout(
           url,
           commit,
-          (deleteLocked) =>
-            d.versionStore.removeUserMembershipAndDeleteIfUnreferenced(
-              id,
-              url,
-              commit,
-              deleteLocked
-            )
+          (deleteLocked) => {
+            if (d.lifecycle.activeJobFor(checkout)) {
+              busy = true;
+              return Promise.resolve(false);
+            }
+            return d.versionStore.removeUserMembershipAndDeleteIfUnreferenced(id, url, commit, deleteLocked);
+          }
         );
+        if (busy) {
+          return reply.status(409).send({ statusCode: 409, error: 'Conflict', code: ErrorCodes.REPO_BUSY, message: 'Repository version is busy', details: { url, commit } }) as unknown as null;
+        }
         if (!deleted) {
           return reply.status(409).send({
             statusCode: 409,

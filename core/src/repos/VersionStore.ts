@@ -40,8 +40,15 @@ export interface VersionStatePatch {
   compiledWith?: { pluginId: string; version: string };
 }
 
+/** Convert Git's scp shorthand into a WHATWG-parsable SSH URL. */
+export function normalizeGitUrl(url: string): string {
+  if (url.includes('://')) return url;
+  const scp = url.match(/^(git@)([^\s/:]+):(.+)$/);
+  return scp ? `ssh://${scp[1]}${scp[2]}/${scp[3]}` : url;
+}
+
 export function pinnedOrigin(url: string): string {
-  const parsed = new URL(url);
+  const parsed = new URL(normalizeGitUrl(url));
   // WHATWG reports file URL origin as "null". Its scheme is still the
   // approval boundary in development fixtures and local-folder workflows.
   if (parsed.protocol === 'file:') return 'file://';
@@ -50,7 +57,7 @@ export function pinnedOrigin(url: string): string {
 
 function slug(url: string): string {
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(normalizeGitUrl(url));
     const value = `${parsed.hostname}${parsed.pathname}`.replace(/\.git$/i, '');
     return (
       value
@@ -125,7 +132,7 @@ export class VersionStore {
   groupDir(url: string): string {
     const urlHash = crypto
       .createHash('sha256')
-      .update(url)
+      .update(normalizeGitUrl(url))
       .digest('hex')
       .slice(0, 8);
     return path.join(
