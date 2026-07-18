@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { getRepoName } from '../../../../utils/repo';
 import type { RootState, AppDispatch } from '../../../../store/store';
-import { filesApi } from '../../../../store/features/files/filesSlice';
+import { fileCacheKey, filesApi } from '../../../../store/features/files/filesSlice';
 import { useSelector as useCompilerSelector } from 'react-redux';
 import { compilerScopeKey, listArtifacts } from '../../../../store/features/compiler/compilerSlice';
 import { SyntaxHighlighter } from '../../../../components/SyntaxHighlighter';
@@ -28,7 +28,7 @@ import {
   removeContract,
 } from '../../../../store/features/deployments/deployDraftSlice';
 import { contractSourceId } from '../../../../utils/contractSourceId';
-import type { ContractSourcePin } from '@ignite/api';
+import type { ArtifactLocation, ContractSourcePin } from '@ignite/api';
 
 interface CopyButtonProps {
   content: string;
@@ -41,6 +41,44 @@ export function canDeploySelectedArtifact(
   variantCount: number
 ): boolean {
   return Boolean(selected && (variantCount <= 1 || explicitArtifactPath));
+}
+
+export function artifactVariantsForFile(
+  artifacts: ArtifactLocation[] | undefined,
+  sourcePath: string,
+  contractName: string | null
+) {
+  if (!contractName || !artifacts) return [];
+  const seenPaths = new Set<string>();
+  return artifacts
+    .filter(
+      (artifact) =>
+        artifact.sourcePath === sourcePath &&
+        artifact.contractName === contractName &&
+        !seenPaths.has(artifact.artifactPath) &&
+        seenPaths.add(artifact.artifactPath) !== undefined
+    )
+    .map((artifact) => {
+      const base = artifact.artifactPath.split('/').pop() ?? '';
+      const suffix = base
+        .replace(/\.json$/, '')
+        .slice(artifact.contractName.length)
+        .replace(/^\./, '');
+      return { artifact, label: suffix || 'default' };
+    })
+    .map((entry, _index, entries) => {
+      const collides = entries.filter((other) => other.label === entry.label).length > 1;
+      if (!collides) return entry;
+      const dir = entry.artifact.artifactPath.split('/')[0] || 'out';
+      return { ...entry, label: `${entry.label} (${dir})` };
+    })
+    .sort((a, b) =>
+      a.label.startsWith('default')
+        ? -1
+        : b.label.startsWith('default')
+          ? 1
+          : a.label.localeCompare(b.label)
+    );
 }
 
 function CopyButton({ content, label }: CopyButtonProps) {
@@ -141,9 +179,11 @@ export default function FilePage() {
   const artifactPath = searchParams.get('artifact');
   const contractName = searchParams.get('contract');
   const versionCommit = searchParams.get('version') ?? undefined;
-  const version = useSelector((state: RootState) => {
+  const repositories = useSelector(
+    (state: RootState) => state.repositories.repositories
+  );
+  const version = useSelector((_state: RootState) => {
     if (!versionCommit) return undefined;
-    const repositories = state.repositories.repositories;
     return [...(repositories?.local ?? []), ...(repositories?.cloned ?? []), ...(repositories?.session ? [repositories.session] : [])]
       .flatMap((entry) => entry.versions)
       .find((candidate) => candidate.url === decodedRepoPath && candidate.commit === versionCommit) ??
@@ -151,12 +191,20 @@ export default function FilePage() {
         ?.versions.find((candidate) => candidate.commit === versionCommit);
   });
   const pin: ContractSourcePin | undefined = versionCommit && version
-    ? { url: version.url, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
+    ? {
+        url: version.url,
+        commit: versionCommit,
+        ...(version.refLabel && (version.refKind === 'tag' || version.refKind === 'branch')
+          ? { ref: version.refLabel, refKind: version.refKind }
+          : {}),
+      }
     : undefined;
   const compilerKey = compilerScopeKey(decodedRepoPath, pin);
+  const invalidVersion = Boolean(versionCommit && repositories && !version);
+  const versionPending = Boolean(versionCommit && repositories === null);
 
   // Get file data from store
-  const fileKey = `${decodedRepoPath}:${decodedFilePath}${pin ? `\u0000${pin.commit.slice(0, 12)}` : ''}`;
+  const fileKey = fileCacheKey(decodedRepoPath, decodedFilePath, pin);
   const fileData = useSelector(
     (state: RootState) => state.files.files[fileKey]
   );
@@ -176,44 +224,12 @@ export default function FilePage() {
   // picker whenever more than one exists; the variant name is whatever sits
   // between the contract name and .json, 'default' for the canonical file.
   const versionVariants = useMemo(() => {
-    if (!selectedArtifact || !frameworkData?.artifacts) return [];
-    const seenPaths = new Set<string>();
-    return frameworkData.artifacts
-      .filter(
-        (artifact) =>
-          artifact.sourcePath === selectedArtifact.sourcePath &&
-          artifact.contractName === selectedArtifact.contractName &&
-          // Exact duplicates in the artifact list must not become two
-          // identical picker entries.
-          !seenPaths.has(artifact.artifactPath) &&
-          seenPaths.add(artifact.artifactPath) !== undefined
-      )
-      .map((artifact) => {
-        const base = artifact.artifactPath.split('/').pop() ?? '';
-        const suffix = base
-          .replace(/\.json$/, '')
-          .slice(artifact.contractName.length)
-          .replace(/^\./, '');
-        return { artifact, label: suffix || 'default' };
-      })
-      .map((entry, _index, entries) => {
-        // Build profiles write identical filenames into different out dirs
-        // (out/ vs out-optimized/) — when the filename label collides,
-        // disambiguate with the artifact directory.
-        const collides =
-          entries.filter((other) => other.label === entry.label).length > 1;
-        if (!collides) return entry;
-        const dir = entry.artifact.artifactPath.split('/')[0] || 'out';
-        return { ...entry, label: `${entry.label} (${dir})` };
-      })
-      .sort((a, b) =>
-        a.label.startsWith('default')
-          ? -1
-          : b.label.startsWith('default')
-            ? 1
-            : a.label.localeCompare(b.label)
-      );
-  }, [selectedArtifact, frameworkData?.artifacts]);
+    return artifactVariantsForFile(
+      frameworkData?.artifacts,
+      decodedFilePath,
+      contractName
+    );
+  }, [contractName, decodedFilePath, frameworkData?.artifacts]);
 
   const selectArtifactVersion = (nextArtifactPath: string) => {
     const next = new URLSearchParams(searchParams);
@@ -224,6 +240,7 @@ export default function FilePage() {
   // Load artifacts if they're missing (happens when accessing FilePage directly)
   useEffect(() => {
     if (
+      !invalidVersion &&
       frameworkId &&
       (!frameworkData || frameworkData.artifacts === undefined)
     ) {
@@ -231,11 +248,11 @@ export default function FilePage() {
         listArtifacts({ pathOrUrl: decodedRepoPath, pluginId: frameworkId, ...(pin ? { pin } : {}), stateKey: compilerKey })
       );
     }
-  }, [dispatch, decodedRepoPath, frameworkId, frameworkData, pin, compilerKey]);
+  }, [dispatch, decodedRepoPath, frameworkId, frameworkData, pin, compilerKey, invalidVersion]);
 
   // Fetch file content
   useEffect(() => {
-    if (!fileData?.content && !fileData?.loading) {
+    if (!invalidVersion && !versionPending && !fileData?.content && !fileData?.loading) {
       const actions = filesApi.fetchFileContent(
         decodedRepoPath,
         decodedFilePath,
@@ -249,12 +266,16 @@ export default function FilePage() {
     decodedFilePath,
     fileData?.content,
     fileData?.loading,
+    invalidVersion,
+    versionPending,
+    pin,
   ]);
 
   // Fetch artifact data (keyed by framework: the same file has a different
   // artifact per framework in multi-framework repos)
   useEffect(() => {
     if (
+      !invalidVersion &&
       frameworkId &&
       frameworkData?.artifacts &&
       selectedArtifactPath &&
@@ -278,6 +299,7 @@ export default function FilePage() {
     fileData?.artifactData,
     frameworkData?.artifacts,
     pin,
+    invalidVersion,
   ]);
 
   const backToRepoUrl = (() => {
@@ -378,6 +400,19 @@ export default function FilePage() {
 
   // Only show main loading for file content - artifact data loads separately in the Contract Details card
   const isLoading = fileLoading || !contentLoaded;
+
+  if (invalidVersion) {
+    return (
+      <div className="text-[var(--text)]">
+        <button onClick={() => navigate('/repositories')} className="btn btn-secondary btn-icon" aria-label="Back to repositories"><ArrowLeft size={18} /></button>
+        <div className="card-milky p-6 mt-6"><h2 className="text-lg font-semibold">Version Not Installed</h2><p className="text-sm text-muted mt-2">This version is not installed for this repository.</p></div>
+      </div>
+    );
+  }
+
+  if (versionPending) {
+    return <div className="card-milky p-6 flex items-center gap-3"><Loader2 size={20} className="animate-spin" /><span>Loading repository version...</span></div>;
+  }
 
   return (
     <div className="text-[var(--text)]">

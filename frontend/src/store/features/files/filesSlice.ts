@@ -48,6 +48,16 @@ const initialState: IFilesState = {
   files: {},
 };
 
+// File and artifact data share this exact cache identity. Keep the version
+// suffix on the repository segment so colons in a source path stay harmless.
+export function fileCacheKey(
+  repoPath: string,
+  filePath: string,
+  pin?: ContractSourcePin
+): string {
+  return `${repoPath}${pin ? `\u0000${pin.commit.slice(0, 12)}` : ''}:${filePath}`;
+}
+
 const filesSlice = createSlice({
   name: 'files',
   initialState,
@@ -58,10 +68,11 @@ const filesSlice = createSlice({
         repoPath: string;
         filePath: string;
         loading: boolean;
+        pin?: ContractSourcePin;
       }>
     ) {
-      const { repoPath, filePath, loading } = action.payload;
-      const key = `${repoPath}:${filePath}`;
+      const { repoPath, filePath, loading, pin } = action.payload;
+      const key = fileCacheKey(repoPath, filePath, pin);
 
       if (!state.files[key]) {
         state.files[key] = { loading: false };
@@ -79,10 +90,11 @@ const filesSlice = createSlice({
         repoPath: string;
         filePath: string;
         content: FileContent;
+        pin?: ContractSourcePin;
       }>
     ) {
-      const { repoPath, filePath, content } = action.payload;
-      const key = `${repoPath}:${filePath}`;
+      const { repoPath, filePath, content, pin } = action.payload;
+      const key = fileCacheKey(repoPath, filePath, pin);
 
       if (!state.files[key]) {
         state.files[key] = { loading: false };
@@ -99,11 +111,12 @@ const filesSlice = createSlice({
         frameworkId: string;
         artifactPath: string;
         artifactData: ArtifactData;
+        pin?: ContractSourcePin;
       }>
     ) {
-      const { repoPath, filePath, frameworkId, artifactPath, artifactData } =
+      const { repoPath, filePath, frameworkId, artifactPath, artifactData, pin } =
         action.payload;
-      const key = `${repoPath}:${filePath}`;
+      const key = fileCacheKey(repoPath, filePath, pin);
 
       if (!state.files[key]) {
         state.files[key] = { loading: false };
@@ -119,10 +132,11 @@ const filesSlice = createSlice({
         repoPath: string;
         filePath: string;
         error: string;
+        pin?: ContractSourcePin;
       }>
     ) {
-      const { repoPath, filePath, error } = action.payload;
-      const key = `${repoPath}:${filePath}`;
+      const { repoPath, filePath, error, pin } = action.payload;
+      const key = fileCacheKey(repoPath, filePath, pin);
 
       if (!state.files[key]) {
         state.files[key] = { loading: false };
@@ -132,10 +146,10 @@ const filesSlice = createSlice({
     },
     clearFileData(
       state,
-      action: PayloadAction<{ repoPath: string; filePath: string }>
+      action: PayloadAction<{ repoPath: string; filePath: string; pin?: ContractSourcePin }>
     ) {
-      const { repoPath, filePath } = action.payload;
-      const key = `${repoPath}:${filePath}`;
+      const { repoPath, filePath, pin } = action.payload;
+      const key = fileCacheKey(repoPath, filePath, pin);
       delete state.files[key];
     },
     clearAllFiles(state) {
@@ -159,25 +173,26 @@ export const filesReducer = filesSlice.reducer;
 export const filesApi = {
   // Fetch file content
   fetchFileContent: (repoPath: string, filePath: string, pin?: ContractSourcePin) => {
-    const scopedRepoPath = `${repoPath}${pin ? `\u0000${pin.commit.slice(0, 12)}` : ''}`;
     return [
-      setFileLoading({ repoPath: scopedRepoPath, filePath, loading: true }),
+      setFileLoading({ repoPath, filePath, loading: true, pin }),
       apiClient.dispatch.getFile({
         body: { pathOrUrl: repoPath, filePath, ...(pin ? { pin } : {}) },
         onSuccess: (data) => {
           return setFileContent({
-            repoPath: scopedRepoPath,
+            repoPath,
             filePath,
             content: data,
+            pin,
           });
         },
         onError: (error: ApiError) => {
           const { description } = formatApiError(error);
           return [
             setFileError({
-              repoPath: scopedRepoPath,
+              repoPath,
               filePath,
               error: description,
+              pin,
             }),
             triggerToast({
               title: 'Failed to load file',
@@ -199,16 +214,16 @@ export const filesApi = {
     filePath: string,
     pin?: ContractSourcePin
   ) => {
-    const scopedRepoPath = `${repoPath}${pin ? `\u0000${pin.commit.slice(0, 12)}` : ''}`;
     return apiClient.dispatch.getArtifactData({
       body: { pathOrUrl: repoPath, artifactPath, pluginId, ...(pin ? { pin } : {}) },
       onSuccess: (data) => {
         return setArtifactData({
-          repoPath: scopedRepoPath,
+          repoPath,
           filePath, // Use the source file path as the key
           frameworkId: pluginId,
           artifactPath,
           artifactData: data,
+          pin,
         });
       },
       onError: (error: ApiError) => {
@@ -224,8 +239,8 @@ export const filesApi = {
   },
 
   // Clear specific file data
-  clearFile: (repoPath: string, filePath: string) => {
-    return clearFileData({ repoPath, filePath });
+  clearFile: (repoPath: string, filePath: string, pin?: ContractSourcePin) => {
+    return clearFileData({ repoPath, filePath, pin });
   },
 
   // Clear all file data (useful when switching profiles/repositories)

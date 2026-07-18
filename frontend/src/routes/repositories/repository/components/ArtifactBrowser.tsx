@@ -110,6 +110,9 @@ export default function ArtifactBrowser({
     if (currentPath) {
       params.set('path', currentPath);
     }
+    // The file page needs the contract identity to offer all variants even
+    // when choosing one is intentionally deferred.
+    params.set('contract', file.artifact.contractName);
     const directArtifact = directArtifactForFile(file);
     if (directArtifact) {
       params.set('artifact', directArtifact.artifactPath);

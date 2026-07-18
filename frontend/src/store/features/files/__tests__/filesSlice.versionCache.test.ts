@@ -1,7 +1,7 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
 import { isApiDispatchAction } from '../../../api/client';
-import { filesApi, filesReducer } from '../filesSlice';
+import { fileCacheKey, filesApi, filesReducer } from '../filesSlice';
 
 const artifactData = (bytecodeHash: string) => ({
   solidityVersion: '0.8.30',
@@ -42,8 +42,8 @@ describe('version-scoped file cache', () => {
       state = filesReducer(state, artifactAction as never);
     });
 
-    const firstKey = `${repoPath}\u0000${pins[0].commit.slice(0, 12)}:${filePath}`;
-    const secondKey = `${repoPath}\u0000${pins[1].commit.slice(0, 12)}:${filePath}`;
+    const firstKey = fileCacheKey(repoPath, filePath, pins[0]);
+    const secondKey = fileCacheKey(repoPath, filePath, pins[1]);
     expect(firstKey).not.toBe(secondKey);
     expect(state.files[firstKey].content?.content).toBe('version-1');
     expect(state.files[secondKey].content?.content).toBe('version-2');

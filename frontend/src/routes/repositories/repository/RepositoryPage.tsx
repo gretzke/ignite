@@ -23,7 +23,13 @@ export function pinForInstalledVersion(
   version: RepoVersionSummary | undefined
 ): ContractSourcePin | undefined {
   return versionCommit && version
-    ? { url: version.url, commit: versionCommit, ...(version.refLabel ? { ref: version.refLabel } : {}) }
+    ? {
+        url: version.url,
+        commit: versionCommit,
+        ...(version.refLabel && (version.refKind === 'tag' || version.refKind === 'branch')
+          ? { ref: version.refLabel, refKind: version.refKind }
+          : {}),
+      }
     : undefined;
 }
 
