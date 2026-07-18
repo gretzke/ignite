@@ -1,6 +1,6 @@
 // MVP Foundry Detection Plugin
 import { promises as fs } from "fs";
-import { join } from "path";
+import { basename, dirname, join } from "path";
 import { parse as parseToml } from "smol-toml";
 import {
   CompilerPlugin,
@@ -111,6 +111,40 @@ export function parseFoundryStandardJsonInput(stdout: string): unknown | null {
 
 export function withVersionPrefix(version: string): string {
   return version.startsWith("v") ? version : `v${version}`;
+}
+
+/**
+ * Foundry writes profile variants alongside the primary artifact in the
+ * source's `.sol` directory. Metadata describes the compilation, but is not
+ * an identity-safe source for the profile suffix, so this deliberately reads
+ * only that filename.
+ */
+export function parseFoundryArtifactVariant(
+  artifactPath: string,
+  sourcePath: string,
+  contractName: string,
+): ArtifactLocation["variant"] | undefined {
+  if (basename(dirname(artifactPath)) !== basename(sourcePath)) {
+    return undefined;
+  }
+
+  const fileStem = basename(artifactPath, ".json");
+  if (fileStem !== contractName && !fileStem.startsWith(`${contractName}.`)) {
+    return undefined;
+  }
+
+  const suffix = fileStem.slice(contractName.length + 1);
+  if (!suffix) return undefined;
+
+  if (/^\d+\.\d+\.\d+$/.test(suffix)) {
+    return { solcVersion: suffix };
+  }
+  const versionAndProfile = suffix.match(/^(\d+\.\d+\.\d+)\.(.+)$/);
+  if (versionAndProfile) {
+    return { solcVersion: versionAndProfile[1], profile: versionAndProfile[2] };
+  }
+
+  return { profile: suffix };
 }
 
 export class FoundryPlugin extends CompilerPlugin {
@@ -259,9 +293,15 @@ export class FoundryPlugin extends CompilerPlugin {
         // Extract source path from artifact metadata using compilationTarget
         const compilationTarget =
           artifactData.metadata?.settings?.compilationTarget;
-        const sourcePaths = Object.keys(compilationTarget || {});
-        for (const sourcePath of sourcePaths) {
-          const contractName = compilationTarget?.[sourcePath] || "";
+        const targets = Object.entries(compilationTarget ?? {});
+        if (targets.length > 1) {
+          console.warn(
+            `Skipping Foundry artifact ${file.relativePath}: compilationTarget has multiple entries`,
+          );
+          continue;
+        }
+
+        for (const [sourcePath, contractName] of targets) {
 
           // Validate final paths
           if (!contractName || !sourcePath || !file.relativePath) {
@@ -276,10 +316,16 @@ export class FoundryPlugin extends CompilerPlugin {
             continue;
           }
 
+          const variant = parseFoundryArtifactVariant(
+            file.relativePath,
+            sourcePath,
+            contractName,
+          );
           const artifact: ArtifactLocation = {
             contractName: contractName.trim(),
             sourcePath: sourcePath.trim(),
             artifactPath: file.relativePath.trim(),
+            ...(variant && { variant }),
           };
 
           artifacts.push(artifact);
