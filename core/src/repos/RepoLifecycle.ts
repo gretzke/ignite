@@ -20,7 +20,7 @@ import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { statFingerprint } from './fingerprint.js';
 import { ErrorCodes } from '../types/errors.js';
 import { getLogger } from '../utils/logger.js';
-import { PinnedStore } from './PinnedStore.js';
+import { VersionStore, type VersionRecord } from './VersionStore.js';
 
 export type LifecycleMode = 'sweep' | 'add' | 'recompile' | 'pinned';
 
@@ -45,10 +45,10 @@ export interface RepoLifecycleDeps {
   jobs: Pick<JobManager, 'start' | 'get'>;
   executor: Pick<PluginExecutor, 'execute'>;
   registryLoader: Pick<PluginRegistryLoader, 'getPluginsByType'>;
-  repos: Pick<RepoService, 'init' | 'resolveWorkspacePath'> & Partial<Pick<RepoService, 'ensurePinnedClone'>>;
+  repos: Pick<RepoService, 'init' | 'resolveWorkspacePath' | 'ensureVersion' | 'removeVersionCheckout' | 'withVersionLock'>;
   registry: Pick<ProfileRepoRegistry, 'list' | 'updateRepoState'>;
   sessionPath: () => string | null;
-  pinnedStore: Pick<PinnedStore, 'worktreePath' | 'get' | 'upsert'>;
+  versionStore: Pick<VersionStore, 'checkoutPath' | 'get' | 'updateState'>;
 }
 
 function isTerminal(state: JobRecord['state']): boolean {
@@ -82,7 +82,7 @@ export class RepoLifecycle {
       registry: deps?.registry ?? new ProfileRepoRegistry(),
       sessionPath:
         deps?.sessionPath ?? (() => process.env.IGNITE_WORKSPACE_PATH || null),
-      pinnedStore: deps?.pinnedStore ?? new PinnedStore(),
+      versionStore: deps?.versionStore ?? new VersionStore(),
     };
   }
 
@@ -194,7 +194,7 @@ export class RepoLifecycle {
   // Pinned jobs retain url+commit in their durable payload, while active-job
   // de-duplication keys by the eventual worktree path rather than the URL.
   startPinnedLifecycle(url: string, commit: string, profileId: string): JobRecord {
-    const worktree = this.deps.pinnedStore.worktreePath(profileId, url, commit);
+    const worktree = this.deps.versionStore.checkoutPath(url, commit);
     const existingId = this.activeJobs.get(worktree)?.jobId;
     if (existingId) {
       const existing = this.deps.jobs.get(existingId);
@@ -222,10 +222,24 @@ export class RepoLifecycle {
     profileId: string,
     ctx: JobContext
   ): Promise<LifecycleResult> {
-    const worktree = this.deps.pinnedStore.worktreePath(profileId, url, commit);
+    const worktree = this.deps.versionStore.checkoutPath(url, commit);
     this.addDirect(worktree);
-    try { return await this.runLifecycle(worktree, profileId, 'pinned', ctx, { url, commit }); }
-    finally { this.removeDirect(worktree); }
+    try {
+      let workspacePath = (await this.deps.repos.ensureVersion(profileId, url, commit)).checkout;
+      const compilers = await this.deps.registryLoader.getPluginsByType(PluginType.COMPILER);
+      if (compilers.length === 0) {
+        throw coded('No compiler plugins are available — the plugin catalog is missing or corrupt.', ErrorCodes.NO_COMPILER_PLUGINS);
+      }
+      const prior = await this.deps.versionStore.get(url, commit);
+      if (this.compiledWithMismatch(prior, compilers)) {
+        ctx.log('phase: rebuild (compiler version changed)\n');
+        await this.deps.repos.removeVersionCheckout(url, commit);
+        workspacePath = (await this.deps.repos.ensureVersion(profileId, url, commit)).checkout;
+      }
+      return await this.deps.repos.withVersionLock(url, commit, () =>
+        this.runLifecycle(workspacePath, profileId, 'pinned', ctx, { url, commit }, workspacePath, compilers)
+      );
+    } finally { this.removeDirect(worktree); }
   }
 
   activeJobFor(pathOrUrl: string): string | undefined {
@@ -353,13 +367,14 @@ export class RepoLifecycle {
     profileId: string,
     mode: LifecycleMode,
     ctx: JobContext,
-    pin?: { url: string; commit: string }
+    pin?: { url: string; commit: string },
+    pinnedWorkspacePath?: string,
+    pinnedCompilers?: Awaited<ReturnType<PluginRegistryLoader['getPluginsByType']>>
   ): Promise<LifecycleResult> {
     let workspacePath: string;
     if (mode === 'pinned') {
-      if (!pin || !this.deps.repos.ensurePinnedClone) throw coded('Pinned lifecycle requires a url and commit.', 'INVALID_PINNED_LIFECYCLE');
-      ctx.log('phase: materialize (pinned)\n');
-      workspacePath = (await this.deps.repos.ensurePinnedClone(profileId, pin.url, pin.commit)).path;
+      if (!pin || !pinnedWorkspacePath) throw coded('Pinned lifecycle requires a url and commit.', 'INVALID_PINNED_LIFECYCLE');
+      workspacePath = pinnedWorkspacePath;
     } else {
       ctx.log(`phase: init (${mode})\n`);
       const initResult = await this.deps.repos.init(pathOrUrl, { signal: ctx.signal });
@@ -368,9 +383,7 @@ export class RepoLifecycle {
     }
 
     ctx.log('phase: detect\n');
-    const compilers = await this.deps.registryLoader.getPluginsByType(
-      PluginType.COMPILER
-    );
+    const compilers = pinnedCompilers ?? await this.deps.registryLoader.getPluginsByType(PluginType.COMPILER);
     if (compilers.length === 0) {
       throw coded(
         'No compiler plugins are available — the plugin catalog is missing or corrupt.',
@@ -378,7 +391,7 @@ export class RepoLifecycle {
       );
     }
 
-    const pinnedPrior = mode === 'pinned' && pin ? await this.deps.pinnedStore.get(profileId, pin.url, pin.commit) : undefined;
+    const pinnedPrior = mode === 'pinned' && pin ? await this.deps.versionStore.get(pin.url, pin.commit) : undefined;
     const prior = pinnedPrior ? { pathOrUrl, frameworks: pinnedPrior.frameworks, detectedAt: pinnedPrior.detectedAt } : await this.priorRecord(pathOrUrl, profileId);
 
     // Sequential on purpose: lifecycle jobs already run per-repo in
@@ -550,7 +563,13 @@ export class RepoLifecycle {
     ctx.log('phase: persist\n');
     const detectedAt = new Date().toISOString();
     if (mode === 'pinned' && pin) {
-      await this.deps.pinnedStore.upsert(profileId, { url: pin.url, commit: pin.commit, frameworks, detectedAt, lastUsedAt: new Date().toISOString() });
+      const compiledFramework = frameworks.find((framework) => compiledThisRun.has(framework.id));
+      const plugin = compiledFramework && compilers.find((candidate) => candidate.metadata.id === compiledFramework.id);
+      await this.deps.versionStore.updateState(pin.url, pin.commit, {
+        frameworks,
+        detectedAt,
+        ...(plugin ? { compiledWith: { pluginId: plugin.metadata.id, version: plugin.metadata.version } } : {}),
+      });
     } else if (this.isSessionPath(pathOrUrl)) {
       this.sessionRecords.set(pathOrUrl, {
         pathOrUrl,
@@ -569,6 +588,15 @@ export class RepoLifecycle {
 
   private isSessionPath(pathOrUrl: string): boolean {
     return this.deps.sessionPath() === pathOrUrl;
+  }
+
+  private compiledWithMismatch(
+    record: VersionRecord | undefined,
+    compilers: Awaited<ReturnType<PluginRegistryLoader['getPluginsByType']>>
+  ): boolean {
+    if (!record?.compiledWith) return false;
+    const current = compilers.find((plugin) => plugin.metadata.id === record.compiledWith?.pluginId);
+    return Boolean(current && current.metadata.version !== record.compiledWith.version);
   }
 
   private async priorRecord(

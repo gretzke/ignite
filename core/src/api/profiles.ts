@@ -19,14 +19,13 @@ import type {
   ProfileConfig,
   ProfileParams,
   RepoList,
-  PinnedSummary,
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { RepoLifecycle } from '../repos/RepoLifecycle.js';
 import { RepoService } from '../repos/RepoService.js';
-import { PinnedStore } from '../repos/PinnedStore.js';
+import { VersionStore } from '../repos/VersionStore.js';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { ErrorCodes } from '../types/errors.js';
 import { sendCaughtError } from './utils/errors.js';
@@ -61,7 +60,7 @@ export interface ProfileHandlerDeps {
   >;
   // Cheap host check for the list endpoint's `initialized` field.
   hasWorkspace: (pathOrUrl: string, profileId: string) => Promise<boolean>;
-  pinnedStore: Pick<PinnedStore, 'list' | 'remove' | 'worktreePath'>;
+  versionStore: Pick<VersionStore, 'removeMembership' | 'referenceCount' | 'remove' | 'checkoutPath'>;
   deleteWorktree: (worktreePath: string) => Promise<void>;
 }
 
@@ -75,7 +74,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
       deps?.hasWorkspace ??
       ((pathOrUrl: string, profileId: string) =>
         RepoService.getInstance().hasWorkspace(pathOrUrl, profileId)),
-    pinnedStore: deps?.pinnedStore ?? new PinnedStore(),
+    versionStore: deps?.versionStore ?? new VersionStore(),
     deleteWorktree:
       deps?.deleteWorktree ??
       ((worktreePath: string) => FileSystem.getInstance().deleteDirectory(worktreePath)),
@@ -305,17 +304,9 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           session: sessionRecord ? await enrich(sessionRecord, id) : null,
           local: await Promise.all(local.map((r) => enrich(r, id))),
           cloned: await Promise.all(cloned.map((r) => enrich(r, id))),
-          pinned: (await d.pinnedStore.list(id)).map((record): PinnedSummary => ({
-            url: record.url,
-            commit: record.commit,
-            ...(record.refLabel ? { refLabel: record.refLabel } : {}),
-            ...(record.refKind ? { refKind: record.refKind } : {}),
-            ...(record.frameworks ? {
-              frameworks: record.frameworks.map(({ id: frameworkId, name }) => ({ id: frameworkId, name })),
-            } : {}),
-            ...(record.detectedAt ? { detectedAt: record.detectedAt } : {}),
-            ...(record.lastUsedAt ? { lastUsedAt: record.lastUsedAt } : {}),
-          })),
+          // Kept for one response-shape-compatible release. Version groups
+          // replace this legacy summary in Task 2.2.
+          pinned: [],
         };
         return reply.status(200).send({ data });
       } catch (error) {
@@ -393,7 +384,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     ): Promise<null> => {
       const { id } = request.params;
       const { url, commit } = request.query;
-      const worktreePath = d.pinnedStore.worktreePath(id, url, commit);
+      const worktreePath = d.versionStore.checkoutPath(url, commit);
       if (d.lifecycle.activeJobFor(worktreePath)) {
         return reply.status(409).send({
           statusCode: 409,
@@ -404,8 +395,11 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         }) as unknown as null;
       }
       try {
-        await d.deleteWorktree(worktreePath);
-        await d.pinnedStore.remove(id, url, commit);
+        await d.versionStore.removeMembership(id, url, commit);
+        if (await d.versionStore.referenceCount(url, commit) === 0) {
+          await d.deleteWorktree(worktreePath);
+          await d.versionStore.remove(url, commit);
+        }
         return reply.status(204).send(null);
       } catch (error) {
         return sendCaughtError(

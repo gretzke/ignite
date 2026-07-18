@@ -55,7 +55,7 @@ const { PluginInstaller } = await import('../../plugins/install/PluginInstaller.
 const { LocalFolderBuildBackend } = await import('../../plugins/install/LocalFolderBuildBackend.js');
 const { TrustManager } = await import('../../plugins/trust/TrustManager.js');
 const { RepoService } = await import('../../repos/RepoService.js');
-const { PinnedStore, pinnedOrigin } = await import('../../repos/PinnedStore.js');
+const { VersionStore, pinnedOrigin } = await import('../../repos/VersionStore.js');
 const { JobManager } = await import('../../jobs/JobManager.js');
 const { DeploymentHookService } = await import('../../deployments/DeploymentHookService.js');
 const { PointerSuggestionService } = await import('../../deployments/PointerSuggestionService.js');
@@ -130,20 +130,20 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
 
   it('blocks unapproved origins, rejects ssh pins, and resolves both tags through real Foundry detect', async () => {
     const repos = RepoService.getInstance();
-    const pins = new PinnedStore();
+    const pins = new VersionStore();
     const jobs = JobManager.getInstance();
     const handlers = createWorkflowHandlers({
       repos,
       devMode: () => true,
       jobs,
-      pinnedStore: pins,
+      versionStore: pins,
       getProfileId: async () => PROFILE,
       lifecycle: {
         runPinnedLifecycle: async (url, commit, profileId) => {
-          const clone = await repos.ensurePinnedClone(profileId, url, commit);
-          const detected = await PluginExecutor.getInstance().execute('foundry', 'detect', {}, { workspacePath: clone.path });
+          const clone = await repos.ensureVersion(profileId, url, commit);
+          const detected = await PluginExecutor.getInstance().execute('foundry', 'detect', {}, { workspacePath: clone.checkout });
           expect(detected).toMatchObject({ success: true, data: { detected: true } });
-          return { pathOrUrl: clone.path, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
+          return { pathOrUrl: clone.checkout, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
         },
       },
     });
@@ -170,14 +170,14 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
     expect(job.state).toBe('succeeded');
     expect(job.result).toMatchObject({ sources: [{ id: 'box-v1', status: 'ready' }, { id: 'box-v2', status: 'ready' }, { id: 'consumer', status: 'ready' }] });
 
-    const v1Path = pins.worktreePath(PROFILE, remote.url, remote.v1);
-    const v2Path = pins.worktreePath(PROFILE, remote.url, remote.v2);
+    const v1Path = pins.checkoutPath(remote.url, remote.v1);
+    const v2Path = pins.checkoutPath(remote.url, remote.v2);
     expect(await fs.stat(v1Path)).toBeTruthy();
     expect(await fs.stat(v2Path)).toBeTruthy();
     expect(v1Path).not.toBe(v2Path);
 
     await fs.writeFile(path.join(v1Path, 'src', 'VersionedBox.sol'), '// hostile tracked mutation\n');
-    await repos.ensurePinnedClone(PROFILE, remote.url, remote.v1);
+    await repos.ensureVersion(PROFILE, remote.url, remote.v1);
     expect(await fs.readFile(path.join(v1Path, 'src', 'VersionedBox.sol'), 'utf8')).toContain('contract VersionedBox');
   }, 180_000);
 
@@ -291,13 +291,13 @@ describe.skipIf(!process.env.D6_NET_TESTS)('workflow integration (network-gated 
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-workflow-net-'));
     try {
       const remote = await makeVersionedRemote(temp);
-      const pins = new PinnedStore();
+      const pins = new VersionStore();
       await pins.approveOrigins(PROFILE, [remote.url]);
-      const clone = await RepoService.getInstance().ensurePinnedClone(PROFILE, remote.url, remote.v2);
-      await fs.rm(path.join(clone.path, 'out'), { recursive: true, force: true });
-      const result = await PluginExecutor.getInstance().execute('foundry', 'compile', {}, { workspacePath: clone.path });
+      const clone = await RepoService.getInstance().ensureVersion(PROFILE, remote.url, remote.v2);
+      await fs.rm(path.join(clone.checkout, 'out'), { recursive: true, force: true });
+      const result = await PluginExecutor.getInstance().execute('foundry', 'compile', {}, { workspacePath: clone.checkout });
       expect(result).toMatchObject({ success: true });
-      expect(await fs.stat(path.join(clone.path, 'out', 'VersionedBox.sol', 'VersionedBox.json'))).toBeTruthy();
+      expect(await fs.stat(path.join(clone.checkout, 'out', 'VersionedBox.sol', 'VersionedBox.json'))).toBeTruthy();
     } finally { await fs.rm(temp, { recursive: true, force: true }); }
   }, 300_000);
 });

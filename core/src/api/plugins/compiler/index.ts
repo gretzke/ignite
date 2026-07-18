@@ -19,7 +19,7 @@ import { PluginRegistryLoader } from '../../../assets/PluginRegistryLoader.js';
 import { JobManager } from '../../../jobs/JobManager.js';
 import { RepoService } from '../../../repos/RepoService.js';
 import { resolveContractWorkspace } from '../../../repos/workspaceResolver.js';
-import { PinnedStore } from '../../../repos/PinnedStore.js';
+import { VersionStore } from '../../../repos/VersionStore.js';
 import { ProfileManager } from '../../../filesystem/ProfileManager.js';
 import { getLogger } from '../../../utils/logger.js';
 import { ErrorCodes } from '../../../types/errors.js';
@@ -47,6 +47,7 @@ export interface CompilerJobManagerLike {
 
 export interface CompilerRepoServiceLike {
   resolveExistingWorkspacePath: RepoService['resolveExistingWorkspacePath'];
+  ensureVersion: RepoService['ensureVersion'];
   assertPinnedIntegrity?: RepoService['assertPinnedIntegrity'];
 }
 
@@ -84,7 +85,7 @@ export async function getCompilerArtifactData(
   }
   let workspacePath: string;
   try {
-    workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, pinnedStore: new PinnedStore() });
+    workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, versionStore: new VersionStore() });
   } catch (error) {
     throw Object.assign(
       new Error(
@@ -135,7 +136,7 @@ export async function getCompilerVerificationBundle(
   }
   let workspacePath: string;
   try {
-    workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, pinnedStore: new PinnedStore() });
+    workspacePath = await resolveContractWorkspace(contract, input.profileId, { verifyIntegrity: true }, { repos: deps.repos, versionStore: new VersionStore() });
   } catch (error) {
     throw Object.assign(
       new Error(

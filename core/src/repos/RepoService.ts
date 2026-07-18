@@ -202,12 +202,21 @@ export class RepoService {
   }
 
   async withVersionLock<T>(url: string, commit: string, fn: () => Promise<T>): Promise<T> {
+    // Group before checkout everywhere. In particular, lifecycle callers hold
+    // both locks, so a rematerialization cannot delete a checkout after it
+    // was checked but before detect/install/compile starts.
+    return this.locks.run(`version-group:${this.versionStore.groupDir(url)}`, () =>
+      this.withVersionCheckoutLock(url, commit, fn)
+    );
+  }
+
+  private async withVersionCheckoutLock<T>(url: string, commit: string, fn: () => Promise<T>): Promise<T> {
     return this.locks.run(`version:${this.versionStore.checkoutPath(url, commit)}`, fn);
   }
 
   async removeVersionCheckout(url: string, commit: string): Promise<void> {
     await this.locks.run(`version-group:${this.versionStore.groupDir(url)}`, async () => {
-      await this.withVersionLock(url, commit, async () => {
+      await this.withVersionCheckoutLock(url, commit, async () => {
         await fs.rm(this.versionStore.checkoutPath(url, commit), { recursive: true, force: true });
       });
     });
@@ -222,7 +231,7 @@ export class RepoService {
     }
     const groupDir = this.versionStore.groupDir(url);
     const checkout = this.versionStore.checkoutPath(url, commit);
-    return this.locks.run(`version-group:${groupDir}`, () => this.withVersionLock(url, commit, async () => {
+    return this.locks.run(`version-group:${groupDir}`, () => this.withVersionCheckoutLock(url, commit, async () => {
       const controller = new AbortController();
       const deadline = Date.now() + this.materializationTimeoutMs;
       const timer = setTimeout(() => controller.abort(Object.assign(new Error('Version repository materialization timed out'), { code: 'VERSION_MATERIALIZATION_TIMEOUT' })), this.materializationTimeoutMs);
@@ -562,6 +571,7 @@ export class RepoService {
     pathOrUrl: string,
     opts?: { signal?: AbortSignal }
   ): Promise<RepoResult<null>> {
+    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.initLocked(pathOrUrl, opts?.signal)
     );
@@ -782,7 +792,7 @@ export class RepoService {
     pathOrUrl: string,
     branch: string
   ): Promise<RepoResult<null>> {
-    if (this.isPinnedWorktree(pathOrUrl)) return this.pinnedReadOnlyResult();
+    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.checkoutBranchLocked(pathOrUrl, branch)
     );
@@ -867,7 +877,7 @@ export class RepoService {
     pathOrUrl: string,
     commit: string
   ): Promise<RepoResult<null>> {
-    if (this.isPinnedWorktree(pathOrUrl)) return this.pinnedReadOnlyResult();
+    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.checkoutCommitLocked(pathOrUrl, commit)
     );
@@ -918,7 +928,7 @@ export class RepoService {
   }
 
   async pullChanges(pathOrUrl: string): Promise<RepoResult<null>> {
-    if (this.isPinnedWorktree(pathOrUrl)) return this.pinnedReadOnlyResult();
+    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.pullChangesLocked(pathOrUrl)
     );
@@ -960,7 +970,7 @@ export class RepoService {
   // Destructive by design (frontend confirms before calling): discard
   // uncommitted changes and remove untracked files. Identical for both kinds.
   async reset(pathOrUrl: string): Promise<RepoResult<null>> {
-    if (this.isPinnedWorktree(pathOrUrl)) return this.pinnedReadOnlyResult();
+    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), async () => {
       try {
         const cwd = await this.resolveWorkspacePath(pathOrUrl);
@@ -976,6 +986,14 @@ export class RepoService {
     });
   }
 
+  private isReadOnlyWorkspace(pathOrUrl: string): boolean {
+    // A few narrow unit fakes predate VersionStore's cache-path helper.
+    // Production FileSystem always supplies it; retain the legacy guard for
+    // those fakes while the cache-root check remains authoritative in use.
+    if (path.isAbsolute(pathOrUrl) && typeof (this.fileSystem as Partial<FileSystem>).getVersionCachePath === 'function' && this.versionStore.isCachePath(pathOrUrl)) return true;
+    return this.isPinnedWorktree(pathOrUrl);
+  }
+
   private isPinnedWorktree(pathOrUrl: string): boolean {
     if (!path.isAbsolute(pathOrUrl)) return false;
     const profileId = this.injectedProfiles?.getCurrentProfile();
@@ -985,7 +1003,10 @@ export class RepoService {
     return candidate === root || candidate.startsWith(root + path.sep);
   }
 
-  private pinnedReadOnlyResult(): RepoResult<null> {
+  private readOnlyWorkspaceResult(pathOrUrl: string): RepoResult<null> {
+    if (path.isAbsolute(pathOrUrl) && this.versionStore.isCachePath(pathOrUrl)) {
+      return { success: false, error: { code: 'VERSION_WORKSPACE_READ_ONLY', message: 'Version cache workspaces are read-only; materialize another version instead.' } };
+    }
     return { success: false, error: { code: 'PINNED_REPO_READ_ONLY', message: 'Pinned worktrees are read-only; materialize another pin instead.' } };
   }
 
@@ -1196,6 +1217,7 @@ export class RepoService {
   // containment checks are needed: git worktrees can contain attacker-owned
   // symlinks, and parents must be verified again after mkdir before rename.
   async writeRepoFile(pathOrUrl: string, filePath: string, contents: string): Promise<RepoResult<null>> {
+    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
     const validated = this.validateFilePath(filePath);
     if (!validated.success) return validated;
     try {
@@ -1216,6 +1238,10 @@ export class RepoService {
       writeFile: (relPath: string, contents: string) => Promise<void>;
     }) => Promise<T>
   ): Promise<T> {
+    if (this.isReadOnlyWorkspace(pathOrUrl)) {
+      const result = this.readOnlyWorkspaceResult(pathOrUrl);
+      if (!result.success) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+    }
     const root = await this.resolveExistingWorkspacePath(pathOrUrl);
     const realRoot = await fs.realpath(path.resolve(root));
     return withRepoWriteLock(realRoot, () => fn({

@@ -11,21 +11,21 @@ describe('resolveContractWorkspace', () => {
   it('uses registered workspace resolution for unpinned sources', async () => {
     const resolveExistingWorkspacePath = vi.fn(async () => '/resolved');
     const result = await resolveContractWorkspace(base, 'p1', {}, {
-      repos: { resolveExistingWorkspacePath, assertPinnedIntegrity: vi.fn() },
-      pinnedStore: { worktreePath: vi.fn() },
+      repos: { resolveExistingWorkspacePath, ensureVersion: vi.fn(), assertPinnedIntegrity: vi.fn() },
+      versionStore: { checkoutPath: vi.fn() },
     });
     expect(result).toBe('/resolved');
     expect(resolveExistingWorkspacePath).toHaveBeenCalledWith('/workspace', 'p1');
   });
 
-  it('maps a pin through PinnedStore and verifies integrity when requested', async () => {
+  it('materializes a pin through VersionStore and verifies integrity when requested', async () => {
     const source: ContractSource = { ...base, repoPathOrUrl: 'https://example.test/repo.git', pin: { url: 'https://example.test/repo.git', commit: 'a'.repeat(40), ref: 'v1', refKind: 'tag' } };
     const assertPinnedIntegrity = vi.fn(async () => {});
     const result = await resolveContractWorkspace(source, 'p1', { verifyIntegrity: true }, {
-      repos: { resolveExistingWorkspacePath: vi.fn(), assertPinnedIntegrity },
-      pinnedStore: { worktreePath: vi.fn(() => '/pins/repo/a') },
+      repos: { resolveExistingWorkspacePath: vi.fn(), ensureVersion: vi.fn(async () => ({ checkout: '/versions/repo/a' })), assertPinnedIntegrity },
+      versionStore: { checkoutPath: vi.fn(() => '/versions/repo/a') },
     });
-    expect(result).toBe('/pins/repo/a');
-    expect(assertPinnedIntegrity).toHaveBeenCalledWith('/pins/repo/a', 'a'.repeat(40));
+    expect(result).toBe('/versions/repo/a');
+    expect(assertPinnedIntegrity).toHaveBeenCalledWith('/versions/repo/a', 'a'.repeat(40));
   });
 });

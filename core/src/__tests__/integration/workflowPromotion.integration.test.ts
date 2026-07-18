@@ -43,7 +43,7 @@ const { PluginConfigStore } = await import('../../plugins/config/PluginConfigSto
 const { PluginExecutor } = await import('../../plugins/containers/PluginExecutor.js');
 const { PluginInvoker } = await import('../../plugins/invoke/PluginInvoker.js');
 const { RepoService } = await import('../../repos/RepoService.js');
-const { PinnedStore } = await import('../../repos/PinnedStore.js');
+const { VersionStore } = await import('../../repos/VersionStore.js');
 const { JobManager } = await import('../../jobs/JobManager.js');
 
 type Anvil = { container: Docker.Container; rpcUrl: string };
@@ -137,17 +137,17 @@ describe.skipIf(!ready)('workflow promotion integration (offline)', () => {
     const adopted = JSON.parse(await fs.readFile(path.join(target, 'ignite', 'deployments', WORKFLOW, `${completed.id}.json`), 'utf8'));
     expect(adopted).toMatchObject({ runId: completed.id, status: 'completed' });
 
-    const pins = new PinnedStore();
+    const pins = new VersionStore();
     await pins.approveOrigins(PROFILE, [origin]);
     const repos = RepoService.getInstance();
     const jobs = JobManager.getInstance();
     const workflowHandlers = createWorkflowHandlers({
-      repos, devMode: () => true, jobs, pinnedStore: pins, getProfileId: async () => PROFILE,
+      repos, devMode: () => true, jobs, versionStore: pins, getProfileId: async () => PROFILE,
       lifecycle: { runPinnedLifecycle: async (url, sha, profileId) => {
-        const clone = await repos.ensurePinnedClone(profileId, url, sha);
-        const detected = await PluginExecutor.getInstance().execute('foundry', 'detect', {}, { workspacePath: clone.path });
+        const clone = await repos.ensureVersion(profileId, url, sha);
+        const detected = await PluginExecutor.getInstance().execute('foundry', 'detect', {}, { workspacePath: clone.checkout });
         expect(detected).toMatchObject({ success: true, data: { detected: true } });
-        return { pathOrUrl: clone.path, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
+        return { pathOrUrl: clone.checkout, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
       } },
     });
     const resolving = reply();

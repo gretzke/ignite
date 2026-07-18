@@ -67,10 +67,11 @@ function makeDeps() {
       ensureProfileSwept: vi.fn(),
       sessionState: vi.fn((): RepoRecord | null => null),
     },
-    pinnedStore: {
-      list: vi.fn(async () => []),
+    versionStore: {
       remove: vi.fn(async () => {}),
-      worktreePath: vi.fn((_profileId: string, url: string, commit: string) => `/pinned/${encodeURIComponent(url)}/${commit.slice(0, 12)}`),
+      removeMembership: vi.fn(async () => {}),
+      referenceCount: vi.fn(async () => 0),
+      checkoutPath: vi.fn((url: string, commit: string) => `/versions/${encodeURIComponent(url)}/${commit}`),
     },
     deleteWorktree: vi.fn(async () => {}),
     hasWorkspace: vi.fn(async () => true),
@@ -200,29 +201,12 @@ describe('profile handlers', () => {
     ).toBe('/ws/session');
   });
 
-  it('listRepos includes pinned clone summaries', async () => {
+  it('keeps the legacy pinned response field empty', async () => {
     const deps = makeDeps();
-    deps.pinnedStore.list = vi.fn(async () => [{
-      url: 'https://example.com/contracts.git',
-      commit: 'a'.repeat(40),
-      refLabel: 'v1.2.3',
-      refKind: 'tag' as const,
-      frameworks: [{ id: 'foundry', name: 'Foundry', compiledAt: 'ignored' }],
-      detectedAt: '2026-07-10T00:00:00.000Z',
-      lastUsedAt: '2026-07-11T00:00:00.000Z',
-    }]);
     const handlers = createProfileHandlers(deps);
     const reply = makeReply();
     await handlers.listRepos({ params: { id: 'p1' } } as never, reply as never);
-    expect((reply.body as { data: { pinned: unknown[] } }).data.pinned).toEqual([{
-      url: 'https://example.com/contracts.git',
-      commit: 'a'.repeat(40),
-      refLabel: 'v1.2.3',
-      refKind: 'tag',
-      frameworks: [{ id: 'foundry', name: 'Foundry' }],
-      detectedAt: '2026-07-10T00:00:00.000Z',
-      lastUsedAt: '2026-07-11T00:00:00.000Z',
-    }]);
+    expect((reply.body as { data: { pinned: unknown[] } }).data.pinned).toEqual([]);
   });
 
   it('deletePinnedRepo removes the worktree and registry entry', async () => {
@@ -231,9 +215,10 @@ describe('profile handlers', () => {
     const reply = makeReply();
     await handlers.deletePinnedRepo({ params: { id: 'p1' }, query: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } } as never, reply as never);
     expect(reply.statusCode).toBe(204);
-    const worktree = `/pinned/${encodeURIComponent('https://example.com/contracts.git')}/${'a'.repeat(12)}`;
+    const worktree = `/versions/${encodeURIComponent('https://example.com/contracts.git')}/${'a'.repeat(40)}`;
     expect(deps.deleteWorktree).toHaveBeenCalledWith(worktree);
-    expect(deps.pinnedStore.remove).toHaveBeenCalledWith('p1', 'https://example.com/contracts.git', 'a'.repeat(40));
+    expect(deps.versionStore.removeMembership).toHaveBeenCalledWith('p1', 'https://example.com/contracts.git', 'a'.repeat(40));
+    expect(deps.versionStore.remove).toHaveBeenCalledWith('https://example.com/contracts.git', 'a'.repeat(40));
   });
 
   it('deletePinnedRepo returns REPO_BUSY while its lifecycle job is active', async () => {
@@ -245,13 +230,13 @@ describe('profile handlers', () => {
     expect(reply.statusCode).toBe(409);
     expect(reply.body).toMatchObject({ code: 'REPO_BUSY' });
     expect(deps.deleteWorktree).not.toHaveBeenCalled();
-    expect(deps.pinnedStore.remove).not.toHaveBeenCalled();
+    expect(deps.versionStore.removeMembership).not.toHaveBeenCalled();
   });
 
   it('deletePinnedRepo returns 409 during an awaitable workflow-resolve lifecycle', async () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git'; const commit = 'a'.repeat(40);
-    const worktree = deps.pinnedStore.worktreePath('p1', url, commit);
+    const worktree = deps.versionStore.checkoutPath(url, commit);
     let release!: () => void;
     const lifecycle = new RepoLifecycle({
       jobs: { start: vi.fn(), get: vi.fn() } as never,
@@ -259,11 +244,12 @@ describe('profile handlers', () => {
       registryLoader: { getPluginsByType: vi.fn(async () => []) } as never,
       repos: {
         init: vi.fn(), resolveWorkspacePath: vi.fn(async () => worktree),
-        ensurePinnedClone: vi.fn(() => new Promise((resolve) => { release = () => resolve({ path: worktree }); })),
+        ensureVersion: vi.fn(() => new Promise((resolve) => { release = () => resolve({ checkout: worktree }); })),
+        removeVersionCheckout: vi.fn(), withVersionLock: vi.fn(async (_url, _commit, fn) => fn()),
       } as never,
       registry: { list: vi.fn(), updateRepoState: vi.fn() } as never,
       sessionPath: () => null,
-      pinnedStore: { worktreePath: () => worktree, get: vi.fn(), upsert: vi.fn() } as never,
+      versionStore: { checkoutPath: () => worktree, get: vi.fn(), updateState: vi.fn() } as never,
     });
     deps.lifecycle.activeJobFor = vi.fn(lifecycle.activeJobFor.bind(lifecycle));
     const resolving = lifecycle.runPinnedLifecycle(url, commit, 'p1', { log: () => {}, signal: new AbortController().signal });

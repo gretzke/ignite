@@ -58,4 +58,20 @@ describe('writeRepoFile', () => {
     })).resolves.toBeUndefined();
     await expect(fs.readFile(path.join(root, 'ignite/workflow.json'), 'utf8')).resolves.toBe('after');
   });
+
+  it('refuses mutations under the global version cache with a typed error', async () => {
+    const root = await temp('ignite-version-cache-');
+    const repos = new RepoService({
+      fileSystem: { getReposPath: () => '/unused', getVersionCachePath: () => root } as unknown as FileSystem,
+      profiles: { getCurrentProfile: () => 'p1' } as unknown as ProfileManager,
+    });
+    await expect(repos.writeRepoFile(root, 'ignite/workflows/a.json', '{}\n')).resolves.toMatchObject({
+      success: false,
+      error: { code: 'VERSION_WORKSPACE_READ_ONLY' },
+    });
+    await expect(repos.checkoutBranch(root, 'main')).resolves.toMatchObject({
+      success: false,
+      error: { code: 'VERSION_WORKSPACE_READ_ONLY' },
+    });
+  });
 });

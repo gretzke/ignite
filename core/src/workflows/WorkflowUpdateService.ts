@@ -16,7 +16,7 @@ import { pluginVersionInfo } from '../api/plugins/versions.js';
 import type { PluginConfig } from '../assets/PluginRegistryLoader.js';
 import type { PluginInstallSource } from '../plugins/install/types.js';
 import type { PluginVersionInfoData } from '@ignite/api';
-import { PinnedStore, pinnedOrigin } from '../repos/PinnedStore.js';
+import { VersionStore, pinnedOrigin } from '../repos/VersionStore.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { ContractTypeService } from '../deployments/ContractTypeService.js';
 
@@ -37,7 +37,7 @@ export class WorkflowUpdateService {
       inspectRemote: deps?.inspectRemote ?? inspectGitRemote,
       pluginRows: deps?.pluginRows ?? requiredPluginRows,
       getProfileId: deps?.getProfileId ?? (async () => (await ProfileManager.getInstance()).getCurrentProfile()),
-      isOriginApproved: deps?.isOriginApproved ?? ((profileId, url) => new PinnedStore().isOriginApproved(profileId, url)),
+      isOriginApproved: deps?.isOriginApproved ?? ((profileId, url) => new VersionStore().isOriginApproved(profileId, url)),
       contractTypeHash: deps?.contractTypeHash ?? (async (pluginId) => (await ContractTypeService.getInstance().frozenDescriptor(pluginId)).contentHash),
     };
   }

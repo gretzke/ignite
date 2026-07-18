@@ -24,11 +24,12 @@ describe('workflow resolve and origin approval', () => {
   it('runs pinned lifecycle awaitably and reports source/plugin readiness', async () => {
     let runner!: JobRunner;
     const lifecycle = { runPinnedLifecycle: vi.fn(async () => ({ pathOrUrl: '/pin', frameworks: [{ id: 'foundry', name: 'Foundry' }] })) };
+    const versionStore = { isOriginApproved: async () => true, approveOrigins: async () => {}, addMembership: vi.fn(async () => {}) };
     const handlers = createWorkflowHandlers({
       repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify(workflow) } })) } as never,
       jobs: { start: vi.fn((_type, _params, value) => { runner = value; return { id: 'job-1' }; }) } as never,
       lifecycle: lifecycle as never,
-      pinnedStore: { isOriginApproved: async () => true, approveOrigins: async () => {} } as never,
+      versionStore: versionStore as never,
       getProfileId: async () => 'p1',
       pluginStatus: async (id) => id === 'missing' ? { id, status: 'missing' } : id === 'wrong-version' ? { id, status: 'version-mismatch', installedVersion: '1.0.0' } : id === 'untrusted' ? { id, status: 'untrusted', installedVersion: '1.0.0' } : { id, status: 'installed', installedVersion: '1.0.0' },
       artifactReadable: async () => true,
@@ -45,6 +46,7 @@ describe('workflow resolve and origin approval', () => {
       { id: 'untrusted', status: 'untrusted', installedVersion: '1.0.0' },
     ]));
     expect(lifecycle.runPinnedLifecycle).toHaveBeenCalledWith('https://example.test/repo.git', 'a'.repeat(40), 'p1', expect.any(Object));
+    expect(versionStore.addMembership).toHaveBeenCalledWith('p1', 'https://example.test/repo.git', 'a'.repeat(40), 'workflow');
   });
 
   it('resolves contract-type sources by descriptor readability without clone or compile', async () => {
@@ -52,7 +54,7 @@ describe('workflow resolve and origin approval', () => {
     const document = { schemaVersion: 1, sources: [{ id: 'proxy', origin: 'contract-type', contractName: 'Proxy', pluginId: 'proxy-plugin', artifactKey: 'proxy', versionLabel: '1', contentHash: 'a'.repeat(64) }], steps: [{ id: 'deploy-proxy', kind: 'deploy', contractId: 'proxy' }], requiredPlugins: [{ id: 'proxy-plugin', version: '1' }], outputs: { hooks: [] } };
     const lifecycle = { runPinnedLifecycle: vi.fn() };
     const artifactReadable = vi.fn(async () => true);
-    const handlers = createWorkflowHandlers({ repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify(document) } })) } as never, jobs: { start: vi.fn((_type, _params, value) => { runner = value; return { id: 'job-1' }; }) } as never, lifecycle: lifecycle as never, pinnedStore: { isOriginApproved: async () => true, approveOrigins: async () => {} } as never, getProfileId: async () => 'p1', pluginStatus: async () => ({ id: 'proxy-plugin', status: 'installed', installedVersion: '1' }), artifactReadable });
+    const handlers = createWorkflowHandlers({ repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify(document) } })) } as never, jobs: { start: vi.fn((_type, _params, value) => { runner = value; return { id: 'job-1' }; }) } as never, lifecycle: lifecycle as never, versionStore: { isOriginApproved: async () => true, approveOrigins: async () => {}, addMembership: vi.fn(async () => {}) } as never, getProfileId: async () => 'p1', pluginStatus: async () => ({ id: 'proxy-plugin', status: 'installed', installedVersion: '1' }), artifactReadable });
     await handlers.resolveWorkflow({ body: { repoPathOrUrl: '/workflow', name: 'test' } } as never, reply());
     await expect(runner({ log: () => {}, signal: new AbortController().signal })).resolves.toMatchObject({ sources: [{ id: 'proxy', status: 'ready' }] });
     expect(lifecycle.runPinnedLifecycle).not.toHaveBeenCalled();
@@ -70,7 +72,7 @@ describe('workflow resolve and origin approval', () => {
       repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify({ ...workflow, requiredPlugins: [{ id: 'foundry', version: '1.0.0' }] }) } })) } as never,
       jobs: { start: vi.fn((_type, _params, value) => { runner = value; return { id: 'job-1' }; }) } as never,
       lifecycle: { runPinnedLifecycle } as never,
-      pinnedStore: store as never,
+      versionStore: { ...store, addMembership: vi.fn(async () => {}) } as never,
       getProfileId: async () => 'p1', pluginStatus: async (id) => ({ id, status: 'installed', installedVersion: '1.0.0' }), artifactReadable: async () => true,
     });
     const blocked = reply();
@@ -97,7 +99,7 @@ describe('workflow resolve and origin approval', () => {
     const handlers = createWorkflowHandlers({
       repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify(document) } })) } as never,
       jobs: jobs as never,
-      pinnedStore: { isOriginApproved: vi.fn(async () => false), approveOrigins: vi.fn() } as never,
+      versionStore: { isOriginApproved: vi.fn(async () => false), approveOrigins: vi.fn(), addMembership: vi.fn() } as never,
       getProfileId: async () => 'p1',
     });
     const res = reply();

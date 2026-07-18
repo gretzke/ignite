@@ -17,7 +17,7 @@ import {
 import { RepoService } from '../repos/RepoService.js';
 import { JobManager, type JobContext } from '../jobs/JobManager.js';
 import { RepoLifecycle } from '../repos/RepoLifecycle.js';
-import { PinnedStore, pinnedOrigin } from '../repos/PinnedStore.js';
+import { VersionStore, pinnedOrigin } from '../repos/VersionStore.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { TrustManager } from '../plugins/trust/TrustManager.js';
@@ -33,7 +33,7 @@ export interface WorkflowHandlerDeps {
   devMode: () => boolean;
   jobs: Pick<JobManager, 'start'>;
   lifecycle: Pick<RepoLifecycle, 'runPinnedLifecycle'>;
-  pinnedStore: Pick<PinnedStore, 'approveOrigins' | 'isOriginApproved'>;
+  versionStore: Pick<VersionStore, 'approveOrigins' | 'isOriginApproved' | 'addMembership'>;
   getProfileId: () => Promise<string>;
   pluginStatus: (id: string, requiredVersion: string) => Promise<WorkflowPluginReadiness>;
   artifactReadable: (source: WorkflowSource, profileId: string) => Promise<boolean>;
@@ -86,7 +86,7 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
     devMode: deps?.devMode ?? (() => process.env.NODE_ENV === 'development'),
     jobs: deps?.jobs ?? JobManager.getInstance(),
     lifecycle: deps?.lifecycle ?? RepoLifecycle.getInstance(),
-    pinnedStore: deps?.pinnedStore ?? new PinnedStore(),
+    versionStore: deps?.versionStore ?? new VersionStore(),
     getProfileId: deps?.getProfileId ?? (async () => (await ProfileManager.getInstance()).getCurrentProfile()),
     pluginStatus: deps?.pluginStatus ?? (async (id, requiredVersion) => {
       let config;
@@ -195,7 +195,7 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
           if (source.origin === 'contract-type') continue;
           origins.set(pinnedOrigin(source.repo.url), source.repo.url);
         }
-        const unapproved = (await Promise.all([...origins].map(async ([origin, url]) => ({ origin, approved: await d.pinnedStore.isOriginApproved(profileId, url) }))))
+        const unapproved = (await Promise.all([...origins].map(async ([origin, url]) => ({ origin, approved: await d.versionStore.isOriginApproved(profileId, url) }))))
           .filter((entry) => !entry.approved)
           .map((entry) => entry.origin);
         if (unapproved.length > 0) throw new WorkflowHttpError(409, 'PINNED_ORIGIN_UNAPPROVED', 'Pinned origin approval required', { origins: unapproved });
@@ -211,6 +211,9 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
               }
               ctx.log(`source ${source.id}: cloning\n`);
               const lifecycle = await d.lifecycle.runPinnedLifecycle(source.repo.url, source.repo.commit, profileId, ctx);
+              // The lifecycle has materialized this immutable checkout. Keep
+              // it retained even if a later framework/artifact check fails.
+              await d.versionStore.addMembership(profileId, source.repo.url, source.repo.commit, 'workflow');
               if (!lifecycle.frameworks.some((framework) => framework.id === source.frameworkId)) throw new Error(`Framework '${source.frameworkId}' was not detected`);
               ctx.log(`source ${source.id}: compiling\n`);
               if (!(await d.artifactReadable(source, profileId))) throw new Error('Compiled artifact is not readable');
@@ -236,7 +239,7 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
     ): Promise<IApiResponse<{ origins: string[] }>> => {
       try {
         const profileId = await d.getProfileId();
-        await d.pinnedStore.approveOrigins(profileId, request.body.origins);
+        await d.versionStore.approveOrigins(profileId, request.body.origins);
         return reply.status(200).send({ data: { origins: request.body.origins } });
       } catch (error) { return fail(reply, new WorkflowHttpError(400, 'PINNED_ORIGIN_INVALID', error instanceof Error ? error.message : String(error))); }
     },

@@ -89,6 +89,7 @@ function makeFakeRepos(
     resolveExistingWorkspacePath: vi.fn(
       async (pathOrUrl: string) => `${pathOrUrl}-workspace`
     ),
+    ensureVersion: vi.fn(async (_profileId: string, _url: string, _commit: string) => ({ checkout: 'unused-version-workspace' })),
     ...overrides,
   };
 }
