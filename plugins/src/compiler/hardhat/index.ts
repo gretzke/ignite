@@ -129,9 +129,9 @@ export class HardhatPlugin extends CompilerPlugin {
     try {
       // if yarn.lock exists, use yarn, otherwise use npm
       await fs.access(join("/workspace", "yarn.lock"));
-      result = await execCommand("yarn", ["install"], "/workspace");
+      result = await execCommand("yarn", ["install", "--ignore-engines"], "/workspace");
     } catch {
-      result = await execCommand("npm", ["install"], "/workspace");
+      result = await execCommand("npm", ["install", "--engine-strict=false"], "/workspace");
     }
 
     if (!result.success) {
