@@ -584,7 +584,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             code: ErrorCodes.VERSION_ORIGIN_UNAPPROVED,
             message: 'Version origin approval required',
             details: { origins: [pinnedOrigin(source.url)] },
-          }) as unknown as IApiResponse<JobStartedData>;
+          }) as unknown as IApiResponse<AddRepoVersionStartedData>;
         }
         const resolved = body.ref
           ? source.localFallbackPath
@@ -608,7 +608,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             error: 'Bad Request',
             code: 'VERSION_REF_NOT_FOUND',
             message: `Remote ref '${body.ref}' was not found`,
-          }) as unknown as IApiResponse<JobStartedData>;
+          }) as unknown as IApiResponse<AddRepoVersionStartedData>;
         let { commit, refKind, refLabel } = resolved;
         // The API accepts a convenient short SHA, but VersionStore identities
         // are always full commits. Prefer advertised heads, then use cached
@@ -625,14 +625,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
                 error: 'Bad Request',
                 code: 'VERSION_COMMIT_AMBIGUOUS',
                 message: `Commit prefix '${commit}' is ambiguous in cached history. Provide more characters.`,
-              }) as unknown as IApiResponse<JobStartedData>;
+              }) as unknown as IApiResponse<AddRepoVersionStartedData>;
             }
             commit = matches[0];
           }
           else {
             const cached = await d.repos.resolveCachedVersionCommit(source.url, commit);
             if (!cached) {
-              return reply.status(400).send({ statusCode: 400, error: 'Bad Request', code: 'VERSION_COMMIT_NOT_RESOLVABLE', message: `Commit prefix '${commit}' is not available in cached history. Provide the full 40-hex commit for commits not at a ref head.` }) as unknown as IApiResponse<JobStartedData>;
+              return reply.status(400).send({ statusCode: 400, error: 'Bad Request', code: 'VERSION_COMMIT_NOT_RESOLVABLE', message: `Commit prefix '${commit}' is not available in cached history. Provide the full 40-hex commit for commits not at a ref head.` }) as unknown as IApiResponse<AddRepoVersionStartedData>;
             }
             commit = cached;
           }
@@ -675,7 +675,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           error,
           ErrorCodes.PROFILE_REPO_SAVE_ERROR,
           'Failed to add repository version'
-        ) as unknown as IApiResponse<JobStartedData>;
+        ) as unknown as IApiResponse<AddRepoVersionStartedData>;
       }
     },
 
