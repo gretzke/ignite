@@ -35,6 +35,7 @@ export function useRepositoryLists() {
           saved: false,
           frameworks: repositoriesData[sessionPath]?.frameworks,
           versions: repositories?.session?.versions ?? [],
+          originUrl: repositories?.session?.originUrl,
         }
       : null;
 
@@ -50,6 +51,7 @@ export function useRepositoryLists() {
         path: entry.pathOrUrl,
         frameworks: repositoriesData[entry.pathOrUrl]?.frameworks,
         versions: entry.versions,
+        originUrl: entry.originUrl,
         isCurrentWorkspace,
         originalIndex: index,
       };
@@ -70,6 +72,7 @@ export function useRepositoryLists() {
         path: entry.pathOrUrl,
         frameworks: repositoriesData[entry.pathOrUrl]?.frameworks,
         versions: entry.versions,
+        originUrl: entry.originUrl,
       })) || [];
 
   return { currentWorkspace, localRepos, clonedRepos, sessionPath };

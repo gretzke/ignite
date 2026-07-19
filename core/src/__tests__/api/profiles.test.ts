@@ -200,6 +200,17 @@ describe('profile handlers', () => {
     expect(deps.hasWorkspace).toHaveBeenCalledWith('/repo-a', 'p1');
   });
 
+  it('listRepos exposes a local repository origin for remote version pickers', async () => {
+    const deps = makeDeps();
+    deps.repoRegistry.list = async () => ({ session: null, local: [{ pathOrUrl: '/repo-a' }], cloned: [] });
+    deps.repos.getVersionSource = vi.fn(async () => ({ url: 'https://example.test/contracts.git', workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
+
+    const reply = makeReply();
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
+
+    expect((reply.body as { data: { local: Array<{ originUrl?: string }> } }).data.local[0].originUrl).toBe('https://example.test/contracts.git');
+  });
+
   it('listRepos includes the session workspace entry from lifecycle state', async () => {
     const deps = makeDeps();
     deps.lifecycle.sessionState = vi.fn(() => ({

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Loader2 } from 'lucide-react';
 import type { AddRepoVersionRequest, InspectGitRemoteData } from '@ignite/api';
@@ -6,18 +6,56 @@ import { apiClient } from '../../../store/api/client';
 import { useAppDispatch } from '../../../store/hooks';
 import Select from '../../../components/Select';
 
+export interface VersionSource {
+  sourceKey: string;
+  label: string;
+  /** Remote origin used for releases, tags, and remote branches. */
+  url?: string;
+  repoPathOrUrl?: string;
+  local: boolean;
+  initialBranch?: string;
+  initialCommit?: string;
+}
+
 interface AddVersionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  source: {
-    sourceKey: string;
-    label: string;
-    url?: string;
-    repoPathOrUrl?: string;
-    local: boolean;
-  } | null;
+  source: VersionSource | null;
   onSubmit: (request: AddRepoVersionRequest) => void;
   onSwitchBranch: (path: string, branch: string) => void;
+}
+
+export function versionPickerSections(
+  source: VersionSource | null,
+  inspect: InspectGitRemoteData | null,
+  localBranches: string[]
+) {
+  const releases = source?.url ? (inspect?.releases ?? []) : [];
+  const tags = source?.url
+    ? Object.keys(inspect?.tagHeads ?? {})
+        .filter((name) => !releases.some((item) => item.tag === name))
+        .sort()
+    : [];
+  return {
+    releases,
+    tags,
+    remoteBranches: source?.url ? (inspect?.branches ?? []) : [],
+    localBranches: source?.local ? localBranches : [],
+  };
+}
+
+export function canSwitchLocalBranch({
+  local,
+  localBranch,
+  remoteRefSelected,
+  commit,
+}: {
+  local: boolean | undefined;
+  localBranch: string;
+  remoteRefSelected: boolean;
+  commit: string;
+}) {
+  return local && Boolean(localBranch) && !remoteRefSelected && !commit.trim();
 }
 
 export default function AddVersionModal({
@@ -28,11 +66,13 @@ export default function AddVersionModal({
   onSwitchBranch,
 }: AddVersionModalProps) {
   const dispatch = useAppDispatch();
+  const commitInput = useRef<HTMLInputElement>(null);
   const [inspect, setInspect] = useState<InspectGitRemoteData | null>(null);
   const [inspecting, setInspecting] = useState(false);
   const [inspectError, setInspectError] = useState('');
   const [localBranches, setLocalBranches] = useState<string[]>([]);
-  const [branch, setBranch] = useState('');
+  const [localBranch, setLocalBranch] = useState('');
+  const [remoteBranch, setRemoteBranch] = useState('');
   const [release, setRelease] = useState('');
   const [tag, setTag] = useState('');
   const [commit, setCommit] = useState('');
@@ -42,11 +82,13 @@ export default function AddVersionModal({
     if (!open || !source) return;
     setInspect(null);
     setInspectError('');
+    setInspecting(Boolean(source.url));
     setLocalBranches([]);
-    setBranch('');
+    setLocalBranch(source.local ? (source.initialBranch ?? '') : '');
+    setRemoteBranch(source.local ? '' : (source.initialBranch ?? ''));
     setRelease('');
     setTag('');
-    setCommit('');
+    setCommit(source.initialCommit ?? '');
     setMode('copy');
 
     if (source.local && source.repoPathOrUrl) {
@@ -55,24 +97,27 @@ export default function AddVersionModal({
           body: { pathOrUrl: source.repoPathOrUrl },
           onSuccess: ({ branches }) => {
             setLocalBranches(branches);
-            setBranch(branches[0] ?? '');
+            if (!source.initialBranch && !source.url)
+              setLocalBranch(branches[0] ?? '');
           },
         })
       );
-      return;
     }
 
     if (!source.url) return;
-    setInspecting(true);
     dispatch(
       apiClient.dispatch.inspectGitRemote({
         body: { url: source.url },
         onSuccess: (data) => {
           setInspect(data);
           setInspecting(false);
-          const stable = data.releases.find((item) => !item.prerelease);
-          if (stable) setRelease(stable.tag);
-          else setBranch(data.defaultBranch ?? data.branches[0] ?? '');
+          // A branch click intentionally keeps its local selection. Otherwise
+          // releases are the first, most useful remote choice.
+          if (!source.initialBranch && !source.initialCommit) {
+            const stable = data.releases.find((item) => !item.prerelease);
+            if (stable) setRelease(stable.tag);
+            else setRemoteBranch(data.defaultBranch ?? data.branches[0] ?? '');
+          }
         },
         onError: (error) => {
           setInspecting(false);
@@ -82,33 +127,59 @@ export default function AddVersionModal({
     );
   }, [dispatch, open, source]);
 
+  useEffect(() => {
+    if (open && source?.initialCommit) commitInput.current?.focus();
+  }, [open, source?.initialCommit]);
+
+  const clearRefsExcept = (
+    selected: 'release' | 'tag' | 'remoteBranch' | 'localBranch'
+  ) => {
+    if (selected !== 'release') setRelease('');
+    if (selected !== 'tag') setTag('');
+    if (selected !== 'remoteBranch') setRemoteBranch('');
+    if (selected !== 'localBranch') setLocalBranch('');
+  };
+
   const commitValid = !commit.trim() || /^[0-9a-f]{7,40}$/i.test(commit.trim());
-  const selectedRef = branch || release || tag;
+  const selectedRef = release || tag || remoteBranch || localBranch;
+  const remoteRefSelected = Boolean(release || tag || remoteBranch);
   const canSubmit = Boolean(
     source && commitValid && (commit.trim() || selectedRef)
   );
-  const canSwitch = source?.local && Boolean(branch) && !commit.trim();
+  const canSwitch = canSwitchLocalBranch({
+    local: source?.local,
+    localBranch,
+    remoteRefSelected,
+    commit,
+  });
 
   const handleSubmit = () => {
     if (!source || !canSubmit) return;
-    if (source.local && mode === 'switch') {
-      if (canSwitch && source.repoPathOrUrl)
-        onSwitchBranch(source.repoPathOrUrl, branch);
+    if (mode === 'switch' && canSwitch && source.repoPathOrUrl) {
+      onSwitchBranch(source.repoPathOrUrl, localBranch);
       return;
     }
+
     const target = commit.trim()
       ? { commit: commit.trim() }
-      : { ref: selectedRef, ...(release || tag ? { refKind: 'tag' as const } : { refKind: 'branch' as const }) };
+      : {
+          ref: selectedRef,
+          refKind: (release || tag ? 'tag' : 'branch') as 'tag' | 'branch',
+        };
+    // Local branches and commits resolve against the local worktree. Remote
+    // release/tag/branch choices resolve from the canonical origin instead.
     onSubmit(
-      source.local
+      source.local && !remoteRefSelected
         ? { repoPathOrUrl: source.repoPathOrUrl!, ...target }
         : { url: source.url!, ...target }
     );
   };
 
-  const releases = inspect?.releases ?? [];
-  const tags = (inspect ? Object.keys(inspect.tagHeads ?? {}).filter((name) => !releases.some((release) => release.tag === name)).sort() : []);
-  const branches = source?.local ? localBranches : (inspect?.branches ?? []);
+  const { releases, tags, remoteBranches } = versionPickerSections(
+    source,
+    inspect,
+    localBranches
+  );
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -132,11 +203,9 @@ export default function AddVersionModal({
             <div className="text-xs text-err mb-3">{inspectError}</div>
           )}
 
-          {!source?.local && releases.length > 0 && (
+          {releases.length > 0 && (
             <div className="mb-3">
-              <label className="block text-sm font-medium mb-2">
-                Release or tag
-              </label>
+              <label className="block text-sm font-medium mb-2">Releases</label>
               <Select
                 options={releases.map((item, index) => ({
                   value: item.tag,
@@ -145,9 +214,77 @@ export default function AddVersionModal({
                 value={release}
                 onValueChange={(value) => {
                   setRelease(value);
-                  setBranch('');
-                  setTag('');
+                  clearRefsExcept('release');
+                  setMode('copy');
                 }}
+                anchor="left"
+              />
+            </div>
+          )}
+
+          {tags.length > 0 && (
+            <div className="mb-3">
+              <label className="block text-sm font-medium mb-2">Tags</label>
+              <Select
+                options={[
+                  { value: '', label: '— none —' },
+                  ...tags.map((name) => ({ value: name, label: name })),
+                ]}
+                value={tag}
+                onValueChange={(value) => {
+                  setTag(value);
+                  if (value) {
+                    clearRefsExcept('tag');
+                    setMode('copy');
+                  }
+                }}
+                anchor="left"
+              />
+            </div>
+          )}
+
+          {remoteBranches.length > 0 && (
+            <div className="mb-3">
+              <label className="block text-sm font-medium mb-2">
+                Remote branch
+              </label>
+              <Select
+                options={[
+                  { value: '', label: '— none —' },
+                  ...remoteBranches.map((name) => ({
+                    value: name,
+                    label: name,
+                  })),
+                ]}
+                value={remoteBranch}
+                onValueChange={(value) => {
+                  setRemoteBranch(value);
+                  if (value) {
+                    clearRefsExcept('remoteBranch');
+                    setMode('copy');
+                  }
+                }}
+                anchor="left"
+              />
+            </div>
+          )}
+
+          {source?.local && localBranches.length > 0 && (
+            <div className="mb-3">
+              <label className="block text-sm font-medium mb-2">
+                Local branch
+              </label>
+              <Select
+                options={localBranches.map((name) => ({
+                  value: name,
+                  label: name,
+                }))}
+                value={localBranch}
+                onValueChange={(value) => {
+                  setLocalBranch(value);
+                  clearRefsExcept('localBranch');
+                }}
+                placeholder="Choose local branch"
                 anchor="left"
               />
             </div>
@@ -155,31 +292,10 @@ export default function AddVersionModal({
 
           <div className="mb-3">
             <label className="block text-sm font-medium mb-2">
-              {source?.local ? 'Local branch' : 'Branch'}
-            </label>
-            <Select
-              options={[
-                ...(releases.length > 0 && !source?.local
-                  ? [{ value: '', label: '— none (use release) —' }]
-                  : []),
-                ...branches.map((name) => ({ value: name, label: name })),
-              ]}
-              value={branch}
-              onValueChange={(value) => {
-                setBranch(value);
-                if (value) setRelease('');
-                if (value) setTag('');
-              }}
-              placeholder={source?.local ? 'Choose branch' : 'Choose branch'}
-              anchor="left"
-            />
-          </div>
-
-          <div className="mb-3">
-            <label className="block text-sm font-medium mb-2">
               Commit hash
             </label>
             <input
+              ref={commitInput}
               type="text"
               placeholder="Optional full or short commit hash"
               value={commit}
@@ -190,15 +306,8 @@ export default function AddVersionModal({
             {!commitValid && (
               <div className="text-xs text-err mt-1">
                 Enter 7–40 hexadecimal characters.
-          </div>
-        )}
-
-          {!source?.local && tags.length > 0 && (
-            <div className="mb-3">
-              <label className="block text-sm font-medium mb-2">Tags</label>
-              <Select options={[{ value: '', label: '— none —' }, ...tags.map((name) => ({ value: name, label: name }))]} value={tag} onValueChange={(value) => { setTag(value); if (value) { setRelease(''); setBranch(''); } }} anchor="left" />
-            </div>
-          )}
+              </div>
+            )}
           </div>
 
           {source?.local && (
@@ -220,24 +329,25 @@ export default function AddVersionModal({
                     Keep the current workspace unchanged.
                   </span>
                 </label>
-                <label className="card-milky p-3 flex-1 text-sm cursor-pointer">
-                  <input
-                    type="radio"
-                    name="local-version-mode"
-                    checked={mode === 'switch'}
-                    onChange={() => setMode('switch')}
-                    className="mr-2"
-                  />
-                  Switch branch
-                  <span className="block text-xs opacity-70 mt-1">
-                    Changes the local workspace after confirmation.
-                  </span>
-                </label>
+                {canSwitch && (
+                  <label className="card-milky p-3 flex-1 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="local-version-mode"
+                      checked={mode === 'switch'}
+                      onChange={() => setMode('switch')}
+                      className="mr-2"
+                    />
+                    Switch branch
+                    <span className="block text-xs opacity-70 mt-1">
+                      Changes the local workspace after confirmation.
+                    </span>
+                  </label>
+                )}
               </div>
-              {mode === 'switch' && !canSwitch && (
+              {!canSwitch && (
                 <div className="text-xs text-warn mt-2">
-                  Switching requires a local branch; use Make a copy for a
-                  commit.
+                  Remote refs and commits can only be copied.
                 </div>
               )}
             </fieldset>
@@ -255,9 +365,7 @@ export default function AddVersionModal({
               onClick={handleSubmit}
               disabled={!canSubmit || (mode === 'switch' && !canSwitch)}
             >
-              {source?.local && mode === 'switch'
-                ? 'Switch branch'
-                : 'Add version'}
+              {mode === 'switch' && canSwitch ? 'Switch branch' : 'Add version'}
             </button>
           </div>
         </Dialog.Content>

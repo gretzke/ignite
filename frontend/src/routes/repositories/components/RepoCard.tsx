@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import Tooltip from '../../../components/Tooltip';
-import Select from '../../../components/Select';
+import Dropdown from '../../../components/Dropdown';
 import {
   Bookmark,
   X,
@@ -9,10 +9,9 @@ import {
   GitCommit,
   GitPullRequest,
   FileEdit,
-  Plus,
+  EllipsisVertical,
 } from 'lucide-react';
-import { useAppSelector, useAppDispatch } from '../../../store/hooks';
-import { repositoriesApi } from '../../../store/features/repositories/repositoriesApi';
+import { useAppSelector } from '../../../store/hooks';
 import {
   selectRepositoriesData,
   type IFramework,
@@ -146,8 +145,13 @@ function DirtyIndicator({
 }
 
 // Branch selector component with custom trigger
-function BranchSelector({ path }: { path: string }) {
-  const dispatch = useAppDispatch();
+function BranchSelector({
+  path,
+  onOpenVersion,
+}: {
+  path: string;
+  onOpenVersion?: (path: string, initial?: VersionModalInitialValue) => void;
+}) {
   const repositoriesData = useAppSelector(selectRepositoriesData);
   const repoData = repositoriesData[path];
   const status = getRepoInitStatus(path, repositoriesData);
@@ -158,85 +162,31 @@ function BranchSelector({ path }: { path: string }) {
   }
 
   const currentBranch = repoData.info?.branch;
-  const branches = repoData.branches || [];
-
-  // Don't show if no branches available
-  if (branches.length === 0) {
+  if (!currentBranch) {
     return null;
   }
 
-  // Convert branches to Select options
-  const branchOptions = branches.map((branch) => ({
-    value: branch,
-    label: branch,
-  }));
-
-  // Handle detached HEAD state
-  const isDetachedHead = currentBranch === null;
-
   return (
-    <Select
-      options={branchOptions}
-      value={currentBranch || undefined}
-      placeholder="Select branch..."
-      defaultPriority={['main', 'master', 'develop']}
-      anchor="left"
-      onValueChange={(branch) => {
-        dispatch(repositoriesApi.checkoutBranch(path, branch));
-      }}
-      renderTrigger={({ ref, toggle, displayLabel, getReferenceProps }) => {
-        // Override displayLabel for detached HEAD state
-        const finalDisplayLabel = isDetachedHead
-          ? 'detached HEAD'
-          : displayLabel;
-
-        return (
-          <div
-            ref={ref}
-            className="row-action flex items-center gap-1 cursor-pointer text-muted hover:text-accent transition-colors"
-            onClick={() => {
-              toggle();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                toggle();
-              }
-            }}
-            role="button"
-            tabIndex={0}
-            title="Switch Branch"
-            aria-label={`Switch to branch: ${
-              isDetachedHead
-                ? 'detached HEAD'
-                : finalDisplayLabel === 'Select branch...'
-                  ? 'select branch'
-                  : finalDisplayLabel
-            }`}
-            {...(getReferenceProps ? getReferenceProps() : {})}
-          >
-            <GitBranch size={12} />
-            <span className="mono-data">
-              {isDetachedHead
-                ? 'detached HEAD'
-                : finalDisplayLabel === 'Select branch...'
-                  ? currentBranch || 'branch'
-                  : finalDisplayLabel}
-            </span>
-          </div>
-        );
-      }}
-    />
+    <button
+      type="button"
+      className="row-action flex items-center gap-1 cursor-pointer text-muted hover:text-accent transition-colors"
+      onClick={() => onOpenVersion?.(path, { initialBranch: currentBranch })}
+      title="Add version from branch"
+      aria-label={`Add version from branch: ${currentBranch}`}
+    >
+      <GitBranch size={12} />
+      <span className="mono-data">{currentBranch}</span>
+    </button>
   );
 }
 
 // Commit hash selector component
 function CommitHashSelector({
   path,
-  onCheckoutCommit,
+  onOpenVersion,
 }: {
   path: string;
-  onCheckoutCommit: (path: string) => void;
+  onOpenVersion?: (path: string, initial?: VersionModalInitialValue) => void;
 }) {
   const repositoriesData = useAppSelector(selectRepositoriesData);
   const repoData = repositoriesData[path];
@@ -251,30 +201,66 @@ function CommitHashSelector({
   // Display short hash (first 7 characters) or 'commit' as fallback
   const displayHash = currentCommit ? currentCommit.substring(0, 7) : 'commit';
 
-  const handleCommitHashClick = () => {
-    onCheckoutCommit(path);
-  };
+  const handleCommitHashClick = () =>
+    onOpenVersion?.(path, { initialCommit: currentCommit });
 
   return (
-    <div
+    <button
+      type="button"
       className="row-action flex items-center gap-1 cursor-pointer text-muted hover:text-accent transition-colors"
       onClick={() => {
         handleCommitHashClick();
       }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          handleCommitHashClick();
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      title="Checkout Commit"
-      aria-label={`Checkout commit: ${displayHash}`}
+      title="Add version from commit"
+      aria-label={`Add version from commit: ${displayHash}`}
     >
       <GitCommit size={12} />
       <span className="mono-data">{displayHash}</span>
-    </div>
+    </button>
+  );
+}
+
+type VersionModalInitialValue = {
+  initialBranch?: string;
+  initialCommit?: string;
+};
+
+function VersionOverflowMenu({ onAddVersion }: { onAddVersion: () => void }) {
+  return (
+    <Dropdown
+      anchor="right"
+      menuClassName="glass-overlay p-1 min-w-36"
+      renderTrigger={({ ref, open, toggle, getReferenceProps }) => (
+        <Tooltip label="Repository actions" placement="top">
+          <button
+            ref={ref}
+            type="button"
+            className="row-action btn btn-secondary btn-secondary-borderless"
+            style={{ width: 40, height: 36, paddingLeft: 0, paddingRight: 0 }}
+            onClick={toggle}
+            aria-label="Repository actions"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            {...getReferenceProps()}
+          >
+            <EllipsisVertical size={16} />
+          </button>
+        </Tooltip>
+      )}
+    >
+      {({ close }) => (
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm w-full justify-start"
+          onClick={() => {
+            onAddVersion();
+            close();
+          }}
+        >
+          Add version
+        </button>
+      )}
+    </Dropdown>
   );
 }
 
@@ -332,15 +318,15 @@ export interface RepoCardProps {
     path: string;
     frameworks?: IFramework[];
     saved?: boolean;
+    originUrl?: string;
   };
   variant: 'current' | 'local' | 'cloned';
   onSave?: () => void;
   onRemove?: (name: string, path: string) => void;
   onPull?: (path: string) => void;
   showPullButton: boolean;
-  onCheckoutCommit: (path: string) => void;
   onResetRepo: (path: string) => void;
-  onAddVersion?: (path: string) => void;
+  onAddVersion?: (path: string, initial?: VersionModalInitialValue) => void;
 }
 
 // Consolidated RepoCard component
@@ -351,7 +337,6 @@ export default function RepoCard({
   onRemove,
   onPull,
   showPullButton,
-  onCheckoutCommit,
   onResetRepo,
   onAddVersion,
 }: RepoCardProps) {
@@ -382,11 +367,8 @@ export default function RepoCard({
           </div>
           <div className="flex items-center gap-3 mt-1">
             <StatusIndicator path={repo.path} />
-            <BranchSelector path={repo.path} />
-            <CommitHashSelector
-              path={repo.path}
-              onCheckoutCommit={onCheckoutCommit}
-            />
+            <BranchSelector path={repo.path} onOpenVersion={onAddVersion} />
+            <CommitHashSelector path={repo.path} onOpenVersion={onAddVersion} />
             <DirtyIndicator path={repo.path} onResetRepo={onResetRepo} />
           </div>
         </div>
@@ -396,15 +378,6 @@ export default function RepoCard({
       </div>
 
       <div className="flex items-center gap-3 shrink-0">
-        {onAddVersion && (
-          <button
-            type="button"
-            className="row-action btn btn-secondary btn-sm"
-            onClick={() => onAddVersion(repo.path)}
-          >
-            <Plus size={14} /> Add version
-          </button>
-        )}
         {showPullButton && onPull && (
           <Tooltip label="Pull Changes" placement="top">
             <button
@@ -469,6 +442,9 @@ export default function RepoCard({
               <X size={16} />
             </button>
           </Tooltip>
+        )}
+        {onAddVersion && (
+          <VersionOverflowMenu onAddVersion={() => onAddVersion(repo.path)} />
         )}
       </div>
     </div>

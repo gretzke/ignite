@@ -13,11 +13,7 @@ import ConfirmDialog from '../../components/ConfirmDialog';
 import { getRepoName, isValidUrl, isValidAbsolutePath } from '../../utils/repo';
 import RepoCard, { shouldShowPullButton } from './components/RepoCard';
 import FailedRepoCard from './components/FailedRepoCard';
-import {
-  LocalRepoModal,
-  CloneRepoModal,
-  CommitHashModal,
-} from './components/RepoModals';
+import { LocalRepoModal, CloneRepoModal } from './components/RepoModals';
 import AddRepoDropdown from './components/AddRepoDropdown';
 import { useRepositoryLists } from './hooks/useRepositoryLists';
 import type {
@@ -27,20 +23,14 @@ import type {
 } from '@ignite/api';
 import { apiClient } from '../../store/api/client';
 import { formatApiError } from '../../store/middleware/apiGate';
-import AddVersionModal from './components/AddVersionModal';
+import AddVersionModal, {
+  type VersionSource,
+} from './components/AddVersionModal';
 import {
   OrphanVersionGroupCard,
   VersionRows,
 } from './components/VersionGroupCard';
 import OriginApprovalDialog from '../../components/OriginApprovalDialog';
-
-type VersionSource = {
-  sourceKey: string;
-  label: string;
-  url?: string;
-  repoPathOrUrl?: string;
-  local: boolean;
-};
 
 export default function RepositoriesPage() {
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
@@ -53,10 +43,6 @@ export default function RepositoriesPage() {
     name: string;
     path: string;
   } | null>(null);
-  const [commitHashModalOpen, setCommitHashModalOpen] = useState(false);
-  const [commitHash, setCommitHash] = useState('');
-  const [commitHashError, setCommitHashError] = useState('');
-  const [selectedRepoPath, setSelectedRepoPath] = useState<string>('');
   // Repo path pending a confirmed `git reset --hard`; '' = dialog closed
   const [resetRepoPath, setResetRepoPath] = useState<string>('');
   const [versionSource, setVersionSource] = useState<VersionSource | null>(
@@ -78,7 +64,9 @@ export default function RepositoriesPage() {
   } | null>(null);
   const navigate = useNavigate();
   const browseVersion = (url: string, version: RepoVersionSummary) =>
-    navigate(`/repositories/${encodeURIComponent(url)}?version=${encodeURIComponent(version.commit)}`);
+    navigate(
+      `/repositories/${encodeURIComponent(url)}?version=${encodeURIComponent(version.commit)}`
+    );
 
   // Store hooks
   const dispatch = useAppDispatch();
@@ -112,21 +100,6 @@ export default function RepositoriesPage() {
       );
     } else {
       setCloneUrlError('');
-    }
-  };
-
-  const handleCommitHashChange = (value: string) => {
-    setCommitHash(value);
-    setCommitHashError('');
-
-    // Basic validation: commit hashes should be alphanumeric and at least 4 characters
-    if (
-      value.trim() &&
-      (value.trim().length < 4 || !/^[a-fA-F0-9]+$/.test(value.trim()))
-    ) {
-      setCommitHashError(
-        'Commit hash should be at least 4 characters and contain only hexadecimal characters (0-9, a-f)'
-      );
     }
   };
 
@@ -220,31 +193,6 @@ export default function RepositoriesPage() {
     setRepoToDelete(null);
   };
 
-  const handleCheckoutCommit = (path: string) => {
-    setSelectedRepoPath(path);
-    setCommitHash('');
-    setCommitHashError('');
-    setCommitHashModalOpen(true);
-  };
-
-  const handleCommitHashModalOpenChange = (open: boolean) => {
-    setCommitHashModalOpen(open);
-    if (!open) {
-      setCommitHash('');
-      setCommitHashError('');
-      setSelectedRepoPath('');
-    }
-  };
-
-  const handleCommitHashSubmit = () => {
-    if (commitHash.trim() && selectedRepoPath) {
-      dispatch(
-        repositoriesApi.checkoutCommit(selectedRepoPath, commitHash.trim())
-      );
-    }
-    setCommitHashModalOpen(false);
-  };
-
   const handleRetryInit = (path: string) => {
     if (currentId) {
       const actions = repositoriesApi.initializeRepository(path);
@@ -307,14 +255,15 @@ export default function RepositoriesPage() {
               currentWorkspace.path,
               repositoriesData
             )}
-            onCheckoutCommit={handleCheckoutCommit}
             onResetRepo={setResetRepoPath}
-            onAddVersion={(path) =>
+            onAddVersion={(path, initial) =>
               openVersionModal({
                 sourceKey: path,
                 label: currentWorkspace.path,
+                url: currentWorkspace.originUrl,
                 repoPathOrUrl: path,
                 local: true,
+                ...initial,
               })
             }
           />
@@ -358,14 +307,15 @@ export default function RepositoriesPage() {
                       r.path,
                       repositoriesData
                     )}
-                    onCheckoutCommit={handleCheckoutCommit}
                     onResetRepo={setResetRepoPath}
-                    onAddVersion={(path) =>
+                    onAddVersion={(path, initial) =>
                       openVersionModal({
                         sourceKey: path,
                         label: r.path,
+                        url: r.originUrl,
                         repoPathOrUrl: path,
                         local: true,
+                        ...initial,
                       })
                     }
                   />
@@ -408,14 +358,14 @@ export default function RepositoriesPage() {
                       r.path,
                       repositoriesData
                     )}
-                    onCheckoutCommit={handleCheckoutCommit}
                     onResetRepo={setResetRepoPath}
-                    onAddVersion={(path) =>
+                    onAddVersion={(path, initial) =>
                       openVersionModal({
                         sourceKey: path,
                         label: r.path,
-                        url: path,
+                        url: r.originUrl ?? path,
                         local: false,
+                        ...initial,
                       })
                     }
                   />
@@ -542,16 +492,6 @@ export default function RepositoriesPage() {
         urlError={cloneUrlError}
         onUrlChange={handleCloneUrlChange}
         onSubmit={handleCloneSubmit}
-      />
-
-      {/* Commit Hash Modal */}
-      <CommitHashModal
-        open={commitHashModalOpen}
-        onOpenChange={handleCommitHashModalOpenChange}
-        commitHash={commitHash}
-        commitHashError={commitHashError}
-        onCommitHashChange={handleCommitHashChange}
-        onSubmit={handleCommitHashSubmit}
       />
 
       <AddVersionModal

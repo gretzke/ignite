@@ -1,5 +1,6 @@
-import { Loader2, Pin, Plus, Trash2 } from 'lucide-react';
+import { EllipsisVertical, Loader2, Pin, Trash2 } from 'lucide-react';
 import type { OrphanVersionGroup, RepoVersionSummary } from '@ignite/api';
+import Dropdown from '../../../components/Dropdown';
 import { FrameworkChips } from './RepoCard';
 
 function VersionFrameworkStatus({ version }: { version: RepoVersionSummary }) {
@@ -55,7 +56,10 @@ export function VersionRows({
           <button
             type="button"
             className="btn btn-sm btn-secondary"
-            onClick={(event) => { event.stopPropagation(); onRemove(version.url, version); }}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemove(version.url, version);
+            }}
           >
             <Trash2 size={14} /> Remove
           </button>
@@ -88,15 +92,42 @@ export function OrphanVersionGroupCard({
       <div className="list-row flex items-center gap-3">
         <Pin size={17} className="text-info shrink-0" />
         <div className="min-w-0 flex-1">
-          <div className="mono-data text-sm font-semibold truncate">{group.url}</div>
+          <div className="mono-data text-sm font-semibold truncate">
+            {group.url}
+          </div>
         </div>
-        <button
-          type="button"
-          className="btn btn-secondary btn-sm"
-          onClick={() => onAddVersion(group)}
+        <Dropdown
+          anchor="right"
+          menuClassName="glass-overlay p-1 min-w-36"
+          renderTrigger={({ ref, open, toggle, getReferenceProps }) => (
+            <button
+              ref={ref}
+              type="button"
+              className="btn btn-secondary btn-secondary-borderless"
+              style={{ width: 40, height: 36, paddingLeft: 0, paddingRight: 0 }}
+              onClick={toggle}
+              aria-label="Repository version actions"
+              aria-haspopup="menu"
+              aria-expanded={open}
+              {...getReferenceProps()}
+            >
+              <EllipsisVertical size={16} />
+            </button>
+          )}
         >
-          <Plus size={14} /> Add version
-        </button>
+          {({ close }) => (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm w-full justify-start"
+              onClick={() => {
+                onAddVersion(group);
+                close();
+              }}
+            >
+              Add version
+            </button>
+          )}
+        </Dropdown>
       </div>
       <VersionRows
         url={group.url}

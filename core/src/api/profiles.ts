@@ -150,11 +150,13 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
   const enrich = async (
     record: RepoRecord,
     profileId: string,
-    versions: RepoVersionSummary[] = []
+    versions: RepoVersionSummary[] = [],
+    originUrl?: string
   ): Promise<RepoListEntry> => ({
     ...record,
     initialized: await d.hasWorkspace(record.pathOrUrl, profileId),
     activeJobId: d.lifecycle.activeJobFor(record.pathOrUrl),
+    ...(originUrl ? { originUrl } : {}),
     versions,
   });
 
@@ -423,7 +425,12 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           enrich(
             record,
             id,
-            versionsByUrl.get(origins.get(record.pathOrUrl) ?? '') ?? []
+            versionsByUrl.get(origins.get(record.pathOrUrl) ?? '') ?? [],
+            // A file URL is the deliberate fallback for a local repository
+            // without an origin. It must not be presented as a remote picker.
+            origins.get(record.pathOrUrl)?.startsWith('file:')
+              ? undefined
+              : origins.get(record.pathOrUrl)
           );
         const data: RepoList = {
           session: sessionRecord ? await withVersions(sessionRecord) : null,

@@ -104,6 +104,8 @@ export interface RepoRecord {
 export interface RepoListEntry extends RepoRecord {
   initialized: boolean;
   activeJobId?: string; // in-flight repo.lifecycle job, if any
+  /** Canonical origin URL, when this repository has a network remote. */
+  originUrl?: string;
   versions: RepoVersionSummary[];
 }
 
@@ -275,6 +277,7 @@ export const RepoListEntrySchema = z.object({
   detectedAt: z.string().optional(),
   initialized: z.boolean(),
   activeJobId: z.string().optional(),
+  originUrl: z.string().min(1).optional(),
   versions: z.array(
     z.object({
       url: z.string().min(1),

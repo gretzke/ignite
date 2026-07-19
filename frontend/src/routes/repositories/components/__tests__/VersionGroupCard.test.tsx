@@ -35,16 +35,20 @@ describe('repository version groups', () => {
     expect(html).toContain('Remove');
   });
 
-  it('renders orphan URL groups with an add-version affordance', () => {
+  it('renders orphan URL groups with an overflow action menu', () => {
     const html = renderToStaticMarkup(
       <OrphanVersionGroupCard
-        group={{ url: 'https://example.test/contracts.git', versions: [version] }}
+        group={{
+          url: 'https://example.test/contracts.git',
+          versions: [version],
+        }}
         onAddVersion={() => undefined}
         onRemove={() => undefined}
       />
     );
 
     expect(html).toContain('https://example.test/contracts.git');
-    expect(html).toContain('Add version');
+    expect(html).toContain('Repository version actions');
+    expect(html).not.toContain('Add version');
   });
 });

@@ -25,8 +25,7 @@ export interface DropdownProps {
     getReferenceProps: () => Record<string, unknown>;
   }) => React.ReactNode;
   children:
-    | React.ReactNode
-    | ((args: { close: () => void }) => React.ReactNode);
+    React.ReactNode | ((args: { close: () => void }) => React.ReactNode);
   sideOffset?: number; // px between trigger and menu (default 8)
   portal?: boolean; // render in a portal (default true)
   anchor?: 'left' | 'right'; // anchor position (default: 'right')
@@ -113,11 +112,13 @@ export default function Dropdown({
   // otherwise be clipped.
   const reference = refs.reference.current;
   const closestDialog =
-    reference instanceof Element
+    typeof Element !== 'undefined' && reference instanceof Element
       ? reference.closest('[role="dialog"]')
       : undefined;
   const portalRoot =
-    closestDialog instanceof HTMLElement ? closestDialog : undefined;
+    typeof HTMLElement !== 'undefined' && closestDialog instanceof HTMLElement
+      ? closestDialog
+      : undefined;
 
   return (
     <>
