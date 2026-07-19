@@ -18,4 +18,10 @@ export const CURATED_PLUGINS: readonly StorePluginData[] = [
       'RPC endpoints and signing accounts from your chainz config (~/.chainz.json) — each chain contributes its selected RPC, and PrivateKey entries sign transactions.',
     repoUrl: 'https://github.com/gretzke/ignite-chainz-plugin',
   },
+  {
+    name: 'v4 Hook Deployer',
+    description:
+      'Mines CREATE2 salts so deployed contract addresses encode Uniswap v4 hook permission flags.',
+    repoUrl: 'https://github.com/gretzke/ignite-v4-hook-deployer-plugin',
+  },
 ];
