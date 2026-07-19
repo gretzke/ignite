@@ -7,6 +7,7 @@ import {
   selectRepositoriesData,
   selectFailedRepositories,
   selectActiveVersionJobs,
+  setRepositoryInfo,
 } from '../../store/features/repositories/repositoriesSlice';
 import { triggerToast } from '../../store/middleware/toastListener';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -52,10 +53,6 @@ export default function RepositoriesPage() {
   const [versionToDelete, setVersionToDelete] = useState<{
     url: string;
     version: RepoVersionSummary;
-  } | null>(null);
-  const [branchToSwitch, setBranchToSwitch] = useState<{
-    path: string;
-    branch: string;
   } | null>(null);
   const [originApproval, setOriginApproval] = useState<{
     origins: string[];
@@ -224,13 +221,16 @@ export default function RepositoriesPage() {
     setAddVersionOpen(false);
   };
 
-  const handleSwitchBranch = (path: string, branch: string) => {
-    setAddVersionOpen(false);
-    if (repositoriesData[path]?.info?.dirty) {
-      dispatch(repositoriesApi.checkoutBranch(path, branch));
-      return;
-    }
-    setBranchToSwitch({ path, branch });
+  const handleSwitchBranch = async (path: string, branch: string) => {
+    await apiClient.request('checkoutBranch', {
+      body: { pathOrUrl: path, branch },
+    });
+    dispatch(
+      apiClient.dispatch.getRepoInfo({
+        body: { pathOrUrl: path },
+        onSuccess: (info) => setRepositoryInfo({ pathOrUrl: path, info }),
+      })
+    );
   };
 
   return (
@@ -364,6 +364,7 @@ export default function RepositoriesPage() {
                         sourceKey: path,
                         label: r.path,
                         url: r.originUrl ?? path,
+                        repoPathOrUrl: path,
                         local: false,
                         ...initial,
                       })
@@ -500,30 +501,6 @@ export default function RepositoriesPage() {
         source={versionSource}
         onSubmit={handleVersionSubmit}
         onSwitchBranch={handleSwitchBranch}
-      />
-
-      <ConfirmDialog
-        open={Boolean(branchToSwitch)}
-        onOpenChange={(open) => {
-          if (!open) setBranchToSwitch(null);
-        }}
-        title="Switch local branch?"
-        description={
-          branchToSwitch
-            ? `Switch ${getRepoName(branchToSwitch.path)} to "${branchToSwitch.branch}"?`
-            : ''
-        }
-        confirmText="Switch branch"
-        variant="warning"
-        onConfirm={() => {
-          if (branchToSwitch)
-            dispatch(
-              repositoriesApi.checkoutBranch(
-                branchToSwitch.path,
-                branchToSwitch.branch
-              )
-            );
-        }}
       />
 
       <OriginApprovalDialog

@@ -21,7 +21,11 @@ import { runCommand, type RunCommandResult } from '../utils/runCommand.js';
 import { KeyedMutex } from '../utils/KeyedMutex.js';
 import { redactUrlCredentials } from '../utils/redact.js';
 import { getLogger } from '../utils/logger.js';
-import { VersionStore, pinnedOrigin, type VersionRecord } from './VersionStore.js';
+import {
+  VersionStore,
+  pinnedOrigin,
+  type VersionRecord,
+} from './VersionStore.js';
 
 export enum RepoKind {
   LOCAL = 'local',
@@ -101,14 +105,23 @@ interface GitOutput {
 // per canonical root. The lock deliberately covers caller-provided read/CAS
 // sections too, so later API handlers can make read-compare-write atomic.
 const repoWriteLocks = new Map<string, Promise<void>>();
-export async function withRepoWriteLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
+export async function withRepoWriteLock<T>(
+  root: string,
+  fn: () => Promise<T>
+): Promise<T> {
   const previous = repoWriteLocks.get(root) ?? Promise.resolve();
   let release!: () => void;
-  const tail = previous.then(() => new Promise<void>((resolve) => { release = resolve; }));
+  const tail = previous.then(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      })
+  );
   repoWriteLocks.set(root, tail);
   await previous;
-  try { return await fn(); }
-  finally {
+  try {
+    return await fn();
+  } finally {
     release();
     if (repoWriteLocks.get(root) === tail) repoWriteLocks.delete(root);
   }
@@ -155,7 +168,8 @@ export function isAllowedCloneUrl(url: string): boolean {
 // only ordinary branch/tag-like names. This deliberately excludes refspecs
 // and the special forms Git reserves for option parsing or revision syntax.
 export function isAllowedVersionRef(ref: string): boolean {
-  if (typeof ref !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/@^~-]*$/.test(ref)) return false;
+  if (typeof ref !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/@^~-]*$/.test(ref))
+    return false;
   if (
     ref.startsWith('-') ||
     ref.includes('..') ||
@@ -165,12 +179,16 @@ export function isAllowedVersionRef(ref: string): boolean {
     ref.includes('@{') ||
     ref === '@' ||
     ref.endsWith('.')
-  ) return false;
-  return ref.split('/').every((component) =>
-    component.length > 0 &&
-    !component.startsWith('.') &&
-    !component.toLowerCase().endsWith('.lock')
-  );
+  )
+    return false;
+  return ref
+    .split('/')
+    .every(
+      (component) =>
+        component.length > 0 &&
+        !component.startsWith('.') &&
+        !component.toLowerCase().endsWith('.lock')
+    );
 }
 
 function errMsg(error: unknown): string {
@@ -183,8 +201,14 @@ function errMsg(error: unknown): string {
 function normalizeVersionRemote(url: string): string {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol === 'file:') return `file://${path.resolve(decodeURIComponent(parsed.pathname))}`.replace(/\.git$/i, '');
-  } catch { /* preserve non-URL remotes below */ }
+    if (parsed.protocol === 'file:')
+      return `file://${path.resolve(decodeURIComponent(parsed.pathname))}`.replace(
+        /\.git$/i,
+        ''
+      );
+  } catch {
+    /* preserve non-URL remotes below */
+  }
   return normalizeRepoUrl(url).replace(/\/$/, '');
 }
 
@@ -218,7 +242,8 @@ export class RepoService {
     this.injectedProfiles = deps?.profiles;
     this.run = deps?.run ?? runCommand;
     this.versionStore = new VersionStore(this.fileSystem);
-    this.materializationTimeoutMs = deps?.materializationTimeoutMs ?? PINNED_MATERIALIZATION_TIMEOUT_MS;
+    this.materializationTimeoutMs =
+      deps?.materializationTimeoutMs ?? PINNED_MATERIALIZATION_TIMEOUT_MS;
   }
 
   // Lock key: canonical URL for cloned repos (so https/ssh forms of the same
@@ -237,17 +262,29 @@ export class RepoService {
     return RepoService.instance;
   }
 
-  async withVersionLock<T>(url: string, commit: string, fn: () => Promise<T>): Promise<T> {
+  async withVersionLock<T>(
+    url: string,
+    commit: string,
+    fn: () => Promise<T>
+  ): Promise<T> {
     // Group before checkout everywhere. In particular, lifecycle callers hold
     // both locks, so a rematerialization cannot delete a checkout after it
     // was checked but before detect/install/compile starts.
-    return this.locks.run(`version-group:${this.versionStore.groupDir(url)}`, () =>
-      this.withVersionCheckoutLock(url, commit, fn)
+    return this.locks.run(
+      `version-group:${this.versionStore.groupDir(url)}`,
+      () => this.withVersionCheckoutLock(url, commit, fn)
     );
   }
 
-  private async withVersionCheckoutLock<T>(url: string, commit: string, fn: () => Promise<T>): Promise<T> {
-    return this.locks.run(`version:${this.versionStore.checkoutPath(url, commit)}`, fn);
+  private async withVersionCheckoutLock<T>(
+    url: string,
+    commit: string,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return this.locks.run(
+      `version:${this.versionStore.checkoutPath(url, commit)}`,
+      fn
+    );
   }
 
   async removeVersionCheckout(
@@ -256,17 +293,20 @@ export class RepoService {
     beforeDelete?: (deleteLocked: () => Promise<void>) => Promise<boolean>
   ): Promise<boolean> {
     let deleted = true;
-    await this.locks.run(`version-group:${this.versionStore.groupDir(url)}`, async () => {
-      await this.withVersionCheckoutLock(url, commit, async () => {
-        const deleteLocked = () =>
-          fs.rm(this.versionStore.checkoutPath(url, commit), {
-            recursive: true,
-            force: true,
-          });
-        if (beforeDelete) deleted = await beforeDelete(deleteLocked);
-        else await deleteLocked();
-      });
-    });
+    await this.locks.run(
+      `version-group:${this.versionStore.groupDir(url)}`,
+      async () => {
+        await this.withVersionCheckoutLock(url, commit, async () => {
+          const deleteLocked = () =>
+            fs.rm(this.versionStore.checkoutPath(url, commit), {
+              recursive: true,
+              force: true,
+            });
+          if (beforeDelete) deleted = await beforeDelete(deleteLocked);
+          else await deleteLocked();
+        });
+      }
+    );
     return deleted;
   }
 
@@ -281,150 +321,278 @@ export class RepoService {
     }) => Promise<T>
   ): Promise<T> {
     await this.validateVersionRequest(profileId, url, commit, opts);
-    return this.locks.run(`version-group:${this.versionStore.groupDir(url)}`, () =>
-      this.withVersionCheckoutLock(url, commit, async () => {
-        const ensure = () => this.ensureVersionLocked(url, commit, opts);
-        const materialized = await ensure();
-        return fn({
-          ...materialized,
-          rematerialize: async () => {
-            await fs.rm(this.versionStore.checkoutPath(url, commit), {
-              recursive: true,
-              force: true,
-            });
-            return ensure();
-          },
-        });
-      })
+    return this.locks.run(
+      `version-group:${this.versionStore.groupDir(url)}`,
+      () =>
+        this.withVersionCheckoutLock(url, commit, async () => {
+          const ensure = () => this.ensureVersionLocked(url, commit, opts);
+          const materialized = await ensure();
+          return fn({
+            ...materialized,
+            rematerialize: async () => {
+              await fs.rm(this.versionStore.checkoutPath(url, commit), {
+                recursive: true,
+                force: true,
+              });
+              return ensure();
+            },
+          });
+        })
     );
   }
 
   // A normal clone rather than a worktree gives every version a real .git
   // directory and independent submodule configuration.
-  async ensureVersion(profileId: string, url: string, commit: string, opts: EnsureVersionOptions = {}): Promise<{ checkout: string }> {
-    return this.withVersionMaterialized(profileId, url, commit, opts, async ({ checkout }) => ({ checkout }));
+  async ensureVersion(
+    profileId: string,
+    url: string,
+    commit: string,
+    opts: EnsureVersionOptions = {}
+  ): Promise<{ checkout: string }> {
+    return this.withVersionMaterialized(
+      profileId,
+      url,
+      commit,
+      opts,
+      async ({ checkout }) => ({ checkout })
+    );
   }
 
-  private async validateVersionRequest(profileId: string, url: string, commit: string, opts: EnsureVersionOptions): Promise<void> {
+  private async validateVersionRequest(
+    profileId: string,
+    url: string,
+    commit: string,
+    opts: EnsureVersionOptions
+  ): Promise<void> {
     if (!isAllowedCloneUrl(url)) {
-      throw Object.assign(new Error('Version URL uses an unsupported clone protocol'), { code: 'VERSION_URL_UNSUPPORTED' });
+      throw Object.assign(
+        new Error('Version URL uses an unsupported clone protocol'),
+        { code: 'VERSION_URL_UNSUPPORTED' }
+      );
     }
     this.assertVersionCommit(commit);
     if (opts.ref !== undefined) this.assertVersionRef(opts.ref);
     if (opts.refLabel !== undefined) this.assertVersionRef(opts.refLabel);
-    if (opts.localFallbackPath !== undefined &&
-      (typeof opts.localFallbackPath !== 'string' || !path.isAbsolute(opts.localFallbackPath))) {
-      throw Object.assign(new Error('Version local fallback path must be absolute'), { code: 'VERSION_LOCAL_FALLBACK_PATH_INVALID' });
+    if (
+      opts.localFallbackPath !== undefined &&
+      (typeof opts.localFallbackPath !== 'string' ||
+        !path.isAbsolute(opts.localFallbackPath))
+    ) {
+      throw Object.assign(
+        new Error('Version local fallback path must be absolute'),
+        { code: 'VERSION_LOCAL_FALLBACK_PATH_INVALID' }
+      );
     }
 
     const origin = pinnedOrigin(url);
     if (!(await this.versionStore.isOriginApproved(profileId, url))) {
-      throw Object.assign(new Error(`Version origin approval required: ${origin}`), { code: 'VERSION_ORIGIN_UNAPPROVED', origins: [origin] });
+      throw Object.assign(
+        new Error(`Version origin approval required: ${origin}`),
+        { code: 'VERSION_ORIGIN_UNAPPROVED', origins: [origin] }
+      );
     }
   }
 
   // Call only while the group -> checkout locks are held.
-  private async ensureVersionLocked(url: string, commit: string, opts: EnsureVersionOptions): Promise<{ checkout: string }> {
+  private async ensureVersionLocked(
+    url: string,
+    commit: string,
+    opts: EnsureVersionOptions
+  ): Promise<{ checkout: string }> {
     const groupDir = this.versionStore.groupDir(url);
     const checkout = this.versionStore.checkoutPath(url, commit);
-      const controller = new AbortController();
-      const deadline = Date.now() + this.materializationTimeoutMs;
-      const timer = setTimeout(() => controller.abort(Object.assign(new Error('Version repository materialization timed out'), { code: 'VERSION_MATERIALIZATION_TIMEOUT' })), this.materializationTimeoutMs);
-      const budget = { signal: controller.signal, remaining: () => Math.max(0, deadline - Date.now()) };
-      let temp: string | undefined;
-      try {
-        const checkoutExists = await fs.stat(checkout).then(() => true).catch((error: NodeJS.ErrnoException) => {
+    const controller = new AbortController();
+    const deadline = Date.now() + this.materializationTimeoutMs;
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          Object.assign(
+            new Error('Version repository materialization timed out'),
+            { code: 'VERSION_MATERIALIZATION_TIMEOUT' }
+          )
+        ),
+      this.materializationTimeoutMs
+    );
+    const budget = {
+      signal: controller.signal,
+      remaining: () => Math.max(0, deadline - Date.now()),
+    };
+    let temp: string | undefined;
+    try {
+      const checkoutExists = await fs
+        .stat(checkout)
+        .then(() => true)
+        .catch((error: NodeJS.ErrnoException) => {
           if (error.code === 'ENOENT') return false;
           throw error;
         });
-        if (checkoutExists) {
-          try {
-            await this.assertPinnedIntegrity(checkout, commit, budget);
-            const now = new Date().toISOString();
-            const existing = await this.versionStore.get(url, commit);
-            await this.versionStore.upsert({
-              ...(existing ?? { url, commit, createdAt: now }),
-              url,
-              commit,
-              ...(opts.refLabel !== undefined || opts.ref !== undefined
-                ? { refLabel: opts.refLabel ?? opts.ref }
-                : {}),
-              ...(opts.refKind !== undefined ? { refKind: opts.refKind } : {}),
-              lastUsedAt: now,
-            });
-            return { checkout };
-          } catch (error) {
-            if (controller.signal.aborted) throw controller.signal.reason;
-            const code = (error as { code?: string }).code ?? 'UNKNOWN';
-            getLogger().warn(`Rebuilding version checkout after integrity failure: url=${url} commit=${commit} code=${code}`);
-            await fs.rm(checkout, { recursive: true, force: true });
-          }
+      if (checkoutExists) {
+        try {
+          await this.assertPinnedIntegrity(checkout, commit, budget);
+          const now = new Date().toISOString();
+          const existing = await this.versionStore.get(url, commit);
+          await this.versionStore.upsert({
+            ...(existing ?? { url, commit, createdAt: now }),
+            url,
+            commit,
+            ...(opts.refLabel !== undefined || opts.ref !== undefined
+              ? { refLabel: opts.refLabel ?? opts.ref }
+              : {}),
+            ...(opts.refKind !== undefined ? { refKind: opts.refKind } : {}),
+            lastUsedAt: now,
+          });
+          return { checkout };
+        } catch (error) {
+          if (controller.signal.aborted) throw controller.signal.reason;
+          const code = (error as { code?: string }).code ?? 'UNKNOWN';
+          getLogger().warn(
+            `Rebuilding version checkout after integrity failure: url=${url} commit=${commit} code=${code}`
+          );
+          await fs.rm(checkout, { recursive: true, force: true });
         }
-
-        await this.ensureBareVersionRepo(groupDir, url, budget);
-        const localFallback = await this.fetchVersionCommit(url, commit, opts, budget);
-        temp = path.join(groupDir, `tmp-${crypto.randomUUID()}`);
-        await fs.mkdir(path.join(groupDir, 'versions'), { recursive: true });
-        const clone = await this.runPinnedGit(groupDir, ['clone', '--no-hardlinks', this.versionStore.bareRepoPath(url), temp], TIMEOUT_CLONE_MS, budget);
-        this.throwGitFailure(clone);
-        const detached = await this.runPinnedGit(temp, ['checkout', '--detach', commit], TIMEOUT_LOCAL_MS, budget);
-        this.throwGitFailure(detached);
-        const submoduleArgs = url.toLowerCase().startsWith('file://')
-          ? ['-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--recursive']
-          : ['submodule', 'update', '--init', '--recursive'];
-        const submodules = await this.runPinnedGit(temp, submoduleArgs, TIMEOUT_SUBMODULES_MS, budget);
-        this.throwGitFailure(submodules);
-        await this.assertPinnedIntegrity(temp, commit, budget);
-        if (controller.signal.aborted) throw controller.signal.reason;
-        await fs.rename(temp, checkout);
-        temp = undefined;
-        const now = new Date().toISOString();
-        await this.versionStore.upsert({
-          url, commit, refLabel: opts.refLabel ?? opts.ref, refKind: opts.refKind,
-          ...(localFallback ? { localFallback: true } : {}), createdAt: now, lastUsedAt: now,
-        });
-        return { checkout };
-      } finally {
-        clearTimeout(timer);
-        if (temp) await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
       }
+
+      await this.ensureBareVersionRepo(groupDir, url, budget);
+      const localFallback = await this.fetchVersionCommit(
+        url,
+        commit,
+        opts,
+        budget
+      );
+      temp = path.join(groupDir, `tmp-${crypto.randomUUID()}`);
+      await fs.mkdir(path.join(groupDir, 'versions'), { recursive: true });
+      const clone = await this.runPinnedGit(
+        groupDir,
+        ['clone', '--no-hardlinks', this.versionStore.bareRepoPath(url), temp],
+        TIMEOUT_CLONE_MS,
+        budget
+      );
+      this.throwGitFailure(clone);
+      const detached = await this.runPinnedGit(
+        temp,
+        ['checkout', '--detach', commit],
+        TIMEOUT_LOCAL_MS,
+        budget
+      );
+      this.throwGitFailure(detached);
+      const submoduleArgs = url.toLowerCase().startsWith('file://')
+        ? [
+            '-c',
+            'protocol.file.allow=always',
+            'submodule',
+            'update',
+            '--init',
+            '--recursive',
+          ]
+        : ['submodule', 'update', '--init', '--recursive'];
+      const submodules = await this.runPinnedGit(
+        temp,
+        submoduleArgs,
+        TIMEOUT_SUBMODULES_MS,
+        budget
+      );
+      this.throwGitFailure(submodules);
+      await this.assertPinnedIntegrity(temp, commit, budget);
+      if (controller.signal.aborted) throw controller.signal.reason;
+      await fs.rename(temp, checkout);
+      temp = undefined;
+      const now = new Date().toISOString();
+      await this.versionStore.upsert({
+        url,
+        commit,
+        refLabel: opts.refLabel ?? opts.ref,
+        refKind: opts.refKind,
+        ...(localFallback ? { localFallback: true } : {}),
+        createdAt: now,
+        lastUsedAt: now,
+      });
+      return { checkout };
+    } finally {
+      clearTimeout(timer);
+      if (temp)
+        await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
-  private async ensureBareVersionRepo(groupDir: string, url: string, budget: { signal: AbortSignal; remaining: () => number }): Promise<void> {
+  private async ensureBareVersionRepo(
+    groupDir: string,
+    url: string,
+    budget: { signal: AbortSignal; remaining: () => number }
+  ): Promise<void> {
     const bare = this.versionStore.bareRepoPath(url);
-    try { await fs.access(bare); }
-    catch {
+    try {
+      await fs.access(bare);
+    } catch {
       await fs.mkdir(groupDir, { recursive: true });
-      this.throwGitFailure(await this.runPinnedGit(groupDir, ['init', '--bare', bare], TIMEOUT_LOCAL_MS, budget));
+      this.throwGitFailure(
+        await this.runPinnedGit(
+          groupDir,
+          ['init', '--bare', bare],
+          TIMEOUT_LOCAL_MS,
+          budget
+        )
+      );
     }
-    const remote = await this.runPinnedGit(bare, ['remote', 'get-url', 'origin'], TIMEOUT_LOCAL_MS, budget);
-    if (!remote.success) this.throwGitFailure(await this.runPinnedGit(bare, ['remote', 'add', 'origin', url], TIMEOUT_LOCAL_MS, budget));
+    const remote = await this.runPinnedGit(
+      bare,
+      ['remote', 'get-url', 'origin'],
+      TIMEOUT_LOCAL_MS,
+      budget
+    );
+    if (!remote.success)
+      this.throwGitFailure(
+        await this.runPinnedGit(
+          bare,
+          ['remote', 'add', 'origin', url],
+          TIMEOUT_LOCAL_MS,
+          budget
+        )
+      );
   }
 
   // Returns whether the local-only fallback supplied the commit.
-  private async fetchVersionCommit(url: string, commit: string, opts: EnsureVersionOptions, budget: { signal: AbortSignal; remaining: () => number }): Promise<boolean> {
+  private async fetchVersionCommit(
+    url: string,
+    commit: string,
+    opts: EnsureVersionOptions,
+    budget: { signal: AbortSignal; remaining: () => number }
+  ): Promise<boolean> {
     const bare = this.versionStore.bareRepoPath(url);
     const attemptedStages: string[] = [];
-    const pinCommit = async (): Promise<boolean> => (await this.runPinnedGit(
-      bare,
-      ['update-ref', `refs/ignite/versions/${commit}`, commit],
-      TIMEOUT_LOCAL_MS,
-      budget
-    )).success;
-    const hasCommit = async (): Promise<boolean> => (await this.runPinnedGit(
-      bare,
-      ['rev-parse', `${commit}^{commit}`],
-      TIMEOUT_LOCAL_MS,
-      budget
-    )).success;
+    const pinCommit = async (): Promise<boolean> =>
+      (
+        await this.runPinnedGit(
+          bare,
+          ['update-ref', `refs/ignite/versions/${commit}`, commit],
+          TIMEOUT_LOCAL_MS,
+          budget
+        )
+      ).success;
+    const hasCommit = async (): Promise<boolean> =>
+      (
+        await this.runPinnedGit(
+          bare,
+          ['rev-parse', `${commit}^{commit}`],
+          TIMEOUT_LOCAL_MS,
+          budget
+        )
+      ).success;
     attemptedStages.push('cached');
-    if (await hasCommit() && await pinCommit()) return false;
-    const tryFetch = async (stage: string, args: string[]): Promise<boolean> => {
+    if ((await hasCommit()) && (await pinCommit())) return false;
+    const tryFetch = async (
+      stage: string,
+      args: string[]
+    ): Promise<boolean> => {
       attemptedStages.push(stage);
-      const fetched = await this.runPinnedGit(bare, args, TIMEOUT_FETCH_MS, budget);
+      const fetched = await this.runPinnedGit(
+        bare,
+        args,
+        TIMEOUT_FETCH_MS,
+        budget
+      );
       if (budget.signal.aborted) throw budget.signal.reason;
       if (!fetched.success) return false;
-      return await hasCommit() && await pinCommit();
+      return (await hasCommit()) && (await pinCommit());
     };
     if (opts.ref) {
       attemptedStages.push('ref');
@@ -444,7 +612,8 @@ export class RepoService {
         );
         if (
           fetchedHead.success &&
-          fetchedHead.data.stdout.trim().toLowerCase() === commit.toLowerCase() &&
+          fetchedHead.data.stdout.trim().toLowerCase() ===
+            commit.toLowerCase() &&
           (await hasCommit()) &&
           (await pinCommit())
         )
@@ -455,17 +624,41 @@ export class RepoService {
     if (await tryFetch('tags', ['fetch', 'origin', '--tags'])) return false;
     if (opts.localFallbackPath) {
       attemptedStages.push('localFallback');
-      const fallbackOrigin = await this.runPinnedGit(opts.localFallbackPath, ['remote', 'get-url', 'origin'], TIMEOUT_LOCAL_MS, budget);
-      if (fallbackOrigin.success && pinnedOrigin(fallbackOrigin.data.stdout.trim()) === pinnedOrigin(url) && normalizeVersionRemote(fallbackOrigin.data.stdout.trim()) === normalizeVersionRemote(url)) {
-        const fetched = await this.runPinnedGit(bare, ['fetch', opts.localFallbackPath, commit], TIMEOUT_FETCH_MS, budget);
-        if (fetched.success && await hasCommit() && await pinCommit()) return true;
+      const fallbackOrigin = await this.runPinnedGit(
+        opts.localFallbackPath,
+        ['remote', 'get-url', 'origin'],
+        TIMEOUT_LOCAL_MS,
+        budget
+      );
+      if (
+        fallbackOrigin.success &&
+        pinnedOrigin(fallbackOrigin.data.stdout.trim()) === pinnedOrigin(url) &&
+        normalizeVersionRemote(fallbackOrigin.data.stdout.trim()) ===
+          normalizeVersionRemote(url)
+      ) {
+        const fetched = await this.runPinnedGit(
+          bare,
+          ['fetch', opts.localFallbackPath, commit],
+          TIMEOUT_FETCH_MS,
+          budget
+        );
+        if (fetched.success && (await hasCommit()) && (await pinCommit()))
+          return true;
       }
     }
-    throw Object.assign(new Error(`Unable to fetch version ${commit} for ${url}`), { code: 'VERSION_FETCH_FAILED', attemptedStages });
+    throw Object.assign(
+      new Error(`Unable to fetch version ${commit} for ${url}`),
+      { code: 'VERSION_FETCH_FAILED', attemptedStages }
+    );
   }
 
-  private throwGitFailure(result: RepoResult<GitOutput>): asserts result is { success: true; data: GitOutput } {
-    if (!result.success) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+  private throwGitFailure(
+    result: RepoResult<GitOutput>
+  ): asserts result is { success: true; data: GitOutput } {
+    if (!result.success)
+      throw Object.assign(new Error(result.error.message), {
+        code: result.error.code,
+      });
   }
 
   private assertVersionCommit(commit: string): void {
@@ -475,44 +668,127 @@ export class RepoService {
 
   private assertVersionRef(ref: string): void {
     if (!isAllowedVersionRef(ref))
-      throw Object.assign(new Error('Version ref must be a safe branch or tag name'), { code: 'VERSION_REF_INVALID' });
+      throw Object.assign(
+        new Error('Version ref must be a safe branch or tag name'),
+        { code: 'VERSION_REF_INVALID' }
+      );
   }
 
   // Build outputs are untracked by convention, so they are excluded. Tracked
   // source mutations are reset; a dirty submodule requires re-materializing
   // its parent because reset --hard cannot restore nested worktrees.
-  async assertPinnedIntegrity(worktree: string, commit: string, budget?: { signal: AbortSignal; remaining: () => number }): Promise<void> {
-    const head = await this.runPinnedGit(worktree, ['rev-parse', 'HEAD'], TIMEOUT_LOCAL_MS, budget);
-    const status = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS, budget);
-    const submoduleStatus = await this.runPinnedGit(worktree, ['submodule', 'foreach', '--quiet', '--recursive', 'git status --porcelain'], TIMEOUT_LOCAL_MS, budget);
+  async assertPinnedIntegrity(
+    worktree: string,
+    commit: string,
+    budget?: { signal: AbortSignal; remaining: () => number }
+  ): Promise<void> {
+    const head = await this.runPinnedGit(
+      worktree,
+      ['rev-parse', 'HEAD'],
+      TIMEOUT_LOCAL_MS,
+      budget
+    );
+    const status = await this.runPinnedGit(
+      worktree,
+      ['status', '--porcelain', '--untracked-files=no'],
+      TIMEOUT_LOCAL_MS,
+      budget
+    );
+    const submoduleStatus = await this.runPinnedGit(
+      worktree,
+      [
+        'submodule',
+        'foreach',
+        '--quiet',
+        '--recursive',
+        'git status --porcelain',
+      ],
+      TIMEOUT_LOCAL_MS,
+      budget
+    );
     if (!head.success)
-      throw Object.assign(new Error(head.error.message), { code: head.error.code });
+      throw Object.assign(new Error(head.error.message), {
+        code: head.error.code,
+      });
     if (!status.success)
-      throw Object.assign(new Error(status.error.message), { code: status.error.code });
+      throw Object.assign(new Error(status.error.message), {
+        code: status.error.code,
+      });
     if (!submoduleStatus.success)
-      throw Object.assign(new Error(submoduleStatus.error.message), { code: submoduleStatus.error.code });
-    const badHead = head.data.stdout.trim().toLowerCase() !== commit.toLowerCase();
+      throw Object.assign(new Error(submoduleStatus.error.message), {
+        code: submoduleStatus.error.code,
+      });
+    const badHead =
+      head.data.stdout.trim().toLowerCase() !== commit.toLowerCase();
     const badStatus = status.data.stdout.trim() !== '';
     const badSubmodule = submoduleStatus.data.stdout.trim() !== '';
     if (!badHead) {
-      if (badSubmodule) throw Object.assign(new Error('Pinned submodule integrity violation requires re-materialization'), { code: 'PINNED_INTEGRITY_VIOLATION' });
+      if (badSubmodule)
+        throw Object.assign(
+          new Error(
+            'Pinned submodule integrity violation requires re-materialization'
+          ),
+          { code: 'PINNED_INTEGRITY_VIOLATION' }
+        );
       if (badStatus) {
-        getLogger().warn(`Resetting tracked mutation in pinned worktree ${worktree}`);
-        const reset = await this.runPinnedGit(worktree, ['reset', '--hard', commit], TIMEOUT_LOCAL_MS, budget);
-        if (!reset.success) throw Object.assign(new Error(reset.error.message), { code: reset.error.code });
-        const clean = await this.runPinnedGit(worktree, ['status', '--porcelain', '--untracked-files=no'], TIMEOUT_LOCAL_MS, budget);
-        if (!clean.success) throw Object.assign(new Error(clean.error.message), { code: clean.error.code });
-        if (clean.data.stdout.trim() !== '') throw Object.assign(new Error('Pinned worktree remained dirty after reset'), { code: 'PINNED_INTEGRITY_VIOLATION' });
+        getLogger().warn(
+          `Resetting tracked mutation in pinned worktree ${worktree}`
+        );
+        const reset = await this.runPinnedGit(
+          worktree,
+          ['reset', '--hard', commit],
+          TIMEOUT_LOCAL_MS,
+          budget
+        );
+        if (!reset.success)
+          throw Object.assign(new Error(reset.error.message), {
+            code: reset.error.code,
+          });
+        const clean = await this.runPinnedGit(
+          worktree,
+          ['status', '--porcelain', '--untracked-files=no'],
+          TIMEOUT_LOCAL_MS,
+          budget
+        );
+        if (!clean.success)
+          throw Object.assign(new Error(clean.error.message), {
+            code: clean.error.code,
+          });
+        if (clean.data.stdout.trim() !== '')
+          throw Object.assign(
+            new Error('Pinned worktree remained dirty after reset'),
+            { code: 'PINNED_INTEGRITY_VIOLATION' }
+          );
       }
       return;
     }
-    throw Object.assign(new Error('Pinned worktree HEAD does not match requested commit'), { code: 'PINNED_INTEGRITY_VIOLATION' });
+    throw Object.assign(
+      new Error('Pinned worktree HEAD does not match requested commit'),
+      { code: 'PINNED_INTEGRITY_VIOLATION' }
+    );
   }
 
-  private async runPinnedGit(cwd: string, args: string[], timeoutMs: number, budget?: { signal: AbortSignal; remaining: () => number }): Promise<RepoResult<GitOutput>> {
+  private async runPinnedGit(
+    cwd: string,
+    args: string[],
+    timeoutMs: number,
+    budget?: { signal: AbortSignal; remaining: () => number }
+  ): Promise<RepoResult<GitOutput>> {
     if (budget && budget.remaining() <= 0 && !budget.signal.aborted)
-      return { success: false, error: { code: 'GIT_COMMAND_FAILED', message: 'Pinned repository materialization timed out' } };
-    return this.runGit(cwd, args, budget ? Math.max(1, Math.min(timeoutMs, budget.remaining())) : timeoutMs, budget?.signal, true);
+      return {
+        success: false,
+        error: {
+          code: 'GIT_COMMAND_FAILED',
+          message: 'Pinned repository materialization timed out',
+        },
+      };
+    return this.runGit(
+      cwd,
+      args,
+      budget ? Math.max(1, Math.min(timeoutMs, budget.remaining())) : timeoutMs,
+      budget?.signal,
+      true
+    );
   }
 
   // === Identity -> host workspace dir ===
@@ -584,11 +860,12 @@ export class RepoService {
       TIMEOUT_LOCAL_MS
     );
     const local = deriveRepoKind(pathOrUrl) === RepoKind.LOCAL;
-    const url = origin.success && origin.data.stdout.trim()
-      ? origin.data.stdout.trim()
-      : local
-        ? pathToFileURL(path.resolve(workspacePath)).href
-        : undefined;
+    const url =
+      origin.success && origin.data.stdout.trim()
+        ? origin.data.stdout.trim()
+        : local
+          ? pathToFileURL(path.resolve(workspacePath)).href
+          : undefined;
     if (!url)
       throw Object.assign(new Error('Repository origin remote is required'), {
         code: 'VERSION_ORIGIN_REQUIRED',
@@ -623,14 +900,20 @@ export class RepoService {
       TIMEOUT_LOCAL_MS
     );
     if (!resolved.success)
-      throw Object.assign(new Error(`Unable to resolve local ref '${revision}'`), {
-        code: 'VERSION_REF_NOT_FOUND',
-      });
+      throw Object.assign(
+        new Error(`Unable to resolve local ref '${revision}'`),
+        {
+          code: 'VERSION_REF_NOT_FOUND',
+        }
+      );
     const commit = resolved.data.stdout.trim();
     if (!/^[0-9a-f]{40}$/i.test(commit))
-      throw Object.assign(new Error(`Local ref '${revision}' did not resolve to a commit`), {
-        code: 'VERSION_REF_NOT_FOUND',
-      });
+      throw Object.assign(
+        new Error(`Local ref '${revision}' did not resolve to a commit`),
+        {
+          code: 'VERSION_REF_NOT_FOUND',
+        }
+      );
     const tag = await this.runGit(
       workspacePath,
       ['rev-parse', '--verify', '--end-of-options', `refs/tags/${revision}`],
@@ -649,7 +932,10 @@ export class RepoService {
   // A cached bare repository commonly retains commits which no longer appear
   // at an advertised branch or tag head.  This is deliberately best-effort:
   // callers still reject an unavailable or ambiguous-looking prefix.
-  async resolveCachedVersionCommit(url: string, prefix: string): Promise<string | undefined> {
+  async resolveCachedVersionCommit(
+    url: string,
+    prefix: string
+  ): Promise<string | undefined> {
     if (!/^[0-9a-f]{7,39}$/i.test(prefix)) return undefined;
     const bare = this.versionStore.bareRepoPath(url);
     try {
@@ -760,7 +1046,8 @@ export class RepoService {
     pathOrUrl: string,
     opts?: { signal?: AbortSignal }
   ): Promise<RepoResult<null>> {
-    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
+    if (this.isReadOnlyWorkspace(pathOrUrl))
+      return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.initLocked(pathOrUrl, opts?.signal)
     );
@@ -981,7 +1268,8 @@ export class RepoService {
     pathOrUrl: string,
     branch: string
   ): Promise<RepoResult<null>> {
-    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
+    if (this.isReadOnlyWorkspace(pathOrUrl))
+      return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.checkoutBranchLocked(pathOrUrl, branch)
     );
@@ -995,13 +1283,8 @@ export class RepoService {
       const kind = deriveRepoKind(pathOrUrl);
       const cwd = await this.resolveWorkspacePath(pathOrUrl);
 
-      if (kind === RepoKind.LOCAL) {
-        const clean = await this.ensureCleanRepo(cwd);
-        if (!clean.success) return clean;
-      } else {
-        const ensured = await this.ensureGitRepo(cwd);
-        if (!ensured.success) return ensured;
-      }
+      const ensured = await this.ensureGitRepo(cwd);
+      if (!ensured.success) return ensured;
 
       const fetchRes = await this.runNetworkGit(
         cwd,
@@ -1009,11 +1292,6 @@ export class RepoService {
         kind
       );
       if (!fetchRes.success) return fetchRes;
-
-      if (kind === RepoKind.CLONED) {
-        const reset = await this.hardReset(cwd);
-        if (!reset.success) return reset;
-      }
 
       const co = await this.doCheckoutBranch(cwd, branch);
       if (!co.success) return co;
@@ -1066,7 +1344,8 @@ export class RepoService {
     pathOrUrl: string,
     commit: string
   ): Promise<RepoResult<null>> {
-    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
+    if (this.isReadOnlyWorkspace(pathOrUrl))
+      return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.checkoutCommitLocked(pathOrUrl, commit)
     );
@@ -1117,7 +1396,8 @@ export class RepoService {
   }
 
   async pullChanges(pathOrUrl: string): Promise<RepoResult<null>> {
-    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
+    if (this.isReadOnlyWorkspace(pathOrUrl))
+      return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
       this.pullChangesLocked(pathOrUrl)
     );
@@ -1159,7 +1439,8 @@ export class RepoService {
   // Destructive by design (frontend confirms before calling): discard
   // uncommitted changes and remove untracked files. Identical for both kinds.
   async reset(pathOrUrl: string): Promise<RepoResult<null>> {
-    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
+    if (this.isReadOnlyWorkspace(pathOrUrl))
+      return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), async () => {
       try {
         const cwd = await this.resolveWorkspacePath(pathOrUrl);
@@ -1180,7 +1461,12 @@ export class RepoService {
     // Production FileSystem always supplies it; retain the legacy guard for
     // those fakes while the cache-root check remains authoritative in use.
     const candidate = path.resolve(pathOrUrl);
-    if (typeof (this.fileSystem as Partial<FileSystem>).getVersionCachePath === 'function' && this.versionStore.isCachePath(candidate)) return true;
+    if (
+      typeof (this.fileSystem as Partial<FileSystem>).getVersionCachePath ===
+        'function' &&
+      this.versionStore.isCachePath(candidate)
+    )
+      return true;
     return this.isPinnedWorktree(pathOrUrl);
   }
 
@@ -1188,16 +1474,33 @@ export class RepoService {
     if (!path.isAbsolute(pathOrUrl)) return false;
     const profileId = this.injectedProfiles?.getCurrentProfile();
     if (!profileId) return false;
-    const root = path.resolve(this.fileSystem.getReposPath(profileId), 'pinned');
+    const root = path.resolve(
+      this.fileSystem.getReposPath(profileId),
+      'pinned'
+    );
     const candidate = path.resolve(pathOrUrl);
     return candidate === root || candidate.startsWith(root + path.sep);
   }
 
   private readOnlyWorkspaceResult(pathOrUrl: string): RepoResult<null> {
     if (this.versionStore.isCachePath(path.resolve(pathOrUrl))) {
-      return { success: false, error: { code: 'VERSION_WORKSPACE_READ_ONLY', message: 'Version cache workspaces are read-only; materialize another version instead.' } };
+      return {
+        success: false,
+        error: {
+          code: 'VERSION_WORKSPACE_READ_ONLY',
+          message:
+            'Version cache workspaces are read-only; materialize another version instead.',
+        },
+      };
     }
-    return { success: false, error: { code: 'PINNED_REPO_READ_ONLY', message: 'Pinned worktrees are read-only; materialize another pin instead.' } };
+    return {
+      success: false,
+      error: {
+        code: 'PINNED_REPO_READ_ONLY',
+        message:
+          'Pinned worktrees are read-only; materialize another pin instead.',
+      },
+    };
   }
 
   async getRepoInfo(pathOrUrl: string): Promise<RepoResult<RepoInfoResult>> {
@@ -1242,26 +1545,51 @@ export class RepoService {
   }
 
   /** Read-only git facts used by workflow-promotion preview/apply. */
-  async inspectPromotionSource(pathOrUrl: string): Promise<PromotionSourceInspection> {
+  async inspectPromotionSource(
+    pathOrUrl: string
+  ): Promise<PromotionSourceInspection> {
     const cwd = await this.resolveExistingWorkspacePath(pathOrUrl);
     const ensured = await this.ensureGitRepo(cwd);
-    if (!ensured.success) throw Object.assign(new Error(ensured.error.message), { code: ensured.error.code });
+    if (!ensured.success)
+      throw Object.assign(new Error(ensured.error.message), {
+        code: ensured.error.code,
+      });
     const [origin, commit, tags, branch, status] = await Promise.all([
       this.runGit(cwd, ['remote', 'get-url', 'origin'], TIMEOUT_LOCAL_MS),
       this.runGit(cwd, ['rev-parse', 'HEAD'], TIMEOUT_LOCAL_MS),
       this.runGit(cwd, ['tag', '--points-at', 'HEAD'], TIMEOUT_LOCAL_MS),
-      this.runGit(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'], TIMEOUT_LOCAL_MS),
+      this.runGit(
+        cwd,
+        ['symbolic-ref', '--short', '-q', 'HEAD'],
+        TIMEOUT_LOCAL_MS
+      ),
       this.runGit(cwd, ['status', '--porcelain'], TIMEOUT_LOCAL_MS),
     ]);
     if (!origin.success || !origin.data.stdout.trim())
-      throw Object.assign(new Error('origin remote is required for workflow promotion'), { code: 'PROMOTION_ORIGIN_REQUIRED' });
-    if (!commit.success) throw Object.assign(new Error(commit.error.message), { code: commit.error.code });
-    if (!tags.success) throw Object.assign(new Error(tags.error.message), { code: tags.error.code });
-    if (!status.success) throw Object.assign(new Error(status.error.message), { code: status.error.code });
+      throw Object.assign(
+        new Error('origin remote is required for workflow promotion'),
+        { code: 'PROMOTION_ORIGIN_REQUIRED' }
+      );
+    if (!commit.success)
+      throw Object.assign(new Error(commit.error.message), {
+        code: commit.error.code,
+      });
+    if (!tags.success)
+      throw Object.assign(new Error(tags.error.message), {
+        code: tags.error.code,
+      });
+    if (!status.success)
+      throw Object.assign(new Error(status.error.message), {
+        code: status.error.code,
+      });
     return {
       origin: origin.data.stdout.trim(),
       commit: commit.data.stdout.trim(),
-      tags: tags.data.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean).sort(),
+      tags: tags.data.stdout
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .sort(),
       branch: branch.success ? branch.data.stdout.trim() || null : null,
       dirty: status.data.stdout.trim().length > 0,
     };
@@ -1270,9 +1598,15 @@ export class RepoService {
   async isExistingGitRepository(pathOrUrl: string): Promise<boolean> {
     try {
       const cwd = await this.resolveExistingWorkspacePath(pathOrUrl);
-      const result = await this.runGit(cwd, ['rev-parse', '--is-inside-work-tree'], TIMEOUT_LOCAL_MS);
+      const result = await this.runGit(
+        cwd,
+        ['rev-parse', '--is-inside-work-tree'],
+        TIMEOUT_LOCAL_MS
+      );
       return result.success && result.data.stdout.trim() === 'true';
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   async getFile(
@@ -1406,16 +1740,26 @@ export class RepoService {
   // Internal-only write counterpart to getFile. Both lexical and realpath
   // containment checks are needed: git worktrees can contain attacker-owned
   // symlinks, and parents must be verified again after mkdir before rename.
-  async writeRepoFile(pathOrUrl: string, filePath: string, contents: string): Promise<RepoResult<null>> {
-    if (this.isReadOnlyWorkspace(pathOrUrl)) return this.readOnlyWorkspaceResult(pathOrUrl);
+  async writeRepoFile(
+    pathOrUrl: string,
+    filePath: string,
+    contents: string
+  ): Promise<RepoResult<null>> {
+    if (this.isReadOnlyWorkspace(pathOrUrl))
+      return this.readOnlyWorkspaceResult(pathOrUrl);
     const validated = this.validateFilePath(filePath);
     if (!validated.success) return validated;
     try {
       const root = await this.resolveExistingWorkspacePath(pathOrUrl);
       const realRoot = await fs.realpath(path.resolve(root));
-      return await withRepoWriteLock(realRoot, () => this.writeRepoFileLocked(realRoot, filePath, contents));
+      return await withRepoWriteLock(realRoot, () =>
+        this.writeRepoFileLocked(realRoot, filePath, contents)
+      );
     } catch (error) {
-      return { success: false, error: { code: 'FILE_WRITE_ERROR', message: errMsg(error) } };
+      return {
+        success: false,
+        error: { code: 'FILE_WRITE_ERROR', message: errMsg(error) },
+      };
     }
   }
 
@@ -1430,68 +1774,130 @@ export class RepoService {
   ): Promise<T> {
     if (this.isReadOnlyWorkspace(pathOrUrl)) {
       const result = this.readOnlyWorkspaceResult(pathOrUrl);
-      if (!result.success) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+      if (!result.success)
+        throw Object.assign(new Error(result.error.message), {
+          code: result.error.code,
+        });
     }
     const root = await this.resolveExistingWorkspacePath(pathOrUrl);
     const realRoot = await fs.realpath(path.resolve(root));
-    return withRepoWriteLock(realRoot, () => fn({
-      readFile: async (relPath) => {
-        const result = await this.getFile(realRoot, relPath);
-        if (result.success) return result.data.content;
-        if (result.error.code === 'FILE_NOT_FOUND') return null;
-        throw Object.assign(new Error(result.error.message), { code: result.error.code });
-      },
-      writeFile: async (relPath, contents) => {
-        const result = await this.writeRepoFileLocked(realRoot, relPath, contents);
-        if (!result.success) throw Object.assign(new Error(result.error.message), { code: result.error.code });
-      },
-    }));
+    return withRepoWriteLock(realRoot, () =>
+      fn({
+        readFile: async (relPath) => {
+          const result = await this.getFile(realRoot, relPath);
+          if (result.success) return result.data.content;
+          if (result.error.code === 'FILE_NOT_FOUND') return null;
+          throw Object.assign(new Error(result.error.message), {
+            code: result.error.code,
+          });
+        },
+        writeFile: async (relPath, contents) => {
+          const result = await this.writeRepoFileLocked(
+            realRoot,
+            relPath,
+            contents
+          );
+          if (!result.success)
+            throw Object.assign(new Error(result.error.message), {
+              code: result.error.code,
+            });
+        },
+      })
+    );
   }
 
-  private async writeRepoFileLocked(realRoot: string, filePath: string, contents: string): Promise<RepoResult<null>> {
+  private async writeRepoFileLocked(
+    realRoot: string,
+    filePath: string,
+    contents: string
+  ): Promise<RepoResult<null>> {
     const validated = this.validateFilePath(filePath);
     if (!validated.success) return validated;
     try {
       const normalized = filePath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
       const target = path.resolve(realRoot, normalized);
-      if (target === realRoot || !target.startsWith(realRoot + path.sep)) return { success: false, error: { code: 'INVALID_PATH', message: 'File path escapes repository root' } };
-        // Walk every existing ancestor with lstat before creating anything.
-        // Symlinked ancestors are rejected even when they happen to resolve
-        // back inside the repository: creation and publication must stay on
-        // the verified canonical directory chain.
-        let realParent = realRoot;
-        const parentSegments = normalized.split('/').slice(0, -1);
-        for (const segment of parentSegments) {
-          const candidate = path.join(realParent, segment);
-          let stats: import('node:fs').Stats;
-          try {
-            stats = await fs.lstat(candidate);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-            try { await fs.mkdir(candidate); }
-            catch (mkdirError) { if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') throw mkdirError; }
-            stats = await fs.lstat(candidate);
-          }
-          if (stats.isSymbolicLink() || !stats.isDirectory())
-            return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'File ancestors must be real directories' } };
-          const canonical = await fs.realpath(candidate);
-          if (canonical !== realRoot && !canonical.startsWith(realRoot + path.sep))
-            return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'File parent resolves outside the repository' } };
-          realParent = canonical;
-        }
-        const publishTarget = path.join(realParent, path.basename(target));
-        let existing: import('node:fs').Stats | undefined;
-        try { existing = await fs.lstat(publishTarget); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-        if (existing && (!existing.isFile() || existing.isSymbolicLink())) return { success: false, error: { code: 'SUSPICIOUS_PATH_PATTERN', message: 'Write target must be a regular file or absent' } };
-        const temp = path.join(realParent, `.${path.basename(target)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+      if (target === realRoot || !target.startsWith(realRoot + path.sep))
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_PATH',
+            message: 'File path escapes repository root',
+          },
+        };
+      // Walk every existing ancestor with lstat before creating anything.
+      // Symlinked ancestors are rejected even when they happen to resolve
+      // back inside the repository: creation and publication must stay on
+      // the verified canonical directory chain.
+      let realParent = realRoot;
+      const parentSegments = normalized.split('/').slice(0, -1);
+      for (const segment of parentSegments) {
+        const candidate = path.join(realParent, segment);
+        let stats: import('node:fs').Stats;
         try {
-          await fs.writeFile(temp, contents, 'utf8');
-          await fs.rename(temp, publishTarget);
-          return { success: true, data: null };
-        } finally { await fs.rm(temp, { force: true }).catch(() => {}); }
-
+          stats = await fs.lstat(candidate);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          try {
+            await fs.mkdir(candidate);
+          } catch (mkdirError) {
+            if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST')
+              throw mkdirError;
+          }
+          stats = await fs.lstat(candidate);
+        }
+        if (stats.isSymbolicLink() || !stats.isDirectory())
+          return {
+            success: false,
+            error: {
+              code: 'SUSPICIOUS_PATH_PATTERN',
+              message: 'File ancestors must be real directories',
+            },
+          };
+        const canonical = await fs.realpath(candidate);
+        if (
+          canonical !== realRoot &&
+          !canonical.startsWith(realRoot + path.sep)
+        )
+          return {
+            success: false,
+            error: {
+              code: 'SUSPICIOUS_PATH_PATTERN',
+              message: 'File parent resolves outside the repository',
+            },
+          };
+        realParent = canonical;
+      }
+      const publishTarget = path.join(realParent, path.basename(target));
+      let existing: import('node:fs').Stats | undefined;
+      try {
+        existing = await fs.lstat(publishTarget);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (existing && (!existing.isFile() || existing.isSymbolicLink()))
+        return {
+          success: false,
+          error: {
+            code: 'SUSPICIOUS_PATH_PATTERN',
+            message: 'Write target must be a regular file or absent',
+          },
+        };
+      const temp = path.join(
+        realParent,
+        `.${path.basename(target)}.${process.pid}.${crypto.randomUUID()}.tmp`
+      );
+      try {
+        await fs.writeFile(temp, contents, 'utf8');
+        await fs.rename(temp, publishTarget);
+        return { success: true, data: null };
+      } finally {
+        await fs.rm(temp, { force: true }).catch(() => {});
+      }
     } catch (error) {
-      return { success: false, error: { code: 'FILE_WRITE_ERROR', message: errMsg(error) } };
+      return {
+        success: false,
+        error: { code: 'FILE_WRITE_ERROR', message: errMsg(error) },
+      };
     }
   }
 

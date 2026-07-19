@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import * as Tabs from '@radix-ui/react-tabs';
 import { Loader2 } from 'lucide-react';
 import type { AddRepoVersionRequest, InspectGitRemoteData } from '@ignite/api';
 import { apiClient } from '../../../store/api/client';
@@ -11,24 +12,30 @@ export interface VersionSource {
   label: string;
   /** Remote origin used for releases, tags, and remote branches. */
   url?: string;
+  /** Present for every source with a live workspace, including clones. */
   repoPathOrUrl?: string;
+  /** A local source can resolve refs that have not been pushed to origin. */
   local: boolean;
   initialBranch?: string;
   initialCommit?: string;
 }
+
+type VersionTab = 'releases' | 'branches' | 'commit';
+
+export type VersionSelection = { tab: VersionTab; value: string };
 
 interface AddVersionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   source: VersionSource | null;
   onSubmit: (request: AddRepoVersionRequest) => void;
-  onSwitchBranch: (path: string, branch: string) => void;
+  onSwitchBranch: (path: string, branch: string) => Promise<void>;
 }
 
 export function versionPickerSections(
   source: VersionSource | null,
   inspect: InspectGitRemoteData | null,
-  localBranches: string[]
+  workspaceBranches: string[]
 ) {
   const releases = source?.url ? (inspect?.releases ?? []) : [];
   const tags = source?.url
@@ -36,26 +43,62 @@ export function versionPickerSections(
         .filter((name) => !releases.some((item) => item.tag === name))
         .sort()
     : [];
-  return {
-    releases,
-    tags,
-    remoteBranches: source?.url ? (inspect?.branches ?? []) : [],
-    localBranches: source?.local ? localBranches : [],
-  };
+  const branches = [
+    ...new Set([
+      ...(source?.url ? (inspect?.branches ?? []) : []),
+      ...(source?.repoPathOrUrl ? workspaceBranches : []),
+    ]),
+  ];
+  return { releases, tags, branches };
 }
 
-export function canSwitchLocalBranch({
-  local,
-  localBranch,
-  remoteRefSelected,
-  commit,
+export function canSwitchWorkspaceBranch({
+  hasWorkspace,
+  tab,
+  branch,
 }: {
-  local: boolean | undefined;
-  localBranch: string;
-  remoteRefSelected: boolean;
-  commit: string;
+  hasWorkspace: boolean;
+  tab: VersionTab;
+  branch: string;
 }) {
-  return local && Boolean(localBranch) && !remoteRefSelected && !commit.trim();
+  return hasWorkspace && tab === 'branches' && Boolean(branch);
+}
+
+export function versionSubmitPayload(
+  source: VersionSource,
+  selection: VersionSelection
+): AddRepoVersionRequest {
+  const target =
+    selection.tab === 'commit'
+      ? { commit: selection.value.trim() }
+      : {
+          ref: selection.value,
+          refKind:
+            selection.tab === 'releases'
+              ? ('tag' as const)
+              : ('branch' as const),
+        };
+
+  // A local worktree can resolve unpublished refs. Cloned worktrees retain
+  // their remote-origin behavior while still being available for switching.
+  return (source.local && selection.tab !== 'releases') || !source.url
+    ? { repoPathOrUrl: source.repoPathOrUrl!, ...target }
+    : { url: source.url, ...target };
+}
+
+function switchErrorMessage(error: unknown): string {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'body' in error &&
+    typeof error.body === 'object' &&
+    error.body !== null &&
+    'message' in error.body &&
+    typeof error.body.message === 'string'
+  ) {
+    return error.body.message;
+  }
+  return error instanceof Error ? error.message : 'Unable to switch branch';
 }
 
 export default function AddVersionModal({
@@ -70,35 +113,43 @@ export default function AddVersionModal({
   const [inspect, setInspect] = useState<InspectGitRemoteData | null>(null);
   const [inspecting, setInspecting] = useState(false);
   const [inspectError, setInspectError] = useState('');
-  const [localBranches, setLocalBranches] = useState<string[]>([]);
-  const [localBranch, setLocalBranch] = useState('');
-  const [remoteBranch, setRemoteBranch] = useState('');
-  const [release, setRelease] = useState('');
-  const [tag, setTag] = useState('');
-  const [commit, setCommit] = useState('');
+  const [switchError, setSwitchError] = useState('');
+  const [switching, setSwitching] = useState(false);
+  const [workspaceBranches, setWorkspaceBranches] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<VersionTab>('branches');
+  const [selection, setSelection] = useState<VersionSelection>({
+    tab: 'branches',
+    value: '',
+  });
   const [mode, setMode] = useState<'copy' | 'switch'>('copy');
 
   useEffect(() => {
     if (!open || !source) return;
+    const initialTab: VersionTab = source.initialCommit ? 'commit' : 'branches';
+    const initialValue = source.initialCommit ?? source.initialBranch ?? '';
     setInspect(null);
     setInspectError('');
+    setSwitchError('');
+    setSwitching(false);
     setInspecting(Boolean(source.url));
-    setLocalBranches([]);
-    setLocalBranch(source.local ? (source.initialBranch ?? '') : '');
-    setRemoteBranch(source.local ? '' : (source.initialBranch ?? ''));
-    setRelease('');
-    setTag('');
-    setCommit(source.initialCommit ?? '');
+    setWorkspaceBranches([]);
+    setActiveTab(initialTab);
+    setSelection({ tab: initialTab, value: initialValue });
     setMode('copy');
 
-    if (source.local && source.repoPathOrUrl) {
+    if (source.repoPathOrUrl) {
       dispatch(
         apiClient.dispatch.getBranches({
           body: { pathOrUrl: source.repoPathOrUrl },
           onSuccess: ({ branches }) => {
-            setLocalBranches(branches);
-            if (!source.initialBranch && !source.url)
-              setLocalBranch(branches[0] ?? '');
+            setWorkspaceBranches(branches);
+            if (!source.initialBranch && !source.initialCommit && !source.url) {
+              setSelection((current) =>
+                current.tab === 'branches' && !current.value
+                  ? { tab: 'branches', value: branches[0] ?? '' }
+                  : current
+              );
+            }
           },
         })
       );
@@ -111,12 +162,26 @@ export default function AddVersionModal({
         onSuccess: (data) => {
           setInspect(data);
           setInspecting(false);
-          // A branch click intentionally keeps its local selection. Otherwise
-          // releases are the first, most useful remote choice.
           if (!source.initialBranch && !source.initialCommit) {
-            const stable = data.releases.find((item) => !item.prerelease);
-            if (stable) setRelease(stable.tag);
-            else setRemoteBranch(data.defaultBranch ?? data.branches[0] ?? '');
+            const release = data.releases.find((item) => !item.prerelease);
+            const tag = Object.keys(data.tagHeads ?? {})
+              .filter(
+                (name) => !data.releases.some((item) => item.tag === name)
+              )
+              .sort()[0];
+            if (release || tag) {
+              setActiveTab('releases');
+              setSelection({
+                tab: 'releases',
+                value: release?.tag ?? tag ?? '',
+              });
+            } else {
+              setActiveTab('branches');
+              setSelection({
+                tab: 'branches',
+                value: data.defaultBranch ?? data.branches[0] ?? '',
+              });
+            }
           }
         },
         onError: (error) => {
@@ -131,55 +196,49 @@ export default function AddVersionModal({
     if (open && source?.initialCommit) commitInput.current?.focus();
   }, [open, source?.initialCommit]);
 
-  const clearRefsExcept = (
-    selected: 'release' | 'tag' | 'remoteBranch' | 'localBranch'
-  ) => {
-    if (selected !== 'release') setRelease('');
-    if (selected !== 'tag') setTag('');
-    if (selected !== 'remoteBranch') setRemoteBranch('');
-    if (selected !== 'localBranch') setLocalBranch('');
-  };
-
-  const commitValid = !commit.trim() || /^[0-9a-f]{7,40}$/i.test(commit.trim());
-  const selectedRef = release || tag || remoteBranch || localBranch;
-  const remoteRefSelected = Boolean(release || tag || remoteBranch);
-  const canSubmit = Boolean(
-    source && commitValid && (commit.trim() || selectedRef)
-  );
-  const canSwitch = canSwitchLocalBranch({
-    local: source?.local,
-    localBranch,
-    remoteRefSelected,
-    commit,
-  });
-
-  const handleSubmit = () => {
-    if (!source || !canSubmit) return;
-    if (mode === 'switch' && canSwitch && source.repoPathOrUrl) {
-      onSwitchBranch(source.repoPathOrUrl, localBranch);
-      return;
-    }
-
-    const target = commit.trim()
-      ? { commit: commit.trim() }
-      : {
-          ref: selectedRef,
-          refKind: (release || tag ? 'tag' : 'branch') as 'tag' | 'branch',
-        };
-    // Local branches and commits resolve against the local worktree. Remote
-    // release/tag/branch choices resolve from the canonical origin instead.
-    onSubmit(
-      source.local && !remoteRefSelected
-        ? { repoPathOrUrl: source.repoPathOrUrl!, ...target }
-        : { url: source.url!, ...target }
-    );
-  };
-
-  const { releases, tags, remoteBranches } = versionPickerSections(
+  const { releases, tags, branches } = versionPickerSections(
     source,
     inspect,
-    localBranches
+    workspaceBranches
   );
+  const hasReleases = releases.length > 0 || tags.length > 0;
+  const hasWorkspace = Boolean(source?.repoPathOrUrl);
+  const commitValid =
+    activeTab !== 'commit' || /^[0-9a-f]{7,40}$/i.test(selection.value.trim());
+  const canSubmit = Boolean(source && selection.value.trim() && commitValid);
+  const canSwitch = canSwitchWorkspaceBranch({
+    hasWorkspace,
+    tab: activeTab,
+    branch: selection.value,
+  });
+
+  const selectTab = (tab: string) => {
+    const next = tab as VersionTab;
+    setActiveTab(next);
+    // A tab is the selection model: changing it deliberately discards the
+    // other tab's value, so a submit can never contain multiple ref kinds.
+    setSelection({ tab: next, value: '' });
+    setMode('copy');
+    setSwitchError('');
+  };
+
+  const handleSubmit = async () => {
+    if (!source || !canSubmit) return;
+    if (mode === 'switch' && canSwitch && source.repoPathOrUrl) {
+      setSwitching(true);
+      setSwitchError('');
+      try {
+        await onSwitchBranch(source.repoPathOrUrl, selection.value);
+        onOpenChange(false);
+      } catch (error) {
+        setSwitchError(switchErrorMessage(error));
+      } finally {
+        setSwitching(false);
+      }
+      return;
+    }
+    onSubmit(versionSubmitPayload(source, selection));
+  };
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -202,124 +261,96 @@ export default function AddVersionModal({
           {inspectError && (
             <div className="text-xs text-err mb-3">{inspectError}</div>
           )}
-
-          {releases.length > 0 && (
-            <div className="mb-3">
-              <label className="block text-sm font-medium mb-2">Releases</label>
-              <Select
-                options={releases.map((item, index) => ({
-                  value: item.tag,
-                  label: `${item.tag}${index === 0 && !item.prerelease ? ' (latest)' : ''}${item.prerelease ? ' (prerelease)' : ''}`,
-                }))}
-                value={release}
-                onValueChange={(value) => {
-                  setRelease(value);
-                  clearRefsExcept('release');
-                  setMode('copy');
-                }}
-                anchor="left"
-              />
-            </div>
+          {switchError && (
+            <div className="text-xs text-err mb-3">{switchError}</div>
           )}
 
-          {tags.length > 0 && (
-            <div className="mb-3">
-              <label className="block text-sm font-medium mb-2">Tags</label>
-              <Select
-                options={[
-                  { value: '', label: '— none —' },
-                  ...tags.map((name) => ({ value: name, label: name })),
-                ]}
-                value={tag}
-                onValueChange={(value) => {
-                  setTag(value);
-                  if (value) {
-                    clearRefsExcept('tag');
-                    setMode('copy');
+          <Tabs.Root value={activeTab} onValueChange={selectTab}>
+            <Tabs.List aria-label="Version source" className="tabs-list">
+              {hasReleases && (
+                <Tabs.Trigger value="releases" className="tabs-trigger">
+                  Releases
+                </Tabs.Trigger>
+              )}
+              <Tabs.Trigger value="branches" className="tabs-trigger">
+                Branches
+              </Tabs.Trigger>
+              <Tabs.Trigger value="commit" className="tabs-trigger">
+                Commit
+              </Tabs.Trigger>
+            </Tabs.List>
+
+            {hasReleases && (
+              <Tabs.Content value="releases" className="mb-3">
+                <label className="block text-sm font-medium mb-2">
+                  Release or tag
+                </label>
+                <Select
+                  options={[
+                    { value: '', label: 'Choose a release or tag' },
+                    ...releases.map((item, index) => ({
+                      value: item.tag,
+                      label: `${item.tag}${index === 0 && !item.prerelease ? ' (latest)' : ''}${item.prerelease ? ' (prerelease)' : ''}`,
+                    })),
+                    ...tags.map((name) => ({ value: name, label: name })),
+                  ]}
+                  value={selection.tab === 'releases' ? selection.value : ''}
+                  onValueChange={(value) =>
+                    setSelection({ tab: 'releases', value })
                   }
-                }}
-                anchor="left"
-              />
-            </div>
-          )}
-
-          {remoteBranches.length > 0 && (
-            <div className="mb-3">
-              <label className="block text-sm font-medium mb-2">
-                Remote branch
-              </label>
-              <Select
-                options={[
-                  { value: '', label: '— none —' },
-                  ...remoteBranches.map((name) => ({
-                    value: name,
-                    label: name,
-                  })),
-                ]}
-                value={remoteBranch}
-                onValueChange={(value) => {
-                  setRemoteBranch(value);
-                  if (value) {
-                    clearRefsExcept('remoteBranch');
-                    setMode('copy');
-                  }
-                }}
-                anchor="left"
-              />
-            </div>
-          )}
-
-          {source?.local && localBranches.length > 0 && (
-            <div className="mb-3">
-              <label className="block text-sm font-medium mb-2">
-                Local branch
-              </label>
-              <Select
-                options={localBranches.map((name) => ({
-                  value: name,
-                  label: name,
-                }))}
-                value={localBranch}
-                onValueChange={(value) => {
-                  setLocalBranch(value);
-                  clearRefsExcept('localBranch');
-                }}
-                placeholder="Choose local branch"
-                anchor="left"
-              />
-            </div>
-          )}
-
-          <div className="mb-3">
-            <label className="block text-sm font-medium mb-2">
-              Commit hash
-            </label>
-            <input
-              ref={commitInput}
-              type="text"
-              placeholder="Optional full or short commit hash"
-              value={commit}
-              onChange={(event) => setCommit(event.target.value)}
-              className="input-glass font-mono text-xs"
-              spellCheck={false}
-            />
-            {!commitValid && (
-              <div className="text-xs text-err mt-1">
-                Enter 7–40 hexadecimal characters.
-              </div>
+                  anchor="left"
+                />
+              </Tabs.Content>
             )}
-          </div>
 
-          {source?.local && (
+            <Tabs.Content value="branches" className="mb-3">
+              <label className="block text-sm font-medium mb-2">Branch</label>
+              <Select
+                options={[
+                  { value: '', label: 'Choose a branch' },
+                  ...branches.map((name) => ({ value: name, label: name })),
+                ]}
+                value={selection.tab === 'branches' ? selection.value : ''}
+                onValueChange={(value) =>
+                  setSelection({ tab: 'branches', value })
+                }
+                anchor="left"
+              />
+            </Tabs.Content>
+
+            <Tabs.Content value="commit" className="mb-3">
+              <label className="block text-sm font-medium mb-2">
+                Commit hash
+              </label>
+              <input
+                ref={commitInput}
+                type="text"
+                placeholder="Full or short commit hash"
+                value={selection.tab === 'commit' ? selection.value : ''}
+                onChange={(event) =>
+                  setSelection({ tab: 'commit', value: event.target.value })
+                }
+                className="input-glass font-mono text-xs"
+                spellCheck={false}
+              />
+              {!commitValid && (
+                <div className="text-xs text-err mt-1">
+                  Enter 7–40 hexadecimal characters.
+                </div>
+              )}
+            </Tabs.Content>
+          </Tabs.Root>
+
+          {activeTab === 'branches' && hasWorkspace && (
             <fieldset className="mb-4">
               <legend className="block text-sm font-medium mb-2">
-                For this local repository
+                For this repository
               </legend>
               <div className="flex gap-3">
                 <label className="card-milky p-3 flex-1 text-sm cursor-pointer">
                   <input
                     type="radio"
-                    name="local-version-mode"
+                    name="version-mode"
                     checked={mode === 'copy'}
                     onChange={() => setMode('copy')}
                     className="mr-2"
@@ -329,43 +360,47 @@ export default function AddVersionModal({
                     Keep the current workspace unchanged.
                   </span>
                 </label>
-                {canSwitch && (
-                  <label className="card-milky p-3 flex-1 text-sm cursor-pointer">
-                    <input
-                      type="radio"
-                      name="local-version-mode"
-                      checked={mode === 'switch'}
-                      onChange={() => setMode('switch')}
-                      className="mr-2"
-                    />
-                    Switch branch
-                    <span className="block text-xs opacity-70 mt-1">
-                      Changes the local workspace after confirmation.
-                    </span>
-                  </label>
-                )}
+                <label className="card-milky p-3 flex-1 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="version-mode"
+                    checked={mode === 'switch'}
+                    onChange={() => setMode('switch')}
+                    disabled={!canSwitch}
+                    className="mr-2"
+                  />
+                  Switch branch
+                  <span className="block text-xs opacity-70 mt-1">
+                    Carry changes over when Git allows it.
+                  </span>
+                </label>
               </div>
-              {!canSwitch && (
-                <div className="text-xs text-warn mt-2">
-                  Remote refs and commits can only be copied.
-                </div>
-              )}
             </fieldset>
           )}
 
           <div className="flex items-center justify-end gap-2">
             <Dialog.Close asChild>
-              <button type="button" className="btn btn-secondary">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={switching}
+              >
                 Cancel
               </button>
             </Dialog.Close>
             <button
               type="button"
               className="btn btn-primary"
-              onClick={handleSubmit}
-              disabled={!canSubmit || (mode === 'switch' && !canSwitch)}
+              onClick={() => void handleSubmit()}
+              disabled={
+                !canSubmit || switching || (mode === 'switch' && !canSwitch)
+              }
             >
-              {mode === 'switch' && canSwitch ? 'Switch branch' : 'Add version'}
+              {switching
+                ? 'Switching…'
+                : mode === 'switch' && canSwitch
+                  ? 'Switch branch'
+                  : 'Add version'}
             </button>
           </div>
         </Dialog.Content>

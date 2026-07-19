@@ -6,7 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
-import { RepoService, RepoKind, deriveRepoKind } from '../../repos/RepoService.js';
+import {
+  RepoService,
+  RepoKind,
+  deriveRepoKind,
+} from '../../repos/RepoService.js';
 import { runCommand } from '../../utils/runCommand.js';
 import type { FileSystem } from '../../filesystem/FileSystem.js';
 import type { ProfileManager } from '../../filesystem/ProfileManager.js';
@@ -25,7 +29,11 @@ function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
 }
 
-async function writeFile(dir: string, rel: string, content: string): Promise<void> {
+async function writeFile(
+  dir: string,
+  rel: string,
+  content: string
+): Promise<void> {
   const full = path.join(dir, rel);
   await fs.mkdir(path.dirname(full), { recursive: true });
   await fs.writeFile(full, content);
@@ -76,7 +84,10 @@ async function withFileInsteadOf<T>(
 ): Promise<T> {
   const configDir = await mkTmp('ignite-gitconfig-');
   const configPath = path.join(configDir, 'gitconfig');
-  await fs.writeFile(configPath, `[url "file://${remoteDir}"]\n\tinsteadOf = ${url}\n`);
+  await fs.writeFile(
+    configPath,
+    `[url "file://${remoteDir}"]\n\tinsteadOf = ${url}\n`
+  );
   const prev = process.env.GIT_CONFIG_GLOBAL;
   process.env.GIT_CONFIG_GLOBAL = configPath;
   try {
@@ -99,10 +110,22 @@ function fakeProfiles(profileId: string): ProfileManager {
 
 function makeRunSpy(): {
   spy: typeof runCommand;
-  calls: { cmd: string; args: string[]; opts: Parameters<typeof runCommand>[2] }[];
+  calls: {
+    cmd: string;
+    args: string[];
+    opts: Parameters<typeof runCommand>[2];
+  }[];
 } {
-  const calls: { cmd: string; args: string[]; opts: Parameters<typeof runCommand>[2] }[] = [];
-  const spy = ((cmd: string, args: string[], opts?: Parameters<typeof runCommand>[2]) => {
+  const calls: {
+    cmd: string;
+    args: string[];
+    opts: Parameters<typeof runCommand>[2];
+  }[] = [];
+  const spy = ((
+    cmd: string,
+    args: string[],
+    opts?: Parameters<typeof runCommand>[2]
+  ) => {
     calls.push({ cmd, args, opts });
     return runCommand(cmd, args, opts);
   }) as typeof runCommand;
@@ -123,7 +146,11 @@ async function newService(opts?: {
 }
 
 afterAll(async () => {
-  await Promise.all(tmpDirs.map((d) => fs.rm(d, { recursive: true, force: true }).catch(() => {})));
+  await Promise.all(
+    tmpDirs.map((d) =>
+      fs.rm(d, { recursive: true, force: true }).catch(() => {})
+    )
+  );
 });
 
 // Skip the whole suite if git isn't on PATH (shouldn't happen in CI/dev, but
@@ -139,7 +166,9 @@ describe('deriveRepoKind', () => {
   });
 
   it('classifies https/ssh/git/scp-like URLs as CLONED', () => {
-    expect(deriveRepoKind('https://github.com/foo/bar.git')).toBe(RepoKind.CLONED);
+    expect(deriveRepoKind('https://github.com/foo/bar.git')).toBe(
+      RepoKind.CLONED
+    );
     expect(deriveRepoKind('git@github.com:foo/bar.git')).toBe(RepoKind.CLONED);
     expect(deriveRepoKind('ssh://git@host/foo/bar.git')).toBe(RepoKind.CLONED);
   });
@@ -191,11 +220,15 @@ describe('version source resolution', () => {
     git(dir, ['checkout', '-q', 'main']);
     const svc = await newService();
 
-    await expect(svc.resolveLocalVersionCommit(dir, 'v1.0.0')).resolves.toEqual({
-      commit,
-      refKind: 'tag',
-    });
-    await expect(svc.resolveLocalVersionCommit(dir, 'feature')).resolves.toEqual({
+    await expect(svc.resolveLocalVersionCommit(dir, 'v1.0.0')).resolves.toEqual(
+      {
+        commit,
+        refKind: 'tag',
+      }
+    );
+    await expect(
+      svc.resolveLocalVersionCommit(dir, 'feature')
+    ).resolves.toEqual({
       commit,
       refKind: 'branch',
     });
@@ -215,8 +248,8 @@ describe('version source resolution', () => {
     await svc.getVersionSource(dir, 'p1');
 
     expect(
-      calls.filter((call) =>
-        call.args.slice(2).join(' ') === 'remote get-url origin'
+      calls.filter(
+        (call) => call.args.slice(2).join(' ') === 'remote get-url origin'
       )
     ).toHaveLength(1);
   });
@@ -224,7 +257,11 @@ describe('version source resolution', () => {
 
 describe('git invocation safety', () => {
   function assertRailsOnEveryCall(
-    calls: { cmd: string; args: string[]; opts: Parameters<typeof runCommand>[2] }[]
+    calls: {
+      cmd: string;
+      args: string[];
+      opts: Parameters<typeof runCommand>[2];
+    }[]
   ): void {
     expect(calls.length).toBeGreaterThan(0);
     for (const call of calls) {
@@ -261,8 +298,13 @@ describe('git invocation safety', () => {
       // The clone invocation specifically must carry the rails.
       const cloneCall = calls.find((c) => c.args.includes('clone'));
       expect(cloneCall).toBeDefined();
-      expect(cloneCall?.args.slice(0, 2)).toEqual(['-c', 'core.hooksPath=/dev/null']);
-      expect(cloneCall?.opts?.env?.GIT_ALLOW_PROTOCOL).toBe('https:git:ssh:file');
+      expect(cloneCall?.args.slice(0, 2)).toEqual([
+        '-c',
+        'core.hooksPath=/dev/null',
+      ]);
+      expect(cloneCall?.opts?.env?.GIT_ALLOW_PROTOCOL).toBe(
+        'https:git:ssh:file'
+      );
     });
   });
 
@@ -337,11 +379,17 @@ describe('init', () => {
     await withFileInsteadOf(url, remoteDir, async () => {
       const svc = await newService();
 
-      await expect(svc.init(url)).resolves.toEqual({ success: true, data: null });
+      await expect(svc.init(url)).resolves.toEqual({
+        success: true,
+        data: null,
+      });
       const workspacePath = await svc.resolveWorkspacePath(url);
       const infoBefore = await svc.getRepoInfo(url);
 
-      await expect(svc.init(url)).resolves.toEqual({ success: true, data: null });
+      await expect(svc.init(url)).resolves.toEqual({
+        success: true,
+        data: null,
+      });
       const infoAfter = await svc.getRepoInfo(url);
 
       expect(infoAfter).toEqual(infoBefore);
@@ -359,9 +407,20 @@ describe('init', () => {
       // lands after a successful clone. init must NOT report failure, or a
       // retry would short-circuit on the already-present clone and never
       // recover.
-      const run = ((cmd: string, args: string[], opts?: Parameters<typeof runCommand>[2]) => {
-        if (args.includes('fetch') && args.includes('+refs/heads/*:refs/remotes/origin/*')) {
-          return Promise.resolve({ stdout: '', stderr: 'simulated fetch failure', code: 1 });
+      const run = ((
+        cmd: string,
+        args: string[],
+        opts?: Parameters<typeof runCommand>[2]
+      ) => {
+        if (
+          args.includes('fetch') &&
+          args.includes('+refs/heads/*:refs/remotes/origin/*')
+        ) {
+          return Promise.resolve({
+            stdout: '',
+            stderr: 'simulated fetch failure',
+            code: 1,
+          });
         }
         return runCommand(cmd, args, opts);
       }) as typeof runCommand;
@@ -373,7 +432,9 @@ describe('init', () => {
       const workspacePath = await svc.resolveWorkspacePath(url);
       expect((await fs.stat(workspacePath)).isDirectory()).toBe(true);
       // The clone is a real, usable git repo despite the failed fetch.
-      expect(git(workspacePath, ['rev-parse', '--is-inside-work-tree']).trim()).toBe('true');
+      expect(
+        git(workspacePath, ['rev-parse', '--is-inside-work-tree']).trim()
+      ).toBe('true');
     });
   });
 });
@@ -391,7 +452,12 @@ describe('getBranches', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.branches).toEqual(
-        expect.arrayContaining(['main', 'origin/feature', 'origin/main', 'v1.0.0'])
+        expect.arrayContaining([
+          'main',
+          'origin/feature',
+          'origin/main',
+          'v1.0.0',
+        ])
       );
     }
   });
@@ -406,7 +472,7 @@ describe('getBranches', () => {
 });
 
 describe('checkoutBranch', () => {
-  it('LOCAL: rejects with DIRTY_WORKTREE when there are uncommitted changes', async () => {
+  it('LOCAL: carries non-conflicting uncommitted changes to the switched branch', async () => {
     const dir = await mkTmp('ignite-local-');
     await initRepo(dir);
     git(dir, ['checkout', '-q', '-b', 'feature']);
@@ -416,8 +482,30 @@ describe('checkoutBranch', () => {
 
     const result = await svc.checkoutBranch(dir, 'feature');
 
+    expect(result).toEqual({ success: true, data: null });
+    expect(git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe(
+      'feature'
+    );
+    expect(await fs.readFile(path.join(dir, 'README.md'), 'utf8')).toBe(
+      'dirty\n'
+    );
+  });
+
+  it('LOCAL: returns Git checkout errors for conflicting uncommitted changes', async () => {
+    const dir = await mkTmp('ignite-local-');
+    await initRepo(dir);
+    git(dir, ['checkout', '-q', '-b', 'feature']);
+    await writeFile(dir, 'README.md', 'feature\n');
+    commitAll(dir, 'feature readme');
+    git(dir, ['checkout', '-q', 'main']);
+    await writeFile(dir, 'README.md', 'dirty\n');
+    const svc = await newService();
+
+    const result = await svc.checkoutBranch(dir, 'feature');
+
     expect(result.success).toBe(false);
-    if (!result.success) expect(result.error.code).toBe('DIRTY_WORKTREE');
+    if (!result.success)
+      expect(result.error.message).toMatch(/would be overwritten by checkout/i);
   });
 
   it('LOCAL: checks out an existing local branch by plain name', async () => {
@@ -430,7 +518,9 @@ describe('checkoutBranch', () => {
     const result = await svc.checkoutBranch(dir, 'feature');
 
     expect(result).toEqual({ success: true, data: null });
-    expect(git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('feature');
+    expect(git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe(
+      'feature'
+    );
   });
 
   it('LOCAL: origin/foo with no existing local branch creates a new tracking branch', async () => {
@@ -444,7 +534,9 @@ describe('checkoutBranch', () => {
     const result = await svc.checkoutBranch(localDir, 'origin/feature');
 
     expect(result).toEqual({ success: true, data: null });
-    expect(git(localDir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('feature');
+    expect(git(localDir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe(
+      'feature'
+    );
   });
 
   it('LOCAL: origin/foo reuses an existing local branch of the same name', async () => {
@@ -459,10 +551,12 @@ describe('checkoutBranch', () => {
     const result = await svc.checkoutBranch(localDir, 'origin/feature');
 
     expect(result).toEqual({ success: true, data: null });
-    expect(git(localDir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('feature');
+    expect(git(localDir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe(
+      'feature'
+    );
   });
 
-  it('CLONED: force-resets dirty state instead of rejecting', async () => {
+  it('CLONED: carries non-conflicting dirty changes to the switched branch', async () => {
     const remoteDir = await initRemoteWithBranches();
     const url = scpLikeCloneSource(remoteDir);
 
@@ -475,8 +569,15 @@ describe('checkoutBranch', () => {
       const result = await svc.checkoutBranch(url, 'origin/feature');
 
       expect(result).toEqual({ success: true, data: null });
-      expect(git(workspacePath, ['status', '--porcelain']).trim()).toBe('');
-      expect(git(workspacePath, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe('feature');
+      expect(git(workspacePath, ['status', '--porcelain']).trim()).toBe(
+        'M README.md'
+      );
+      expect(
+        await fs.readFile(path.join(workspacePath, 'README.md'), 'utf8')
+      ).toBe('dirty\n');
+      expect(
+        git(workspacePath, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()
+      ).toBe('feature');
     });
   });
 });
@@ -586,7 +687,9 @@ describe('pullChanges', () => {
       expect(git(workspacePath, ['rev-parse', 'HEAD']).trim()).toBe(
         git(remoteDir, ['rev-parse', 'HEAD']).trim()
       );
-      await expect(fs.stat(path.join(workspacePath, 'byproduct.lock'))).rejects.toThrow();
+      await expect(
+        fs.stat(path.join(workspacePath, 'byproduct.lock'))
+      ).rejects.toThrow();
     });
   });
 });
@@ -743,7 +846,11 @@ describe('getFile', () => {
     const { dir, svc } = await makeWorkspace();
     // A naive path.resolve(cwd, filePath) would let '/etc/passwd' override
     // cwd entirely and read the real host file; path.join must not.
-    await writeFile(dir, 'etc/passwd', 'workspace-local, not the real /etc/passwd\n');
+    await writeFile(
+      dir,
+      'etc/passwd',
+      'workspace-local, not the real /etc/passwd\n'
+    );
     const result = await svc.getFile(dir, '/etc/passwd');
     expect(result).toEqual({
       success: true,
@@ -756,7 +863,10 @@ describe('getFile', () => {
     // A secret file living OUTSIDE the repo (the attacker's real target).
     const secretDir = await mkTmp('ignite-secret-');
     const secretFile = path.join(secretDir, 'secret.txt');
-    await fs.writeFile(secretFile, 'TOP SECRET — must never be read via getFile\n');
+    await fs.writeFile(
+      secretFile,
+      'TOP SECRET — must never be read via getFile\n'
+    );
     // Commit a symlink inside the repo that points at it (any public repo can
     // do this). fs.stat/readFile would follow it at the OS level absent a
     // realpath-based containment check.
@@ -768,7 +878,8 @@ describe('getFile', () => {
     // An explicit containment refusal, NOT FILE_NOT_FOUND (the file exists;
     // we decline to read it).
     expect(result.success).toBe(false);
-    if (!result.success) expect(result.error.code).toBe('SUSPICIOUS_PATH_PATTERN');
+    if (!result.success)
+      expect(result.error.code).toBe('SUSPICIOUS_PATH_PATTERN');
   });
 
   it('refuses a symlink escape via an intermediate path component', async () => {
@@ -783,7 +894,8 @@ describe('getFile', () => {
     const result = await svc.getFile(dir, 'outside/creds');
 
     expect(result.success).toBe(false);
-    if (!result.success) expect(result.error.code).toBe('SUSPICIOUS_PATH_PATTERN');
+    if (!result.success)
+      expect(result.error.code).toBe('SUSPICIOUS_PATH_PATTERN');
   });
 
   it('allows an in-tree symlink that resolves back inside the workspace', async () => {
