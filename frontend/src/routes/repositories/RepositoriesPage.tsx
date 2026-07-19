@@ -26,6 +26,7 @@ import { apiClient } from '../../store/api/client';
 import { formatApiError } from '../../store/middleware/apiGate';
 import AddVersionModal, {
   type VersionSource,
+  type WorkspaceSwitchTarget,
 } from './components/AddVersionModal';
 import {
   OrphanVersionGroupCard,
@@ -221,10 +222,19 @@ export default function RepositoriesPage() {
     setAddVersionOpen(false);
   };
 
-  const handleSwitchBranch = async (path: string, branch: string) => {
-    await apiClient.request('checkoutBranch', {
-      body: { pathOrUrl: path, branch },
-    });
+  const handleSwitchWorkspace = async (
+    path: string,
+    target: WorkspaceSwitchTarget
+  ) => {
+    await apiClient.request(
+      target.kind === 'branch' ? 'checkoutBranch' : 'checkoutCommit',
+      {
+        body:
+          target.kind === 'branch'
+            ? { pathOrUrl: path, branch: target.branch }
+            : { pathOrUrl: path, commit: target.commit },
+      }
+    );
     dispatch(
       apiClient.dispatch.getRepoInfo({
         body: { pathOrUrl: path },
@@ -500,7 +510,7 @@ export default function RepositoriesPage() {
         onOpenChange={setAddVersionOpen}
         source={versionSource}
         onSubmit={handleVersionSubmit}
-        onSwitchBranch={handleSwitchBranch}
+        onSwitchWorkspace={handleSwitchWorkspace}
       />
 
       <OriginApprovalDialog

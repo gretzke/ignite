@@ -1,9 +1,11 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
 import {
-  canSwitchWorkspaceBranch,
+  canSwitchWorkspaceVersion,
+  shouldShowVersionMode,
   versionSubmitPayload,
   versionPickerSections,
+  versionSwitchTarget,
   type VersionSource,
 } from '../AddVersionModal';
 
@@ -34,28 +36,34 @@ describe('AddVersionModal picker behavior', () => {
     expect(sections.branches).toEqual(['main', 'release', 'work']);
   });
 
-  it('only shows switching for a selected branch in a live workspace', () => {
+  it('shows the copy-or-switch choices on every tab for live workspaces only', () => {
+    expect(shouldShowVersionMode(true)).toBe(true);
+    expect(shouldShowVersionMode(false)).toBe(false);
+
     expect(
-      canSwitchWorkspaceBranch({
+      canSwitchWorkspaceVersion({
         hasWorkspace: true,
-        tab: 'branches',
-        branch: 'work',
+        target: { kind: 'branch', branch: 'work' },
       })
     ).toBe(true);
     expect(
-      canSwitchWorkspaceBranch({
+      canSwitchWorkspaceVersion({
         hasWorkspace: true,
-        tab: 'releases',
-        branch: 'v1.1.0',
+        target: { kind: 'commit', commit: 'a'.repeat(40) },
       })
-    ).toBe(false);
+    ).toBe(true);
     expect(
-      canSwitchWorkspaceBranch({
+      canSwitchWorkspaceVersion({
         hasWorkspace: false,
-        tab: 'branches',
-        branch: 'main',
+        target: { kind: 'branch', branch: 'main' },
       })
     ).toBe(false);
+  });
+
+  it('switches a selected release by its inspected commit SHA', () => {
+    expect(
+      versionSwitchTarget({ tab: 'releases', value: 'v1.1.0' }, inspected)
+    ).toEqual({ kind: 'commit', commit: 'b'.repeat(40) });
   });
 
   it('submits only the active tab selection with its matching ref kind', () => {

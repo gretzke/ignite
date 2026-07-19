@@ -600,20 +600,41 @@ describe('checkoutCommit', () => {
     if (info.success) expect(info.data.branch).toBeNull();
   });
 
-  it('LOCAL: rejects with DIRTY_WORKTREE on uncommitted changes', async () => {
+  it('LOCAL: carries non-conflicting uncommitted changes when detaching HEAD', async () => {
     const dir = await mkTmp('ignite-local-');
     await initRepo(dir);
     const first = git(dir, ['rev-parse', 'HEAD']).trim();
+    await writeFile(dir, 'second.txt', 'second\n');
+    commitAll(dir, 'second');
+    await writeFile(dir, 'README.md', 'dirty\n');
+    const svc = await newService();
+
+    const result = await svc.checkoutCommit(dir, first);
+
+    expect(result).toEqual({ success: true, data: null });
+    expect(git(dir, ['rev-parse', 'HEAD']).trim()).toBe(first);
+    expect(await fs.readFile(path.join(dir, 'README.md'), 'utf8')).toBe(
+      'dirty\n'
+    );
+  });
+
+  it('LOCAL: returns Git checkout errors for conflicting uncommitted changes', async () => {
+    const dir = await mkTmp('ignite-local-');
+    await initRepo(dir);
+    const first = git(dir, ['rev-parse', 'HEAD']).trim();
+    await writeFile(dir, 'README.md', 'second\n');
+    commitAll(dir, 'second');
     await writeFile(dir, 'README.md', 'dirty\n');
     const svc = await newService();
 
     const result = await svc.checkoutCommit(dir, first);
 
     expect(result.success).toBe(false);
-    if (!result.success) expect(result.error.code).toBe('DIRTY_WORKTREE');
+    if (!result.success)
+      expect(result.error.message).toMatch(/would be overwritten by checkout/i);
   });
 
-  it('CLONED: force-resets before detaching', async () => {
+  it('CLONED: carries non-conflicting dirty changes when detaching', async () => {
     const remoteDir = await initRemoteWithBranches();
     const url = scpLikeCloneSource(remoteDir);
 
@@ -627,7 +648,12 @@ describe('checkoutCommit', () => {
       const result = await svc.checkoutCommit(url, target);
 
       expect(result).toEqual({ success: true, data: null });
-      expect(git(workspacePath, ['status', '--porcelain']).trim()).toBe('');
+      expect(git(workspacePath, ['status', '--porcelain']).trim()).toBe(
+        'M README.md'
+      );
+      expect(
+        await fs.readFile(path.join(workspacePath, 'README.md'), 'utf8')
+      ).toBe('dirty\n');
     });
   });
 });

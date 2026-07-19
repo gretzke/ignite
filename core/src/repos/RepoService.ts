@@ -1359,13 +1359,8 @@ export class RepoService {
       const kind = deriveRepoKind(pathOrUrl);
       const cwd = await this.resolveWorkspacePath(pathOrUrl);
 
-      if (kind === RepoKind.LOCAL) {
-        const clean = await this.ensureCleanRepo(cwd);
-        if (!clean.success) return clean;
-      } else {
-        const ensured = await this.ensureGitRepo(cwd);
-        if (!ensured.success) return ensured;
-      }
+      const ensured = await this.ensureGitRepo(cwd);
+      if (!ensured.success) return ensured;
 
       const fetchRes = await this.runNetworkGit(
         cwd,
@@ -1373,11 +1368,6 @@ export class RepoService {
         kind
       );
       if (!fetchRes.success) return fetchRes;
-
-      if (kind === RepoKind.CLONED) {
-        const reset = await this.hardReset(cwd);
-        if (!reset.success) return reset;
-      }
 
       const co = await this.runGit(
         cwd,

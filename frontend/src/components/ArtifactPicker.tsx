@@ -21,7 +21,9 @@ import {
   groupArtifactVariants,
   requiresExplicitVariantPick,
 } from '../utils/artifactVariants';
-import AddVersionModal from '../routes/repositories/components/AddVersionModal';
+import AddVersionModal, {
+  type WorkspaceSwitchTarget,
+} from '../routes/repositories/components/AddVersionModal';
 import { repositoriesApi } from '../store/features/repositories/repositoriesApi';
 import { setRepositoryInfo } from '../store/features/repositories/repositoriesSlice';
 import OriginApprovalDialog from './OriginApprovalDialog';
@@ -398,10 +400,16 @@ export default function ArtifactPicker({
         onOpenChange={setAddVersionOpen}
         source={versionSource}
         onSubmit={addVersion}
-        onSwitchBranch={async (path, branch) => {
-          await apiClient.request('checkoutBranch', {
-            body: { pathOrUrl: path, branch },
-          });
+        onSwitchWorkspace={async (path, target: WorkspaceSwitchTarget) => {
+          await apiClient.request(
+            target.kind === 'branch' ? 'checkoutBranch' : 'checkoutCommit',
+            {
+              body:
+                target.kind === 'branch'
+                  ? { pathOrUrl: path, branch: target.branch }
+                  : { pathOrUrl: path, commit: target.commit },
+            }
+          );
           dispatch(
             apiClient.dispatch.getRepoInfo({
               body: { pathOrUrl: path },

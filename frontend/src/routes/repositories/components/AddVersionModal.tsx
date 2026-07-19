@@ -23,13 +23,19 @@ export interface VersionSource {
 type VersionTab = 'releases' | 'branches' | 'commit';
 
 export type VersionSelection = { tab: VersionTab; value: string };
+export type WorkspaceSwitchTarget =
+  | { kind: 'branch'; branch: string }
+  | { kind: 'commit'; commit: string };
 
 interface AddVersionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   source: VersionSource | null;
   onSubmit: (request: AddRepoVersionRequest) => void;
-  onSwitchBranch: (path: string, branch: string) => Promise<void>;
+  onSwitchWorkspace: (
+    path: string,
+    target: WorkspaceSwitchTarget
+  ) => Promise<void>;
 }
 
 export function versionPickerSections(
@@ -52,16 +58,32 @@ export function versionPickerSections(
   return { releases, tags, branches };
 }
 
-export function canSwitchWorkspaceBranch({
+export function canSwitchWorkspaceVersion({
   hasWorkspace,
-  tab,
-  branch,
+  target,
 }: {
   hasWorkspace: boolean;
-  tab: VersionTab;
-  branch: string;
+  target: WorkspaceSwitchTarget | null;
 }) {
-  return hasWorkspace && tab === 'branches' && Boolean(branch);
+  return hasWorkspace && target !== null;
+}
+
+export function shouldShowVersionMode(hasWorkspace: boolean) {
+  return hasWorkspace;
+}
+
+export function versionSwitchTarget(
+  selection: VersionSelection,
+  inspect: InspectGitRemoteData | null
+): WorkspaceSwitchTarget | null {
+  const value = selection.value.trim();
+  if (!value) return null;
+  if (selection.tab === 'branches') return { kind: 'branch', branch: value };
+  if (selection.tab === 'commit') return { kind: 'commit', commit: value };
+
+  const release = inspect?.releases.find((item) => item.tag === value);
+  const commit = release?.sha ?? inspect?.tagHeads?.[value];
+  return commit ? { kind: 'commit', commit } : null;
 }
 
 export function versionSubmitPayload(
@@ -106,7 +128,7 @@ export default function AddVersionModal({
   onOpenChange,
   source,
   onSubmit,
-  onSwitchBranch,
+  onSwitchWorkspace,
 }: AddVersionModalProps) {
   const dispatch = useAppDispatch();
   const commitInput = useRef<HTMLInputElement>(null);
@@ -201,15 +223,15 @@ export default function AddVersionModal({
     inspect,
     workspaceBranches
   );
-  const hasReleases = releases.length > 0 || tags.length > 0;
+  const showReleasesTab = Boolean(source?.url);
   const hasWorkspace = Boolean(source?.repoPathOrUrl);
   const commitValid =
     activeTab !== 'commit' || /^[0-9a-f]{7,40}$/i.test(selection.value.trim());
   const canSubmit = Boolean(source && selection.value.trim() && commitValid);
-  const canSwitch = canSwitchWorkspaceBranch({
+  const switchTarget = versionSwitchTarget(selection, inspect);
+  const canSwitch = canSwitchWorkspaceVersion({
     hasWorkspace,
-    tab: activeTab,
-    branch: selection.value,
+    target: switchTarget,
   });
 
   const selectTab = (tab: string) => {
@@ -224,11 +246,11 @@ export default function AddVersionModal({
 
   const handleSubmit = async () => {
     if (!source || !canSubmit) return;
-    if (mode === 'switch' && canSwitch && source.repoPathOrUrl) {
+    if (mode === 'switch' && canSwitch && source.repoPathOrUrl && switchTarget) {
       setSwitching(true);
       setSwitchError('');
       try {
-        await onSwitchBranch(source.repoPathOrUrl, selection.value);
+        await onSwitchWorkspace(source.repoPathOrUrl, switchTarget);
         onOpenChange(false);
       } catch (error) {
         setSwitchError(switchErrorMessage(error));
@@ -267,7 +289,7 @@ export default function AddVersionModal({
 
           <Tabs.Root value={activeTab} onValueChange={selectTab}>
             <Tabs.List aria-label="Version source" className="tabs-list">
-              {hasReleases && (
+              {showReleasesTab && (
                 <Tabs.Trigger value="releases" className="tabs-trigger">
                   Releases
                 </Tabs.Trigger>
@@ -280,42 +302,68 @@ export default function AddVersionModal({
               </Tabs.Trigger>
             </Tabs.List>
 
-            {hasReleases && (
+            {showReleasesTab && (
               <Tabs.Content value="releases" className="mb-3">
-                <label className="block text-sm font-medium mb-2">
-                  Release or tag
-                </label>
-                <Select
-                  options={[
-                    { value: '', label: 'Choose a release or tag' },
-                    ...releases.map((item, index) => ({
-                      value: item.tag,
-                      label: `${item.tag}${index === 0 && !item.prerelease ? ' (latest)' : ''}${item.prerelease ? ' (prerelease)' : ''}`,
-                    })),
-                    ...tags.map((name) => ({ value: name, label: name })),
-                  ]}
-                  value={selection.tab === 'releases' ? selection.value : ''}
-                  onValueChange={(value) =>
-                    setSelection({ tab: 'releases', value })
-                  }
-                  anchor="left"
-                />
+                {inspecting ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 size={20} className="animate-spin opacity-70" />
+                  </div>
+                ) : inspectError ? (
+                  <div className="text-xs text-err py-4">{inspectError}</div>
+                ) : (
+                  <>
+                    <label className="block text-sm font-medium mb-2">
+                      Release or tag
+                    </label>
+                    <Select
+                      options={[
+                        { value: '', label: 'Choose a release or tag' },
+                        ...releases.map((item, index) => ({
+                          value: item.tag,
+                          label: `${item.tag}${index === 0 && !item.prerelease ? ' (latest)' : ''}${item.prerelease ? ' (prerelease)' : ''}`,
+                        })),
+                        ...tags.map((name) => ({ value: name, label: name })),
+                      ]}
+                      value={
+                        selection.tab === 'releases' ? selection.value : ''
+                      }
+                      onValueChange={(value) =>
+                        setSelection({ tab: 'releases', value })
+                      }
+                      anchor="left"
+                    />
+                  </>
+                )}
               </Tabs.Content>
             )}
 
             <Tabs.Content value="branches" className="mb-3">
-              <label className="block text-sm font-medium mb-2">Branch</label>
-              <Select
-                options={[
-                  { value: '', label: 'Choose a branch' },
-                  ...branches.map((name) => ({ value: name, label: name })),
-                ]}
-                value={selection.tab === 'branches' ? selection.value : ''}
-                onValueChange={(value) =>
-                  setSelection({ tab: 'branches', value })
-                }
-                anchor="left"
-              />
+              {source?.url && inspecting ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 size={20} className="animate-spin opacity-70" />
+                </div>
+              ) : source?.url && inspectError ? (
+                <div className="text-xs text-err py-4">{inspectError}</div>
+              ) : (
+                <>
+                  <label className="block text-sm font-medium mb-2">
+                    Branch
+                  </label>
+                  <Select
+                    options={[
+                      { value: '', label: 'Choose a branch' },
+                      ...branches.map((name) => ({ value: name, label: name })),
+                    ]}
+                    value={
+                      selection.tab === 'branches' ? selection.value : ''
+                    }
+                    onValueChange={(value) =>
+                      setSelection({ tab: 'branches', value })
+                    }
+                    anchor="left"
+                  />
+                </>
+              )}
             </Tabs.Content>
 
             <Tabs.Content value="commit" className="mb-3">
@@ -341,7 +389,7 @@ export default function AddVersionModal({
             </Tabs.Content>
           </Tabs.Root>
 
-          {activeTab === 'branches' && hasWorkspace && (
+          {shouldShowVersionMode(hasWorkspace) && (
             <fieldset className="mb-4">
               <legend className="block text-sm font-medium mb-2">
                 For this repository
@@ -369,9 +417,13 @@ export default function AddVersionModal({
                     disabled={!canSwitch}
                     className="mr-2"
                   />
-                  Switch branch
+                  {activeTab === 'branches'
+                    ? 'Switch branch'
+                    : 'Switch working copy'}
                   <span className="block text-xs opacity-70 mt-1">
-                    Carry changes over when Git allows it.
+                    {activeTab === 'branches'
+                      ? 'Carry changes over when Git allows it.'
+                      : 'Check out this commit in detached HEAD; carry changes over when Git allows it.'}
                   </span>
                 </label>
               </div>
@@ -399,7 +451,9 @@ export default function AddVersionModal({
               {switching
                 ? 'Switching…'
                 : mode === 'switch' && canSwitch
-                  ? 'Switch branch'
+                  ? activeTab === 'branches'
+                    ? 'Switch branch'
+                    : 'Switch working copy'
                   : 'Add version'}
             </button>
           </div>
