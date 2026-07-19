@@ -67,11 +67,23 @@ export default function Tooltip({
   const arrowX = middlewareData.arrow?.x ?? 0;
   const arrowY = middlewareData.arrow?.y ?? 0;
 
+  // The child may carry its own ref (e.g. a Dropdown trigger's floating-ui
+  // reference). cloneElement replaces same-named props, so both the ref and
+  // the interaction handlers must be composed rather than overwritten.
+  const childRef = (children as React.ReactElement & { ref?: React.Ref<Element> })
+    .ref;
+  const mergedRef = (node: Element | null) => {
+    refs.setReference(node);
+    if (typeof childRef === 'function') childRef(node);
+    else if (childRef && typeof childRef === 'object')
+      (childRef as React.MutableRefObject<Element | null>).current = node;
+  };
+
   return (
     <>
       {React.cloneElement(children, {
-        ref: refs.setReference,
-        ...getReferenceProps(),
+        ref: mergedRef,
+        ...getReferenceProps(children.props as Record<string, unknown>),
       })}
       <FloatingPortal>
         {open && (
