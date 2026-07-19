@@ -117,6 +117,8 @@ export interface RepoVersionSummary {
   refLabel?: string;
   refKind?: RepoVersionRefKind;
   frameworks?: RepoFrameworkState[];
+  /** In-flight materialization, detection, or compilation for this version. */
+  activeJobId?: string;
   lastUsedAt: string;
   localFallback?: boolean;
 }
@@ -152,6 +154,12 @@ export interface AddRepoVersionRequest {
   ref?: string;
   refKind?: 'tag' | 'branch';
   commit?: string;
+}
+
+export interface AddRepoVersionStartedData {
+  jobId: string;
+  url: string;
+  commit: string;
 }
 
 export interface RemoveRepoVersionRequest {
@@ -285,6 +293,7 @@ export const RepoListEntrySchema = z.object({
       refLabel: z.string().optional(),
       refKind: z.enum(['tag', 'branch', 'commit']).optional(),
       frameworks: z.array(RepoFrameworkStateSchema).optional(),
+      activeJobId: z.string().optional(),
       lastUsedAt: z.string(),
       localFallback: z.boolean().optional(),
     }),
@@ -306,6 +315,7 @@ export const GetReposResponseSchema = createApiResponseSchema<RepoList>(
         refLabel: z.string().optional(),
         refKind: z.enum(['tag', 'branch', 'commit']).optional(),
         frameworks: z.array(RepoFrameworkStateSchema).optional(),
+        activeJobId: z.string().optional(),
         lastUsedAt: z.string(),
         localFallback: z.boolean().optional(),
       })),
@@ -345,6 +355,17 @@ export const AddRepoVersionRequestSchema =
       if (value.refKind !== undefined && value.ref === undefined)
         context.addIssue({ code: 'custom', message: 'refKind requires ref' });
     }),
+  );
+
+export const AddRepoVersionStartedResponseSchema =
+  createApiResponseSchema<AddRepoVersionStartedData>(
+    'AddRepoVersionStartedResponseSchema'
+  )(
+    z.object({
+      jobId: z.string(),
+      url: z.string().min(1),
+      commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
+    })
   );
 
 export const RemoveRepoVersionRequestSchema =
@@ -512,7 +533,7 @@ export const profileRoutes = {
     schema: {
       tags: ['profiles'],
       body: AddRepoVersionRequestSchema,
-      response: { 200: JobStartedResponseSchema },
+      response: { 200: AddRepoVersionStartedResponseSchema },
     },
   },
   removeRepoVersion: {

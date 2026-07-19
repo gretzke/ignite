@@ -1,20 +1,44 @@
-import { EllipsisVertical, Loader2, Pin, Trash2 } from 'lucide-react';
+import { EllipsisVertical, Pin, RotateCcw, Trash2 } from 'lucide-react';
 import type { OrphanVersionGroup, RepoVersionSummary } from '@ignite/api';
 import Dropdown from '../../../components/Dropdown';
 import { FrameworkChips } from './RepoCard';
+import Tooltip from '../../../components/Tooltip';
+import {
+  type IVersionAddJob,
+  versionAddJobKey,
+} from '../../../store/features/repositories/repositoriesSlice';
 
-function VersionFrameworkStatus({ version }: { version: RepoVersionSummary }) {
+function VersionFrameworkStatus({
+  version,
+  job,
+}: {
+  version: RepoVersionSummary;
+  job?: IVersionAddJob;
+}) {
+  const active = job?.status === 'active' || Boolean(version.activeJobId);
+  if (job?.status === 'failed') {
+    return (
+      <Tooltip label={job.error ?? 'Adding this version failed'} placement="top">
+        <span className="chip chip-err">Failed</span>
+      </Tooltip>
+    );
+  }
+
   if (version.frameworks === undefined || version.frameworks.length === 0)
-    return <FrameworkChips frameworks={version.frameworks} />;
+    return <FrameworkChips frameworks={active ? undefined : []} />;
   const compiled = version.frameworks.every(
     (framework) => framework.compiledAt
   );
   return (
     <>
       <FrameworkChips frameworks={version.frameworks} />
-      <span className={compiled ? 'chip chip-ok' : 'chip chip-info'}>
-        <span className={compiled ? 'chip-dot' : 'chip-dot pulse'} />
-        {compiled ? 'Compiled' : 'Compiling'}
+      <span
+        className={
+          compiled ? 'chip chip-ok' : active ? 'chip chip-info' : 'chip chip-warn'
+        }
+      >
+        <span className={compiled || !active ? 'chip-dot' : 'chip-dot pulse'} />
+        {compiled ? 'Compiled' : active ? 'Compiling' : 'Not compiled'}
       </span>
     </>
   );
@@ -23,14 +47,16 @@ function VersionFrameworkStatus({ version }: { version: RepoVersionSummary }) {
 export function VersionRows({
   url: _url,
   versions,
-  activeJobId,
+  versionAddJobs = {},
   onRemove,
+  onRetry = () => undefined,
   onBrowse,
 }: {
   url: string;
   versions: RepoVersionSummary[];
-  activeJobId?: string;
+  versionAddJobs?: Record<string, IVersionAddJob>;
   onRemove: (url: string, version: RepoVersionSummary) => void;
+  onRetry?: (url: string, version: RepoVersionSummary) => void;
   onBrowse?: (url: string, version: RepoVersionSummary) => void;
 }) {
   return (
@@ -51,8 +77,26 @@ export function VersionRows({
             </div>
           </div>
           <div className="flex items-center gap-1 flex-wrap justify-end">
-            <VersionFrameworkStatus version={version} />
+            <VersionFrameworkStatus
+              version={version}
+              job={versionAddJobs[versionAddJobKey(version.url, version.commit)]}
+            />
           </div>
+          {versionAddJobs[versionAddJobKey(version.url, version.commit)]?.status ===
+            'failed' && (
+            <Tooltip label="Retry adding this version" placement="top">
+              <button
+                type="button"
+                className="btn btn-sm btn-secondary"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRetry(version.url, version);
+                }}
+              >
+                <RotateCcw size={14} /> Retry
+              </button>
+            </Tooltip>
+          )}
           <button
             type="button"
             className="btn btn-sm btn-secondary"
@@ -65,26 +109,23 @@ export function VersionRows({
           </button>
         </div>
       ))}
-      {activeJobId && (
-        <div className="list-row flex items-center gap-2 pl-10 text-sm text-muted">
-          <Loader2 size={15} className="animate-spin" /> Adding version…
-        </div>
-      )}
     </>
   );
 }
 
 export function OrphanVersionGroupCard({
   group,
-  activeJobId,
+  versionAddJobs,
   onAddVersion,
   onRemove,
+  onRetry,
   onBrowse,
 }: {
   group: OrphanVersionGroup;
-  activeJobId?: string;
+  versionAddJobs?: Record<string, IVersionAddJob>;
   onAddVersion: (group: OrphanVersionGroup) => void;
   onRemove: (url: string, version: RepoVersionSummary) => void;
+  onRetry?: (url: string, version: RepoVersionSummary) => void;
   onBrowse?: (url: string, version: RepoVersionSummary) => void;
 }) {
   return (
@@ -132,8 +173,9 @@ export function OrphanVersionGroupCard({
       <VersionRows
         url={group.url}
         versions={group.versions}
-        activeJobId={activeJobId}
+        versionAddJobs={versionAddJobs ?? {}}
         onRemove={onRemove}
+        onRetry={onRetry ?? (() => undefined)}
         onBrowse={onBrowse}
       />
     </div>

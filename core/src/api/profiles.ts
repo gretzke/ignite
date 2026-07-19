@@ -21,6 +21,7 @@ import type {
   RepoList,
   RepoVersionSummary,
   AddRepoVersionRequest,
+  AddRepoVersionStartedData,
   RemoveRepoVersionRequest,
   InspectGitRemoteData,
 } from '@ignite/api';
@@ -96,13 +97,17 @@ export interface ProfileHandlerDeps {
   inspectGitRemote: (url: string) => Promise<InspectGitRemoteData>;
 }
 
-function versionSummary(record: VersionRecord): RepoVersionSummary {
+function versionSummary(
+  record: VersionRecord,
+  activeJobId?: string
+): RepoVersionSummary {
   return {
     url: record.url,
     commit: record.commit,
     ...(record.refLabel ? { refLabel: record.refLabel } : {}),
     ...(record.refKind ? { refKind: record.refKind } : {}),
     ...(record.frameworks ? { frameworks: record.frameworks } : {}),
+    ...(activeJobId ? { activeJobId } : {}),
     lastUsedAt: record.lastUsedAt,
     ...(record.localFallback ? { localFallback: true } : {}),
   };
@@ -394,7 +399,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             const record = recordsByKey.get(`${url}\u0000${entry.commit}`);
             if (!record) continue;
             seen.add(entry.commit);
-            summaries.push(versionSummary(record));
+            summaries.push(
+              versionSummary(
+                record,
+                d.lifecycle.activeJobFor(
+                  d.versionStore.checkoutPath(record.url, record.commit)
+                )
+              )
+            );
           }
           if (summaries.length > 0) versionsByUrl.set(url, summaries);
         }
@@ -558,7 +570,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         Body: AddRepoVersionRequest;
       }>,
       reply: FastifyReply
-    ): Promise<IApiResponse<JobStartedData>> => {
+    ): Promise<IApiResponse<AddRepoVersionStartedData>> => {
       try {
         const { id } = request.params;
         const body = request.body;
@@ -654,7 +666,9 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             }
           }
         );
-        return reply.status(200).send({ data: { jobId: job.id } });
+        return reply.status(200).send({
+          data: { jobId: job.id, url: source.url, commit },
+        });
       } catch (error) {
         return sendCaughtError(
           reply,

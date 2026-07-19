@@ -7,6 +7,7 @@ import { getRepoName } from '../../../utils/repo';
 import { jobStarted } from '../jobs/jobsSlice';
 import { wsSend } from '../../middleware/websocket';
 import {
+  clearRepositoryList,
   clearRepositories,
   setRepositories,
   setRepositoryInitialized,
@@ -54,7 +55,7 @@ export const repositoriesApi = {
   fetchRepositories: (profileId: string) => {
     const generation = ++repositoriesRequestGeneration;
     // Clear repositories immediately (flash of empty content)
-    const clearAction = clearRepositories();
+    const clearAction = clearRepositoryList();
 
     // Create API action with enhanced client
     const apiAction = apiClient.dispatch.listRepos({
@@ -71,6 +72,10 @@ export const repositoriesApi = {
           ...(data.cloned || []),
           ...(data.session ? [data.session] : []),
         ];
+        const versionEntries = [
+          ...entries.flatMap((entry) => entry.versions),
+          ...data.versionGroups.flatMap((group) => group.versions),
+        ];
         const attachActions = entries
           .filter((entry) => entry.activeJobId)
           .flatMap((entry) => [
@@ -81,13 +86,31 @@ export const repositoriesApi = {
             }),
             wsSend({ type: 'subscribe', jobId: entry.activeJobId }),
           ]);
+        const attachVersionActions = versionEntries
+          .filter(
+            (version) =>
+              version.activeJobId && !version.activeJobId.startsWith('direct:')
+          )
+          .flatMap((version) => [
+            jobStarted({
+              jobId: version.activeJobId as string,
+              type: 'repo.version.add',
+              params: { url: version.url, commit: version.commit },
+            }),
+            wsSend({ type: 'subscribe', jobId: version.activeJobId }),
+          ]);
         // Repos with no in-flight job get no terminal event to route their
         // git info through — hydrate them directly (page reload after the
         // startup sweep finished would otherwise show bare cards).
         const hydrateActions = entries
           .filter((entry) => entry.initialized && !entry.activeJobId)
           .map((entry) => hydrateRepoGitState(entry.pathOrUrl));
-        return [setRepositories(data), ...attachActions, ...hydrateActions];
+        return [
+          setRepositories(data),
+          ...attachActions,
+          ...attachVersionActions,
+          ...hydrateActions,
+        ];
       },
       onError: (error) => {
         const { title, description } = formatApiError(error);
@@ -438,15 +461,14 @@ export const repositoriesApi = {
 
   addRepoVersion: (
     profileId: string,
-    sourceKey: string,
     request: AddRepoVersionRequest,
     onOriginApproval: (origins: string[]) => void
   ) =>
     apiClient.dispatch.addRepoVersion({
       params: { id: profileId },
       body: request,
-      onSuccess: ({ jobId }) => [
-        startRepoVersionJob({ sourceKey, jobId }),
+      onSuccess: ({ jobId, url, commit }) => [
+        startRepoVersionJob({ url, commit, jobId }),
         jobStarted({ jobId, type: 'repo.version.add', params: { ...request } }),
         wsSend({ type: 'subscribe', jobId }),
         triggerToast({

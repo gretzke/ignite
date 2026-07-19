@@ -264,7 +264,14 @@ export function routeTerminalJob(
       // entry. Refresh the authoritative RepoList when it reaches a terminal
       // state so its version row (or an orphan URL group) appears immediately.
       const profileId = getState().profiles.currentId;
-      dispatch(finishRepoVersionJob(job.id));
+      dispatch(
+        finishRepoVersionJob({
+          url: job.params.url as string,
+          commit: job.params.commit as string,
+          jobId: job.id,
+          ...(!succeeded ? { error: errorMessage } : {}),
+        })
+      );
       if (!succeeded) dispatch(triggerToast({ title: 'Adding repository version failed', description: errorMessage, variant: 'error', duration: 5000 }));
       if (profileId) {
         repositoriesApi

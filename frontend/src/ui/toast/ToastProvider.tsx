@@ -14,6 +14,10 @@ export interface IToastOptions {
   permanent?: boolean; // convenience flag to force no auto-dismiss
 }
 
+export function isPersistentToast(opts: IToastOptions): boolean {
+  return opts.permanent === true || opts.variant === 'error';
+}
+
 type ToastItem = Required<Pick<IToastOptions, 'id'>> &
   IToastOptions & { open: boolean };
 
@@ -59,7 +63,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const show = React.useCallback((opts: IToastOptions) => {
     const id = opts.id ?? nextId();
-    const duration = opts.permanent
+    const permanent = isPersistentToast(opts);
+    const duration = permanent
       ? PERMANENT_DURATION
       : opts.duration ?? DEFAULT_DURATION;
     setToasts((prev) => {
@@ -67,13 +72,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       if (exists) {
         return prev.map((t) => {
           if (t.id !== id) return t;
+          const permanent = isPersistentToast({
+            variant: opts.variant ?? t.variant,
+            permanent:
+              opts.permanent ?? (opts.variant === undefined ? t.permanent : false),
+          });
           return {
             ...t,
             title: opts.title ?? t.title,
             description: opts.description ?? t.description,
             variant: opts.variant ?? t.variant,
-            permanent: opts.permanent ?? t.permanent,
-            duration,
+            permanent,
+            duration: permanent ? PERMANENT_DURATION : duration,
             open: true,
           } as ToastItem;
         });
@@ -86,7 +96,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           description: opts.description ?? '',
           variant: opts.variant ?? 'neutral',
           duration,
-          permanent: opts.permanent ?? false,
+          permanent,
           open: true,
         },
       ];
@@ -105,13 +115,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             id: t.id,
             open: t.open,
           } as ToastItem;
-          if (opts.permanent !== undefined) {
-            next.duration = opts.permanent
-              ? PERMANENT_DURATION
-              : opts.duration ?? DEFAULT_DURATION;
-          } else if (opts.duration !== undefined) {
-            next.duration = opts.duration;
-          }
+          const permanent = isPersistentToast({
+            variant: next.variant,
+            permanent:
+              opts.permanent ?? (opts.variant === undefined ? t.permanent : false),
+          });
+          next.permanent = permanent;
+          next.duration = permanent
+            ? PERMANENT_DURATION
+            : opts.duration ?? t.duration ?? DEFAULT_DURATION;
           return next;
         })
       );
@@ -185,8 +197,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         update(id, {
           ...next,
           variant: next.variant ?? 'error',
-          permanent: false,
-          duration: 6000,
+          permanent: true,
         });
         throw err;
       }

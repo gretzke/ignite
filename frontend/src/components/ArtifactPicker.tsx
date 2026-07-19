@@ -284,7 +284,6 @@ export default function ArtifactPicker({
       dispatch(
         repositoriesApi.addRepoVersion(
           currentId,
-          versionSource.sourceKey,
           request,
           (origins) => setOriginApproval({ origins, request })
         )
@@ -432,7 +431,6 @@ export default function ArtifactPicker({
                 dispatch(
                   repositoriesApi.addRepoVersion(
                     currentId,
-                    versionSource.sourceKey,
                     originApproval.request,
                     (origins) =>
                       setOriginApproval({

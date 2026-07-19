@@ -6,7 +6,7 @@ import {
   selectRepositories,
   selectRepositoriesData,
   selectFailedRepositories,
-  selectActiveVersionJobs,
+  selectVersionAddJobs,
   setRepositoryInfo,
 } from '../../store/features/repositories/repositoriesSlice';
 import { triggerToast } from '../../store/middleware/toastListener';
@@ -71,7 +71,7 @@ export default function RepositoriesPage() {
   const repositories = useAppSelector(selectRepositories);
   const repositoriesData = useAppSelector(selectRepositoriesData);
   const failedRepositories = useAppSelector(selectFailedRepositories);
-  const activeVersionJobs = useAppSelector(selectActiveVersionJobs);
+  const versionAddJobs = useAppSelector(selectVersionAddJobs);
   const { currentId } = useAppSelector((state) => state.profiles);
   const { currentWorkspace, localRepos, clonedRepos, sessionPath } =
     useRepositoryLists();
@@ -210,7 +210,7 @@ export default function RepositoriesPage() {
   const submitVersion = (sourceKey: string, request: AddRepoVersionRequest) => {
     if (!currentId) return;
     dispatch(
-      repositoriesApi.addRepoVersion(currentId, sourceKey, request, (origins) =>
+      repositoriesApi.addRepoVersion(currentId, request, (origins) =>
         setOriginApproval({ origins, sourceKey, request })
       )
     );
@@ -220,6 +220,10 @@ export default function RepositoriesPage() {
     if (!versionSource) return;
     submitVersion(versionSource.sourceKey, request);
     setAddVersionOpen(false);
+  };
+
+  const handleRetryVersion = (url: string, version: RepoVersionSummary) => {
+    submitVersion(url, { url, commit: version.commit });
   };
 
   const handleSwitchWorkspace = async (
@@ -277,16 +281,16 @@ export default function RepositoriesPage() {
               })
             }
           />
-          {(currentWorkspace.versions.length > 0 ||
-            activeVersionJobs[currentWorkspace.path]) && (
+          {currentWorkspace.versions.length > 0 && (
             <div className="glass-list mt-2">
               <VersionRows
                 url={currentWorkspace.path}
                 versions={currentWorkspace.versions}
-                activeJobId={activeVersionJobs[currentWorkspace.path]}
+                versionAddJobs={versionAddJobs}
                 onRemove={(url, version) =>
                   setVersionToDelete({ url, version })
                 }
+                onRetry={handleRetryVersion}
                 onBrowse={browseVersion}
               />
             </div>
@@ -332,10 +336,11 @@ export default function RepositoriesPage() {
                   <VersionRows
                     url={r.path}
                     versions={r.versions}
-                    activeJobId={activeVersionJobs[r.path]}
+                    versionAddJobs={versionAddJobs}
                     onRemove={(url, version) =>
                       setVersionToDelete({ url, version })
                     }
+                    onRetry={handleRetryVersion}
                     onBrowse={browseVersion}
                   />
                 </div>
@@ -383,10 +388,11 @@ export default function RepositoriesPage() {
                   <VersionRows
                     url={r.path}
                     versions={r.versions}
-                    activeJobId={activeVersionJobs[r.path]}
+                    versionAddJobs={versionAddJobs}
                     onRemove={(url, version) =>
                       setVersionToDelete({ url, version })
                     }
+                    onRetry={handleRetryVersion}
                     onBrowse={browseVersion}
                   />
                 </div>
@@ -406,7 +412,7 @@ export default function RepositoriesPage() {
               <OrphanVersionGroupCard
                 key={group.url}
                 group={group}
-                activeJobId={activeVersionJobs[group.url]}
+                versionAddJobs={versionAddJobs}
                 onAddVersion={(orphan: OrphanVersionGroup) =>
                   openVersionModal({
                     sourceKey: orphan.url,
@@ -418,6 +424,7 @@ export default function RepositoriesPage() {
                 onRemove={(url, version) =>
                   setVersionToDelete({ url, version })
                 }
+                onRetry={handleRetryVersion}
                 onBrowse={browseVersion}
               />
             ))}

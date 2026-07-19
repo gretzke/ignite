@@ -35,6 +35,29 @@ describe('repository version groups', () => {
     expect(html).toContain('Remove');
   });
 
+  it('renders a persistent failed state and retry control for a failed add', () => {
+    const html = renderToStaticMarkup(
+      <VersionRows
+        url="https://example.test/contracts.git"
+        versions={[version]}
+        versionAddJobs={{
+          [`${version.url}\u0000${version.commit}`]: {
+            jobId: 'job-failed',
+            status: 'failed',
+            error: 'Dependency installation failed',
+          },
+        }}
+        onRemove={() => undefined}
+        onRetry={() => undefined}
+      />
+    );
+
+    expect(html).toContain('Failed');
+    expect(html).toContain('Retry');
+    expect(html).not.toContain('Detecting');
+    expect(html).not.toContain('Compiling');
+  });
+
   it('renders orphan URL groups with an overflow action menu', () => {
     const html = renderToStaticMarkup(
       <OrphanVersionGroupCard

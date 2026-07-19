@@ -249,7 +249,9 @@ describe('profile handlers', () => {
     deps.versionStore.list = vi.fn(async () => [{ url, commit, refLabel: 'main', refKind: 'branch' as const, frameworks: [{ id: 'foundry', name: 'Foundry' }], createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
     const handlers = createProfileHandlers(deps); const addReply = makeReply();
     await handlers.addRepoVersion({ params: { id: 'p1' }, body: { url, ref: 'main' } } as never, addReply as never);
-    expect(addReply.body).toEqual({ data: { jobId: 'job-version-1' } });
+    expect(addReply.body).toEqual({
+      data: { jobId: 'job-version-1', url, commit },
+    });
     await runner({ log: () => {}, signal: new AbortController().signal });
     expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.objectContaining({ ref: 'main', refKind: 'branch' }));
     expect(deps.lifecycle.runPinnedLifecycle).toHaveBeenCalledWith(url, commit, 'p1', expect.any(Object), expect.any(Object), true);

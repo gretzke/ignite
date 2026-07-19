@@ -14,18 +14,27 @@ export interface IRepository {
   frameworks?: IFramework[]; // undefined = detecting, empty array = no frameworks found
 }
 
+export interface IVersionAddJob {
+  jobId: string;
+  status: 'active' | 'failed';
+  error?: string;
+}
+
+export const versionAddJobKey = (url: string, commit: string) =>
+  `${url}\u0000${commit}`;
+
 export interface IRepositoriesState {
   repositories: RepoList | null;
   repositoriesData: Record<string, IRepository>;
   failedRepositories: string[]; // List of repositories that failed initialization
-  activeVersionJobs: Record<string, string>;
+  versionAddJobs: Record<string, IVersionAddJob>;
 }
 
 const initialState: IRepositoriesState = {
   repositories: null,
   failedRepositories: [],
   repositoriesData: {},
-  activeVersionJobs: {},
+  versionAddJobs: {},
 };
 
 const repositoriesSlice = createSlice({
@@ -54,6 +63,26 @@ const repositoriesSlice = createSlice({
         versionGroups: action.payload.versionGroups ?? [],
       };
       state.repositories = repositories;
+
+      const versions = [
+        ...repositories.local.flatMap((entry) => entry.versions),
+        ...repositories.cloned.flatMap((entry) => entry.versions),
+        ...(repositories.session?.versions ?? []),
+        ...repositories.versionGroups.flatMap((group) => group.versions),
+      ];
+      const versionKeys = new Set(
+        versions.map((version) => versionAddJobKey(version.url, version.commit))
+      );
+      for (const version of versions) {
+        if (!version.activeJobId) continue;
+        state.versionAddJobs[versionAddJobKey(version.url, version.commit)] = {
+          jobId: version.activeJobId,
+          status: 'active',
+        };
+      }
+      for (const key of Object.keys(state.versionAddJobs)) {
+        if (!versionKeys.has(key)) delete state.versionAddJobs[key];
+      }
 
       const allEntries: RepoListEntry[] = [
         ...(repositories.local || []),
@@ -99,7 +128,12 @@ const repositoriesSlice = createSlice({
       state.repositories = null;
       state.repositoriesData = {};
       state.failedRepositories = [];
-      state.activeVersionJobs = {};
+      state.versionAddJobs = {};
+    },
+    clearRepositoryList(state) {
+      state.repositories = null;
+      state.repositoriesData = {};
+      state.failedRepositories = [];
     },
     setRepositoryInitialized(
       state,
@@ -245,15 +279,32 @@ const repositoriesSlice = createSlice({
     },
     startRepoVersionJob(
       state,
-      action: PayloadAction<{ sourceKey: string; jobId: string }>
+      action: PayloadAction<{ url: string; commit: string; jobId: string }>
     ) {
-      state.activeVersionJobs[action.payload.sourceKey] = action.payload.jobId;
+      state.versionAddJobs[
+        versionAddJobKey(action.payload.url, action.payload.commit)
+      ] = { jobId: action.payload.jobId, status: 'active' };
     },
-    finishRepoVersionJob(state, action: PayloadAction<string>) {
-      for (const [sourceKey, jobId] of Object.entries(
-        state.activeVersionJobs
-      )) {
-        if (jobId === action.payload) delete state.activeVersionJobs[sourceKey];
+    finishRepoVersionJob(
+      state,
+      action: PayloadAction<{
+        url: string;
+        commit: string;
+        jobId: string;
+        error?: string;
+      }>
+    ) {
+      const key = versionAddJobKey(action.payload.url, action.payload.commit);
+      const current = state.versionAddJobs[key];
+      if (current && current.jobId !== action.payload.jobId) return;
+      if (action.payload.error) {
+        state.versionAddJobs[key] = {
+          jobId: action.payload.jobId,
+          status: 'failed',
+          error: action.payload.error,
+        };
+      } else {
+        delete state.versionAddJobs[key];
       }
     },
   },
@@ -262,6 +313,7 @@ const repositoriesSlice = createSlice({
 export const {
   setRepositories,
   clearRepositories,
+  clearRepositoryList,
   setRepositoryInitialized,
   addRepository,
   removeRepository: removeRepositoryAction,
@@ -282,5 +334,5 @@ export const selectRepositoriesData = (state: RootState) =>
   state.repositories.repositoriesData;
 export const selectFailedRepositories = (state: RootState) =>
   state.repositories.failedRepositories;
-export const selectActiveVersionJobs = (state: RootState) =>
-  state.repositories.activeVersionJobs;
+export const selectVersionAddJobs = (state: RootState) =>
+  state.repositories.versionAddJobs;
