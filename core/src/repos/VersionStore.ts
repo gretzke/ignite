@@ -15,6 +15,9 @@ export interface VersionRecord {
   // Canonical identity is url; fetchUrl preserves the remote spelling Git was
   // asked to fetch from, including a trailing .git when a server requires it.
   fetchUrl?: string;
+  // Retry provenance for a checkout which could not be moved out of its
+  // pre-canonical cache group during startup reconciliation.
+  legacySourceUrl?: string;
   localFallback?: boolean;
   frameworks?: RepoFrameworkState[];
   detectedAt?: string;
@@ -41,6 +44,11 @@ interface VersionOrigins {
 // readRegistry canonicalizes URLs for all public operations, but reconcile
 // needs the pre-canonical value once to locate a legacy raw-URL cache group.
 const rawRegistryUrl = Symbol('rawRegistryUrl');
+const winnerSourceUrl = Symbol('winnerSourceUrl');
+type MigrationRecord = VersionRecord & {
+  [rawRegistryUrl]?: string[];
+  [winnerSourceUrl]?: string;
+};
 
 export interface VersionStatePatch {
   frameworks?: RepoFrameworkState[];
@@ -279,11 +287,8 @@ export class VersionStore {
       for (const record of registry.versions) {
         if (!isCommit(record.commit)) continue;
         try {
-          if (!(await this.migrateLegacyGroupDir(record))) continue;
-          const checkout = this.checkoutPath(record.url, record.commit);
-          // eslint-disable-next-line security/detect-non-literal-fs-filename -- URL is hashed and commit is validated under the version cache root.
-          const stats = await fs.stat(checkout);
-          if (stats.isDirectory()) {
+          const checkout = await this.migrateLegacyCheckout(record);
+          if (checkout) {
             if (!record.detectedAt && !record.lastError) {
               record.lastError = {
                 code: 'INTERRUPTED',
@@ -291,7 +296,7 @@ export class VersionStore {
                 at: new Date().toISOString(),
               };
             }
-            liveRecords.push(record);
+            liveRecords.push(this.persistableRecord(record));
           }
         } catch {
           // Missing checkouts are disposable cache entries and must not survive startup.
@@ -331,11 +336,20 @@ export class VersionStore {
       }
 
       const recordsByGroup = new Map<string, Set<string>>();
+      const retainedGroups = new Set<string>();
       for (const record of liveRecords) {
         const group = this.groupDir(record.url);
+        retainedGroups.add(group);
         const commits = recordsByGroup.get(group) ?? new Set<string>();
         commits.add(record.commit);
         recordsByGroup.set(group, commits);
+        if (record.legacySourceUrl) {
+          const legacyGroup = this.groupDirForKey(record.legacySourceUrl);
+          retainedGroups.add(legacyGroup);
+          const legacyCommits = recordsByGroup.get(legacyGroup) ?? new Set<string>();
+          legacyCommits.add(record.commit);
+          recordsByGroup.set(legacyGroup, legacyCommits);
+        }
       }
 
       let groups: import('node:fs').Dirent[];
@@ -355,8 +369,7 @@ export class VersionStore {
           this.fileSystem.getVersionCachePath(),
           group.name
         );
-        const expectedCommits =
-          recordsByGroup.get(groupPath) ?? new Set<string>();
+        const expectedCommits = recordsByGroup.get(groupPath) ?? new Set<string>();
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- group.name comes from the cache-root directory listing.
         const entries = await fs.readdir(groupPath, { withFileTypes: true });
         for (const entry of entries) {
@@ -376,6 +389,12 @@ export class VersionStore {
               });
             }
           }
+        }
+        // A legacy group is retained only while a failed migration explicitly
+        // points at it.  Successful moves and duplicate non-winner groups are
+        // collected as whole groups, including their bare repositories.
+        if (!retainedGroups.has(groupPath)) {
+          await fs.rm(groupPath, { recursive: true, force: true });
         }
       }
     });
@@ -519,35 +538,105 @@ export class VersionStore {
     return VersionStore.rmwMutex.run(VersionStore.rmwKey, fn);
   }
 
-  private async migrateLegacyGroupDir(record: VersionRecord): Promise<boolean> {
-    const rawUrl = (record as VersionRecord & { [rawRegistryUrl]?: string })[
-      rawRegistryUrl
-    ];
-    if (!rawUrl || rawUrl === record.url) return true;
+  private persistableRecord(record: MigrationRecord): VersionRecord {
+    const { [rawRegistryUrl]: _raw, [winnerSourceUrl]: _winner, ...stored } = record;
+    return stored;
+  }
 
-    const canonicalGroup = this.groupDir(record.url);
-    const legacyGroup = this.groupDirForKey(rawUrl);
-    if (canonicalGroup === legacyGroup) return true;
+  private async isDirectory(candidate: string): Promise<boolean> {
     try {
-      const stats = await fs.stat(canonicalGroup);
-      if (stats.isDirectory()) return true;
+      return (await fs.stat(candidate)).isDirectory();
     } catch {
-      // The canonical group has not yet been created; check the legacy path.
-    }
-    try {
-      const stats = await fs.stat(legacyGroup);
-      if (!stats.isDirectory()) return true;
-    } catch {
-      return true;
-    }
-    try {
-      await fs.rename(legacyGroup, canonicalGroup);
-      return true;
-    } catch (error) {
-      getLogger().warn(
-        `Dropping version cache record after legacy group migration failed: ${String(error)}`
-      );
       return false;
+    }
+  }
+
+  private async migrateLegacyCheckout(
+    record: MigrationRecord
+  ): Promise<string | undefined> {
+    const canonicalCheckout = this.checkoutPath(record.url, record.commit);
+    const rawUrls = record[rawRegistryUrl] ?? [record.url];
+    const candidates = [...new Set([...rawUrls, record.legacySourceUrl].filter(
+      (value): value is string => Boolean(value)
+    ))]
+      .map((rawUrl) => ({ rawUrl, group: this.groupDirForKey(rawUrl) }))
+      .filter(({ group }) => group !== this.groupDir(record.url))
+      .sort((a, b) => a.group.localeCompare(b.group));
+    const existingLegacy: Array<{ rawUrl: string; group: string }> = [];
+    for (const candidate of candidates) {
+      if (
+        await this.isDirectory(
+          path.join(candidate.group, 'versions', record.commit)
+        )
+      )
+        existingLegacy.push(candidate);
+    }
+    const canonicalExists = await this.isDirectory(canonicalCheckout);
+    if (!existingLegacy.length) {
+      if (canonicalExists) delete record.legacySourceUrl;
+      return canonicalExists ? canonicalCheckout : undefined;
+    }
+
+    const preferred =
+      existingLegacy.find((candidate) =>
+        candidate.rawUrl === record[winnerSourceUrl]
+      ) ?? existingLegacy[0];
+    const legacyCheckout = path.join(
+      preferred.group,
+      'versions',
+      record.commit
+    );
+    const winnerIsLegacy =
+      preferred.rawUrl === record[winnerSourceUrl] && Boolean(record.detectedAt);
+
+    if (!canonicalExists) {
+      try {
+        await fs.mkdir(path.dirname(canonicalCheckout), { recursive: true });
+        // Checkouts may retain a local origin which points at the old bare
+        // group. Nothing fetches from a version checkout after materialization;
+        // integrity failure rebuilds it from the canonical bare cache.
+        await fs.rename(legacyCheckout, canonicalCheckout);
+        if (!(await this.isDirectory(canonicalCheckout))) throw new Error('moved checkout is missing');
+        delete record.legacySourceUrl;
+        return canonicalCheckout;
+      } catch (error) {
+        record.legacySourceUrl = preferred.rawUrl;
+        getLogger().warn(`Version checkout migration will retry: ${String(error)}`);
+        return (await this.isDirectory(legacyCheckout)) ? legacyCheckout : undefined;
+      }
+    }
+
+    if (!winnerIsLegacy) {
+      delete record.legacySourceUrl;
+      return canonicalCheckout;
+    }
+
+    const quarantine = path.join(
+      this.groupDir(record.url),
+      `tmp-migrate-${crypto.randomUUID()}`
+    );
+    try {
+      await fs.rename(canonicalCheckout, quarantine);
+      await fs.rename(legacyCheckout, canonicalCheckout);
+      if (!(await this.isDirectory(canonicalCheckout)))
+        throw new Error('replacement checkout is missing');
+      await fs.rm(quarantine, { recursive: true, force: true });
+      delete record.legacySourceUrl;
+      return canonicalCheckout;
+    } catch (error) {
+      // Preserve the prior canonical checkout when the replacement cannot be
+      // completed. The legacy group stays eligible for a later retry.
+      if (await this.isDirectory(quarantine)) {
+        await fs.rm(canonicalCheckout, { recursive: true, force: true });
+        await fs.rename(quarantine, canonicalCheckout).catch(() => {});
+      }
+      record.legacySourceUrl = preferred.rawUrl;
+      getLogger().warn(`Version checkout replacement will retry: ${String(error)}`);
+      return (await this.isDirectory(canonicalCheckout))
+        ? canonicalCheckout
+        : (await this.isDirectory(legacyCheckout))
+          ? legacyCheckout
+          : undefined;
     }
   }
 
@@ -565,17 +654,19 @@ export class VersionStore {
       );
       if (!this.isRegistry(registry))
         throw new Error('registry does not contain a versions array');
-      const versions = registry.versions
-        .filter((record) => this.isVersionRecord(record))
-        .map((record) => {
-          const canonicalUrl = canonicalGitUrl(record.url);
-          const canonicalRecord = { ...record, url: canonicalUrl };
-          if (canonicalUrl !== record.url)
-            Object.defineProperty(canonicalRecord, rawRegistryUrl, {
-              value: record.url,
-            });
-          return canonicalRecord;
-        });
+      const valid = registry.versions.filter((record) =>
+        this.isVersionRecord(record)
+      );
+      const byIdentity = new Map<string, VersionRecord[]>();
+      for (const record of valid) {
+        const key = `${canonicalGitUrl(record.url)}\u0000${record.commit}`;
+        const records = byIdentity.get(key) ?? [];
+        records.push(record);
+        byIdentity.set(key, records);
+      }
+      const versions = [...byIdentity.values()].map((records) =>
+        this.mergeCanonicalRecords(records)
+      );
       if (versions.length !== registry.versions.length)
         getLogger().warn('Ignoring invalid version cache registry record(s)');
       return { versions };
@@ -585,6 +676,47 @@ export class VersionStore {
       );
       return { versions: [] };
     }
+  }
+
+  private mergeCanonicalRecords(records: VersionRecord[]): MigrationRecord {
+    const ordered = [...records].sort((a, b) => {
+      const aDetected = a.detectedAt ?? '';
+      const bDetected = b.detectedAt ?? '';
+      if (aDetected || bDetected) return bDetected.localeCompare(aDetected);
+      return b.lastUsedAt.localeCompare(a.lastUsedAt);
+    });
+    const winner = ordered[0];
+    const human = ordered.find(
+      (record) =>
+        (record.refKind === 'tag' || record.refKind === 'branch') &&
+        Boolean(record.refLabel)
+    );
+    const winnerHasHumanLabel =
+      winner.refKind === 'tag' || winner.refKind === 'branch';
+    const rawSpellings = [...new Set(records.map((record) => record.url))].sort();
+    const merged: MigrationRecord = {
+      ...winner,
+      url: canonicalGitUrl(winner.url),
+      createdAt: records.reduce(
+        (earliest, record) =>
+          record.createdAt.localeCompare(earliest) < 0 ? record.createdAt : earliest,
+        winner.createdAt
+      ),
+      lastUsedAt: records.reduce(
+        (latest, record) =>
+          record.lastUsedAt.localeCompare(latest) > 0 ? record.lastUsedAt : latest,
+        winner.lastUsedAt
+      ),
+      localFallback: records.some((record) => record.localFallback) || undefined,
+      fetchUrl: winner.fetchUrl ?? records.find((record) => record.fetchUrl)?.fetchUrl,
+    };
+    if (!winnerHasHumanLabel && human) {
+      merged.refLabel = human.refLabel;
+      merged.refKind = human.refKind;
+    }
+    Object.defineProperty(merged, rawRegistryUrl, { value: rawSpellings });
+    Object.defineProperty(merged, winnerSourceUrl, { value: winner.url });
+    return merged;
   }
 
   private isRegistry(value: unknown): value is VersionRegistry {

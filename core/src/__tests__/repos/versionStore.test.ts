@@ -161,6 +161,59 @@ describe('VersionStore', () => {
     await expect(fs.access(rawGroup)).rejects.toThrow();
   });
 
+  it('merges duplicate .git records and transactionally keeps the detected legacy checkout', async () => {
+    const home = await temp('ignite-version-duplicate-groups-');
+    const { fileSystem, store: versions } = await store(home);
+    const legacyUrl = 'https://example.test/acme/repo.git';
+    const canonicalUrl = canonicalGitUrl(legacyUrl);
+    const legacyHash = crypto
+      .createHash('sha256')
+      .update(legacyUrl)
+      .digest('hex')
+      .slice(0, 8);
+    const legacyGroup = path.join(
+      fileSystem.getVersionCachePath(),
+      `example-test-acme-repo-${legacyHash}`
+    );
+    const canonicalCheckout = versions.checkoutPath(canonicalUrl, commitA);
+    const legacyCheckout = path.join(legacyGroup, 'versions', commitA);
+    await fs.mkdir(canonicalCheckout, { recursive: true });
+    await fs.mkdir(legacyCheckout, { recursive: true });
+    await fs.writeFile(path.join(canonicalCheckout, 'winner.txt'), 'canonical');
+    await fs.writeFile(path.join(legacyCheckout, 'winner.txt'), 'legacy');
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.writeFile(
+      fileSystem.getVersionRegistryPath(),
+      JSON.stringify({
+        versions: [
+          {
+            ...record(canonicalUrl, commitA),
+            lastUsedAt: '2026-07-20T00:00:00.000Z',
+          },
+          {
+            ...record(legacyUrl, commitA),
+            refLabel: 'v1.0.0',
+            refKind: 'tag',
+            detectedAt: '2026-07-21T00:00:00.000Z',
+          },
+        ],
+      })
+    );
+
+    await versions.reconcile();
+
+    expect(await versions.list()).toEqual([
+      expect.objectContaining({
+        url: canonicalUrl,
+        refLabel: 'v1.0.0',
+        refKind: 'tag',
+        detectedAt: '2026-07-21T00:00:00.000Z',
+      }),
+    ]);
+    await expect(fs.readFile(path.join(canonicalCheckout, 'winner.txt'), 'utf8')).resolves.toBe('legacy');
+    await expect(fs.access(legacyGroup)).rejects.toThrow();
+  });
+
   it('round-trips global records and only removes registry entries', async () => {
     const home = await temp('ignite-version-home-');
     const { store: versions } = await store(home);
