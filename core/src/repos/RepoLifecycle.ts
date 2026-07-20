@@ -692,25 +692,18 @@ export class RepoLifecycle {
     ctx.log('phase: persist\n');
     const detectedAt = new Date().toISOString();
     if (mode === 'pinned' && pin) {
-      const compiledFramework = frameworks.find((framework) =>
-        compiledThisRun.has(framework.id)
-      );
-      const plugin =
-        compiledFramework &&
-        compilers.find(
-          (candidate) => candidate.metadata.id === compiledFramework.id
-        );
+      const compiledWith = compilers
+        .filter((plugin) => compiledThisRun.has(plugin.metadata.id))
+        .map((plugin) => ({
+          pluginId: plugin.metadata.id,
+          version: plugin.metadata.version,
+        }));
       await this.deps.versionStore.updateState(pin.url, pin.commit, {
         frameworks,
         detectedAt,
         lastError: null,
-        ...(plugin
-          ? {
-              compiledWith: {
-                pluginId: plugin.metadata.id,
-                version: plugin.metadata.version,
-              },
-            }
+        ...(compiledWith.length > 0
+          ? { compiledWith }
           : {}),
       });
     } else {
@@ -751,12 +744,15 @@ export class RepoLifecycle {
     compilers: Awaited<ReturnType<PluginRegistryLoader['getPluginsByType']>>
   ): boolean {
     if (!record?.compiledWith) return false;
-    const current = compilers.find(
-      (plugin) => plugin.metadata.id === record.compiledWith?.pluginId
-    );
-    return Boolean(
-      current && current.metadata.version !== record.compiledWith.version
-    );
+    const recordedCompilers = Array.isArray(record.compiledWith)
+      ? record.compiledWith
+      : [record.compiledWith as unknown as { pluginId: string; version: string }];
+    return recordedCompilers.some((recorded) => {
+      const current = compilers.find(
+        (plugin) => plugin.metadata.id === recorded.pluginId
+      );
+      return !current || current.metadata.version !== recorded.version;
+    });
   }
 
   private async priorRecord(

@@ -250,7 +250,7 @@ describe('RepoLifecycle', () => {
         expect.objectContaining({
           frameworks: [expect.objectContaining({ id: 'foundry' })],
           lastError: null,
-          compiledWith: { pluginId: 'foundry', version: '1.0.0' },
+          compiledWith: [{ pluginId: 'foundry', version: '1.0.0' }],
         })
       );
     } finally {
@@ -314,6 +314,47 @@ describe('RepoLifecycle', () => {
       await cleanupTestDirectory(dir);
     }
   });
+
+  it('tracks every pinned compiler and treats changed or missing compilers as a mismatch', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, versionStore } = makeLifecycle({
+        workspaceDir: dir,
+        compilers: ['foundry', 'hardhat'],
+        responses: {
+          foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK },
+          hardhat: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK },
+        },
+      });
+      await lifecycle.runPinnedLifecycle(
+        'https://example.test/repo.git',
+        'a'.repeat(40),
+        'p1',
+        { log: () => {}, signal: new AbortController().signal }
+      );
+      expect(versionStore.updateState).toHaveBeenCalledWith(
+        'https://example.test/repo.git',
+        'a'.repeat(40),
+        expect.objectContaining({
+          compiledWith: [
+            { pluginId: 'foundry', version: '1.0.0' },
+            { pluginId: 'hardhat', version: '1.0.0' },
+          ],
+        })
+      );
+
+      const mismatch = (lifecycle as unknown as {
+        compiledWithMismatch: (record: unknown, compilers: unknown[]) => boolean;
+      }).compiledWithMismatch;
+      const upgraded = makeCompilerConfigs(['foundry', 'hardhat']);
+      upgraded[1].metadata.version = '2.0.0';
+      expect(mismatch({ compiledWith: [{ pluginId: 'foundry', version: '1.0.0' }, { pluginId: 'hardhat', version: '1.0.0' }] }, upgraded)).toBe(true);
+      expect(mismatch({ compiledWith: [{ pluginId: 'missing', version: '1.0.0' }] }, upgraded)).toBe(true);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('keeps an awaitable pinned resolve visible to deletion until it settles', async () => {
     const dir = await createTestDirectory();
     try {
@@ -473,7 +514,7 @@ describe('RepoLifecycle', () => {
       await jobs.runAll();
 
       expect(registry.updates[0].patch.originUrl).toBe(
-        'https://example.test/contracts.git'
+        'https://example.test/contracts'
       );
     } finally {
       await cleanupTestDirectory(dir);

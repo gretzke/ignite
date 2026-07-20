@@ -318,16 +318,37 @@ describe('VersionStore', () => {
 
     await versions.updateState(urlA, commitA, {
       detectedAt: '2026-07-18T01:00:00.000Z',
-      compiledWith: { pluginId: 'foundry', version: '1.2.3' },
+      compiledWith: [{ pluginId: 'foundry', version: '1.2.3' }],
     });
     await versions.approveOrigins('p1', ['https://github.com']);
 
     expect(await versions.get(urlA, commitA)).toMatchObject({
       detectedAt: '2026-07-18T01:00:00.000Z',
-      compiledWith: { pluginId: 'foundry', version: '1.2.3' },
+      compiledWith: [{ pluginId: 'foundry', version: '1.2.3' }],
     });
     expect(await versions.isOriginApproved('p1', urlA)).toBe(true);
     expect(await versions.isOriginApproved('p2', urlA)).toBe(false);
+  });
+
+  it('normalizes legacy single-compiler metadata when reading the registry', async () => {
+    const home = await temp('ignite-version-legacy-compiler-');
+    const { fileSystem, store: versions } = await store(home);
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.writeFile(
+      fileSystem.getVersionRegistryPath(),
+      JSON.stringify({
+        versions: [
+          {
+            ...record(),
+            compiledWith: { pluginId: 'foundry', version: '1.2.3' },
+          },
+        ],
+      })
+    );
+
+    await expect(versions.get(urlA, commitA)).resolves.toMatchObject({
+      compiledWith: [{ pluginId: 'foundry', version: '1.2.3' }],
+    });
   });
 
   it('sets and clears durable version failures with a null lastError patch', async () => {

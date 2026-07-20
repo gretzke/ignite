@@ -21,7 +21,7 @@ export interface VersionRecord {
   localFallback?: boolean;
   frameworks?: RepoFrameworkState[];
   detectedAt?: string;
-  compiledWith?: { pluginId: string; version: string };
+  compiledWith?: Array<{ pluginId: string; version: string }>;
   lastError?: { code: string; message: string; at: string };
   createdAt: string;
   lastUsedAt: string;
@@ -53,7 +53,7 @@ type MigrationRecord = VersionRecord & {
 export interface VersionStatePatch {
   frameworks?: RepoFrameworkState[];
   detectedAt?: string;
-  compiledWith?: { pluginId: string; version: string };
+  compiledWith?: Array<{ pluginId: string; version: string }>;
   lastError?: { code: string; message: string; at: string } | null;
 }
 
@@ -659,7 +659,7 @@ export class VersionStore {
         throw new Error('registry does not contain a versions array');
       const valid = registry.versions.filter((record) =>
         this.isVersionRecord(record)
-      );
+      ).map((record) => this.normalizeLegacyRecord(record));
       const byIdentity = new Map<string, VersionRecord[]>();
       for (const record of valid) {
         const key = `${canonicalGitUrl(record.url)}\u0000${record.commit}`;
@@ -720,6 +720,18 @@ export class VersionStore {
     Object.defineProperty(merged, rawRegistryUrl, { value: rawSpellings });
     Object.defineProperty(merged, winnerSourceUrl, { value: winner.url });
     return merged;
+  }
+
+  private normalizeLegacyRecord(record: VersionRecord): VersionRecord {
+    const compiledWith = record.compiledWith as
+      | VersionRecord['compiledWith']
+      | { pluginId: string; version: string }
+      | undefined;
+    return Array.isArray(compiledWith)
+      ? record
+      : compiledWith
+        ? { ...record, compiledWith: [compiledWith] }
+        : record;
   }
 
   private isRegistry(value: unknown): value is VersionRegistry {
