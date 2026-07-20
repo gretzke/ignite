@@ -12,6 +12,9 @@ export interface VersionRecord {
   commit: string;
   refLabel?: string;
   refKind?: 'tag' | 'branch' | 'commit';
+  // Canonical identity is url; fetchUrl preserves the remote spelling Git was
+  // asked to fetch from, including a trailing .git when a server requires it.
+  fetchUrl?: string;
   localFallback?: boolean;
   frameworks?: RepoFrameworkState[];
   detectedAt?: string;
@@ -75,7 +78,9 @@ export function assertNoUrlCredentials(url: string): void {
 export function canonicalGitUrl(url: string): string {
   try {
     const parsed = new URL(normalizeGitUrl(url));
-    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    parsed.pathname = parsed.pathname
+      .replace(/\/+$/, '')
+      .replace(/\.git$/i, '');
     return parsed.toString().replace(/\/$/, '');
   } catch {
     return normalizeGitUrl(url);

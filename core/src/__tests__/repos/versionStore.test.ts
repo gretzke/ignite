@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { FileSystem } from '../../filesystem/FileSystem.js';
-import { assertNoUrlCredentials, VersionStore, pinnedOrigin, type VersionRecord } from '../../repos/VersionStore.js';
+import { assertNoUrlCredentials, canonicalGitUrl, VersionStore, pinnedOrigin, type VersionRecord } from '../../repos/VersionStore.js';
 import { getLogger } from '../../utils/logger.js';
 
 const dirs: string[] = [];
@@ -38,6 +38,10 @@ function record(url = urlA, commit = commitA): VersionRecord {
   };
 }
 
+function storedRecord(url = urlA, commit = commitA): VersionRecord {
+  return { ...record(url, commit), url: canonicalGitUrl(url) };
+}
+
 afterAll(async () => {
   await Promise.all(
     dirs.map((dir) => fs.rm(dir, { recursive: true, force: true }))
@@ -45,6 +49,15 @@ afterAll(async () => {
 });
 
 describe('VersionStore', () => {
+  it.each([
+    ['https://example.test/team/repo.git', 'https://example.test/team/repo'],
+    ['https://example.test/team/repo.GIT/', 'https://example.test/team/repo'],
+    ['git@github.com:team/repo.git', 'ssh://git@github.com/team/repo'],
+    ['ssh://git@example.test/team/repo.git', 'ssh://git@example.test/team/repo'],
+  ])('canonicalizes %s as %s', (input, expected) => {
+    expect(canonicalGitUrl(input)).toBe(expected);
+  });
+
   it('rejects credential-embedded HTTP URLs but accepts SSH user identities', () => {
     expect(() => assertNoUrlCredentials('https://user:pass@example.test/repo.git')).toThrow(
       expect.objectContaining({ code: 'VERSION_URL_CREDENTIALS' })
@@ -60,7 +73,7 @@ describe('VersionStore', () => {
     const { fileSystem, store: versions } = await store(home);
     const hash = crypto
       .createHash('sha256')
-      .update(urlA)
+      .update(canonicalGitUrl(urlA))
       .digest('hex')
       .slice(0, 8);
     const group = path.join(
@@ -123,7 +136,7 @@ describe('VersionStore', () => {
     const home = await temp('ignite-version-legacy-group-');
     const { fileSystem, store: versions } = await store(home);
     const scp = 'git@github.com:org/repo.git';
-    const canonical = 'ssh://git@github.com/org/repo.git';
+    const canonical = 'ssh://git@github.com/org/repo';
     const rawHash = crypto.createHash('sha256').update(scp).digest('hex').slice(0, 8);
     const rawGroup = path.join(
       fileSystem.getVersionCachePath(),
@@ -139,7 +152,7 @@ describe('VersionStore', () => {
     await versions.reconcile();
 
     expect(await versions.list()).toEqual([expect.objectContaining({
-      ...record(canonical, commitA),
+      ...storedRecord(canonical, commitA),
       lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
     })]);
     await expect(fs.stat(versions.checkoutPath(canonical, commitA))).resolves.toMatchObject({
@@ -156,7 +169,7 @@ describe('VersionStore', () => {
 
     await versions.upsert(record());
     await versions.upsert(record(urlA, commitB));
-    expect(await versions.get(urlA, commitA)).toMatchObject(record());
+    expect(await versions.get(urlA, commitA)).toMatchObject(storedRecord());
     expect(await versions.list()).toHaveLength(2);
 
     await versions.remove(urlA, commitA);
@@ -175,7 +188,7 @@ describe('VersionStore', () => {
     await versions.addMembership('p2', urlA, commitA, 'workflow');
     await versions.addMembership('p2', urlA, commitB, 'user');
 
-    expect((await versions.listMemberships('p1'))[urlA]).toEqual([
+    expect((await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]).toEqual([
       { commit: commitA, addedAt: expect.any(String), source: 'user' },
       { commit: commitA, addedAt: expect.any(String), source: 'workflow' },
     ]);
@@ -191,7 +204,7 @@ describe('VersionStore', () => {
 
     await versions.removeMembership('p1', urlA, commitA);
 
-    expect((await versions.listMemberships('p1'))[urlA]).toEqual([
+    expect((await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]).toEqual([
       { commit: commitA, addedAt: expect.any(String), source: 'workflow' },
     ]);
     expect(await versions.referenceCount(urlA, commitA)).toBe(1);
@@ -297,7 +310,7 @@ describe('VersionStore', () => {
 
     await expect(versions.reconcile()).resolves.toBeUndefined();
     expect(await versions.list()).toEqual([expect.objectContaining({
-      ...valid,
+      ...storedRecord(),
       lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
     })]);
     expect(warning).toHaveBeenCalledWith(
@@ -350,7 +363,7 @@ describe('VersionStore', () => {
     await versions.reconcile();
 
     expect(await versions.list()).toEqual([expect.objectContaining({
-      ...live,
+      ...storedRecord(urlA, commitA),
       lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
     })]);
     await expect(
@@ -398,7 +411,10 @@ describe('VersionStore', () => {
     ]);
 
     expect(await versions.list()).toEqual(
-      expect.arrayContaining([record(urlA, commitA), record(urlB, commitB)])
+      expect.arrayContaining([
+        storedRecord(urlA, commitA),
+        storedRecord(urlB, commitB),
+      ])
     );
   });
 

@@ -683,7 +683,11 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         if (body.url) assertNoUrlCredentials(body.url);
         const source: VersionSource = body.repoPathOrUrl
           ? await d.repos.getVersionSource(body.repoPathOrUrl, id)
-          : { url: body.url!, workspacePath: '' };
+          : {
+              url: canonicalGitUrl(body.url!),
+              fetchUrl: body.url!,
+              workspacePath: '',
+            };
         assertNoUrlCredentials(source.url);
         if (source.fetchUrl) assertNoUrlCredentials(source.fetchUrl);
         if (!(await d.versionStore.isOriginApproved(id, source.url))) {
@@ -705,7 +709,11 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
                 )),
                 refLabel: body.ref,
               }
-          : remoteRef(await d.inspectGitRemote(source.url), body.ref, body.refKind)
+          : remoteRef(
+              await d.inspectGitRemote(source.fetchUrl ?? source.url),
+              body.ref,
+              body.refKind
+            )
           : {
               commit: body.commit!,
               refKind: 'commit' as const,
@@ -723,11 +731,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         // are always full commits. Prefer advertised heads, then use cached
         // bare history for a valid historical commit.
         if (commit.length < 40) {
-          const heads = await d.inspectGitRemote(source.url);
+          const heads = await d.inspectGitRemote(source.fetchUrl ?? source.url);
           const matches = [...Object.values(heads.branchHeads ?? {}), ...Object.values(heads.tagHeads ?? {})]
             .filter((sha, index, all) => sha.toLowerCase().startsWith(commit.toLowerCase()) && all.indexOf(sha) === index);
           if (matches.length === 1) {
-            const cached = await d.repos.resolveCachedVersionCommit(source.url, commit);
+            const cached = await d.repos.resolveCachedVersionCommit(
+              source.fetchUrl ?? source.url,
+              commit
+            );
             if (cached && cached.toLowerCase() !== matches[0].toLowerCase()) {
               return reply.status(400).send({
                 statusCode: 400,
@@ -739,7 +750,10 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             commit = matches[0];
           }
           else {
-            const cached = await d.repos.resolveCachedVersionCommit(source.url, commit);
+            const cached = await d.repos.resolveCachedVersionCommit(
+              source.fetchUrl ?? source.url,
+              commit
+            );
             if (!cached) {
               return reply.status(400).send({ statusCode: 400, error: 'Bad Request', code: 'VERSION_COMMIT_NOT_RESOLVABLE', message: `Commit prefix '${commit}' is not available in cached history. Provide the full 40-hex commit for commits not at a ref head.` }) as unknown as IApiResponse<AddRepoVersionStartedData>;
             }
@@ -769,7 +783,15 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
               ctx.log('phase: materialize\n');
               return await withMaterialized(
                 id, source.url, commit,
-                { ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}), onLog: (text) => ctx.log(text), signal: ctx.signal },
+                {
+                  ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}),
+                  ...(source.fetchUrl ? { fetchUrl: source.fetchUrl } : {}),
+                  ...(source.localFallbackPath
+                    ? { localFallbackPath: source.localFallbackPath }
+                    : {}),
+                  onLog: (text) => ctx.log(text),
+                  signal: ctx.signal,
+                },
                 async (materialized) => {
                   if (ctx.signal.aborted) throw ctx.signal.reason;
                   ctx.log('phase: add user membership\n');

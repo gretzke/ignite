@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { RepoRecord } from '@ignite/api';
 import { createProfileHandlers } from '../../api/profiles.js';
 import { RepoLifecycle } from '../../repos/RepoLifecycle.js';
+import { canonicalGitUrl } from '../../repos/VersionStore.js';
 
 function makeReply() {
   const reply = {
@@ -213,7 +214,7 @@ describe('profile handlers', () => {
     const reply = makeReply();
     await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
-    expect((reply.body as { data: { local: Array<{ originUrl?: string }> } }).data.local[0].originUrl).toBe('https://example.test/contracts.git');
+    expect((reply.body as { data: { local: Array<{ originUrl?: string }> } }).data.local[0].originUrl).toBe('https://example.test/contracts');
   });
 
   it('groups from a persisted origin without probing live git', async () => {
@@ -259,7 +260,7 @@ describe('profile handlers', () => {
     const reply = makeReply();
     await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
-    expect((reply.body as { data: { cloned: Array<{ originUrl?: string }> } }).data.cloned[0].originUrl).toBe(url);
+    expect((reply.body as { data: { cloned: Array<{ originUrl?: string }> } }).data.cloned[0].originUrl).toBe(canonicalGitUrl(url));
   });
 
   it('attaches file-origin versions to a local record without exposing the file origin', async () => {
@@ -353,30 +354,59 @@ describe('profile handlers', () => {
     deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => { runner = value; return { id: 'job-version-1', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] }; }) };
     deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: commit }, tagHeads: {}, releases: [] }));
     deps.repoRegistry.list = async () => ({ session: null, local: [{ pathOrUrl: '/repo-a' }], cloned: [] });
-    deps.repos.getVersionSource = vi.fn(async () => ({ url, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
+    deps.repos.getVersionSource = vi.fn(async () => ({ url: canonicalGitUrl(url), fetchUrl: url, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
     const memberships: Record<string, Array<{ commit: string; addedAt: string; source: 'user' | 'workflow' }>> = {};
     deps.versionStore.addMembership = vi.fn(async (_profileId: string, membershipUrl: string, membershipCommit: string) => { memberships[membershipUrl] = [{ commit: membershipCommit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' }]; });
     deps.versionStore.listMemberships = vi.fn(async () => memberships);
-    deps.versionStore.list = vi.fn(async () => [{ url, commit, refLabel: 'main', refKind: 'branch' as const, frameworks: [{ id: 'foundry', name: 'Foundry' }], createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
+    deps.versionStore.list = vi.fn(async () => [{ url: canonicalGitUrl(url), fetchUrl: url, commit, refLabel: 'main', refKind: 'branch' as const, frameworks: [{ id: 'foundry', name: 'Foundry' }], createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
     const handlers = createProfileHandlers(deps); const addReply = makeReply();
     await handlers.addRepoVersion({ params: { id: 'p1' }, body: { url, ref: 'main' } } as never, addReply as never);
     expect(addReply.body).toEqual({
-      data: { jobId: 'job-version-1', url, commit },
+      data: { jobId: 'job-version-1', url: canonicalGitUrl(url), commit },
     });
     await runner({ log: () => {}, signal: new AbortController().signal });
-    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.objectContaining({ ref: 'main', refKind: 'branch' }));
-    expect(deps.lifecycle.runPinnedLifecycle).toHaveBeenCalledWith(url, commit, 'p1', expect.any(Object), expect.any(Object), true);
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', canonicalGitUrl(url), commit, expect.objectContaining({ fetchUrl: url, ref: 'main', refKind: 'branch' }));
+    expect(deps.lifecycle.runPinnedLifecycle).toHaveBeenCalledWith(canonicalGitUrl(url), commit, 'p1', expect.any(Object), expect.any(Object), true);
     const listReply = makeReply(); await handlers.listRepos({ params: { id: 'p1' } } as never, listReply as never);
     expect((listReply.body as { data: { local: Array<{ versions: Array<{ commit: string }> }> } }).data.local[0].versions).toEqual([expect.objectContaining({ commit })]);
+  });
+
+  it('keeps direct .git adds canonical while inspecting and fetching the verbatim URL', async () => {
+    const deps = makeDeps();
+    const fetchUrl = 'https://example.com/contracts.git';
+    const url = canonicalGitUrl(fetchUrl);
+    const commit = 'a'.repeat(40);
+    deps.inspectGitRemote = vi.fn(async () => ({
+      defaultBranch: 'main',
+      branches: ['main'],
+      branchHeads: { main: commit },
+      tagHeads: {},
+      releases: [],
+    }));
+    const reply = makeReply();
+
+    await createProfileHandlers(deps).addRepoVersion(
+      { params: { id: 'p1' }, body: { url: fetchUrl, ref: 'main' } } as never,
+      reply as never
+    );
+
+    expect(reply.body).toMatchObject({ data: { url, commit } });
+    expect(deps.inspectGitRemote).toHaveBeenCalledWith(fetchUrl);
+    expect(deps.jobs.start).toHaveBeenCalledWith(
+      'repo.version.add',
+      expect.objectContaining({ url, commit }),
+      expect.any(Function),
+      expect.any(Object)
+    );
   });
 
   it('groups an SCP remote version under a repository with the canonical SSH origin', async () => {
     const deps = makeDeps();
     const scp = 'git@example.com:team/contracts.git';
-    const canonical = 'ssh://git@example.com/team/contracts.git';
+    const canonical = 'ssh://git@example.com/team/contracts';
     const commit = 'd'.repeat(40);
     deps.repoRegistry.list = async () => ({ session: null, local: [{ pathOrUrl: '/repo-a' }], cloned: [] });
-    deps.repos.getVersionSource = vi.fn(async () => ({ url: scp, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
+    deps.repos.getVersionSource = vi.fn(async () => ({ url: canonicalGitUrl(scp), fetchUrl: scp, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
     deps.versionStore.listMemberships = vi.fn(async () => ({ [canonical]: [{ commit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' as const }] }));
     deps.versionStore.list = vi.fn(async () => [{ url: canonical, commit, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
 
@@ -422,7 +452,7 @@ describe('profile handlers', () => {
       makeReply() as never
     );
     await expect(runner({ log: () => {}, signal: new AbortController().signal })).rejects.toThrow('compile failed');
-    expect(deps.versionStore.addMembership).toHaveBeenCalledWith('p1', url, commit, 'user');
+    expect(deps.versionStore.addMembership).toHaveBeenCalledWith('p1', canonicalGitUrl(url), commit, 'user');
     expect((deps.repos.ensureVersion as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
       (deps.versionStore.addMembership as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
     );
@@ -451,9 +481,9 @@ describe('profile handlers', () => {
 
     expect(deps.repos.ensureVersion).toHaveBeenCalledWith(
       'p1',
-      url,
+      canonicalGitUrl(url),
       commit,
-      expect.not.objectContaining({ refLabel: expect.anything(), refKind: expect.anything() })
+      expect.objectContaining({ fetchUrl: url })
     );
   });
 
@@ -529,7 +559,7 @@ describe('profile handlers', () => {
     expect(active).toBe(false);
     expect(deps.versionStore.addMembership).not.toHaveBeenCalled();
     expect(materialization).toHaveBeenCalledWith(
-      'p1', url, commit, expect.objectContaining({ signal: controller.signal }), expect.any(Function)
+      'p1', canonicalGitUrl(url), commit, expect.objectContaining({ fetchUrl: url, signal: controller.signal }), expect.any(Function)
     );
   });
 
@@ -558,7 +588,7 @@ describe('profile handlers', () => {
     expect(duplicate.body).toMatchObject({ data: { jobId: 'job-0' } });
     expect(otherProfile.body).toMatchObject({ data: { jobId: 'job-1' } });
     expect(deps.jobs.start).toHaveBeenCalledTimes(2);
-    expect(deps.lifecycle.beginPinnedActivity).toHaveBeenNthCalledWith(1, 'https://example.com/contracts.git', 'a'.repeat(40), 'job-0');
+    expect(deps.lifecycle.beginPinnedActivity).toHaveBeenNthCalledWith(1, 'https://example.com/contracts', 'a'.repeat(40), 'job-0');
   });
 
   it('cleans pending state and activity when a queued version add settles cancelled', async () => {
@@ -584,7 +614,7 @@ describe('profile handlers', () => {
     expect(pending.size).toBe(1);
     onSettled({ state: 'cancelled' });
     await vi.waitFor(() => expect(deps.versionStore.updateState).toHaveBeenCalledWith(
-      'https://example.com/contracts.git',
+      'https://example.com/contracts',
       'a'.repeat(40),
       expect.objectContaining({ lastError: expect.objectContaining({ code: 'CANCELLED' }) })
     ));
@@ -607,7 +637,7 @@ describe('profile handlers', () => {
     await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
     expect((reply.body as { data: { versionGroups: Array<{ url: string; versions: Array<Record<string, unknown>> }> } }).data.versionGroups).toEqual([
-      { url, versions: [expect.objectContaining({ commit, refLabel: 'main', activeJobId: 'job-pending' })] },
+      { url: canonicalGitUrl(url), versions: [expect.objectContaining({ commit, refLabel: 'main', activeJobId: 'job-pending' })] },
     ]);
   });
 
@@ -641,8 +671,8 @@ describe('profile handlers', () => {
     await runner({ log: () => {}, signal: new AbortController().signal });
 
     expect(reply.statusCode).toBe(200);
-    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.any(Object));
-    expect(deps.versionStore.addMembership).toHaveBeenCalledWith('p1', url, commit, 'user');
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', canonicalGitUrl(url), commit, expect.objectContaining({ fetchUrl: url }));
+    expect(deps.versionStore.addMembership).toHaveBeenCalledWith('p1', canonicalGitUrl(url), commit, 'user');
   });
 
   it('accepts a head prefix when cached history resolves to that same commit', async () => {
@@ -720,8 +750,8 @@ describe('profile handlers', () => {
     await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, ref: 'release', refKind: 'tag' } } as never, makeReply() as never);
     await runner({ log: () => {}, signal: new AbortController().signal });
 
-    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, tagCommit, expect.objectContaining({ ref: 'release', refKind: 'tag' }));
-    expect(deps.repos.ensureVersion).not.toHaveBeenCalledWith('p1', url, branchCommit, expect.any(Object));
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', canonicalGitUrl(url), tagCommit, expect.objectContaining({ fetchUrl: url, ref: 'release', refKind: 'tag' }));
+    expect(deps.repos.ensureVersion).not.toHaveBeenCalledWith('p1', canonicalGitUrl(url), branchCommit, expect.any(Object));
   });
 
   it('rechecks REPO_BUSY under the delete lock while a version-add lifecycle is mid-flight', async () => {

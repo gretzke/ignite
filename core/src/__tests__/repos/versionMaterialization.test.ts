@@ -85,6 +85,46 @@ afterAll(async () => {
 });
 
 describe('RepoService version materialization', () => {
+  it('keeps the bare remote on the verbatim fetch URL when canonical identity strips .git', async () => {
+    const home = await temp('ignite-version-home-');
+    const canonicalUrl = 'https://example.test/team/contracts';
+    const fetchUrl = `${canonicalUrl}.git`;
+    FileSystem.resetInstance();
+    const fileSystem = FileSystem.getInstance(home);
+    const versions = new VersionStore(fileSystem);
+    await fs.mkdir(versions.bareRepoPath(canonicalUrl), { recursive: true });
+    const run = vi.fn(async (_command: string, args: string[]) =>
+      args.join(' ') === 'remote get-url origin'
+        ? { code: 0, stdout: 'https://example.test/team/stale.git\n', stderr: '' }
+        : { code: 0, stdout: '', stderr: '' }
+    );
+    const repos = new RepoService({
+      fileSystem,
+      profiles: { getCurrentProfile: () => profileId } as unknown as ProfileManager,
+      run: run as typeof runCommand,
+    });
+
+    await (repos as unknown as {
+      ensureBareVersionRepo: (
+        group: string,
+        url: string,
+        remote: string,
+        budget: { signal: AbortSignal; remaining: () => number }
+      ) => Promise<void>;
+    }).ensureBareVersionRepo(
+      versions.groupDir(canonicalUrl),
+      canonicalUrl,
+      fetchUrl,
+      { signal: new AbortController().signal, remaining: () => 30_000 }
+    );
+
+    expect(run).toHaveBeenCalledWith(
+      'git',
+      expect.arrayContaining(['remote', 'set-url', 'origin', fetchUrl]),
+      expect.any(Object)
+    );
+  });
+
   it('requires origin approval before any git invocation', async () => {
     const home = await temp('ignite-version-home-');
     const run = vi.fn(runCommand);

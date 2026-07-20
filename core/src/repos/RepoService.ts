@@ -23,6 +23,7 @@ import { redactUrlCredentials } from '../utils/redact.js';
 import { getLogger } from '../utils/logger.js';
 import {
   assertNoUrlCredentials,
+  canonicalGitUrl,
   VersionStore,
   pinnedOrigin,
   type VersionRecord,
@@ -451,6 +452,7 @@ export class RepoService {
             ...(existing ?? { url, commit, createdAt: now }),
             url,
             commit,
+            ...(opts.fetchUrl !== undefined ? { fetchUrl: opts.fetchUrl } : {}),
             ...(opts.refLabel !== undefined || opts.ref !== undefined
               ? { refLabel: opts.refLabel ?? opts.ref }
               : {}),
@@ -468,8 +470,13 @@ export class RepoService {
         }
       }
 
-      await this.ensureBareVersionRepo(groupDir, url, budget);
-      opts.onLog?.(`materialize: fetch ${url}\n`);
+      await this.ensureBareVersionRepo(
+        groupDir,
+        url,
+        opts.fetchUrl ?? url,
+        budget
+      );
+      opts.onLog?.(`materialize: fetch ${opts.fetchUrl ?? url}\n`);
       const localFallback = await this.fetchVersionCommit(
         url,
         commit,
@@ -522,6 +529,7 @@ export class RepoService {
         commit,
         refLabel: opts.refLabel ?? opts.ref,
         refKind: opts.refKind,
+        ...(opts.fetchUrl !== undefined ? { fetchUrl: opts.fetchUrl } : {}),
         ...(localFallback ? { localFallback: true } : {}),
         createdAt: now,
         lastUsedAt: now,
@@ -537,6 +545,7 @@ export class RepoService {
   private async ensureBareVersionRepo(
     groupDir: string,
     url: string,
+    fetchUrl: string,
     budget: { signal: AbortSignal; remaining: () => number }
   ): Promise<void> {
     const bare = this.versionStore.bareRepoPath(url);
@@ -563,7 +572,16 @@ export class RepoService {
       this.throwGitFailure(
         await this.runPinnedGit(
           bare,
-          ['remote', 'add', 'origin', url],
+          ['remote', 'add', 'origin', fetchUrl],
+          TIMEOUT_LOCAL_MS,
+          budget
+        )
+      );
+    else if (remote.data.stdout.trim() !== fetchUrl)
+      this.throwGitFailure(
+        await this.runPinnedGit(
+          bare,
+          ['remote', 'set-url', 'origin', fetchUrl],
           TIMEOUT_LOCAL_MS,
           budget
         )
@@ -891,7 +909,8 @@ export class RepoService {
         code: 'VERSION_ORIGIN_REQUIRED',
       });
     const source = {
-      url,
+      url: canonicalGitUrl(url),
+      fetchUrl: url,
       workspacePath,
       ...(local ? { localFallbackPath: path.resolve(workspacePath) } : {}),
     };
