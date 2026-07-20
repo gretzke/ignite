@@ -24,7 +24,7 @@ export interface JobContext {
 
 export type JobRunner = (ctx: JobContext) => Promise<unknown>;
 export interface JobStartOptions {
-  onSettled?: (record: JobRecord) => void;
+  onSettled?: (record: JobRecord) => void | Promise<void>;
 }
 
 // Oldest events are dropped beyond this cap; seq keeps counting monotonically.
@@ -46,7 +46,7 @@ interface InternalJob {
   // Serializes persistence writes for this job so concurrent schedulePersist
   // calls can't interleave and corrupt the on-disk record.
   persistChain: Promise<void>;
-  onSettled?: (record: JobRecord) => void;
+  onSettled?: (record: JobRecord) => void | Promise<void>;
   settled: boolean;
 }
 
@@ -102,6 +102,8 @@ export class JobManager {
   private readonly fileSystem: FileSystem;
   private readonly jobs = new Map<string, InternalJob>();
   private readonly listeners = new Set<JobListener>();
+  private readonly settlePromises = new Set<Promise<void>>();
+  private persistenceDisabled = false;
 
   constructor(deps?: { fileSystem?: FileSystem }) {
     this.fileSystem = deps?.fileSystem ?? FileSystem.getInstance();
@@ -258,7 +260,8 @@ export class JobManager {
   // Factory reset: cancel everything in flight (abort signals kill the
   // underlying container execs / git processes) and forget all records so
   // nothing re-persists into a wiped jobs directory.
-  cancelAllAndClear(): void {
+  async cancelAllAndClear(): Promise<void> {
+    this.persistenceDisabled = true;
     for (const job of this.jobs.values()) {
       if (job.record.state === 'queued' || job.record.state === 'running') {
         job.cancelled = true;
@@ -271,7 +274,15 @@ export class JobManager {
         this.fireSettled(job);
       }
     }
+    const persistChains = [...this.jobs.values()].map(
+      (job) => job.persistChain
+    );
     this.jobs.clear();
+    await Promise.allSettled([...persistChains, ...this.settlePromises]);
+  }
+
+  resumePersistence(): void {
+    this.persistenceDisabled = false;
   }
 
   cancel(id: string): boolean {
@@ -361,7 +372,18 @@ export class JobManager {
     if (job.settled) return;
     job.settled = true;
     try {
-      job.onSettled?.(this.cloneRecord(job.record));
+      const settled = job.onSettled?.(this.cloneRecord(job.record));
+      if (settled) {
+        let tracked!: Promise<void>;
+        tracked = Promise.resolve(settled)
+          .catch((err) => {
+            getLogger().warn(
+              `Job ${job.record.id} onSettled callback failed: ${String(err)}`
+            );
+          })
+          .finally(() => this.settlePromises.delete(tracked));
+        this.settlePromises.add(tracked);
+      }
     } catch (err) {
       getLogger().warn(
         `Job ${job.record.id} onSettled callback failed: ${String(err)}`
@@ -442,6 +464,7 @@ export class JobManager {
   }
 
   private async writeJobFile(record: JobRecord): Promise<void> {
+    if (this.persistenceDisabled) return;
     const filePath = path.join(
       this.fileSystem.getJobsPath(),
       `${record.id}.json`

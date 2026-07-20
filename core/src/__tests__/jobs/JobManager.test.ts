@@ -130,12 +130,16 @@ describe('JobManager', () => {
   it('calls onSettled once for successful and failed jobs', async () => {
     const settled: JobRecord[] = [];
     const success = manager.start('test.success', {}, async () => 'ok', {
-      onSettled: (record) => settled.push(record),
+      onSettled: (record) => {
+        settled.push(record);
+      },
     });
     const failure = manager.start('test.failure', {}, async () => {
       throw new Error('boom');
     }, {
-      onSettled: (record) => settled.push(record),
+      onSettled: (record) => {
+        settled.push(record);
+      },
     });
 
     await waitForState(success.id, ['succeeded']);
@@ -176,6 +180,73 @@ describe('JobManager', () => {
     // Existing fire-and-forget persistence may still be flushing while the
     // reset has already forgotten the jobs.
     await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
+  it('drains queued persistence before cancelAllAndClear returns', async () => {
+    let releaseWrite!: () => void;
+    const writeBlocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const write = vi
+      .spyOn(fileSystem, 'writeJsonFile')
+      .mockImplementation(async () => writeBlocked);
+    manager.start('test.reset-persist', {}, async (ctx) => {
+      await new Promise<void>((_resolve, reject) => {
+        ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), {
+          once: true,
+        });
+      });
+    });
+    await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+
+    let cleared = false;
+    const clearing = manager.cancelAllAndClear().then(() => {
+      cleared = true;
+    });
+    await Promise.resolve();
+    expect(cleared).toBe(false);
+
+    releaseWrite();
+    await clearing;
+    const writesAtBarrier = write.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(write).toHaveBeenCalledTimes(writesAtBarrier);
+  });
+
+  it('waits for asynchronous onSettled work before cancelAllAndClear returns', async () => {
+    let releaseSettled!: () => void;
+    const settled = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseSettled = resolve;
+        })
+    );
+    manager.start('test.reset-settled', {}, async () => undefined, {
+      onSettled: settled,
+    });
+
+    let cleared = false;
+    const clearing = manager.cancelAllAndClear().then(() => {
+      cleared = true;
+    });
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
+    expect(cleared).toBe(false);
+
+    releaseSettled();
+    await clearing;
+    expect(cleared).toBe(true);
+  });
+
+  it('persists new jobs after reset persistence is resumed', async () => {
+    await manager.cancelAllAndClear();
+    manager.resumePersistence();
+    const record = manager.start('test.persistence-resumed', {}, async () => 'ok');
+
+    await waitForState(record.id, ['succeeded']);
+    await expect(readPersisted(record.id)).resolves.toMatchObject({
+      state: 'succeeded',
+    });
   });
 
   it('falls back to OPERATION_EXECUTION_FAILED for plain thrown errors', async () => {

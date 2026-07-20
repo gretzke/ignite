@@ -781,7 +781,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
               d.pendingVersionAdds.delete(key);
               if (!record.startedAt) releaseActivity();
               if (record.state === 'failed' || record.state === 'cancelled') {
-                void markVersionFailure(source.url, commit, record).catch((error) =>
+                return markVersionFailure(source.url, commit, record).catch((error) =>
                   getLogger().warn(`version failure persist: ${String(error)}`)
                 );
               }

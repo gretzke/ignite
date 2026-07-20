@@ -76,7 +76,8 @@ export async function factoryReset(): Promise<void> {
   // 1. Stop work: cancel every active job (abort signals kill container
   //    execs and git processes) and drop the in-memory job map so nothing
   //    re-persists into the wiped directory.
-  JobManager.getInstance().cancelAllAndClear();
+  const jobs = JobManager.getInstance();
+  await jobs.cancelAllAndClear();
 
   // 2. Docker state.
   await cleanDockerState();
@@ -98,6 +99,7 @@ export async function factoryReset(): Promise<void> {
   //    recreates config.json and the default profile; the lifecycle
   //    forgets swept profiles/session state so the next trigger sweeps
   //    like a first run.
+  jobs.resumePersistence();
   ProfileManager.resetInstance();
   await ProfileManager.getInstance();
   RepoLifecycle.getInstance().resetState();
