@@ -11,11 +11,13 @@ import type {
   RepoFrameworkState,
   RepoWatchPaths,
 } from '@ignite/api';
+import { normalizeRepoUrl } from '@ignite/plugin-types';
 import { PluginType } from '@ignite/plugin-types/types';
+import path from 'node:path';
 import { JobManager, type JobContext } from '../jobs/JobManager.js';
 import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
-import { RepoService } from './RepoService.js';
+import { RepoKind, RepoService, deriveRepoKind } from './RepoService.js';
 import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { statFingerprint } from './fingerprint.js';
 import { ErrorCodes } from '../types/errors.js';
@@ -326,7 +328,8 @@ export class RepoLifecycle {
   }
 
   activeJobFor(pathOrUrl: string): string | undefined {
-    const active = this.activeJobs.get(pathOrUrl);
+    const key = this.activityKey(pathOrUrl);
+    const active = this.activeJobs.get(key);
     if (!active) return undefined;
     for (const jobId of active.jobIds) {
       const record = this.deps.jobs.get(jobId);
@@ -334,39 +337,51 @@ export class RepoLifecycle {
       active.jobIds.delete(jobId);
     }
     if (active.jobIds.size === 0 && active.directRefs === 0) {
-      this.activeJobs.delete(pathOrUrl);
+      this.activeJobs.delete(key);
       return undefined;
     }
     return active.directRefs
-      ? `direct:${pathOrUrl}`
+      ? `direct:${key}`
       : undefined;
   }
 
   private setJob(pathOrUrl: string, jobId: string): void {
-    const active = this.activeJobs.get(pathOrUrl) ?? { jobIds: new Set<string>(), directRefs: 0 };
+    const key = this.activityKey(pathOrUrl);
+    const active = this.activeJobs.get(key) ?? { jobIds: new Set<string>(), directRefs: 0 };
     active.jobIds.add(jobId);
-    this.activeJobs.set(pathOrUrl, active);
+    this.activeJobs.set(key, active);
   }
 
   private clearJob(pathOrUrl: string, jobId: string): void {
-    const active = this.activeJobs.get(pathOrUrl);
+    const key = this.activityKey(pathOrUrl);
+    const active = this.activeJobs.get(key);
     if (!active) return;
     active.jobIds.delete(jobId);
-    if (active.directRefs === 0 && active.jobIds.size === 0) this.activeJobs.delete(pathOrUrl);
+    if (active.directRefs === 0 && active.jobIds.size === 0) this.activeJobs.delete(key);
   }
 
   private addDirect(pathOrUrl: string): void {
-    const active = this.activeJobs.get(pathOrUrl) ?? { jobIds: new Set<string>(), directRefs: 0 };
+    const key = this.activityKey(pathOrUrl);
+    const active = this.activeJobs.get(key) ?? { jobIds: new Set<string>(), directRefs: 0 };
     active.directRefs += 1;
-    this.activeJobs.set(pathOrUrl, active);
+    this.activeJobs.set(key, active);
   }
 
   private removeDirect(pathOrUrl: string): void {
-    const active = this.activeJobs.get(pathOrUrl);
+    const key = this.activityKey(pathOrUrl);
+    const active = this.activeJobs.get(key);
     if (!active) return;
     active.directRefs = Math.max(0, active.directRefs - 1);
     if (active.directRefs === 0 && active.jobIds.size === 0)
-      this.activeJobs.delete(pathOrUrl);
+      this.activeJobs.delete(key);
+  }
+
+  // Keep lifecycle activity keyed exactly like RepoService's mutation lock so
+  // equivalent spellings cannot reserve or compile the same worktree twice.
+  private activityKey(pathOrUrl: string): string {
+    return deriveRepoKind(pathOrUrl) === RepoKind.CLONED
+      ? `cloned:${normalizeRepoUrl(pathOrUrl)}`
+      : `local:${path.resolve(pathOrUrl)}`;
   }
 
   // Derived state for the session workspace (kept in memory — the session

@@ -381,6 +381,23 @@ describe('RepoLifecycle', () => {
       await cleanupTestDirectory(dir);
     }
   });
+
+  it('shares direct activity across equivalent local and cloned repo spellings', () => {
+    const { lifecycle } = makeLifecycle({ workspaceDir: '/workspace' });
+    const releaseLocal = lifecycle.beginRepoActivity('/repo');
+    const releaseCloned = lifecycle.beginRepoActivity(
+      'https://github.com/example/contracts.git'
+    );
+
+    expect(lifecycle.activeJobFor('/repo/.')).toBe('direct:local:/repo');
+    expect(lifecycle.activeJobFor('git@github.com:example/contracts.git')).toBe(
+      'direct:cloned:https://github.com/example/contracts'
+    );
+
+    releaseLocal();
+    releaseCloned();
+  });
+
   it('keeps an earlier active pinned job visible when a later job settles first', async () => {
     const dir = await createTestDirectory();
     try {
