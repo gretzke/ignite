@@ -652,7 +652,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             try {
               return await withMaterialized(
                 id, source.url, commit,
-                { ...(body.ref ? { ref: body.ref, refLabel, refKind } : { refLabel, refKind }), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}) },
+                { ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}) },
                 async (materialized) => {
                   ctx.log(`phase: install ${commit}\n`);
                   ctx.log('phase: add user membership\n');

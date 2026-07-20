@@ -320,6 +320,32 @@ describe('profile handlers', () => {
     );
   });
 
+  it('keeps existing ref metadata when a version is re-added by commit', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const commit = 'e'.repeat(40);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.jobs = {
+      start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => {
+        runner = value;
+        return { id: 'job-commit-only', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
+    };
+
+    await createProfileHandlers(deps).addRepoVersion(
+      { params: { id: 'p1' }, body: { url, commit } } as never,
+      makeReply() as never
+    );
+    await runner({ log: () => {}, signal: new AbortController().signal });
+
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith(
+      'p1',
+      url,
+      commit,
+      expect.not.objectContaining({ refLabel: expect.anything(), refKind: expect.anything() })
+    );
+  });
+
   it('keeps the pinned activity marker through the enclosing materialization lock', async () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
