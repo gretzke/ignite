@@ -289,6 +289,7 @@ export default function RepositoriesPage() {
                 url: currentWorkspace.originUrl,
                 repoPathOrUrl: path,
                 local: true,
+                existingVersions: currentWorkspace.versions,
                 ...initial,
               })
             }
@@ -341,6 +342,7 @@ export default function RepositoriesPage() {
                         url: r.originUrl,
                         repoPathOrUrl: path,
                         local: true,
+                        existingVersions: r.versions,
                         ...initial,
                       })
                     }
@@ -393,6 +395,7 @@ export default function RepositoriesPage() {
                         url: r.originUrl ?? path,
                         repoPathOrUrl: path,
                         local: false,
+                        existingVersions: r.versions,
                         ...initial,
                       })
                     }
@@ -431,6 +434,7 @@ export default function RepositoriesPage() {
                     label: orphan.url,
                     url: orphan.url,
                     local: false,
+                    existingVersions: orphan.versions,
                   })
                 }
                 onRemove={(url, version) =>

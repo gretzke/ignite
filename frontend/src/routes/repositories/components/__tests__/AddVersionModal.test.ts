@@ -6,6 +6,7 @@ import {
   versionSubmitPayload,
   versionPickerSections,
   versionSwitchTarget,
+  existingVersionHint,
   type VersionSource,
 } from '../AddVersionModal';
 
@@ -28,6 +29,41 @@ const inspected = {
 };
 
 describe('AddVersionModal picker behavior', () => {
+  it('warns for an existing release or commit-prefix selection without blocking submit', () => {
+    const withExisting: VersionSource = {
+      ...source,
+      existingVersions: [
+        { commit: 'b'.repeat(40), refLabel: 'v1.1.0' },
+      ],
+    };
+    expect(
+      existingVersionHint(
+        withExisting,
+        { tab: 'releases', value: 'v1.1.0' },
+        inspected,
+        'copy'
+      )
+    ).toBe("Already added to this repository's versions.");
+    expect(
+      existingVersionHint(
+        withExisting,
+        { tab: 'commit', value: 'bbbbbbb' },
+        inspected,
+        'switch'
+      )
+    ).toBe(
+      'This ref is already available as a pinned version. Switching changes your live checkout instead.'
+    );
+    expect(
+      existingVersionHint(
+        withExisting,
+        { tab: 'releases', value: 'v9.9.9' },
+        inspected,
+        'copy'
+      )
+    ).toBeNull();
+  });
+
   it('merges and deduplicates remote and workspace branches', () => {
     const sections = versionPickerSections(source, inspected, ['work', 'main']);
 

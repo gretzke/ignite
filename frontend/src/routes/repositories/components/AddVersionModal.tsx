@@ -18,6 +18,7 @@ export interface VersionSource {
   local: boolean;
   initialBranch?: string;
   initialCommit?: string;
+  existingVersions?: Array<{ commit: string; refLabel?: string }>;
 }
 
 type VersionTab = 'releases' | 'branches' | 'commit';
@@ -106,6 +107,33 @@ export function versionSubmitPayload(
   return (source.local && selection.tab !== 'releases') || !source.url
     ? { repoPathOrUrl: source.repoPathOrUrl!, ...target }
     : { url: source.url, ...target };
+}
+
+export function existingVersionHint(
+  source: VersionSource | null,
+  selection: VersionSelection,
+  inspect: InspectGitRemoteData | null,
+  mode: 'copy' | 'switch'
+): string | null {
+  const value = selection.value.trim();
+  if (!source || !value || !source.existingVersions?.length) return null;
+  const matches =
+    selection.tab === 'commit'
+      ? source.existingVersions.some((version) =>
+          version.commit.toLowerCase().startsWith(value.toLowerCase())
+        )
+      : source.existingVersions.some((version) => {
+          if (version.refLabel === value) return true;
+          if (selection.tab !== 'releases') return false;
+          const commit =
+            inspect?.releases.find((release) => release.tag === value)?.sha ??
+            inspect?.tagHeads?.[value];
+          return Boolean(commit && version.commit === commit);
+        });
+  if (!matches) return null;
+  return mode === 'switch'
+    ? 'This ref is already available as a pinned version. Switching changes your live checkout instead.'
+    : "Already added to this repository's versions.";
 }
 
 function switchErrorMessage(error: unknown): string {
@@ -233,6 +261,7 @@ export default function AddVersionModal({
     hasWorkspace,
     target: switchTarget,
   });
+  const duplicateHint = existingVersionHint(source, selection, inspect, mode);
 
   const selectTab = (tab: string) => {
     const next = tab as VersionTab;
@@ -428,6 +457,10 @@ export default function AddVersionModal({
                 </label>
               </div>
             </fieldset>
+          )}
+
+          {duplicateHint && (
+            <div className="text-xs opacity-70 mb-4">{duplicateHint}</div>
           )}
 
           <div className="flex items-center justify-end gap-2">
