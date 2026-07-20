@@ -486,6 +486,29 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('skips repos reserved for a direct mutation during profile sweeps', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a' }, { pathOrUrl: '/repo-b' }],
+        responses: { foundry: { detect: NOT_DETECTED } },
+      });
+      const release = lifecycle.beginRepoActivity('/repo-a');
+
+      lifecycle.ensureProfileSwept('p1');
+      await vi.waitFor(() => expect(jobs.started).toHaveLength(1));
+
+      expect(jobs.started[0].record.params).toMatchObject({
+        pathOrUrl: '/repo-b',
+        mode: 'sweep',
+      });
+      release();
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('resweepProfile re-runs a completed sweep (plugin catalog changed)', async () => {
     const dir = await createTestDirectory();
     try {

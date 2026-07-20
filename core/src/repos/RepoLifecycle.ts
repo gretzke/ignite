@@ -130,6 +130,7 @@ export class RepoLifecycle {
       try {
         const { local, cloned } = await this.deps.registry.list(profileId);
         for (const record of [...local, ...cloned]) {
+          if (this.activeJobFor(record.pathOrUrl)) continue;
           this.startLifecycle(record.pathOrUrl, profileId, 'sweep');
         }
         const session = this.deps.sessionPath();
@@ -159,6 +160,7 @@ export class RepoLifecycle {
     try {
       const { local, cloned } = await this.deps.registry.list(profileId);
       for (const record of [...local, ...cloned]) {
+        if (this.activeJobFor(record.pathOrUrl)) continue;
         this.startLifecycle(record.pathOrUrl, profileId, 'sweep');
       }
       const session = this.deps.sessionPath();
@@ -173,6 +175,8 @@ export class RepoLifecycle {
   }
 
   // Start (or return the already-running) lifecycle job for one repo.
+  // Callers must consult activeJobFor first: mutation reservations created by
+  // beginRepoActivity/beginPinnedActivity may only be bypassed by their owner.
   startLifecycle(
     pathOrUrl: string,
     profileId: string,
