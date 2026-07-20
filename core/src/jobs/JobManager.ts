@@ -263,7 +263,12 @@ export class JobManager {
       if (job.record.state === 'queued' || job.record.state === 'running') {
         job.cancelled = true;
         job.abortController.abort();
-        this.transitionTo(job, 'cancelled');
+        // In-memory transition only: a scheduled persist would race the
+        // factory-reset directory wipe and recreate the jobs directory
+        // (writeJsonFile mkdirs its parent). The settle hook still fires so
+        // handler-side state (pending version adds, activity refs) clears.
+        job.record.state = 'cancelled';
+        this.fireSettled(job);
       }
     }
     this.jobs.clear();
@@ -349,13 +354,18 @@ export class JobManager {
     job.record.state = state;
     this.appendEvent(job, 'state', state);
     this.schedulePersist(job);
-    if (isTerminal(state) && !job.settled) {
-      job.settled = true;
-      try {
-        job.onSettled?.(this.cloneRecord(job.record));
-      } catch (err) {
-        getLogger().warn(`Job ${job.record.id} onSettled callback failed: ${String(err)}`);
-      }
+    if (isTerminal(state)) this.fireSettled(job);
+  }
+
+  private fireSettled(job: InternalJob): void {
+    if (job.settled) return;
+    job.settled = true;
+    try {
+      job.onSettled?.(this.cloneRecord(job.record));
+    } catch (err) {
+      getLogger().warn(
+        `Job ${job.record.id} onSettled callback failed: ${String(err)}`
+      );
     }
   }
 
