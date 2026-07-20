@@ -53,7 +53,13 @@ export interface RepoJobManagerLike {
 export interface RepoHandlerDeps {
   repos: RepoServiceLike;
   jobs: RepoJobManagerLike;
-  lifecycle: Pick<RepoLifecycle, 'checkAndRecompile'>;
+  lifecycle: Pick<
+    RepoLifecycle,
+    | 'activeJobFor'
+    | 'beginRepoActivity'
+    | 'startLifecycle'
+    | 'checkAndRecompile'
+  >;
   getProfileId: () => Promise<string>;
 }
 
@@ -74,6 +80,15 @@ function sendRepoError<T>(
     fallbackMessage,
     statusCode
   );
+}
+
+function sendRepoBusy(reply: FastifyReply) {
+  return reply.status(409).send({
+    statusCode: 409,
+    error: 'Conflict',
+    code: ErrorCodes.REPO_BUSY,
+    message: 'Repository is busy',
+  });
 }
 
 export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
@@ -165,18 +180,31 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         Body: CheckoutBranchRequest;
       }>,
       reply: FastifyReply
-    ): Promise<z.ZodNull> => {
+    ): Promise<IApiResponse<JobStartedData>> => {
       const { pathOrUrl, branch } = request.body;
-      const result = await d.repos.checkoutBranch(pathOrUrl, branch);
-      if (!result.success) {
-        return sendRepoError(
-          reply,
-          result,
-          ErrorCodes.CHECKOUT_BRANCH_ERROR,
-          'Failed to checkout branch'
-        );
+      if (d.lifecycle.activeJobFor(pathOrUrl)) {
+        return sendRepoBusy(reply) as unknown as IApiResponse<JobStartedData>;
       }
-      return reply.status(204).send(null);
+      const release = d.lifecycle.beginRepoActivity(pathOrUrl);
+      try {
+        const result = await d.repos.checkoutBranch(pathOrUrl, branch);
+        if (!result.success) {
+          return sendRepoError(
+            reply,
+            result,
+            ErrorCodes.CHECKOUT_BRANCH_ERROR,
+            'Failed to checkout branch'
+          );
+        }
+        const job = d.lifecycle.startLifecycle(
+          pathOrUrl,
+          await d.getProfileId(),
+          'switch'
+        );
+        return reply.status(200).send({ data: { jobId: job.id } });
+      } finally {
+        release();
+      }
     },
 
     checkoutCommit: async (
@@ -184,18 +212,31 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         Body: CheckoutCommitRequest;
       }>,
       reply: FastifyReply
-    ): Promise<z.ZodNull> => {
+    ): Promise<IApiResponse<JobStartedData>> => {
       const { pathOrUrl, commit } = request.body;
-      const result = await d.repos.checkoutCommit(pathOrUrl, commit);
-      if (!result.success) {
-        return sendRepoError(
-          reply,
-          result,
-          ErrorCodes.CHECKOUT_COMMIT_ERROR,
-          'Failed to checkout commit'
-        );
+      if (d.lifecycle.activeJobFor(pathOrUrl)) {
+        return sendRepoBusy(reply) as unknown as IApiResponse<JobStartedData>;
       }
-      return reply.status(204).send(null);
+      const release = d.lifecycle.beginRepoActivity(pathOrUrl);
+      try {
+        const result = await d.repos.checkoutCommit(pathOrUrl, commit);
+        if (!result.success) {
+          return sendRepoError(
+            reply,
+            result,
+            ErrorCodes.CHECKOUT_COMMIT_ERROR,
+            'Failed to checkout commit'
+          );
+        }
+        const job = d.lifecycle.startLifecycle(
+          pathOrUrl,
+          await d.getProfileId(),
+          'switch'
+        );
+        return reply.status(200).send({ data: { jobId: job.id } });
+      } finally {
+        release();
+      }
     },
 
     pullChanges: async (

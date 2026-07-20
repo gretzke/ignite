@@ -26,6 +26,8 @@ import AddVersionModal, {
 } from '../routes/repositories/components/AddVersionModal';
 import { repositoriesApi } from '../store/features/repositories/repositoriesApi';
 import { setRepositoryInfo } from '../store/features/repositories/repositoriesSlice';
+import { jobStarted } from '../store/features/jobs/jobsSlice';
+import { wsSend } from '../store/middleware/websocket';
 import OriginApprovalDialog from './OriginApprovalDialog';
 
 export interface PickedArtifact {
@@ -400,7 +402,7 @@ export default function ArtifactPicker({
         source={versionSource}
         onSubmit={addVersion}
         onSwitchWorkspace={async (path, target: WorkspaceSwitchTarget) => {
-          await apiClient.request(
+          const response = await apiClient.request(
             target.kind === 'branch' ? 'checkoutBranch' : 'checkoutCommit',
             {
               body:
@@ -409,6 +411,16 @@ export default function ArtifactPicker({
                   : { pathOrUrl: path, commit: target.commit },
             }
           );
+          if ('data' in response) {
+            dispatch(
+              jobStarted({
+                jobId: response.data.jobId,
+                type: 'repo.lifecycle',
+                params: { pathOrUrl: path },
+              })
+            );
+            dispatch(wsSend({ type: 'subscribe', jobId: response.data.jobId }));
+          }
           dispatch(
             apiClient.dispatch.getRepoInfo({
               body: { pathOrUrl: path },

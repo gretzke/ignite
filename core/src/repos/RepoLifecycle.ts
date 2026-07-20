@@ -301,6 +301,19 @@ export class RepoLifecycle {
     };
   }
 
+  // Reserve arbitrary host repo activity for a caller-owned mutation. The
+  // release is deliberately idempotent so handler finally blocks stay safe
+  // across every git failure path.
+  beginRepoActivity(pathOrUrl: string): () => void {
+    this.addDirect(pathOrUrl);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.removeDirect(pathOrUrl);
+    };
+  }
+
   activeJobFor(pathOrUrl: string): string | undefined {
     const active = this.activeJobs.get(pathOrUrl);
     if (!active) return undefined;

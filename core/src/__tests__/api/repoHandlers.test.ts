@@ -7,6 +7,7 @@ import {
 import { ErrorCodes } from '../../types/errors.js';
 import type { RepoResult } from '../../repos/RepoService.js';
 import type { JobContext, JobRunner } from '../../jobs/JobManager.js';
+import type { RepoLifecycle } from '../../repos/RepoLifecycle.js';
 
 function makeReply() {
   const reply = {
@@ -77,6 +78,30 @@ function makeFakeRepos(overrides?: Partial<RepoServiceLike>): RepoServiceLike {
     withVersionMaterialized: vi.fn(async (_profileId, _url, _commit, _opts, fn) =>
       fn({ checkout: '/pinned', rematerialize: async () => ({ checkout: '/pinned' }) })
     ),
+    ...overrides,
+  };
+}
+
+function makeFakeLifecycle(
+  overrides?: Partial<
+    Pick<
+      RepoLifecycle,
+      'activeJobFor' | 'beginRepoActivity' | 'startLifecycle' | 'checkAndRecompile'
+    >
+  >
+) {
+  return {
+    activeJobFor: vi.fn(() => undefined),
+    beginRepoActivity: vi.fn(() => vi.fn()),
+    startLifecycle: vi.fn(() => ({
+      id: 'lifecycle-1',
+      type: 'repo.lifecycle',
+      params: {},
+      state: 'queued' as const,
+      createdAt: new Date().toISOString(),
+      events: [],
+    })),
+    checkAndRecompile: vi.fn(async () => ({ started: [] })),
     ...overrides,
   };
 }
@@ -215,9 +240,15 @@ describe('repo-manager API handlers', () => {
   });
 
   describe('checkoutBranch', () => {
-    it('returns 204 on success', async () => {
+    it('returns a switch lifecycle job id on success', async () => {
       const repos = makeFakeRepos();
-      const handlers = createRepoHandlers({ repos, jobs: makeFakeJobs() });
+      const lifecycle = makeFakeLifecycle();
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
       const reply = makeReply();
 
       await handlers.checkoutBranch(
@@ -225,9 +256,95 @@ describe('repo-manager API handlers', () => {
         reply as never
       );
 
-      expect(reply.statusCode).toBe(204);
-      expect(reply.body).toBeNull();
+      expect(reply.statusCode).toBe(200);
+      expect(reply.body).toEqual({ data: { jobId: 'lifecycle-1' } });
       expect(repos.checkoutBranch).toHaveBeenCalledWith('/repo', 'main');
+      expect(lifecycle.startLifecycle).toHaveBeenCalledWith('/repo', 'p1', 'switch');
+    });
+
+    it('rejects a concurrent checkout while the first checkout holds its reservation', async () => {
+      let resolveCheckout!: () => void;
+      const repos = makeFakeRepos({
+        checkoutBranch: vi.fn(
+          () => new Promise<RepoResult<null>>((resolve) => {
+            resolveCheckout = () => resolve(ok(null));
+          })
+        ),
+      });
+      const busy = new Set<string>();
+      const lifecycle = makeFakeLifecycle({
+        activeJobFor: vi.fn((path) => (busy.has(path) ? `direct:${path}` : undefined)),
+        beginRepoActivity: vi.fn((path) => {
+          busy.add(path);
+          return () => busy.delete(path);
+        }),
+      });
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
+      const firstReply = makeReply();
+      const first = handlers.checkoutBranch(
+        { body: { pathOrUrl: '/repo', branch: 'main' } } as never,
+        firstReply as never
+      );
+      await Promise.resolve();
+      const secondReply = makeReply();
+      await handlers.checkoutBranch(
+        { body: { pathOrUrl: '/repo', branch: 'other' } } as never,
+        secondReply as never
+      );
+
+      expect(secondReply.statusCode).toBe(409);
+      expect(secondReply.body).toMatchObject({ code: 'REPO_BUSY' });
+      expect(repos.checkoutBranch).toHaveBeenCalledTimes(1);
+
+      resolveCheckout();
+      await first;
+    });
+
+    it('rejects checkout while a lifecycle job is active', async () => {
+      const repos = makeFakeRepos();
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle: makeFakeLifecycle({ activeJobFor: vi.fn(() => 'lifecycle-active') }),
+      });
+      const reply = makeReply();
+
+      await handlers.checkoutBranch(
+        { body: { pathOrUrl: '/repo', branch: 'main' } } as never,
+        reply as never
+      );
+
+      expect(reply.statusCode).toBe(409);
+      expect(reply.body).toMatchObject({ code: 'REPO_BUSY' });
+      expect(repos.checkoutBranch).not.toHaveBeenCalled();
+    });
+
+    it('does not start a lifecycle job after a checkout failure or leave the repo busy', async () => {
+      const release = vi.fn();
+      const lifecycle = makeFakeLifecycle({ beginRepoActivity: vi.fn(() => release) });
+      const handlers = createRepoHandlers({
+        repos: makeFakeRepos({
+          checkoutBranch: vi.fn(async () => fail('DIRTY_REPO', 'uncommitted changes')),
+        }),
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
+      const reply = makeReply();
+
+      await handlers.checkoutBranch(
+        { body: { pathOrUrl: '/repo', branch: 'main' } } as never,
+        reply as never
+      );
+
+      expect(reply.statusCode).toBe(500);
+      expect(lifecycle.startLifecycle).not.toHaveBeenCalled();
+      expect(release).toHaveBeenCalledOnce();
     });
 
     it('maps DIRTY_REPO failure to 500 CHECKOUT_BRANCH_ERROR fallback code preserved from result', async () => {
@@ -250,9 +367,15 @@ describe('repo-manager API handlers', () => {
   });
 
   describe('checkoutCommit', () => {
-    it('returns 204 on success', async () => {
+    it('returns a switch lifecycle job id on success', async () => {
       const repos = makeFakeRepos();
-      const handlers = createRepoHandlers({ repos, jobs: makeFakeJobs() });
+      const lifecycle = makeFakeLifecycle();
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
       const reply = makeReply();
 
       await handlers.checkoutCommit(
@@ -260,8 +383,10 @@ describe('repo-manager API handlers', () => {
         reply as never
       );
 
-      expect(reply.statusCode).toBe(204);
+      expect(reply.statusCode).toBe(200);
+      expect(reply.body).toEqual({ data: { jobId: 'lifecycle-1' } });
       expect(repos.checkoutCommit).toHaveBeenCalledWith('/repo', 'abc123');
+      expect(lifecycle.startLifecycle).toHaveBeenCalledWith('/repo', 'p1', 'switch');
     });
 
     it('maps failure to 500 CHECKOUT_COMMIT_ERROR', async () => {
@@ -270,7 +395,12 @@ describe('repo-manager API handlers', () => {
           fail('CHECKOUT_COMMIT_ERROR', 'bad commit')
         ),
       });
-      const handlers = createRepoHandlers({ repos, jobs: makeFakeJobs() });
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle: makeFakeLifecycle(),
+        getProfileId: async () => 'p1',
+      });
       const reply = makeReply();
 
       await handlers.checkoutCommit(
@@ -518,11 +648,11 @@ describe('repo-manager API handlers', () => {
 
   describe('checkRepos', () => {
     it('delegates to lifecycle.checkAndRecompile for the current profile', async () => {
-      const lifecycle = {
+      const lifecycle = makeFakeLifecycle({
         checkAndRecompile: vi.fn(async () => ({
           started: [{ pathOrUrl: '/repo-a', jobId: 'job-3' }],
         })),
-      };
+      });
       const handlers = createRepoHandlers({
         repos: makeFakeRepos(),
         jobs: makeFakeJobs(),
@@ -539,9 +669,9 @@ describe('repo-manager API handlers', () => {
     });
 
     it('narrows the check to a single repo when pathOrUrl is provided', async () => {
-      const lifecycle = {
+      const lifecycle = makeFakeLifecycle({
         checkAndRecompile: vi.fn(async () => ({ started: [] })),
-      };
+      });
       const handlers = createRepoHandlers({
         repos: makeFakeRepos(),
         jobs: makeFakeJobs(),

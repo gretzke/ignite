@@ -109,7 +109,7 @@ export const repoManagerRoutes = {
     schema: {
       tags: ["repo-manager"],
       body: CheckoutBranchRequestSchema,
-      response: { 204: z.null() },
+      response: { 200: JobStartedResponseSchema },
     },
   },
   checkoutCommit: {
@@ -118,7 +118,7 @@ export const repoManagerRoutes = {
     schema: {
       tags: ["repo-manager"],
       body: CheckoutCommitRequestSchema,
-      response: { 204: z.null() },
+      response: { 200: JobStartedResponseSchema },
     },
   },
   pullChanges: {

@@ -24,6 +24,8 @@ import type {
 } from '@ignite/api';
 import { apiClient } from '../../store/api/client';
 import { formatApiError } from '../../store/middleware/apiGate';
+import { jobStarted } from '../../store/features/jobs/jobsSlice';
+import { wsSend } from '../../store/middleware/websocket';
 import AddVersionModal, {
   type VersionSource,
   type WorkspaceSwitchTarget,
@@ -230,7 +232,7 @@ export default function RepositoriesPage() {
     path: string,
     target: WorkspaceSwitchTarget
   ) => {
-    await apiClient.request(
+    const response = await apiClient.request(
       target.kind === 'branch' ? 'checkoutBranch' : 'checkoutCommit',
       {
         body:
@@ -239,6 +241,16 @@ export default function RepositoriesPage() {
             : { pathOrUrl: path, commit: target.commit },
       }
     );
+    if ('data' in response) {
+      dispatch(
+        jobStarted({
+          jobId: response.data.jobId,
+          type: 'repo.lifecycle',
+          params: { pathOrUrl: path },
+        })
+      );
+      dispatch(wsSend({ type: 'subscribe', jobId: response.data.jobId }));
+    }
     dispatch(
       apiClient.dispatch.getRepoInfo({
         body: { pathOrUrl: path },

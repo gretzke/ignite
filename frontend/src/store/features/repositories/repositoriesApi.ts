@@ -133,7 +133,15 @@ export const repositoriesApi = {
 
     const apiAction = apiClient.dispatch.checkoutBranch({
       body: { pathOrUrl, branch },
-      onSuccess: () => {
+      onSuccess: (data) => {
+        const lifecycleActions = [
+          jobStarted({
+            jobId: data.jobId,
+            type: 'repo.lifecycle',
+            params: { pathOrUrl },
+          }),
+          wsSend({ type: 'subscribe', jobId: data.jobId }),
+        ];
         // After successful branch checkout, refresh repo info
         const refreshInfoAction = apiClient.dispatch.getRepoInfo({
           body: { pathOrUrl },
@@ -154,7 +162,7 @@ export const repositoriesApi = {
           },
         });
 
-        return [refreshInfoAction];
+        return [...lifecycleActions, refreshInfoAction];
       },
       onError: (error) => {
         // Error handling will be done by the promise-based toast
@@ -194,7 +202,15 @@ export const repositoriesApi = {
 
     const apiAction = apiClient.dispatch.checkoutCommit({
       body: { pathOrUrl, commit },
-      onSuccess: () => {
+      onSuccess: (data) => {
+        const lifecycleActions = [
+          jobStarted({
+            jobId: data.jobId,
+            type: 'repo.lifecycle',
+            params: { pathOrUrl },
+          }),
+          wsSend({ type: 'subscribe', jobId: data.jobId }),
+        ];
         // After successful commit checkout, refresh repo info
         const refreshInfoAction = apiClient.dispatch.getRepoInfo({
           body: { pathOrUrl },
@@ -215,7 +231,7 @@ export const repositoriesApi = {
           },
         });
 
-        return [refreshInfoAction];
+        return [...lifecycleActions, refreshInfoAction];
       },
       onError: (error) => {
         // Error handling will be done by the promise-based toast
