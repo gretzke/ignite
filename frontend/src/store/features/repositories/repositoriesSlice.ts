@@ -74,8 +74,11 @@ const repositoriesSlice = createSlice({
         versions.map((version) => versionAddJobKey(version.url, version.commit))
       );
       for (const version of versions) {
-        if (!version.activeJobId) continue;
-        state.versionAddJobs[versionAddJobKey(version.url, version.commit)] = {
+        if (!version.activeJobId || version.activeJobId.startsWith('direct:')) continue;
+        const key = versionAddJobKey(version.url, version.commit);
+        const existing = state.versionAddJobs[key];
+        if (existing && !existing.jobId.startsWith('direct:') && existing.jobId !== version.activeJobId) continue;
+        state.versionAddJobs[key] = {
           jobId: version.activeJobId,
           status: 'active',
         };
@@ -281,6 +284,7 @@ const repositoriesSlice = createSlice({
       state,
       action: PayloadAction<{ url: string; commit: string; jobId: string }>
     ) {
+      if (action.payload.jobId.startsWith('direct:')) return;
       state.versionAddJobs[
         versionAddJobKey(action.payload.url, action.payload.commit)
       ] = { jobId: action.payload.jobId, status: 'active' };
@@ -296,7 +300,11 @@ const repositoriesSlice = createSlice({
     ) {
       const key = versionAddJobKey(action.payload.url, action.payload.commit);
       const current = state.versionAddJobs[key];
-      if (current && current.jobId !== action.payload.jobId) return;
+      if (
+        current &&
+        current.jobId !== action.payload.jobId &&
+        !current.jobId.startsWith('direct:')
+      ) return;
       if (action.payload.error) {
         state.versionAddJobs[key] = {
           jobId: action.payload.jobId,

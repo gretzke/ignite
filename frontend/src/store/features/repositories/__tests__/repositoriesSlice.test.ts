@@ -82,4 +82,53 @@ describe('repositoriesSlice', () => {
       status: 'active',
     });
   });
+
+  it('does not let a direct placeholder overwrite a real version add job id', () => {
+    const url = 'https://example.test/contracts.git';
+    const commit = 'a'.repeat(40);
+    let state = repositoriesReducer(
+      undefined,
+      startRepoVersionJob({ url, commit, jobId: 'job-real' })
+    );
+    state = repositoriesReducer(
+      state,
+      setRepositories({
+        session: null,
+        local: [],
+        cloned: [],
+        versionGroups: [{
+          url,
+          versions: [{ url, commit, activeJobId: `direct:${url}`, lastUsedAt: '2026-07-21T00:00:00.000Z' }],
+        }],
+        pinned: [],
+      })
+    );
+
+    expect(state.versionAddJobs[versionAddJobKey(url, commit)]).toEqual({
+      jobId: 'job-real',
+      status: 'active',
+    });
+  });
+
+  it('finishes a legacy direct placeholder when the terminal event arrives', () => {
+    const url = 'https://example.test/contracts.git';
+    const commit = 'a'.repeat(40);
+    const state = repositoriesReducer(
+      {
+        repositories: null,
+        repositoriesData: {},
+        failedRepositories: [],
+        versionAddJobs: {
+          [versionAddJobKey(url, commit)]: { jobId: `direct:${url}`, status: 'active' },
+        },
+      },
+      finishRepoVersionJob({ url, commit, jobId: 'job-real', error: 'failed' })
+    );
+
+    expect(state.versionAddJobs[versionAddJobKey(url, commit)]).toEqual({
+      jobId: 'job-real',
+      status: 'failed',
+      error: 'failed',
+    });
+  });
 });

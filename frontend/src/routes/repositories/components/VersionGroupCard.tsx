@@ -16,9 +16,9 @@ function VersionFrameworkStatus({
   job?: IVersionAddJob;
 }) {
   const active = job?.status === 'active' || Boolean(version.activeJobId);
-  if (job?.status === 'failed') {
+  if (job?.status === 'failed' || (version.lastError && !active)) {
     return (
-      <Tooltip label={job.error ?? 'Adding this version failed'} placement="top">
+      <Tooltip label={job?.error ?? version.lastError?.message ?? 'Adding this version failed'} placement="top">
         <span className="chip chip-err">Failed</span>
       </Tooltip>
     );
@@ -61,8 +61,12 @@ export function VersionRows({
 }) {
   return (
     <>
-      {versions.map((version) => (
-        <div
+      {versions.map((version) => {
+        const job = versionAddJobs[versionAddJobKey(version.url, version.commit)];
+        const active = job?.status === 'active' || Boolean(version.activeJobId);
+        const retryable = job?.status === 'failed' || Boolean(version.lastError && !active);
+        return (
+          <div
           key={version.commit}
           className={`list-row flex items-center gap-3 pl-10 ${onBrowse ? 'clickable cursor-pointer' : ''}`}
           onClick={() => onBrowse?.(version.url, version)}
@@ -79,11 +83,10 @@ export function VersionRows({
           <div className="flex items-center gap-1 flex-wrap justify-end">
             <VersionFrameworkStatus
               version={version}
-              job={versionAddJobs[versionAddJobKey(version.url, version.commit)]}
+              job={job}
             />
           </div>
-          {versionAddJobs[versionAddJobKey(version.url, version.commit)]?.status ===
-            'failed' && (
+          {retryable && (
             <Tooltip label="Retry adding this version" placement="top">
               <button
                 type="button"
@@ -107,8 +110,9 @@ export function VersionRows({
           >
             <Trash2 size={14} /> Remove
           </button>
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </>
   );
 }

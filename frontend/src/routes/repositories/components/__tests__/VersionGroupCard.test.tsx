@@ -58,6 +58,27 @@ describe('repository version groups', () => {
     expect(html).not.toContain('Compiling');
   });
 
+  it('renders a persisted backend failure and retry control after reload', () => {
+    const html = renderToStaticMarkup(
+      <VersionRows
+        url="https://example.test/contracts.git"
+        versions={[{
+          ...version,
+          lastError: {
+            code: 'CANCELLED',
+            message: 'Version add was cancelled',
+            at: '2026-07-21T00:00:00.000Z',
+          },
+        }]}
+        onRemove={() => undefined}
+        onRetry={() => undefined}
+      />
+    );
+
+    expect(html).toContain('Failed');
+    expect(html).toContain('Retry');
+  });
+
   it('renders orphan URL groups with an overflow action menu', () => {
     const html = renderToStaticMarkup(
       <OrphanVersionGroupCard
