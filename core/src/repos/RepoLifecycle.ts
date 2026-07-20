@@ -73,7 +73,7 @@ export class RepoLifecycle {
   private readonly sweptProfiles = new Set<string>();
   private readonly activeJobs = new Map<
     string,
-    { jobId?: string; directRefs: number }
+    { jobIds: Set<string>; directRefs: number }
   >();
   private readonly sessionRecords = new Map<string, RepoRecord>();
   private readonly lastRecompile = new Map<string, number>();
@@ -171,13 +171,12 @@ export class RepoLifecycle {
     profileId: string,
     mode: LifecycleMode
   ): JobRecord {
-    const existingId = this.activeJobs.get(pathOrUrl)?.jobId;
-    if (existingId) {
+    const existingId = this.activeJobFor(pathOrUrl);
+    if (existingId && !existingId.startsWith('direct:')) {
       const existing = this.deps.jobs.get(existingId);
-      if (existing && !isTerminal(existing.state)) {
+      if (existing) {
         return existing;
       }
-      this.clearJob(pathOrUrl);
     }
 
     const job = this.deps.jobs.start(
@@ -187,7 +186,7 @@ export class RepoLifecycle {
         try {
           return await this.runLifecycle(pathOrUrl, profileId, mode, ctx);
         } finally {
-          this.clearJob(pathOrUrl);
+          this.clearJob(pathOrUrl, job.id);
         }
       }
     );
@@ -205,11 +204,10 @@ export class RepoLifecycle {
     profileId: string
   ): JobRecord {
     const worktree = this.deps.versionStore.checkoutPath(url, commit);
-    const existingId = this.activeJobs.get(worktree)?.jobId;
-    if (existingId) {
+    const existingId = this.activeJobFor(worktree);
+    if (existingId && !existingId.startsWith('direct:')) {
       const existing = this.deps.jobs.get(existingId);
-      if (existing && !isTerminal(existing.state)) return existing;
-      this.clearJob(worktree);
+      if (existing) return existing;
     }
     const job = this.deps.jobs.start(
       LIFECYCLE_JOB_TYPE,
@@ -218,7 +216,7 @@ export class RepoLifecycle {
         try {
           return await this.runPinnedLifecycle(url, commit, profileId, ctx);
         } finally {
-          this.clearJob(worktree);
+          this.clearJob(worktree, job.id);
         }
       }
     );
@@ -290,40 +288,51 @@ export class RepoLifecycle {
   // caller-owned materialization lock. This prevents a waiter from treating
   // the checkout as idle in the gap between lifecycle completion and lock
   // release, while still allowing a delete once the add has fully completed.
-  beginPinnedActivity(url: string, commit: string): () => void {
+  beginPinnedActivity(url: string, commit: string, jobId?: string): () => void {
     const worktree = this.deps.versionStore.checkoutPath(url, commit);
     this.addDirect(worktree);
-    return () => this.removeDirect(worktree);
+    if (jobId) this.setJob(worktree, jobId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.removeDirect(worktree);
+      if (jobId) this.clearJob(worktree, jobId);
+    };
   }
 
   activeJobFor(pathOrUrl: string): string | undefined {
     const active = this.activeJobs.get(pathOrUrl);
     if (!active) return undefined;
-    if (active.jobId) {
-      const record = this.deps.jobs.get(active.jobId);
-      if (record && !isTerminal(record.state)) return active.jobId;
-      this.clearJob(pathOrUrl);
+    for (const jobId of active.jobIds) {
+      const record = this.deps.jobs.get(jobId);
+      if (record && !isTerminal(record.state)) return jobId;
+      active.jobIds.delete(jobId);
     }
-    return this.activeJobs.get(pathOrUrl)?.directRefs
+    if (active.jobIds.size === 0 && active.directRefs === 0) {
+      this.activeJobs.delete(pathOrUrl);
+      return undefined;
+    }
+    return active.directRefs
       ? `direct:${pathOrUrl}`
       : undefined;
   }
 
   private setJob(pathOrUrl: string, jobId: string): void {
-    const active = this.activeJobs.get(pathOrUrl) ?? { directRefs: 0 };
-    active.jobId = jobId;
+    const active = this.activeJobs.get(pathOrUrl) ?? { jobIds: new Set<string>(), directRefs: 0 };
+    active.jobIds.add(jobId);
     this.activeJobs.set(pathOrUrl, active);
   }
 
-  private clearJob(pathOrUrl: string): void {
+  private clearJob(pathOrUrl: string, jobId: string): void {
     const active = this.activeJobs.get(pathOrUrl);
     if (!active) return;
-    delete active.jobId;
-    if (active.directRefs === 0) this.activeJobs.delete(pathOrUrl);
+    active.jobIds.delete(jobId);
+    if (active.directRefs === 0 && active.jobIds.size === 0) this.activeJobs.delete(pathOrUrl);
   }
 
   private addDirect(pathOrUrl: string): void {
-    const active = this.activeJobs.get(pathOrUrl) ?? { directRefs: 0 };
+    const active = this.activeJobs.get(pathOrUrl) ?? { jobIds: new Set<string>(), directRefs: 0 };
     active.directRefs += 1;
     this.activeJobs.set(pathOrUrl, active);
   }
@@ -332,7 +341,7 @@ export class RepoLifecycle {
     const active = this.activeJobs.get(pathOrUrl);
     if (!active) return;
     active.directRefs = Math.max(0, active.directRefs - 1);
-    if (active.directRefs === 0 && !active.jobId)
+    if (active.directRefs === 0 && active.jobIds.size === 0)
       this.activeJobs.delete(pathOrUrl);
   }
 

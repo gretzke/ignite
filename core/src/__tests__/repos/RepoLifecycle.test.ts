@@ -350,6 +350,53 @@ describe('RepoLifecycle', () => {
       await cleanupTestDirectory(dir);
     }
   });
+  it('reports the real pinned add job id while activity is registered', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir });
+      jobs.get.mockImplementation((id: string) => id === 'job-real' ? {
+        id,
+        type: 'repo.version.add',
+        params: {},
+        state: 'queued',
+        createdAt: new Date().toISOString(),
+        events: [],
+      } : undefined);
+      const release = lifecycle.beginPinnedActivity(
+        'https://example.test/repo.git',
+        'a'.repeat(40),
+        'job-real'
+      );
+
+      expect(lifecycle.activeJobFor(dir)).toBe('job-real');
+      release();
+      expect(lifecycle.activeJobFor(dir)).toBeUndefined();
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+  it('keeps an earlier active pinned job visible when a later job settles first', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir });
+      jobs.get.mockImplementation((id: string) => ({
+        id,
+        type: 'repo.version.add',
+        params: {},
+        state: 'queued',
+        createdAt: new Date().toISOString(),
+        events: [],
+      }));
+      const one = lifecycle.beginPinnedActivity('https://example.test/repo.git', 'a'.repeat(40), 'job-one');
+      const two = lifecycle.beginPinnedActivity('https://example.test/repo.git', 'a'.repeat(40), 'job-two');
+
+      two();
+      expect(lifecycle.activeJobFor(dir)).toBe('job-one');
+      one();
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
   it('sweep: init -> detect -> watchPaths -> persist, no install/compile', async () => {
     const dir = await createTestDirectory();
     try {

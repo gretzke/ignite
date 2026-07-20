@@ -28,7 +28,7 @@ const profile = {
   lastUsed: '2024-01-01T00:00:00.000Z',
 };
 
-function makeDeps() {
+function makeDeps(): any {
   return {
     getProfileManager: async () => ({
       getCurrentProfile: () => 'p1',
@@ -84,7 +84,10 @@ function makeDeps() {
       resolveCachedVersionCommit: vi.fn(async () => undefined),
       ensureVersion: vi.fn(async () => ({ checkout: '/versions/version' })),
     },
-    jobs: { start: vi.fn((type: string, params: Record<string, unknown>) => ({ id: 'job-version-0', type, params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] })) },
+    jobs: {
+      start: vi.fn((type: string, params: Record<string, unknown>) => ({ id: 'job-version-0', type, params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] })),
+      get: vi.fn(() => undefined),
+    },
     inspectGitRemote: vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: 'a'.repeat(40) }, tagHeads: {}, releases: [] })),
     hasWorkspace: vi.fn(async () => true),
   };
@@ -387,11 +390,13 @@ describe('profile handlers', () => {
     const url = 'https://example.com/contracts.git';
     const commit = 'd'.repeat(40);
     let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    let onSettled!: (record: { state: 'succeeded' }) => void;
     let active = false;
-    deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => {
+    deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner, opts: { onSettled: typeof onSettled }) => {
       runner = value;
+      onSettled = opts.onSettled;
       return { id: 'job-activity', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
-    }) };
+    }), get: vi.fn(() => undefined) };
     deps.lifecycle.beginPinnedActivity = vi.fn(() => {
       active = true;
       return () => { active = false; };
@@ -404,8 +409,63 @@ describe('profile handlers', () => {
 
     await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit } } as never, makeReply() as never);
     await runner({ log: () => {}, signal: new AbortController().signal });
+    onSettled({ state: 'succeeded' });
 
     expect(active).toBe(false);
+  });
+
+  it('dedupes active adds per profile while allowing another profile to start its own job', async () => {
+    const deps = makeDeps();
+    const records = new Map<string, { id: string; state: 'queued' }>();
+    let next = 0;
+    deps.jobs = {
+      start: vi.fn((_type: string, _params: Record<string, unknown>) => {
+        const record = { id: `job-${next++}`, state: 'queued' as const };
+        records.set(record.id, record);
+        return { ...record, type: 'repo.version.add', params: {}, createdAt: new Date().toISOString(), events: [] };
+      }),
+      get: vi.fn((jobId: string) => records.get(jobId)),
+    };
+    const handlers = createProfileHandlers(deps);
+    const request = { body: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } };
+    const first = makeReply();
+    await handlers.addRepoVersion({ ...request, params: { id: 'p1' } } as never, first as never);
+    const duplicate = makeReply();
+    await handlers.addRepoVersion({ ...request, params: { id: 'p1' } } as never, duplicate as never);
+    const otherProfile = makeReply();
+    await handlers.addRepoVersion({ ...request, params: { id: 'p2' } } as never, otherProfile as never);
+
+    expect(first.body).toMatchObject({ data: { jobId: 'job-0' } });
+    expect(duplicate.body).toMatchObject({ data: { jobId: 'job-0' } });
+    expect(otherProfile.body).toMatchObject({ data: { jobId: 'job-1' } });
+    expect(deps.jobs.start).toHaveBeenCalledTimes(2);
+    expect(deps.lifecycle.beginPinnedActivity).toHaveBeenNthCalledWith(1, 'https://example.com/contracts.git', 'a'.repeat(40), 'job-0');
+  });
+
+  it('cleans pending state and activity when a queued version add settles cancelled', async () => {
+    const deps = makeDeps();
+    const pending = new Map();
+    const release = vi.fn();
+    let onSettled!: (record: { state: 'cancelled' }) => void;
+    deps.pendingVersionAdds = pending;
+    deps.lifecycle.beginPinnedActivity = vi.fn(() => release);
+    deps.jobs = {
+      start: vi.fn((_type: string, _params: Record<string, unknown>, _runner: unknown, opts: { onSettled: typeof onSettled }) => {
+        onSettled = opts.onSettled;
+        return { id: 'job-cancelled', type: 'repo.version.add', params: {}, state: 'queued', createdAt: new Date().toISOString(), events: [] };
+      }),
+      get: vi.fn(() => ({ state: 'queued' })),
+    };
+
+    await createProfileHandlers(deps).addRepoVersion(
+      { params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } } as never,
+      makeReply() as never
+    );
+    expect(pending.size).toBe(1);
+    onSettled({ state: 'cancelled' });
+
+    expect(pending.size).toBe(0);
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it('resolves a seven-character commit prefix to the full remote commit before materialization', async () => {

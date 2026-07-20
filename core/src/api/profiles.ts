@@ -24,6 +24,7 @@ import type {
   AddRepoVersionStartedData,
   RemoveRepoVersionRequest,
   InspectGitRemoteData,
+  JobRecord,
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
@@ -94,8 +95,27 @@ export interface ProfileHandlerDeps {
     | 'resolveCachedVersionCommit'
     | 'ensureVersion'
   > & { withVersionMaterialized?: RepoService['withVersionMaterialized'] };
-  jobs: Pick<JobManager, 'start'>;
+  jobs: Pick<JobManager, 'start'> & { get?: (id: string) => JobRecord | undefined };
   inspectGitRemote: (url: string) => Promise<InspectGitRemoteData>;
+  pendingVersionAdds: Map<string, PendingVersionAdd>;
+}
+
+export interface PendingVersionAdd {
+  jobId: string;
+  url: string;
+  fetchUrl?: string;
+  commit: string;
+  refLabel?: string;
+  refKind?: 'branch' | 'tag' | 'commit';
+  startedAt: string;
+}
+
+function pendingKey(profileId: string, url: string, commit: string): string {
+  return `${profileId}\u0000${canonicalGitUrl(url)}\u0000${commit}`;
+}
+
+function jobIsActive(record: JobRecord | undefined): boolean {
+  return Boolean(record && record.state !== 'succeeded' && record.state !== 'failed' && record.state !== 'cancelled');
 }
 
 function versionSummary(
@@ -150,6 +170,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     repos: deps?.repos ?? RepoService.getInstance(),
     jobs: deps?.jobs ?? JobManager.getInstance(),
     inspectGitRemote: deps?.inspectGitRemote ?? inspectGitRemote,
+    pendingVersionAdds: deps?.pendingVersionAdds ?? new Map(),
   };
 
   // Enrich a persisted record with computed state for the list response.
@@ -642,6 +663,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           }
           refLabel = commit;
         }
+        const key = pendingKey(id, source.url, commit);
+        const existing = d.pendingVersionAdds.get(key);
+        if (existing && jobIsActive(d.jobs.get?.(existing.jobId))) {
+          return reply.status(200).send({
+            data: { jobId: existing.jobId, url: source.url, commit },
+          });
+        }
+        let releaseActivity: () => void = () => {};
         const job = d.jobs.start(
           'repo.version.add',
           { url: source.url, commit, ref: body.ref },
@@ -652,24 +681,35 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
               await d.repos.ensureVersion(profileId, url, versionCommit, opts);
               return fn({ checkout: d.versionStore.checkoutPath(url, versionCommit), rematerialize: () => d.repos.ensureVersion(profileId, url, versionCommit, opts) }) as Promise<T>;
             });
-            const releaseActivity = d.lifecycle.beginPinnedActivity(source.url, commit);
-            try {
-              ctx.log('phase: materialize\n');
-              return await withMaterialized(
-                id, source.url, commit,
-                { ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}), onLog: (text) => ctx.log(text) },
-                async (materialized) => {
-                  ctx.log('phase: add user membership\n');
-                  await d.versionStore.addMembership(id, source.url, commit, 'user');
-                  ctx.log('phase: detect and compile\n');
-                  return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized, true);
-                }
-              );
-            } finally {
+            ctx.log('phase: materialize\n');
+            return withMaterialized(
+              id, source.url, commit,
+              { ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}), onLog: (text) => ctx.log(text) },
+              async (materialized) => {
+                ctx.log('phase: add user membership\n');
+                await d.versionStore.addMembership(id, source.url, commit, 'user');
+                ctx.log('phase: detect and compile\n');
+                return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized, true);
+              }
+            );
+          },
+          {
+            onSettled: () => {
+              d.pendingVersionAdds.delete(key);
               releaseActivity();
-            }
+            },
           }
         );
+        releaseActivity = d.lifecycle.beginPinnedActivity(source.url, commit, job.id);
+        d.pendingVersionAdds.set(key, {
+          jobId: job.id,
+          url: canonicalGitUrl(source.url),
+          ...(source.fetchUrl ? { fetchUrl: source.fetchUrl } : {}),
+          commit,
+          ...(refLabel ? { refLabel } : {}),
+          ...(refKind ? { refKind } : {}),
+          startedAt: new Date().toISOString(),
+        });
         return reply.status(200).send({
           data: { jobId: job.id, url: source.url, commit },
         });
