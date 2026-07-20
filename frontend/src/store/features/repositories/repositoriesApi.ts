@@ -510,6 +510,7 @@ export const repositoriesApi = {
           variant: 'info',
           duration: 4000,
         }),
+        ...repositoriesApi.fetchRepositories(profileId),
       ],
       onError: (error) => {
         const origins =

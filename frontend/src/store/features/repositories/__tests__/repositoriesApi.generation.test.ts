@@ -36,4 +36,32 @@ describe('repository fetch generation guard', () => {
     expect(staleResult).toEqual([]);
     expect(freshResult).toEqual([setRepositories(list('/new')), expect.any(Object)]);
   });
+
+  it('drops a pre-add list response when a version add starts its refetch', () => {
+    const profileId = 'version-add-profile';
+    const oldActions = repositoriesApi.fetchRepositories(profileId);
+    const oldRequest = oldActions[0];
+    const addRequest = repositoriesApi.addRepoVersion(
+      profileId,
+      { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) },
+      () => {}
+    );
+    expect(isApiDispatchAction(oldRequest)).toBe(true);
+    expect(isApiDispatchAction(addRequest)).toBe(true);
+    if (!isApiDispatchAction(oldRequest) || !isApiDispatchAction(addRequest)) return;
+
+    const addActions = addRequest.payload.onSuccess?.({
+      jobId: 'version-job',
+      url: 'https://example.com/contracts.git',
+      commit: 'a'.repeat(40),
+    });
+    expect(addActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          payload: expect.objectContaining({ endpoint: 'listRepos' }),
+        }),
+      ])
+    );
+    expect(oldRequest.payload.onSuccess?.(list('/stale'))).toEqual([]);
+  });
 });
