@@ -511,9 +511,15 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
               if (!originUrl) return;
               originBackfillCache.set(cacheKey, originUrl);
               if (sessionRecord?.pathOrUrl === record.pathOrUrl) return;
-              void d.repoRegistry.updateRepoState(id, record.pathOrUrl, {
-                originUrl,
-              });
+              void d.repoRegistry
+                .updateRepoState(id, record.pathOrUrl, { originUrl })
+                .catch((error) => {
+                  getLogger().warn(
+                    `Failed to persist origin backfill for '${record.pathOrUrl}': ${
+                      error instanceof Error ? error.message : String(error)
+                    }`
+                  );
+                });
             });
             const originUrl = await Promise.race([
               source,
