@@ -127,6 +127,57 @@ describe('JobManager', () => {
     expect(finalRecord?.finishedAt).toBeDefined();
   });
 
+  it('calls onSettled once for successful and failed jobs', async () => {
+    const settled: JobRecord[] = [];
+    const success = manager.start('test.success', {}, async () => 'ok', {
+      onSettled: (record) => settled.push(record),
+    });
+    const failure = manager.start('test.failure', {}, async () => {
+      throw new Error('boom');
+    }, {
+      onSettled: (record) => settled.push(record),
+    });
+
+    await waitForState(success.id, ['succeeded']);
+    await waitForState(failure.id, ['failed']);
+
+    expect(settled.map((record) => [record.id, record.state])).toEqual([
+      [success.id, 'succeeded'],
+      [failure.id, 'failed'],
+    ]);
+  });
+
+  it('calls onSettled once for a queued cancellation, even if its runner later rejects', async () => {
+    const settled = vi.fn();
+    const runner = vi.fn(async () => {
+      throw new Error('should not run');
+    });
+    const record = manager.start('test.queued-cancel', {}, runner, { onSettled: settled });
+
+    expect(manager.cancel(record.id)).toBe(true);
+    await waitForState(record.id, ['cancelled']);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(runner).not.toHaveBeenCalled();
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ id: record.id, state: 'cancelled' }));
+  });
+
+  it('calls onSettled for every active job before cancelAllAndClear clears them', async () => {
+    const settled = vi.fn();
+    manager.start('test.reset-one', {}, async () => undefined, { onSettled: settled });
+    manager.start('test.reset-two', {}, async () => undefined, { onSettled: settled });
+
+    manager.cancelAllAndClear();
+
+    expect(settled).toHaveBeenCalledTimes(2);
+    expect(settled.mock.calls.map(([record]) => record.state)).toEqual(['cancelled', 'cancelled']);
+    expect(manager.list()).toEqual([]);
+    // Existing fire-and-forget persistence may still be flushing while the
+    // reset has already forgotten the jobs.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
   it('falls back to OPERATION_EXECUTION_FAILED for plain thrown errors', async () => {
     const record = manager.start('test.fail-plain', {}, async () => {
       throw new Error('plain failure');

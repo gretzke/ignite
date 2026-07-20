@@ -23,6 +23,9 @@ export interface JobContext {
 }
 
 export type JobRunner = (ctx: JobContext) => Promise<unknown>;
+export interface JobStartOptions {
+  onSettled?: (record: JobRecord) => void;
+}
 
 // Oldest events are dropped beyond this cap; seq keeps counting monotonically.
 const MAX_EVENTS = 1000;
@@ -43,6 +46,8 @@ interface InternalJob {
   // Serializes persistence writes for this job so concurrent schedulePersist
   // calls can't interleave and corrupt the on-disk record.
   persistChain: Promise<void>;
+  onSettled?: (record: JobRecord) => void;
+  settled: boolean;
 }
 
 function isTerminal(state: JobState): boolean {
@@ -182,6 +187,7 @@ export class JobManager {
         logBuffer: '',
         nextSeq: (record.events.at(-1)?.seq ?? 0) + 1,
         persistChain: Promise.resolve(),
+        settled: isTerminal(record.state),
       });
     }
   }
@@ -191,7 +197,8 @@ export class JobManager {
   start(
     type: string,
     params: Record<string, unknown>,
-    runner: JobRunner
+    runner: JobRunner,
+    opts?: JobStartOptions
   ): JobRecord {
     const id = crypto.randomUUID();
     const record: JobRecord = {
@@ -212,6 +219,8 @@ export class JobManager {
       logBuffer: '',
       nextSeq: 1,
       persistChain: Promise.resolve(),
+      onSettled: opts?.onSettled,
+      settled: false,
     };
     this.jobs.set(id, job);
 
@@ -254,6 +263,7 @@ export class JobManager {
       if (job.record.state === 'queued' || job.record.state === 'running') {
         job.cancelled = true;
         job.abortController.abort();
+        this.transitionTo(job, 'cancelled');
       }
     }
     this.jobs.clear();
@@ -339,6 +349,14 @@ export class JobManager {
     job.record.state = state;
     this.appendEvent(job, 'state', state);
     this.schedulePersist(job);
+    if (isTerminal(state) && !job.settled) {
+      job.settled = true;
+      try {
+        job.onSettled?.(this.cloneRecord(job.record));
+      } catch (err) {
+        getLogger().warn(`Job ${job.record.id} onSettled callback failed: ${String(err)}`);
+      }
+    }
   }
 
   private handleLog(job: InternalJob, chunk: string): void {
