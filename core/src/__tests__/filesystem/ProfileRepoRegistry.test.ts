@@ -126,28 +126,33 @@ describe('ProfileRepoRegistry', () => {
     expect(local[0].originUrl).toBe('file:///abs/path/repo');
   });
 
-  it('serializes same-profile state writes so concurrent patches do not lose fields', async () => {
-    const registry = new ProfileRepoRegistry(deps);
-    await registry.save('p1', '/abs/path/repo');
+  it('serializes same-profile state writes across registry instances', async () => {
+    const firstRegistry = new ProfileRepoRegistry(deps);
+    const secondRegistry = new ProfileRepoRegistry(deps);
+    await firstRegistry.save('p1', '/abs/path/repo');
     let releaseFirst!: () => void;
     const originalRead = deps.fileSystem.readJsonFile;
     let reads = 0;
     deps.fileSystem.readJsonFile = async <T>(p: string) => {
       reads += 1;
-      if (reads === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
-      return originalRead<T>(p);
+      const snapshot = await originalRead<T>(p);
+      if (reads === 1)
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      return snapshot;
     };
-    const first = registry.updateRepoState('p1', '/abs/path/repo', {
+    const first = firstRegistry.updateRepoState('p1', '/abs/path/repo', {
       frameworks: [{ id: 'foundry', name: 'Foundry' }],
     });
     await vi.waitFor(() => expect(releaseFirst).toBeTypeOf('function'));
-    const second = registry.updateRepoState('p1', '/abs/path/repo', {
+    const second = secondRegistry.updateRepoState('p1', '/abs/path/repo', {
       originUrl: 'file:///abs/path/repo',
     });
     releaseFirst();
     await Promise.all([first, second]);
 
-    const { local } = await registry.list('p1');
+    const { local } = await firstRegistry.list('p1');
     expect(local[0]).toMatchObject({
       frameworks: [{ id: 'foundry', name: 'Foundry' }],
       originUrl: 'file:///abs/path/repo',

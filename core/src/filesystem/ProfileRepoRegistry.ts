@@ -20,8 +20,10 @@ export interface ProfileRepoRegistryDeps {
 }
 
 export class ProfileRepoRegistry {
+  // Registry instances are constructed by separate API and lifecycle paths.
+  // This must be process-wide so their read-modify-write operations serialize.
+  private static readonly profileMutex = new KeyedMutex();
   private deps: ProfileRepoRegistryDeps;
-  private readonly profileMutex = new KeyedMutex();
 
   constructor(deps?: Partial<ProfileRepoRegistryDeps>) {
     this.deps = {
@@ -71,7 +73,7 @@ export class ProfileRepoRegistry {
   }
 
   async save(profileId: string, pathOrUrl: string): Promise<void> {
-    await this.profileMutex.run(profileId, async () => {
+    await ProfileRepoRegistry.profileMutex.run(profileId, async () => {
       const kind = deriveRepoKind(pathOrUrl);
       if (kind === RepoKind.LOCAL) {
         if (pathOrUrl.startsWith('./') || pathOrUrl.startsWith('..')) {
@@ -120,7 +122,7 @@ export class ProfileRepoRegistry {
     pathOrUrl: string,
     patch: Partial<Pick<RepoRecord, 'frameworks' | 'detectedAt' | 'originUrl'>>
   ): Promise<void> {
-    await this.profileMutex.run(profileId, async () => {
+    await ProfileRepoRegistry.profileMutex.run(profileId, async () => {
       const kind = deriveRepoKind(pathOrUrl);
       const p = this.registryPath(profileId, kind);
       if (!(await this.deps.fileSystem.fileExists(p))) return;
@@ -138,7 +140,7 @@ export class ProfileRepoRegistry {
   }
 
   async remove(profileId: string, pathOrUrl: string): Promise<void> {
-    await this.profileMutex.run(profileId, async () => {
+    await ProfileRepoRegistry.profileMutex.run(profileId, async () => {
       const kind = deriveRepoKind(pathOrUrl);
       const p = this.registryPath(profileId, kind);
       if (!(await this.deps.fileSystem.fileExists(p))) {
