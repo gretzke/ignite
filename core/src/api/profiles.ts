@@ -413,6 +413,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           ])
         );
         const versionsByUrl = new Map<string, RepoVersionSummary[]>();
+        const projected = new Set<string>();
         for (const [url, entries] of Object.entries(memberships)) {
           const summaries: RepoVersionSummary[] = [];
           const seen = new Set<string>();
@@ -429,8 +430,27 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
                 )
               )
             );
+            projected.add(`${canonicalGitUrl(record.url)}\u0000${record.commit}`);
           }
           if (summaries.length > 0) versionsByUrl.set(url, summaries);
+        }
+        for (const [key, pending] of d.pendingVersionAdds) {
+          if (!key.startsWith(`${id}\u0000`)) continue;
+          if (!jobIsActive(d.jobs.get?.(pending.jobId))) continue;
+          const canonicalUrl = canonicalGitUrl(pending.url);
+          const versionKey = `${canonicalUrl}\u0000${pending.commit}`;
+          if (projected.has(versionKey)) continue;
+          const summaries = versionsByUrl.get(canonicalUrl) ?? [];
+          summaries.push({
+            url: canonicalUrl,
+            commit: pending.commit,
+            ...(pending.refLabel ? { refLabel: pending.refLabel } : {}),
+            ...(pending.refKind ? { refKind: pending.refKind } : {}),
+            activeJobId: pending.jobId,
+            lastUsedAt: pending.startedAt,
+          });
+          versionsByUrl.set(canonicalUrl, summaries);
+          projected.add(versionKey);
         }
 
         // Cache one origin lookup per registered record for this response.

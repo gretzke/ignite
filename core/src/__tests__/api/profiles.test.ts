@@ -468,6 +468,24 @@ describe('profile handlers', () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
+  it('projects an active pending version add only into its requesting profile', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const commit = 'a'.repeat(40);
+    deps.pendingVersionAdds = new Map([
+      [`p1\u0000${url}\u0000${commit}`, { jobId: 'job-pending', url, commit, refLabel: 'main', refKind: 'branch', startedAt: '2026-07-21T00:00:00.000Z' }],
+      [`p2\u0000${url}\u0000${'b'.repeat(40)}`, { jobId: 'job-other-profile', url, commit: 'b'.repeat(40), startedAt: '2026-07-21T00:00:00.000Z' }],
+    ]);
+    deps.jobs.get = vi.fn((jobId: string) => ({ id: jobId, state: 'queued' }));
+
+    const reply = makeReply();
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
+
+    expect((reply.body as { data: { versionGroups: Array<{ url: string; versions: Array<Record<string, unknown>> }> } }).data.versionGroups).toEqual([
+      { url, versions: [expect.objectContaining({ commit, refLabel: 'main', activeJobId: 'job-pending' })] },
+    ]);
+  });
+
   it('resolves a seven-character commit prefix to the full remote commit before materialization', async () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
