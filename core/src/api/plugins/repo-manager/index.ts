@@ -242,33 +242,61 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
     pullChanges: async (
       request: FastifyRequest<{ Body: PathOptions }>,
       reply: FastifyReply
-    ): Promise<z.ZodNull> => {
-      const result = await d.repos.pullChanges(request.body.pathOrUrl);
-      if (!result.success) {
-        return sendRepoError(
-          reply,
-          result,
-          ErrorCodes.PULL_ERROR,
-          'Failed to pull changes'
-        );
+    ): Promise<IApiResponse<{ jobId?: string }>> => {
+      const { pathOrUrl } = request.body;
+      if (d.lifecycle.activeJobFor(pathOrUrl)) {
+        return sendRepoBusy(reply) as unknown as IApiResponse<{ jobId?: string }>;
       }
-      return reply.status(204).send(null);
+      const release = d.lifecycle.beginRepoActivity(pathOrUrl);
+      try {
+        const result = await d.repos.pullChanges(pathOrUrl);
+        if (!result.success) {
+          return sendRepoError(
+            reply,
+            result,
+            ErrorCodes.PULL_ERROR,
+            'Failed to pull changes'
+          );
+        }
+        const job = d.lifecycle.startLifecycle(
+          pathOrUrl,
+          await d.getProfileId(),
+          'recompile'
+        );
+        return reply.status(200).send({ data: { jobId: job.id } });
+      } finally {
+        release();
+      }
     },
 
     resetRepo: async (
       request: FastifyRequest<{ Body: PathOptions }>,
       reply: FastifyReply
-    ): Promise<z.ZodNull> => {
-      const result = await d.repos.reset(request.body.pathOrUrl);
-      if (!result.success) {
-        return sendRepoError(
-          reply,
-          result,
-          ErrorCodes.RESET_ERROR,
-          'Failed to reset repository'
-        );
+    ): Promise<IApiResponse<{ jobId?: string }>> => {
+      const { pathOrUrl } = request.body;
+      if (d.lifecycle.activeJobFor(pathOrUrl)) {
+        return sendRepoBusy(reply) as unknown as IApiResponse<{ jobId?: string }>;
       }
-      return reply.status(204).send(null);
+      const release = d.lifecycle.beginRepoActivity(pathOrUrl);
+      try {
+        const result = await d.repos.reset(pathOrUrl);
+        if (!result.success) {
+          return sendRepoError(
+            reply,
+            result,
+            ErrorCodes.RESET_ERROR,
+            'Failed to reset repository'
+          );
+        }
+        const job = d.lifecycle.startLifecycle(
+          pathOrUrl,
+          await d.getProfileId(),
+          'recompile'
+        );
+        return reply.status(200).send({ data: { jobId: job.id } });
+      } finally {
+        release();
+      }
     },
 
     getRepoInfo: async (

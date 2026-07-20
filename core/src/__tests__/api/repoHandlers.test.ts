@@ -414,9 +414,15 @@ describe('repo-manager API handlers', () => {
   });
 
   describe('pullChanges', () => {
-    it('returns 204 on success', async () => {
+    it('starts a recompile lifecycle and returns its job id on success', async () => {
       const repos = makeFakeRepos();
-      const handlers = createRepoHandlers({ repos, jobs: makeFakeJobs() });
+      const lifecycle = makeFakeLifecycle();
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
       const reply = makeReply();
 
       await handlers.pullChanges(
@@ -424,15 +430,24 @@ describe('repo-manager API handlers', () => {
         reply as never
       );
 
-      expect(reply.statusCode).toBe(204);
+      expect(reply.statusCode).toBe(200);
+      expect(reply.body).toEqual({ data: { jobId: 'lifecycle-1' } });
       expect(repos.pullChanges).toHaveBeenCalledWith('/repo');
+      expect(lifecycle.startLifecycle).toHaveBeenCalledWith('/repo', 'p1', 'recompile');
     });
 
     it('maps failure to 500 PULL_ERROR', async () => {
       const repos = makeFakeRepos({
         pullChanges: vi.fn(async () => fail('PULL_ERROR', 'diverged')),
       });
-      const handlers = createRepoHandlers({ repos, jobs: makeFakeJobs() });
+      const release = vi.fn();
+      const lifecycle = makeFakeLifecycle({ beginRepoActivity: vi.fn(() => release) });
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
       const reply = makeReply();
 
       await handlers.pullChanges(
@@ -442,13 +457,82 @@ describe('repo-manager API handlers', () => {
 
       expect(reply.statusCode).toBe(500);
       expect(reply.body).toMatchObject({ code: 'PULL_ERROR' });
+      expect(lifecycle.startLifecycle).not.toHaveBeenCalled();
+      expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('rejects pull during an active lifecycle without mutating the repository', async () => {
+      const repos = makeFakeRepos();
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle: makeFakeLifecycle({ activeJobFor: vi.fn(() => 'lifecycle-active') }),
+      });
+      const reply = makeReply();
+
+      await handlers.pullChanges(
+        { body: { pathOrUrl: '/repo' } } as never,
+        reply as never
+      );
+
+      expect(reply.statusCode).toBe(409);
+      expect(reply.body).toMatchObject({ code: 'REPO_BUSY' });
+      expect(repos.pullChanges).not.toHaveBeenCalled();
+    });
+
+    it('rejects checkout while a pull holds its reservation', async () => {
+      let resolvePull!: () => void;
+      const repos = makeFakeRepos({
+        pullChanges: vi.fn(
+          () => new Promise<RepoResult<null>>((resolve) => {
+            resolvePull = () => resolve(ok(null));
+          })
+        ),
+      });
+      const busy = new Set<string>();
+      const lifecycle = makeFakeLifecycle({
+        activeJobFor: vi.fn((path) => (busy.has(path) ? `direct:${path}` : undefined)),
+        beginRepoActivity: vi.fn((path) => {
+          busy.add(path);
+          return () => busy.delete(path);
+        }),
+      });
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
+      const pullReply = makeReply();
+      const pull = handlers.pullChanges(
+        { body: { pathOrUrl: '/repo' } } as never,
+        pullReply as never
+      );
+      await Promise.resolve();
+      const checkoutReply = makeReply();
+      await handlers.checkoutBranch(
+        { body: { pathOrUrl: '/repo', branch: 'main' } } as never,
+        checkoutReply as never
+      );
+
+      expect(checkoutReply.statusCode).toBe(409);
+      expect(repos.checkoutBranch).not.toHaveBeenCalled();
+
+      resolvePull();
+      await pull;
     });
   });
 
   describe('resetRepo', () => {
-    it('returns 204 on success', async () => {
+    it('starts a recompile lifecycle and returns its job id on success', async () => {
       const repos = makeFakeRepos();
-      const handlers = createRepoHandlers({ repos, jobs: makeFakeJobs() });
+      const lifecycle = makeFakeLifecycle();
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
       const reply = makeReply();
 
       await handlers.resetRepo(
@@ -456,15 +540,22 @@ describe('repo-manager API handlers', () => {
         reply as never
       );
 
-      expect(reply.statusCode).toBe(204);
+      expect(reply.statusCode).toBe(200);
+      expect(reply.body).toEqual({ data: { jobId: 'lifecycle-1' } });
       expect(repos.reset).toHaveBeenCalledWith('/repo');
+      expect(lifecycle.startLifecycle).toHaveBeenCalledWith('/repo', 'p1', 'recompile');
     });
 
     it('maps failure to 500 RESET_ERROR', async () => {
       const repos = makeFakeRepos({
         reset: vi.fn(async () => fail('RESET_ERROR', 'failed to reset')),
       });
-      const handlers = createRepoHandlers({ repos, jobs: makeFakeJobs() });
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle: makeFakeLifecycle(),
+        getProfileId: async () => 'p1',
+      });
       const reply = makeReply();
 
       await handlers.resetRepo(
@@ -474,6 +565,25 @@ describe('repo-manager API handlers', () => {
 
       expect(reply.statusCode).toBe(500);
       expect(reply.body).toMatchObject({ code: 'RESET_ERROR' });
+    });
+
+    it('rejects reset during an active lifecycle without mutating the repository', async () => {
+      const repos = makeFakeRepos();
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle: makeFakeLifecycle({ activeJobFor: vi.fn(() => 'lifecycle-active') }),
+      });
+      const reply = makeReply();
+
+      await handlers.resetRepo(
+        { body: { pathOrUrl: '/repo' } } as never,
+        reply as never
+      );
+
+      expect(reply.statusCode).toBe(409);
+      expect(reply.body).toMatchObject({ code: 'REPO_BUSY' });
+      expect(repos.reset).not.toHaveBeenCalled();
     });
   });
 

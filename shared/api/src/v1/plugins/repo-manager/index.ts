@@ -83,6 +83,10 @@ const RepoCheckResponseSchema = createApiResponseSchema<RepoCheckResult>(
   }),
 );
 
+const RepoMutationResponseSchema = createApiResponseSchema<{ jobId?: string }>(
+  "RepoMutationResponseSchema",
+)(z.object({ jobId: z.string().optional() }));
+
 // Route registry
 export const repoManagerRoutes = {
   init: {
@@ -127,7 +131,7 @@ export const repoManagerRoutes = {
     schema: {
       tags: ["repo-manager"],
       body: PathRequestSchema,
-      response: { 204: z.null() },
+      response: { 200: RepoMutationResponseSchema },
     },
   },
   resetRepo: {
@@ -136,7 +140,7 @@ export const repoManagerRoutes = {
     schema: {
       tags: ["repo-manager"],
       body: PathRequestSchema,
-      response: { 204: z.null() },
+      response: { 200: RepoMutationResponseSchema },
     },
   },
   getRepoInfo: {

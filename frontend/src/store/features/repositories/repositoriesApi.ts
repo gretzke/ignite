@@ -270,7 +270,17 @@ export const repositoriesApi = {
 
     const apiAction = apiClient.dispatch.pullChanges({
       body: { pathOrUrl },
-      onSuccess: () => {
+      onSuccess: (data) => {
+        const lifecycleActions = data.jobId
+          ? [
+              jobStarted({
+                jobId: data.jobId,
+                type: 'repo.lifecycle',
+                params: { pathOrUrl },
+              }),
+              wsSend({ type: 'subscribe' as const, jobId: data.jobId }),
+            ]
+          : [];
         // After successful pull, refresh repo info
         const refreshInfoAction = apiClient.dispatch.getRepoInfo({
           body: { pathOrUrl },
@@ -291,7 +301,7 @@ export const repositoriesApi = {
           },
         });
 
-        return [refreshInfoAction];
+        return [...lifecycleActions, refreshInfoAction];
       },
       onError: (error) => {
         // Error handling will be done by the promise-based toast
@@ -331,7 +341,17 @@ export const repositoriesApi = {
 
     const apiAction = apiClient.dispatch.resetRepo({
       body: { pathOrUrl },
-      onSuccess: () => {
+      onSuccess: (data) => {
+        const lifecycleActions = data.jobId
+          ? [
+              jobStarted({
+                jobId: data.jobId,
+                type: 'repo.lifecycle',
+                params: { pathOrUrl },
+              }),
+              wsSend({ type: 'subscribe' as const, jobId: data.jobId }),
+            ]
+          : [];
         // After the reset, refresh repo info so the dirty flag clears
         const refreshInfoAction = apiClient.dispatch.getRepoInfo({
           body: { pathOrUrl },
@@ -352,7 +372,7 @@ export const repositoriesApi = {
           },
         });
 
-        return [refreshInfoAction];
+        return [...lifecycleActions, refreshInfoAction];
       },
       onError: (error) => {
         // Error handling will be done by the promise-based toast
