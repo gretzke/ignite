@@ -257,6 +257,7 @@ describe('profile handlers', () => {
     deps.repos.getVersionSource = vi.fn(async () => ({
       url: 'https://user:pass@example.test/repo.git',
       workspacePath: '/repo-a',
+      localFallbackPath: '/repo-a',
     }));
     const reply = makeReply();
 
