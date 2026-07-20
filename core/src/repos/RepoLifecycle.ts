@@ -278,7 +278,7 @@ export class RepoLifecycle {
             profileId,
             url,
             commit,
-            {},
+            { onLog: (text) => ctx.log(text) },
             run
           );
     } finally {

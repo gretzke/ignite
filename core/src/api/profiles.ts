@@ -654,11 +654,11 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             });
             const releaseActivity = d.lifecycle.beginPinnedActivity(source.url, commit);
             try {
+              ctx.log('phase: materialize\n');
               return await withMaterialized(
                 id, source.url, commit,
-                { ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}) },
+                { ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}), onLog: (text) => ctx.log(text) },
                 async (materialized) => {
-                  ctx.log(`phase: install ${commit}\n`);
                   ctx.log('phase: add user membership\n');
                   await d.versionStore.addMembership(id, source.url, commit, 'user');
                   ctx.log('phase: detect and compile\n');

@@ -110,6 +110,27 @@ describe('RepoService version materialization', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it('streams fresh materialization progress when requested', async () => {
+    const remote = await sourceRepo();
+    const home = await temp('ignite-version-home-');
+    const { repos } = await approved(home, remote.remote);
+    const logs: string[] = [];
+
+    await repos.ensureVersion(profileId, remote.remote, remote.first, {
+      onLog: (text) => logs.push(text),
+    });
+    await expect(
+      repos.ensureVersion(profileId, remote.remote, remote.first)
+    ).resolves.toBeDefined();
+
+    expect(logs).toEqual([
+      `materialize: fetch ${remote.remote}\n`,
+      'materialize: clone\n',
+      'materialize: submodules\n',
+      'materialize: verify\n',
+    ]);
+  });
+
   it('rejects unsafe refs and labels before any git invocation', async () => {
     const remote = await sourceRepo();
     const home = await temp('ignite-version-home-');

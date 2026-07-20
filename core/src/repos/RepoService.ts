@@ -67,6 +67,7 @@ export type RefKind = NonNullable<VersionRecord['refKind']>;
 export interface EnsureVersionOptions {
   ref?: string;
   fetchUrl?: string;
+  onLog?: (text: string) => void;
   localFallbackPath?: string;
   refLabel?: string;
   refKind?: RefKind;
@@ -458,6 +459,7 @@ export class RepoService {
       }
 
       await this.ensureBareVersionRepo(groupDir, url, budget);
+      opts.onLog?.(`materialize: fetch ${url}\n`);
       const localFallback = await this.fetchVersionCommit(
         url,
         commit,
@@ -466,6 +468,7 @@ export class RepoService {
       );
       temp = path.join(groupDir, `tmp-${crypto.randomUUID()}`);
       await fs.mkdir(path.join(groupDir, 'versions'), { recursive: true });
+      opts.onLog?.('materialize: clone\n');
       const clone = await this.runPinnedGit(
         groupDir,
         ['clone', '--no-hardlinks', this.versionStore.bareRepoPath(url), temp],
@@ -490,6 +493,7 @@ export class RepoService {
             '--recursive',
           ]
         : ['submodule', 'update', '--init', '--recursive'];
+      opts.onLog?.('materialize: submodules\n');
       const submodules = await this.runPinnedGit(
         temp,
         submoduleArgs,
@@ -497,6 +501,7 @@ export class RepoService {
         budget
       );
       this.throwGitFailure(submodules);
+      opts.onLog?.('materialize: verify\n');
       await this.assertPinnedIntegrity(temp, commit, budget);
       if (controller.signal.aborted) throw controller.signal.reason;
       await fs.rename(temp, checkout);

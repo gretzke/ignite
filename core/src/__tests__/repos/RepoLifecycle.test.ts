@@ -229,7 +229,7 @@ describe('RepoLifecycle', () => {
         'p1',
         'https://example.test/repo.git',
         'a'.repeat(40),
-        {},
+        expect.objectContaining({ onLog: expect.any(Function) }),
         expect.any(Function)
       );
       expect(executor.calls.map((call) => call.op)).toEqual([
