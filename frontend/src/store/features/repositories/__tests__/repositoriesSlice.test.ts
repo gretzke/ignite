@@ -110,6 +110,61 @@ describe('repositoriesSlice', () => {
     });
   });
 
+  it('drops a stale active entry when the server lists the version as idle', () => {
+    const url = 'https://example.test/contracts.git';
+    const commit = 'a'.repeat(40);
+    let state = repositoriesReducer(
+      undefined,
+      startRepoVersionJob({ url, commit, jobId: 'job-missed' })
+    );
+    state = repositoriesReducer(
+      state,
+      setRepositories({
+        session: null,
+        local: [],
+        cloned: [],
+        versionGroups: [{
+          url,
+          versions: [{ url, commit, lastUsedAt: '2026-07-21T00:00:00.000Z' }],
+        }],
+        pinned: [],
+      })
+    );
+
+    expect(state.versionAddJobs[versionAddJobKey(url, commit)]).toBeUndefined();
+  });
+
+  it('adopts the server job id over a stale failed entry when a retry runs elsewhere', () => {
+    const url = 'https://example.test/contracts.git';
+    const commit = 'a'.repeat(40);
+    let state = repositoriesReducer(
+      undefined,
+      startRepoVersionJob({ url, commit, jobId: 'job-old' })
+    );
+    state = repositoriesReducer(
+      state,
+      finishRepoVersionJob({ url, commit, jobId: 'job-old', error: 'boom' })
+    );
+    state = repositoriesReducer(
+      state,
+      setRepositories({
+        session: null,
+        local: [],
+        cloned: [],
+        versionGroups: [{
+          url,
+          versions: [{ url, commit, activeJobId: 'job-new', lastUsedAt: '2026-07-21T00:00:00.000Z' }],
+        }],
+        pinned: [],
+      })
+    );
+
+    expect(state.versionAddJobs[versionAddJobKey(url, commit)]).toEqual({
+      jobId: 'job-new',
+      status: 'active',
+    });
+  });
+
   it('finishes a legacy direct placeholder when the terminal event arrives', () => {
     const url = 'https://example.test/contracts.git';
     const commit = 'a'.repeat(40);

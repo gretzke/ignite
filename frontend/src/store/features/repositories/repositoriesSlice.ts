@@ -74,10 +74,23 @@ const repositoriesSlice = createSlice({
         versions.map((version) => versionAddJobKey(version.url, version.commit))
       );
       for (const version of versions) {
-        if (!version.activeJobId || version.activeJobId.startsWith('direct:')) continue;
         const key = versionAddJobKey(version.url, version.commit);
-        const existing = state.versionAddJobs[key];
-        if (existing && !existing.jobId.startsWith('direct:') && existing.jobId !== version.activeJobId) continue;
+        if (!version.activeJobId) {
+          // The server says nothing is running for this version. An 'active'
+          // entry here is stale (its job settled while this client was not
+          // subscribed) and would pulse "Detecting" forever; the persisted
+          // lastError on the row carries any failure. Keep 'failed' entries,
+          // they hold the immediate error until the next add.
+          if (state.versionAddJobs[key]?.status === 'active') {
+            delete state.versionAddJobs[key];
+          }
+          continue;
+        }
+        // Placeholder ids cannot be subscribed to or matched against terminal
+        // events; the row still renders as active via version.activeJobId.
+        if (version.activeJobId.startsWith('direct:')) continue;
+        // A real id from the server is the truth, even over an existing entry
+        // (a retry started in another session replaces a failed entry here).
         state.versionAddJobs[key] = {
           jobId: version.activeJobId,
           status: 'active',
