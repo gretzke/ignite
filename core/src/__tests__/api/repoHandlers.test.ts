@@ -262,6 +262,55 @@ describe('repo-manager API handlers', () => {
       expect(lifecycle.startLifecycle).toHaveBeenCalledWith('/repo', 'p1', 'switch');
     });
 
+    it('captures the profile before a mutation can overlap a profile switch', async () => {
+      let finishFirst!: () => void;
+      const repos = makeFakeRepos({
+        checkoutBranch: vi.fn((pathOrUrl: string) =>
+          pathOrUrl === '/repo-a'
+            ? new Promise<RepoResult<null>>((resolve) => {
+                finishFirst = () => resolve(ok(null));
+              })
+            : Promise.resolve(ok(null))
+        ),
+      });
+      const lifecycle = makeFakeLifecycle();
+      const getProfileId = vi
+        .fn()
+        .mockResolvedValueOnce('A')
+        .mockResolvedValueOnce('B');
+      const handlers = createRepoHandlers({
+        repos,
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId,
+      });
+
+      const first = handlers.checkoutBranch(
+        { body: { pathOrUrl: '/repo-a', branch: 'main' } } as never,
+        makeReply() as never
+      );
+      await vi.waitFor(() => expect(finishFirst).toBeTypeOf('function'));
+      await handlers.checkoutBranch(
+        { body: { pathOrUrl: '/repo-b', branch: 'main' } } as never,
+        makeReply() as never
+      );
+      finishFirst();
+      await first;
+
+      expect(lifecycle.startLifecycle).toHaveBeenNthCalledWith(
+        1,
+        '/repo-b',
+        'B',
+        'switch'
+      );
+      expect(lifecycle.startLifecycle).toHaveBeenNthCalledWith(
+        2,
+        '/repo-a',
+        'A',
+        'switch'
+      );
+    });
+
     it('rejects a concurrent checkout while the first checkout holds its reservation', async () => {
       let resolveCheckout!: () => void;
       const repos = makeFakeRepos({

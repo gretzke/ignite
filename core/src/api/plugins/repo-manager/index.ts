@@ -182,6 +182,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<JobStartedData>> => {
       const { pathOrUrl, branch } = request.body;
+      const profileId = await d.getProfileId();
       if (d.lifecycle.activeJobFor(pathOrUrl)) {
         return sendRepoBusy(reply) as unknown as IApiResponse<JobStartedData>;
       }
@@ -198,7 +199,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         }
         const job = d.lifecycle.startLifecycle(
           pathOrUrl,
-          await d.getProfileId(),
+          profileId,
           'switch'
         );
         return reply.status(200).send({ data: { jobId: job.id } });
@@ -214,6 +215,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<JobStartedData>> => {
       const { pathOrUrl, commit } = request.body;
+      const profileId = await d.getProfileId();
       if (d.lifecycle.activeJobFor(pathOrUrl)) {
         return sendRepoBusy(reply) as unknown as IApiResponse<JobStartedData>;
       }
@@ -230,7 +232,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         }
         const job = d.lifecycle.startLifecycle(
           pathOrUrl,
-          await d.getProfileId(),
+          profileId,
           'switch'
         );
         return reply.status(200).send({ data: { jobId: job.id } });
@@ -244,6 +246,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<{ jobId?: string }>> => {
       const { pathOrUrl } = request.body;
+      const profileId = await d.getProfileId();
       if (d.lifecycle.activeJobFor(pathOrUrl)) {
         return sendRepoBusy(reply) as unknown as IApiResponse<{ jobId?: string }>;
       }
@@ -260,7 +263,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         }
         const job = d.lifecycle.startLifecycle(
           pathOrUrl,
-          await d.getProfileId(),
+          profileId,
           'recompile'
         );
         return reply.status(200).send({ data: { jobId: job.id } });
@@ -274,6 +277,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
       reply: FastifyReply
     ): Promise<IApiResponse<{ jobId?: string }>> => {
       const { pathOrUrl } = request.body;
+      const profileId = await d.getProfileId();
       if (d.lifecycle.activeJobFor(pathOrUrl)) {
         return sendRepoBusy(reply) as unknown as IApiResponse<{ jobId?: string }>;
       }
@@ -290,7 +294,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         }
         const job = d.lifecycle.startLifecycle(
           pathOrUrl,
-          await d.getProfileId(),
+          profileId,
           'recompile'
         );
         return reply.status(200).send({ data: { jobId: job.id } });
