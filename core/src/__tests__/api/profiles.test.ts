@@ -51,6 +51,7 @@ function makeDeps(): any {
       }> => ({ session: null, local: [], cloned: [] }),
       save: vi.fn(async () => {}),
       remove: vi.fn(async () => {}),
+      updateRepoState: vi.fn(async () => {}),
     },
     lifecycle: {
       startLifecycle: vi.fn(() => ({
@@ -213,6 +214,76 @@ describe('profile handlers', () => {
     await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
     expect((reply.body as { data: { local: Array<{ originUrl?: string }> } }).data.local[0].originUrl).toBe('https://example.test/contracts.git');
+  });
+
+  it('groups from a persisted origin without probing live git', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.test/contracts.git';
+    const commit = 'a'.repeat(40);
+    deps.repoRegistry.list = async () => ({
+      session: null,
+      local: [{ pathOrUrl: '/repo-a', originUrl: url }],
+      cloned: [],
+    });
+    deps.repos.getVersionSource = vi.fn(async () => {
+      throw new Error('must not probe persisted origins');
+    });
+    deps.versionStore.listMemberships = vi.fn(async () => ({
+      [url]: [{ commit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' as const }],
+    }));
+    deps.versionStore.list = vi.fn(async () => [
+      { url, commit, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' },
+    ]);
+
+    const reply = makeReply();
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
+
+    expect(deps.repos.getVersionSource).not.toHaveBeenCalled();
+    expect((reply.body as { data: { local: Array<{ versions: Array<{ commit: string }> }> } }).data.local[0].versions).toEqual([
+      expect.objectContaining({ commit }),
+    ]);
+  });
+
+  it('backfills a cloned record from its path when its live origin cannot be read', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.test/contracts.git';
+    deps.repoRegistry.list = async () => ({
+      session: null,
+      local: [],
+      cloned: [{ pathOrUrl: url }],
+    });
+    deps.repos.getVersionSource = vi.fn(async () => {
+      throw new Error('origin unavailable');
+    });
+
+    const reply = makeReply();
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
+
+    expect((reply.body as { data: { cloned: Array<{ originUrl?: string }> } }).data.cloned[0].originUrl).toBe(url);
+  });
+
+  it('attaches file-origin versions to a local record without exposing the file origin', async () => {
+    const deps = makeDeps();
+    const url = 'file:///repo-a';
+    const commit = 'b'.repeat(40);
+    deps.repoRegistry.list = async () => ({
+      session: null,
+      local: [{ pathOrUrl: '/repo-a', originUrl: url }],
+      cloned: [],
+    });
+    deps.versionStore.listMemberships = vi.fn(async () => ({
+      [url]: [{ commit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' as const }],
+    }));
+    deps.versionStore.list = vi.fn(async () => [
+      { url, commit, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' },
+    ]);
+
+    const reply = makeReply();
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
+
+    const local = (reply.body as { data: { local: Array<{ originUrl?: string; versions: Array<{ commit: string }> }> } }).data.local[0];
+    expect(local.originUrl).toBeUndefined();
+    expect(local.versions).toEqual([expect.objectContaining({ commit })]);
   });
 
   it('listRepos includes the session workspace entry from lifecycle state', async () => {

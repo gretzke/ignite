@@ -30,7 +30,12 @@ import type { PathOptions } from '@ignite/plugin-types';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { RepoLifecycle } from '../repos/RepoLifecycle.js';
-import { RepoService, type VersionSource } from '../repos/RepoService.js';
+import {
+  RepoService,
+  RepoKind,
+  deriveRepoKind,
+  type VersionSource,
+} from '../repos/RepoService.js';
 import {
   assertNoUrlCredentials,
   VersionStore,
@@ -67,7 +72,10 @@ export interface ProfileManagerLike {
 
 export interface ProfileHandlerDeps {
   getProfileManager: () => Promise<ProfileManagerLike>;
-  repoRegistry: Pick<ProfileRepoRegistry, 'list' | 'save' | 'remove'>;
+  repoRegistry: Pick<
+    ProfileRepoRegistry,
+    'list' | 'save' | 'remove' | 'updateRepoState'
+  >;
   lifecycle: Pick<
     RepoLifecycle,
     | 'startLifecycle'
@@ -175,6 +183,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     inspectGitRemote: deps?.inspectGitRemote ?? inspectGitRemote,
     pendingVersionAdds: deps?.pendingVersionAdds ?? new Map(),
   };
+  const originBackfillCache = new Map<string, string>();
 
   const markVersionFailure = async (
     url: string,
@@ -197,13 +206,19 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     profileId: string,
     versions: RepoVersionSummary[] = [],
     originUrl?: string
-  ): Promise<RepoListEntry> => ({
-    ...record,
-    initialized: await d.hasWorkspace(record.pathOrUrl, profileId),
-    activeJobId: d.lifecycle.activeJobFor(record.pathOrUrl),
-    ...(originUrl ? { originUrl } : {}),
-    versions,
-  });
+  ): Promise<RepoListEntry> => {
+    // originUrl is a durable grouping key, not always an exposed remote.
+    // In particular file: origins attach local versions but stay hidden from
+    // the version-picker response contract.
+    const { originUrl: _storedOrigin, ...visibleRecord } = record;
+    return {
+      ...visibleRecord,
+      initialized: await d.hasWorkspace(record.pathOrUrl, profileId),
+      activeJobId: d.lifecycle.activeJobFor(record.pathOrUrl),
+      ...(originUrl ? { originUrl } : {}),
+      versions,
+    };
+  };
 
   return {
     listProfiles: async (
@@ -471,23 +486,48 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           projected.add(versionKey);
         }
 
-        // Cache one origin lookup per registered record for this response.
-        // Repositories whose origin cannot be read do not absorb a version
-        // group; retaining it as an orphan is safer than associating it with
-        // the wrong checkout.
+        // Group by durable origins. Legacy records get a bounded live probe;
+        // a successful one is cached and persisted without delaying the reply.
+        // The exposed response still suppresses file: origins, but file: is a
+        // real grouping identity so remoteless local repos retain their pins.
         const origins = new Map<string, string | undefined>();
         await Promise.all(
           records.map(async (record) => {
-            try {
-              origins.set(
-                record.pathOrUrl,
-                canonicalGitUrl(
-                  (await d.repos.getVersionSource(record.pathOrUrl, id)).url
-                )
-              );
-            } catch {
-              origins.set(record.pathOrUrl, undefined);
+            if (record.originUrl) {
+              origins.set(record.pathOrUrl, record.originUrl);
+              return;
             }
+            const cacheKey = `${id}\u0000${record.pathOrUrl}`;
+            const cached = originBackfillCache.get(cacheKey);
+            if (cached) {
+              origins.set(record.pathOrUrl, cached);
+              return;
+            }
+            const source = d.repos
+              .getVersionSource(record.pathOrUrl, id)
+              .then((value) => canonicalGitUrl(value.url))
+              .catch(() => undefined);
+            void source.then((originUrl) => {
+              if (!originUrl) return;
+              originBackfillCache.set(cacheKey, originUrl);
+              if (sessionRecord?.pathOrUrl === record.pathOrUrl) return;
+              void d.repoRegistry.updateRepoState(id, record.pathOrUrl, {
+                originUrl,
+              });
+            });
+            const originUrl = await Promise.race([
+              source,
+              new Promise<undefined>((resolve) =>
+                setTimeout(() => resolve(undefined), 3_000)
+              ),
+            ]);
+            origins.set(
+              record.pathOrUrl,
+              originUrl ??
+                (deriveRepoKind(record.pathOrUrl) === RepoKind.CLONED
+                  ? canonicalGitUrl(record.pathOrUrl)
+                  : undefined)
+            );
           })
         );
         const matchedUrls = new Set(

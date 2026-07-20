@@ -118,10 +118,40 @@ describe('ProfileRepoRegistry', () => {
     await registry.updateRepoState('p1', '/abs/path/repo', {
       frameworks: [{ id: 'foundry', name: 'Foundry' }],
       detectedAt: '2026-07-06T00:00:00.000Z',
+      originUrl: 'file:///abs/path/repo',
     });
     const { local } = await registry.list('p1');
     expect(local[0].frameworks?.[0].id).toBe('foundry');
     expect(local[0].detectedAt).toBe('2026-07-06T00:00:00.000Z');
+    expect(local[0].originUrl).toBe('file:///abs/path/repo');
+  });
+
+  it('serializes same-profile state writes so concurrent patches do not lose fields', async () => {
+    const registry = new ProfileRepoRegistry(deps);
+    await registry.save('p1', '/abs/path/repo');
+    let releaseFirst!: () => void;
+    const originalRead = deps.fileSystem.readJsonFile;
+    let reads = 0;
+    deps.fileSystem.readJsonFile = async <T>(p: string) => {
+      reads += 1;
+      if (reads === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      return originalRead<T>(p);
+    };
+    const first = registry.updateRepoState('p1', '/abs/path/repo', {
+      frameworks: [{ id: 'foundry', name: 'Foundry' }],
+    });
+    await vi.waitFor(() => expect(releaseFirst).toBeTypeOf('function'));
+    const second = registry.updateRepoState('p1', '/abs/path/repo', {
+      originUrl: 'file:///abs/path/repo',
+    });
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    const { local } = await registry.list('p1');
+    expect(local[0]).toMatchObject({
+      frameworks: [{ id: 'foundry', name: 'Foundry' }],
+      originUrl: 'file:///abs/path/repo',
+    });
   });
 
   it('updateRepoState is a no-op for an unregistered repo', async () => {

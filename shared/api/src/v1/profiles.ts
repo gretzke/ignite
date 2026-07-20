@@ -97,6 +97,8 @@ export interface RepoRecord {
   pathOrUrl: string;
   frameworks?: RepoFrameworkState[]; // undefined = never detected
   detectedAt?: string;
+  /** Canonical origin used for version grouping, including file: URLs. */
+  originUrl?: string;
 }
 
 // List entries enrich the persisted record with computed state so the UI
@@ -284,9 +286,9 @@ export const RepoListEntrySchema = z.object({
   pathOrUrl: z.string(),
   frameworks: z.array(RepoFrameworkStateSchema).optional(),
   detectedAt: z.string().optional(),
+  originUrl: z.string().min(1).optional(),
   initialized: z.boolean(),
   activeJobId: z.string().optional(),
-  originUrl: z.string().min(1).optional(),
   versions: z.array(
     z.object({
       url: z.string().min(1),

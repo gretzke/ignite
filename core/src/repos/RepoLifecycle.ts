@@ -20,7 +20,11 @@ import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { statFingerprint } from './fingerprint.js';
 import { ErrorCodes } from '../types/errors.js';
 import { getLogger } from '../utils/logger.js';
-import { VersionStore, type VersionRecord } from './VersionStore.js';
+import {
+  VersionStore,
+  canonicalGitUrl,
+  type VersionRecord,
+} from './VersionStore.js';
 
 export type LifecycleMode = 'sweep' | 'add' | 'recompile' | 'pinned' | 'switch';
 
@@ -47,7 +51,10 @@ export interface RepoLifecycleDeps {
   registryLoader: Pick<PluginRegistryLoader, 'getPluginsByType'>;
   repos: Pick<
     RepoService,
-    'init' | 'resolveWorkspacePath' | 'withVersionMaterialized'
+    | 'init'
+    | 'resolveWorkspacePath'
+    | 'withVersionMaterialized'
+    | 'getVersionSource'
   >;
   registry: Pick<ProfileRepoRegistry, 'list' | 'updateRepoState'>;
   sessionPath: () => string | null;
@@ -687,17 +694,30 @@ export class RepoLifecycle {
             }
           : {}),
       });
-    } else if (this.isSessionPath(pathOrUrl)) {
+    } else {
+      let originUrl: string | undefined;
+      try {
+        originUrl = canonicalGitUrl(
+          (await this.deps.repos.getVersionSource(pathOrUrl, profileId)).url
+        );
+      } catch {
+        // Lifecycle state is still useful when Git cannot currently report an
+        // origin. listRepos will backfill this field on a later successful probe.
+      }
+      if (this.isSessionPath(pathOrUrl)) {
       this.sessionRecords.set(pathOrUrl, {
         pathOrUrl,
         frameworks,
         detectedAt,
+        ...(originUrl ? { originUrl } : {}),
       });
-    } else {
+      } else {
       await this.deps.registry.updateRepoState(profileId, pathOrUrl, {
         frameworks,
         detectedAt,
+        ...(originUrl ? { originUrl } : {}),
       });
+      }
     }
 
     return { pathOrUrl, frameworks };

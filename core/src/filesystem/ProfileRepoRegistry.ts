@@ -6,6 +6,7 @@ import { FileSystem } from './FileSystem.js';
 import { RepoService, RepoKind, deriveRepoKind } from '../repos/RepoService.js';
 import { isGitRepository } from '../utils/startup.js';
 import { hasUrlCredentials } from '../utils/redact.js';
+import { KeyedMutex } from '../utils/KeyedMutex.js';
 
 // Injectable dependencies (tests pass fakes; production uses real singletons).
 export interface ProfileRepoRegistryDeps {
@@ -20,6 +21,7 @@ export interface ProfileRepoRegistryDeps {
 
 export class ProfileRepoRegistry {
   private deps: ProfileRepoRegistryDeps;
+  private readonly profileMutex = new KeyedMutex();
 
   constructor(deps?: Partial<ProfileRepoRegistryDeps>) {
     this.deps = {
@@ -69,42 +71,44 @@ export class ProfileRepoRegistry {
   }
 
   async save(profileId: string, pathOrUrl: string): Promise<void> {
-    const kind = deriveRepoKind(pathOrUrl);
-    if (kind === RepoKind.LOCAL) {
-      if (pathOrUrl.startsWith('./') || pathOrUrl.startsWith('..')) {
-        throw new Error(`Local repository path must be absolute: ${pathOrUrl}`);
+    await this.profileMutex.run(profileId, async () => {
+      const kind = deriveRepoKind(pathOrUrl);
+      if (kind === RepoKind.LOCAL) {
+        if (pathOrUrl.startsWith('./') || pathOrUrl.startsWith('..')) {
+          throw new Error(`Local repository path must be absolute: ${pathOrUrl}`);
+        }
+        if (!this.deps.isGitRepository(pathOrUrl)) {
+          throw new Error(
+            `Local repository path must be a git repository: ${pathOrUrl}`
+          );
+        }
       }
-      if (!this.deps.isGitRepository(pathOrUrl)) {
+      // A credentialed URL saved here would persist the secret in cloned.json
+      // and surface it in every list/job/WS payload keyed by this identity.
+      // Host ambient credentials (helpers, ssh-agent) are the supported story.
+      if (kind === RepoKind.CLONED && hasUrlCredentials(pathOrUrl)) {
         throw new Error(
-          `Local repository path must be a git repository: ${pathOrUrl}`
+          'Repository URLs with embedded credentials are not supported. ' +
+            'Configure a git credential helper or SSH access instead.'
         );
       }
-    }
-    // A credentialed URL saved here would persist the secret in cloned.json
-    // and surface it in every list/job/WS payload keyed by this identity.
-    // Host ambient credentials (helpers, ssh-agent) are the supported story.
-    if (kind === RepoKind.CLONED && hasUrlCredentials(pathOrUrl)) {
-      throw new Error(
-        'Repository URLs with embedded credentials are not supported. ' +
-          'Configure a git credential helper or SSH access instead.'
-      );
-    }
-    // Deliberately NOT the tolerant readList(): a corrupt registry file must
-    // propagate as an error (old handler behavior → 500) instead of being
-    // silently overwritten with a fresh single-entry list.
-    const p = this.registryPath(profileId, kind);
-    let records: RepoRecord[] = [];
-    if (await this.deps.fileSystem.fileExists(p)) {
-      records = await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
-    }
-    if (records.some((r) => r.pathOrUrl === pathOrUrl)) {
-      // Coded so the handler can map this to 409 instead of a generic 500.
-      throw Object.assign(new Error(`Repository ${pathOrUrl} already exists`), {
-        code: 'REPO_ALREADY_EXISTS',
-      });
-    }
-    records.push({ pathOrUrl });
-    await this.deps.fileSystem.writeJsonFile(p, records);
+      // Deliberately NOT the tolerant readList(): a corrupt registry file must
+      // propagate as an error (old handler behavior → 500) instead of being
+      // silently overwritten with a fresh single-entry list.
+      const p = this.registryPath(profileId, kind);
+      let records: RepoRecord[] = [];
+      if (await this.deps.fileSystem.fileExists(p)) {
+        records = await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
+      }
+      if (records.some((r) => r.pathOrUrl === pathOrUrl)) {
+        // Coded so the handler can map this to 409 instead of a generic 500.
+        throw Object.assign(new Error(`Repository ${pathOrUrl} already exists`), {
+          code: 'REPO_ALREADY_EXISTS',
+        });
+      }
+      records.push({ pathOrUrl });
+      await this.deps.fileSystem.writeJsonFile(p, records);
+    });
   }
 
   // Merge lifecycle results (frameworks, detectedAt) onto a registered repo's
@@ -114,42 +118,46 @@ export class ProfileRepoRegistry {
   async updateRepoState(
     profileId: string,
     pathOrUrl: string,
-    patch: Pick<RepoRecord, 'frameworks' | 'detectedAt'>
+    patch: Partial<Pick<RepoRecord, 'frameworks' | 'detectedAt' | 'originUrl'>>
   ): Promise<void> {
-    const kind = deriveRepoKind(pathOrUrl);
-    const p = this.registryPath(profileId, kind);
-    if (!(await this.deps.fileSystem.fileExists(p))) return;
-    let records: RepoRecord[];
-    try {
-      records = await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
-    } catch {
-      return;
-    }
-    const idx = records.findIndex((r) => r.pathOrUrl === pathOrUrl);
-    if (idx === -1) return;
-    records[idx] = { ...records[idx], ...patch };
-    await this.deps.fileSystem.writeJsonFile(p, records);
+    await this.profileMutex.run(profileId, async () => {
+      const kind = deriveRepoKind(pathOrUrl);
+      const p = this.registryPath(profileId, kind);
+      if (!(await this.deps.fileSystem.fileExists(p))) return;
+      let records: RepoRecord[];
+      try {
+        records = await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
+      } catch {
+        return;
+      }
+      const idx = records.findIndex((r) => r.pathOrUrl === pathOrUrl);
+      if (idx === -1) return;
+      records[idx] = { ...records[idx], ...patch };
+      await this.deps.fileSystem.writeJsonFile(p, records);
+    });
   }
 
   async remove(profileId: string, pathOrUrl: string): Promise<void> {
-    const kind = deriveRepoKind(pathOrUrl);
-    const p = this.registryPath(profileId, kind);
-    if (!(await this.deps.fileSystem.fileExists(p))) {
-      throw new Error(`Repository ${pathOrUrl} not found`);
-    }
-    const records = await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
-    await this.deps.fileSystem.writeJsonFile(
-      p,
-      records.filter((r) => r.pathOrUrl !== pathOrUrl)
-    );
-    // The clone is disposable host data we own; a LOCAL repo is the user's
-    // own directory and is never ours to delete (removeClone no-ops there
-    // too, but skip the call entirely to keep the CLONED-only contract
-    // explicit here). profileId is threaded through so removing a repo from
-    // a NON-active profile deletes that profile's clone, not the current
-    // profile's directory for the same URL.
-    if (kind === RepoKind.CLONED) {
-      await this.deps.removeClone(pathOrUrl, profileId);
-    }
+    await this.profileMutex.run(profileId, async () => {
+      const kind = deriveRepoKind(pathOrUrl);
+      const p = this.registryPath(profileId, kind);
+      if (!(await this.deps.fileSystem.fileExists(p))) {
+        throw new Error(`Repository ${pathOrUrl} not found`);
+      }
+      const records = await this.deps.fileSystem.readJsonFile<RepoRecord[]>(p);
+      await this.deps.fileSystem.writeJsonFile(
+        p,
+        records.filter((r) => r.pathOrUrl !== pathOrUrl)
+      );
+      // The clone is disposable host data we own; a LOCAL repo is the user's
+      // own directory and is never ours to delete (removeClone no-ops there
+      // too, but skip the call entirely to keep the CLONED-only contract
+      // explicit here). profileId is threaded through so removing a repo from
+      // a NON-active profile deletes that profile's clone, not the current
+      // profile's directory for the same URL.
+      if (kind === RepoKind.CLONED) {
+        await this.deps.removeClone(pathOrUrl, profileId);
+      }
+    });
   }
 }

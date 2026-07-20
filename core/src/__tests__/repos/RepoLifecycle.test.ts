@@ -120,7 +120,7 @@ function makeLifecycle(opts: {
   const updates: Array<{
     profileId: string;
     pathOrUrl: string;
-    patch: Pick<RepoRecord, 'frameworks' | 'detectedAt'>;
+    patch: Partial<Pick<RepoRecord, 'frameworks' | 'detectedAt' | 'originUrl'>>;
   }> = [];
   const registry = {
     updates,
@@ -133,7 +133,7 @@ function makeLifecycle(opts: {
       async (
         profileId: string,
         pathOrUrl: string,
-        patch: Pick<RepoRecord, 'frameworks' | 'detectedAt'>
+        patch: Partial<Pick<RepoRecord, 'frameworks' | 'detectedAt' | 'originUrl'>>
       ) => {
         updates.push({ profileId, pathOrUrl, patch });
       }
@@ -141,6 +141,11 @@ function makeLifecycle(opts: {
   };
   const repoService = {
     init: vi.fn(async () => ({ success: true as const, data: null })),
+    getVersionSource: vi.fn(async () => ({
+      url: `file://${opts.workspaceDir}`,
+      workspacePath: opts.workspaceDir,
+      localFallbackPath: opts.workspaceDir,
+    })),
     resolveWorkspacePath: vi.fn(async () => opts.workspaceDir),
     withVersionMaterialized: vi.fn(
       async (_profileId, _url, _commit, _opts, fn) =>
@@ -426,8 +431,33 @@ describe('RepoLifecycle', () => {
       expect(patch.frameworks?.[0].id).toBe('foundry');
       expect(patch.frameworks?.[0].watchPaths?.sources).toEqual(['src']);
       expect(patch.detectedAt).toBeDefined();
+      expect(patch.originUrl).toBe(`file://${dir}`);
       // Never compiled -> no fingerprint captured by a sweep.
       expect(patch.frameworks?.[0].fingerprint).toBeUndefined();
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('persists a canonical remote origin during non-pinned lifecycle persistence', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, registry, repoService } = makeLifecycle({
+        workspaceDir: dir,
+        responses: { foundry: { detect: NOT_DETECTED } },
+      });
+      repoService.getVersionSource.mockResolvedValue({
+        url: 'https://example.test/contracts.git/',
+        workspacePath: dir,
+        localFallbackPath: dir,
+      });
+
+      lifecycle.startLifecycle('/repo-a', 'p1', 'sweep');
+      await jobs.runAll();
+
+      expect(registry.updates[0].patch.originUrl).toBe(
+        'https://example.test/contracts.git'
+      );
     } finally {
       await cleanupTestDirectory(dir);
     }
