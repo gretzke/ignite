@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { FileSystem } from '../../filesystem/FileSystem.js';
-import { VersionStore, pinnedOrigin, type VersionRecord } from '../../repos/VersionStore.js';
+import { assertNoUrlCredentials, VersionStore, pinnedOrigin, type VersionRecord } from '../../repos/VersionStore.js';
 import { getLogger } from '../../utils/logger.js';
 
 const dirs: string[] = [];
@@ -45,6 +45,16 @@ afterAll(async () => {
 });
 
 describe('VersionStore', () => {
+  it('rejects credential-embedded HTTP URLs but accepts SSH user identities', () => {
+    expect(() => assertNoUrlCredentials('https://user:pass@example.test/repo.git')).toThrow(
+      expect.objectContaining({ code: 'VERSION_URL_CREDENTIALS' })
+    );
+    expect(() => assertNoUrlCredentials('https://token@example.test/repo.git')).toThrow(
+      expect.objectContaining({ code: 'VERSION_URL_CREDENTIALS' })
+    );
+    expect(() => assertNoUrlCredentials('ssh://git@github.com/org/repo.git')).not.toThrow();
+  });
+
   it('derives global cache paths using the pinned-store slug and URL hash conventions', async () => {
     const home = await temp('ignite-version-home-');
     const { fileSystem, store: versions } = await store(home);

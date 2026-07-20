@@ -31,6 +31,7 @@ import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { RepoLifecycle } from '../repos/RepoLifecycle.js';
 import { RepoService, type VersionSource } from '../repos/RepoService.js';
 import {
+  assertNoUrlCredentials,
   VersionStore,
   canonicalGitUrl,
   pinnedOrigin,
@@ -574,9 +575,12 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
       try {
         const { id } = request.params;
         const body = request.body;
+        if (body.url) assertNoUrlCredentials(body.url);
         const source: VersionSource = body.repoPathOrUrl
           ? await d.repos.getVersionSource(body.repoPathOrUrl, id)
           : { url: body.url!, workspacePath: '' };
+        assertNoUrlCredentials(source.url);
+        if (source.fetchUrl) assertNoUrlCredentials(source.fetchUrl);
         if (!(await d.versionStore.isOriginApproved(id, source.url))) {
           return reply.status(409).send({
             statusCode: 409,
@@ -670,6 +674,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           data: { jobId: job.id, url: source.url, commit },
         });
       } catch (error) {
+        if ((error as { code?: string }).code === 'VERSION_URL_CREDENTIALS') {
+          return reply.status(400).send({
+            statusCode: 400,
+            error: 'Bad Request',
+            code: 'VERSION_URL_CREDENTIALS',
+            message: 'Version URLs must not embed credentials',
+          }) as unknown as IApiResponse<AddRepoVersionStartedData>;
+        }
         return sendCaughtError(
           reply,
           error,

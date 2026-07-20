@@ -235,6 +235,41 @@ describe('profile handlers', () => {
     expect((reply.body as { data: { pinned: unknown[] } }).data.pinned).toEqual([]);
   });
 
+  it.each([
+    'https://user:pass@example.test/repo.git',
+    'https://token@example.test/repo.git',
+  ])('rejects credential-embedded direct version URL %s', async (url) => {
+    const deps = makeDeps();
+    const reply = makeReply();
+
+    await createProfileHandlers(deps).addRepoVersion(
+      { params: { id: 'p1' }, body: { url, commit: 'a'.repeat(40) } } as never,
+      reply as never
+    );
+
+    expect(reply.statusCode).toBe(400);
+    expect(reply.body).toMatchObject({ code: 'VERSION_URL_CREDENTIALS' });
+    expect(deps.jobs.start).not.toHaveBeenCalled();
+  });
+
+  it('rejects credential-embedded resolved version origins before inspecting remotes', async () => {
+    const deps = makeDeps();
+    deps.repos.getVersionSource = vi.fn(async () => ({
+      url: 'https://user:pass@example.test/repo.git',
+      workspacePath: '/repo-a',
+    }));
+    const reply = makeReply();
+
+    await createProfileHandlers(deps).addRepoVersion(
+      { params: { id: 'p1' }, body: { repoPathOrUrl: '/repo-a', ref: 'main' } } as never,
+      reply as never
+    );
+
+    expect(reply.statusCode).toBe(400);
+    expect(reply.body).toMatchObject({ code: 'VERSION_URL_CREDENTIALS' });
+    expect(deps.inspectGitRemote).not.toHaveBeenCalled();
+  });
+
   it('adds a remote ref version through a job, then lists it under its matching repository', async () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git'; const commit = 'a'.repeat(40);

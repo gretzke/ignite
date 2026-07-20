@@ -22,6 +22,7 @@ import { KeyedMutex } from '../utils/KeyedMutex.js';
 import { redactUrlCredentials } from '../utils/redact.js';
 import { getLogger } from '../utils/logger.js';
 import {
+  assertNoUrlCredentials,
   VersionStore,
   pinnedOrigin,
   type VersionRecord,
@@ -65,6 +66,7 @@ export interface RepoServiceDeps {
 export type RefKind = NonNullable<VersionRecord['refKind']>;
 export interface EnsureVersionOptions {
   ref?: string;
+  fetchUrl?: string;
   localFallbackPath?: string;
   refLabel?: string;
   refKind?: RefKind;
@@ -79,6 +81,7 @@ export interface PromotionSourceInspection {
 
 export interface VersionSource {
   url: string;
+  fetchUrl?: string;
   workspacePath: string;
   localFallbackPath?: string;
 }
@@ -364,6 +367,8 @@ export class RepoService {
     commit: string,
     opts: EnsureVersionOptions
   ): Promise<void> {
+    assertNoUrlCredentials(url);
+    if (opts.fetchUrl !== undefined) assertNoUrlCredentials(opts.fetchUrl);
     if (!isAllowedCloneUrl(url)) {
       throw Object.assign(
         new Error('Version URL uses an unsupported clone protocol'),

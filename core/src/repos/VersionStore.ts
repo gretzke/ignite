@@ -51,6 +51,24 @@ export function normalizeGitUrl(url: string): string {
   return scp ? `ssh://${scp[1]}${scp[2]}/${scp[3]}` : url;
 }
 
+export function assertNoUrlCredentials(url: string): void {
+  try {
+    const parsed = new URL(normalizeGitUrl(url));
+    const httpish = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    if (parsed.password || (httpish && parsed.username)) {
+      throw Object.assign(
+        new Error('Version URLs must not embed credentials'),
+        { code: 'VERSION_URL_CREDENTIALS' }
+      );
+    }
+  } catch (error) {
+    if ((error as { code?: string }).code === 'VERSION_URL_CREDENTIALS') {
+      throw error;
+    }
+    // Unparsable URLs are rejected by protocol validation instead.
+  }
+}
+
 /** Stable identity used by every cache registry and membership lookup. */
 export function canonicalGitUrl(url: string): string {
   try {
