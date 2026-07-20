@@ -142,10 +142,15 @@ function makeLifecycle(opts: {
   const repoService = {
     init: vi.fn(async () => ({ success: true as const, data: null })),
     resolveWorkspacePath: vi.fn(async () => opts.workspaceDir),
-    withVersionMaterialized: vi.fn(async (_profileId, _url, _commit, _opts, fn) => fn({
-      checkout: opts.pinnedPath ?? opts.workspaceDir,
-      rematerialize: async () => ({ checkout: opts.pinnedPath ?? opts.workspaceDir }),
-    })),
+    withVersionMaterialized: vi.fn(
+      async (_profileId, _url, _commit, _opts, fn) =>
+        fn({
+          checkout: opts.pinnedPath ?? opts.workspaceDir,
+          rematerialize: async () => ({
+            checkout: opts.pinnedPath ?? opts.workspaceDir,
+          }),
+        })
+    ),
   };
   const registryLoader = {
     getPluginsByType: vi.fn(async () =>
@@ -168,7 +173,15 @@ function makeLifecycle(opts: {
     versionStore: versionStore as unknown as RepoLifecycleDeps['versionStore'],
   };
   const lifecycle = new RepoLifecycle(deps);
-  return { lifecycle, jobs, executor, registry, repoService, registryLoader, versionStore };
+  return {
+    lifecycle,
+    jobs,
+    executor,
+    registry,
+    repoService,
+    registryLoader,
+    versionStore,
+  };
 }
 
 const DETECTED: PluginResponse<unknown> = {
@@ -189,53 +202,153 @@ describe('RepoLifecycle', () => {
   it('pinned: materializes, detects, installs, compiles, and persists frameworks', async () => {
     const dir = await createTestDirectory();
     try {
-      const { lifecycle, jobs, executor, repoService, registry, versionStore } = makeLifecycle({
-        workspaceDir: dir,
-        responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK } },
+      const { lifecycle, jobs, executor, repoService, registry, versionStore } =
+        makeLifecycle({
+          workspaceDir: dir,
+          responses: {
+            foundry: {
+              detect: DETECTED,
+              getWatchPaths: WATCH,
+              install: OK,
+              compile: OK,
+            },
+          },
+        });
+      const job = lifecycle.startPinnedLifecycle(
+        'https://example.test/repo.git',
+        'a'.repeat(40),
+        'p1'
+      );
+      expect(job.params).toMatchObject({
+        mode: 'pinned',
+        url: 'https://example.test/repo.git',
+        commit: 'a'.repeat(40),
       });
-      const job = lifecycle.startPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1');
-      expect(job.params).toMatchObject({ mode: 'pinned', url: 'https://example.test/repo.git', commit: 'a'.repeat(40) });
       await jobs.runAll();
-      expect(repoService.withVersionMaterialized).toHaveBeenCalledWith('p1', 'https://example.test/repo.git', 'a'.repeat(40), {}, expect.any(Function));
-      expect(executor.calls.map((call) => call.op)).toEqual(['detect', 'getWatchPaths', 'install', 'compile']);
+      expect(repoService.withVersionMaterialized).toHaveBeenCalledWith(
+        'p1',
+        'https://example.test/repo.git',
+        'a'.repeat(40),
+        {},
+        expect.any(Function)
+      );
+      expect(executor.calls.map((call) => call.op)).toEqual([
+        'detect',
+        'getWatchPaths',
+        'install',
+        'compile',
+      ]);
       expect(registry.updates).toHaveLength(0);
-      expect(versionStore.updateState).toHaveBeenCalledWith('https://example.test/repo.git', 'a'.repeat(40), expect.objectContaining({ frameworks: [expect.objectContaining({ id: 'foundry' })], compiledWith: { pluginId: 'foundry', version: '1.0.0' } }));
-    } finally { await cleanupTestDirectory(dir); }
+      expect(versionStore.updateState).toHaveBeenCalledWith(
+        'https://example.test/repo.git',
+        'a'.repeat(40),
+        expect.objectContaining({
+          frameworks: [expect.objectContaining({ id: 'foundry' })],
+          compiledWith: { pluginId: 'foundry', version: '1.0.0' },
+        })
+      );
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
   });
 
   it('exposes an awaitable pinned runner without creating a nested job', async () => {
     const dir = await createTestDirectory();
     try {
-      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir, responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK } } });
-      const result = await lifecycle.runPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1', { log: () => {}, signal: new AbortController().signal });
-      expect(result.frameworks).toEqual([expect.objectContaining({ id: 'foundry' })]);
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        responses: {
+          foundry: {
+            detect: DETECTED,
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: OK,
+          },
+        },
+      });
+      const result = await lifecycle.runPinnedLifecycle(
+        'https://example.test/repo.git',
+        'a'.repeat(40),
+        'p1',
+        { log: () => {}, signal: new AbortController().signal }
+      );
+      expect(result.frameworks).toEqual([
+        expect.objectContaining({ id: 'foundry' }),
+      ]);
       expect(jobs.started).toHaveLength(0);
-    } finally { await cleanupTestDirectory(dir); }
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
   });
   it('rebuilds a compiled version when its compiler plugin version changes', async () => {
     const dir = await createTestDirectory();
     try {
       const { lifecycle, repoService, versionStore } = makeLifecycle({
         workspaceDir: dir,
-        responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK } },
+        responses: {
+          foundry: {
+            detect: DETECTED,
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: OK,
+          },
+        },
       });
-      versionStore.get.mockResolvedValue({ compiledWith: { pluginId: 'foundry', version: '0.9.0' } } as never);
-      await lifecycle.runPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1', { log: () => {}, signal: new AbortController().signal });
+      versionStore.get.mockResolvedValue({
+        compiledWith: { pluginId: 'foundry', version: '0.9.0' },
+      } as never);
+      await lifecycle.runPinnedLifecycle(
+        'https://example.test/repo.git',
+        'a'.repeat(40),
+        'p1',
+        { log: () => {}, signal: new AbortController().signal }
+      );
       expect(repoService.withVersionMaterialized).toHaveBeenCalledTimes(1);
-    } finally { await cleanupTestDirectory(dir); }
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
   });
   it('keeps an awaitable pinned resolve visible to deletion until it settles', async () => {
     const dir = await createTestDirectory();
     try {
-      const { lifecycle, repoService } = makeLifecycle({ workspaceDir: dir, pinnedPath: dir, responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK } } });
+      const { lifecycle, repoService } = makeLifecycle({
+        workspaceDir: dir,
+        pinnedPath: dir,
+        responses: {
+          foundry: {
+            detect: DETECTED,
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: OK,
+          },
+        },
+      });
       let release!: () => void;
-      repoService.withVersionMaterialized.mockImplementationOnce((_profileId, _url, _commit, _opts, fn) => new Promise((resolve) => { release = () => resolve(fn({ checkout: dir, rematerialize: async () => ({ checkout: dir }) })); }));
-      const running = lifecycle.runPinnedLifecycle('https://example.test/repo.git', 'a'.repeat(40), 'p1', { log: () => {}, signal: new AbortController().signal });
+      repoService.withVersionMaterialized.mockImplementationOnce(
+        (_profileId, _url, _commit, _opts, fn) =>
+          new Promise((resolve) => {
+            release = () =>
+              resolve(
+                fn({
+                  checkout: dir,
+                  rematerialize: async () => ({ checkout: dir }),
+                })
+              );
+          })
+      );
+      const running = lifecycle.runPinnedLifecycle(
+        'https://example.test/repo.git',
+        'a'.repeat(40),
+        'p1',
+        { log: () => {}, signal: new AbortController().signal }
+      );
       expect(lifecycle.activeJobFor(dir)).toMatch(/^direct:/);
       release();
       await running;
       expect(lifecycle.activeJobFor(dir)).toBeUndefined();
-    } finally { await cleanupTestDirectory(dir); }
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
   });
   it('sweep: init -> detect -> watchPaths -> persist, no install/compile', async () => {
     const dir = await createTestDirectory();
@@ -447,6 +560,243 @@ describe('RepoLifecycle', () => {
         expect(f.fingerprint?.sources).toMatch(/^[0-9a-f]{64}$/);
         expect(f.fingerprint?.artifacts).toMatch(/^[0-9a-f]{64}$/);
       }
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it.each(['add', 'pinned'] as const)(
+    '%s: installs every detected framework before compiling any framework',
+    async (mode) => {
+      const dir = await createTestDirectory();
+      try {
+        const { lifecycle, jobs, executor } = makeLifecycle({
+          workspaceDir: dir,
+          compilers: ['foundry', 'hardhat'],
+          responses: {
+            foundry: {
+              detect: DETECTED,
+              getWatchPaths: WATCH,
+              install: OK,
+              compile: OK,
+            },
+            hardhat: {
+              detect: DETECTED,
+              getWatchPaths: WATCH,
+              install: OK,
+              compile: OK,
+            },
+          },
+        });
+
+        if (mode === 'pinned') {
+          lifecycle.startPinnedLifecycle(
+            'https://example.test/repo.git',
+            'a'.repeat(40),
+            'p1'
+          );
+        } else {
+          lifecycle.startLifecycle('/repo-a', 'p1', mode);
+        }
+        await jobs.runAll();
+
+        expect(
+          executor.calls.map((call) => `${call.pluginId}:${call.op}`)
+        ).toEqual([
+          'foundry:detect',
+          'hardhat:detect',
+          'foundry:getWatchPaths',
+          'hardhat:getWatchPaths',
+          'foundry:install',
+          'hardhat:install',
+          'foundry:compile',
+          'hardhat:compile',
+        ]);
+      } finally {
+        await cleanupTestDirectory(dir);
+      }
+    }
+  );
+
+  it('recompile: installs all detected frameworks but compiles only drifted frameworks', async () => {
+    const dir = await createTestDirectory();
+    try {
+      await fs.mkdir(path.join(dir, 'src'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A {}');
+      const { statFingerprint } = await import('../../repos/fingerprint.js');
+      const cleanFingerprint = {
+        sources: await statFingerprint(dir, ['hardhat.config.ts', 'contracts']),
+        artifacts: await statFingerprint(dir, ['artifacts']),
+      };
+      const { lifecycle, jobs, executor } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [
+          {
+            pathOrUrl: '/repo-a',
+            frameworks: [
+              {
+                id: 'foundry',
+                name: 'Foundry',
+                watchPaths: {
+                  config: ['foundry.toml'],
+                  sources: ['src'],
+                  artifacts: ['out'],
+                },
+                fingerprint: { sources: 'stale', artifacts: 'stale' },
+                compiledAt: '2026-07-01T00:00:00.000Z',
+              },
+              {
+                id: 'hardhat',
+                name: 'Hardhat',
+                watchPaths: {
+                  config: ['hardhat.config.ts'],
+                  sources: ['contracts'],
+                  artifacts: ['artifacts'],
+                },
+                fingerprint: cleanFingerprint,
+                compiledAt: '2026-07-01T00:00:00.000Z',
+              },
+            ],
+          },
+        ],
+        compilers: ['foundry', 'hardhat'],
+        responses: {
+          foundry: {
+            detect: DETECTED,
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: OK,
+          },
+          hardhat: {
+            detect: DETECTED,
+            getWatchPaths: {
+              success: true,
+              data: {
+                config: ['hardhat.config.ts'],
+                sources: ['contracts'],
+                artifacts: ['artifacts'],
+              },
+            },
+            install: OK,
+            compile: OK,
+          },
+        },
+      });
+
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A { uint x; }');
+      lifecycle.startLifecycle('/repo-a', 'p1', 'recompile');
+      await jobs.runAll();
+
+      expect(
+        executor.calls.map((call) => `${call.pluginId}:${call.op}`)
+      ).toContain('foundry:install');
+      expect(
+        executor.calls.map((call) => `${call.pluginId}:${call.op}`)
+      ).toContain('hardhat:install');
+      expect(
+        executor.calls.map((call) => `${call.pluginId}:${call.op}`)
+      ).toContain('foundry:compile');
+      expect(
+        executor.calls.map((call) => `${call.pluginId}:${call.op}`)
+      ).not.toContain('hardhat:compile');
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('recompile: compiles newly detected frameworks that have never been compiled', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, executor } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [
+          {
+            pathOrUrl: '/repo-a',
+            frameworks: [
+              {
+                id: 'foundry',
+                name: 'Foundry',
+                compiledAt: '2026-07-01T00:00:00.000Z',
+              },
+            ],
+          },
+        ],
+        compilers: ['foundry', 'hardhat'],
+        responses: {
+          foundry: {
+            detect: DETECTED,
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: OK,
+          },
+          hardhat: {
+            detect: DETECTED,
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: OK,
+          },
+        },
+      });
+
+      lifecycle.startLifecycle('/repo-a', 'p1', 'recompile');
+      await jobs.runAll();
+
+      expect(
+        executor.calls.map((call) => `${call.pluginId}:${call.op}`)
+      ).toContain('hardhat:compile');
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('recompile: skips installs when every detected framework is clean and already compiled', async () => {
+    const dir = await createTestDirectory();
+    try {
+      await fs.mkdir(path.join(dir, 'src'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A {}');
+      const { statFingerprint } = await import('../../repos/fingerprint.js');
+      const fingerprint = {
+        sources: await statFingerprint(dir, ['foundry.toml', 'src']),
+        artifacts: await statFingerprint(dir, ['out']),
+      };
+      const { lifecycle, jobs, executor } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [
+          {
+            pathOrUrl: '/repo-a',
+            frameworks: [
+              {
+                id: 'foundry',
+                name: 'Foundry',
+                watchPaths: {
+                  config: ['foundry.toml'],
+                  sources: ['src'],
+                  artifacts: ['out'],
+                },
+                fingerprint,
+                compiledAt: '2026-07-01T00:00:00.000Z',
+              },
+            ],
+          },
+        ],
+        responses: {
+          foundry: {
+            detect: DETECTED,
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: OK,
+          },
+        },
+      });
+
+      lifecycle.startLifecycle('/repo-a', 'p1', 'recompile');
+      await jobs.runAll();
+
+      expect(
+        executor.calls.some(
+          (call) => call.op === 'install' || call.op === 'compile'
+        )
+      ).toBe(false);
     } finally {
       await cleanupTestDirectory(dir);
     }

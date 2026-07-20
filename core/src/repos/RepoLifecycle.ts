@@ -22,7 +22,7 @@ import { ErrorCodes } from '../types/errors.js';
 import { getLogger } from '../utils/logger.js';
 import { VersionStore, type VersionRecord } from './VersionStore.js';
 
-export type LifecycleMode = 'sweep' | 'add' | 'recompile' | 'pinned';
+export type LifecycleMode = 'sweep' | 'add' | 'recompile' | 'pinned' | 'switch';
 
 export const LIFECYCLE_JOB_TYPE = 'repo.lifecycle';
 
@@ -45,7 +45,10 @@ export interface RepoLifecycleDeps {
   jobs: Pick<JobManager, 'start' | 'get'>;
   executor: Pick<PluginExecutor, 'execute'>;
   registryLoader: Pick<PluginRegistryLoader, 'getPluginsByType'>;
-  repos: Pick<RepoService, 'init' | 'resolveWorkspacePath' | 'withVersionMaterialized'>;
+  repos: Pick<
+    RepoService,
+    'init' | 'resolveWorkspacePath' | 'withVersionMaterialized'
+  >;
   registry: Pick<ProfileRepoRegistry, 'list' | 'updateRepoState'>;
   sessionPath: () => string | null;
   versionStore: Pick<VersionStore, 'checkoutPath' | 'get' | 'updateState'>;
@@ -68,7 +71,10 @@ export class RepoLifecycle {
   // lifecycle job per repo; sessionRecords holds derived state for the
   // session workspace, which is not in any profile registry.
   private readonly sweptProfiles = new Set<string>();
-  private readonly activeJobs = new Map<string, { jobId?: string; directRefs: number }>();
+  private readonly activeJobs = new Map<
+    string,
+    { jobId?: string; directRefs: number }
+  >();
   private readonly sessionRecords = new Map<string, RepoRecord>();
   private readonly lastRecompile = new Map<string, number>();
 
@@ -193,7 +199,11 @@ export class RepoLifecycle {
 
   // Pinned jobs retain url+commit in their durable payload, while active-job
   // de-duplication keys by the eventual worktree path rather than the URL.
-  startPinnedLifecycle(url: string, commit: string, profileId: string): JobRecord {
+  startPinnedLifecycle(
+    url: string,
+    commit: string,
+    profileId: string
+  ): JobRecord {
     const worktree = this.deps.versionStore.checkoutPath(url, commit);
     const existingId = this.activeJobs.get(worktree)?.jobId;
     if (existingId) {
@@ -205,8 +215,11 @@ export class RepoLifecycle {
       LIFECYCLE_JOB_TYPE,
       { pathOrUrl: worktree, mode: 'pinned', profileId, url, commit },
       async (ctx) => {
-        try { return await this.runPinnedLifecycle(url, commit, profileId, ctx); }
-        finally { this.clearJob(worktree); }
+        try {
+          return await this.runPinnedLifecycle(url, commit, profileId, ctx);
+        } finally {
+          this.clearJob(worktree);
+        }
       }
     );
     this.setJob(worktree, job.id);
@@ -230,23 +243,47 @@ export class RepoLifecycle {
     const worktree = this.deps.versionStore.checkoutPath(url, commit);
     if (!activityAlreadyTracked) this.addDirect(worktree);
     try {
-      const run = async ({ checkout, rematerialize }: NonNullable<typeof materialized>) => {
-          let workspacePath = checkout;
-          const compilers = await this.deps.registryLoader.getPluginsByType(PluginType.COMPILER);
-          if (compilers.length === 0) {
-            throw coded('No compiler plugins are available — the plugin catalog is missing or corrupt.', ErrorCodes.NO_COMPILER_PLUGINS);
-          }
-          const prior = await this.deps.versionStore.get(url, commit);
-          if (this.compiledWithMismatch(prior, compilers)) {
-            ctx.log('phase: rebuild (compiler version changed)\n');
-            workspacePath = (await rematerialize()).checkout;
-          }
-          return this.runLifecycle(workspacePath, profileId, 'pinned', ctx, { url, commit }, workspacePath, compilers);
-        };
+      const run = async ({
+        checkout,
+        rematerialize,
+      }: NonNullable<typeof materialized>) => {
+        let workspacePath = checkout;
+        const compilers = await this.deps.registryLoader.getPluginsByType(
+          PluginType.COMPILER
+        );
+        if (compilers.length === 0) {
+          throw coded(
+            'No compiler plugins are available — the plugin catalog is missing or corrupt.',
+            ErrorCodes.NO_COMPILER_PLUGINS
+          );
+        }
+        const prior = await this.deps.versionStore.get(url, commit);
+        if (this.compiledWithMismatch(prior, compilers)) {
+          ctx.log('phase: rebuild (compiler version changed)\n');
+          workspacePath = (await rematerialize()).checkout;
+        }
+        return this.runLifecycle(
+          workspacePath,
+          profileId,
+          'pinned',
+          ctx,
+          { url, commit },
+          workspacePath,
+          compilers
+        );
+      };
       return materialized
         ? await run(materialized)
-        : await this.deps.repos.withVersionMaterialized(profileId, url, commit, {}, run);
-    } finally { if (!activityAlreadyTracked) this.removeDirect(worktree); }
+        : await this.deps.repos.withVersionMaterialized(
+            profileId,
+            url,
+            commit,
+            {},
+            run
+          );
+    } finally {
+      if (!activityAlreadyTracked) this.removeDirect(worktree);
+    }
   }
 
   // Keep the direct activity marker for precisely the same scope as a
@@ -267,7 +304,9 @@ export class RepoLifecycle {
       if (record && !isTerminal(record.state)) return active.jobId;
       this.clearJob(pathOrUrl);
     }
-    return this.activeJobs.get(pathOrUrl)?.directRefs ? `direct:${pathOrUrl}` : undefined;
+    return this.activeJobs.get(pathOrUrl)?.directRefs
+      ? `direct:${pathOrUrl}`
+      : undefined;
   }
 
   private setJob(pathOrUrl: string, jobId: string): void {
@@ -293,7 +332,8 @@ export class RepoLifecycle {
     const active = this.activeJobs.get(pathOrUrl);
     if (!active) return;
     active.directRefs = Math.max(0, active.directRefs - 1);
-    if (active.directRefs === 0 && !active.jobId) this.activeJobs.delete(pathOrUrl);
+    if (active.directRefs === 0 && !active.jobId)
+      this.activeJobs.delete(pathOrUrl);
   }
 
   // Derived state for the session workspace (kept in memory — the session
@@ -377,6 +417,48 @@ export class RepoLifecycle {
     return artifacts !== fw.fingerprint.artifacts;
   }
 
+  private async runInstall(
+    fw: RepoFrameworkState,
+    pathOrUrl: string,
+    workspacePath: string,
+    ctx: JobContext
+  ): Promise<void> {
+    ctx.log(`phase: install ${fw.id}\n`);
+    const install = await this.deps.executor.execute(
+      fw.id,
+      'install',
+      { pathOrUrl },
+      { workspacePath, signal: ctx.signal, onOutput: (t) => ctx.log(t) }
+    );
+    if (!install.success) {
+      throw coded(
+        install.error?.message ?? `Install failed for ${fw.id}`,
+        install.error?.code ?? ErrorCodes.INSTALL_FAILED
+      );
+    }
+  }
+
+  private async runCompile(
+    fw: RepoFrameworkState,
+    pathOrUrl: string,
+    workspacePath: string,
+    ctx: JobContext
+  ): Promise<void> {
+    ctx.log(`phase: compile ${fw.id}\n`);
+    const compile = await this.deps.executor.execute(
+      fw.id,
+      'compile',
+      { pathOrUrl },
+      { workspacePath, signal: ctx.signal, onOutput: (t) => ctx.log(t) }
+    );
+    if (!compile.success) {
+      throw coded(
+        compile.error?.message ?? `Compile failed for ${fw.id}`,
+        compile.error?.code ?? ErrorCodes.COMPILE_FAILED
+      );
+    }
+  }
+
   // === The lifecycle runner ===
 
   private async runLifecycle(
@@ -386,21 +468,35 @@ export class RepoLifecycle {
     ctx: JobContext,
     pin?: { url: string; commit: string },
     pinnedWorkspacePath?: string,
-    pinnedCompilers?: Awaited<ReturnType<PluginRegistryLoader['getPluginsByType']>>
+    pinnedCompilers?: Awaited<
+      ReturnType<PluginRegistryLoader['getPluginsByType']>
+    >
   ): Promise<LifecycleResult> {
     let workspacePath: string;
     if (mode === 'pinned') {
-      if (!pin || !pinnedWorkspacePath) throw coded('Pinned lifecycle requires a url and commit.', 'INVALID_PINNED_LIFECYCLE');
+      if (!pin || !pinnedWorkspacePath)
+        throw coded(
+          'Pinned lifecycle requires a url and commit.',
+          'INVALID_PINNED_LIFECYCLE'
+        );
       workspacePath = pinnedWorkspacePath;
     } else {
       ctx.log(`phase: init (${mode})\n`);
-      const initResult = await this.deps.repos.init(pathOrUrl, { signal: ctx.signal });
-      if (!initResult.success) throw coded(initResult.error.message, initResult.error.code);
-      workspacePath = await this.deps.repos.resolveWorkspacePath(pathOrUrl, profileId);
+      const initResult = await this.deps.repos.init(pathOrUrl, {
+        signal: ctx.signal,
+      });
+      if (!initResult.success)
+        throw coded(initResult.error.message, initResult.error.code);
+      workspacePath = await this.deps.repos.resolveWorkspacePath(
+        pathOrUrl,
+        profileId
+      );
     }
 
     ctx.log('phase: detect\n');
-    const compilers = pinnedCompilers ?? await this.deps.registryLoader.getPluginsByType(PluginType.COMPILER);
+    const compilers =
+      pinnedCompilers ??
+      (await this.deps.registryLoader.getPluginsByType(PluginType.COMPILER));
     if (compilers.length === 0) {
       throw coded(
         'No compiler plugins are available — the plugin catalog is missing or corrupt.',
@@ -408,8 +504,17 @@ export class RepoLifecycle {
       );
     }
 
-    const pinnedPrior = mode === 'pinned' && pin ? await this.deps.versionStore.get(pin.url, pin.commit) : undefined;
-    const prior = pinnedPrior ? { pathOrUrl, frameworks: pinnedPrior.frameworks, detectedAt: pinnedPrior.detectedAt } : await this.priorRecord(pathOrUrl, profileId);
+    const pinnedPrior =
+      mode === 'pinned' && pin
+        ? await this.deps.versionStore.get(pin.url, pin.commit)
+        : undefined;
+    const prior = pinnedPrior
+      ? {
+          pathOrUrl,
+          frameworks: pinnedPrior.frameworks,
+          detectedAt: pinnedPrior.detectedAt,
+        }
+      : await this.priorRecord(pathOrUrl, profileId);
 
     // Sequential on purpose: lifecycle jobs already run per-repo in
     // parallel; fanning out per-plugin containers on top of that invites
@@ -489,75 +594,34 @@ export class RepoLifecycle {
     }
 
     const compiledThisRun = new Set<string>();
-    if (mode === 'add' || mode === 'pinned') {
+    if (mode === 'add' || mode === 'pinned' || mode === 'switch') {
       for (const fw of frameworks) {
-        ctx.log(`phase: install ${fw.id}\n`);
-        const install = await this.deps.executor.execute(
-          fw.id,
-          'install',
-          { pathOrUrl },
-          { workspacePath, signal: ctx.signal, onOutput: (t) => ctx.log(t) }
-        );
-        if (!install.success) {
-          throw coded(
-            install.error?.message ?? `Install failed for ${fw.id}`,
-            install.error?.code ?? ErrorCodes.INSTALL_FAILED
-          );
-        }
-        ctx.log(`phase: compile ${fw.id}\n`);
-        const compile = await this.deps.executor.execute(
-          fw.id,
-          'compile',
-          { pathOrUrl },
-          { workspacePath, signal: ctx.signal, onOutput: (t) => ctx.log(t) }
-        );
-        if (!compile.success) {
-          throw coded(
-            compile.error?.message ?? `Compile failed for ${fw.id}`,
-            compile.error?.code ?? ErrorCodes.COMPILE_FAILED
-          );
-        }
+        await this.runInstall(fw, pathOrUrl, workspacePath, ctx);
+      }
+      for (const fw of frameworks) {
+        await this.runCompile(fw, pathOrUrl, workspacePath, ctx);
         fw.compiledAt = new Date().toISOString();
         compiledThisRun.add(fw.id);
       }
     } else if (mode === 'recompile') {
+      const targets: RepoFrameworkState[] = [];
       for (const fw of frameworks) {
-        if (!(await this.frameworkDrifted(workspacePath, fw))) continue;
-        // Install ops are idempotent by plugin contract (npm install / forge
-        // install with dependencies already present is a fast no-op), so
-        // re-running one here is cheap. A recompile must never assume the
-        // workspace still has its dependencies — a re-clone after an
-        // interrupted job or a manual `node_modules` wipe invalidates that
-        // silently, and the add pipeline is otherwise the only path that
-        // installs.
-        ctx.log(`phase: install ${fw.id}\n`);
-        const install = await this.deps.executor.execute(
-          fw.id,
-          'install',
-          { pathOrUrl },
-          { workspacePath, signal: ctx.signal, onOutput: (t) => ctx.log(t) }
-        );
-        if (!install.success) {
-          throw coded(
-            install.error?.message ?? `Install failed for ${fw.id}`,
-            install.error?.code ?? ErrorCodes.INSTALL_FAILED
-          );
+        if (
+          !fw.compiledAt ||
+          (await this.frameworkDrifted(workspacePath, fw))
+        ) {
+          targets.push(fw);
         }
-        ctx.log(`phase: compile ${fw.id}\n`);
-        const compile = await this.deps.executor.execute(
-          fw.id,
-          'compile',
-          { pathOrUrl },
-          { workspacePath, signal: ctx.signal, onOutput: (t) => ctx.log(t) }
-        );
-        if (!compile.success) {
-          throw coded(
-            compile.error?.message ?? `Compile failed for ${fw.id}`,
-            compile.error?.code ?? ErrorCodes.COMPILE_FAILED
-          );
+      }
+      if (targets.length > 0) {
+        for (const fw of frameworks) {
+          await this.runInstall(fw, pathOrUrl, workspacePath, ctx);
         }
-        fw.compiledAt = new Date().toISOString();
-        compiledThisRun.add(fw.id);
+        for (const fw of targets) {
+          await this.runCompile(fw, pathOrUrl, workspacePath, ctx);
+          fw.compiledAt = new Date().toISOString();
+          compiledThisRun.add(fw.id);
+        }
       }
     }
 
@@ -580,12 +644,25 @@ export class RepoLifecycle {
     ctx.log('phase: persist\n');
     const detectedAt = new Date().toISOString();
     if (mode === 'pinned' && pin) {
-      const compiledFramework = frameworks.find((framework) => compiledThisRun.has(framework.id));
-      const plugin = compiledFramework && compilers.find((candidate) => candidate.metadata.id === compiledFramework.id);
+      const compiledFramework = frameworks.find((framework) =>
+        compiledThisRun.has(framework.id)
+      );
+      const plugin =
+        compiledFramework &&
+        compilers.find(
+          (candidate) => candidate.metadata.id === compiledFramework.id
+        );
       await this.deps.versionStore.updateState(pin.url, pin.commit, {
         frameworks,
         detectedAt,
-        ...(plugin ? { compiledWith: { pluginId: plugin.metadata.id, version: plugin.metadata.version } } : {}),
+        ...(plugin
+          ? {
+              compiledWith: {
+                pluginId: plugin.metadata.id,
+                version: plugin.metadata.version,
+              },
+            }
+          : {}),
       });
     } else if (this.isSessionPath(pathOrUrl)) {
       this.sessionRecords.set(pathOrUrl, {
@@ -612,8 +689,12 @@ export class RepoLifecycle {
     compilers: Awaited<ReturnType<PluginRegistryLoader['getPluginsByType']>>
   ): boolean {
     if (!record?.compiledWith) return false;
-    const current = compilers.find((plugin) => plugin.metadata.id === record.compiledWith?.pluginId);
-    return Boolean(current && current.metadata.version !== record.compiledWith.version);
+    const current = compilers.find(
+      (plugin) => plugin.metadata.id === record.compiledWith?.pluginId
+    );
+    return Boolean(
+      current && current.metadata.version !== record.compiledWith.version
+    );
   }
 
   private async priorRecord(
