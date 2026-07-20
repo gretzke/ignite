@@ -486,6 +486,53 @@ describe('profile handlers', () => {
     expect(active).toBe(false);
   });
 
+  it('keeps started version activity until cancellation stops materialization', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const commit = 'c'.repeat(40);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    let onSettled!: (record: { state: 'cancelled'; startedAt?: string }) => void;
+    let active = false;
+    deps.jobs = {
+      start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner, opts: { onSettled: typeof onSettled }) => {
+        runner = value;
+        onSettled = opts.onSettled;
+        return { id: 'job-cancel-running', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
+      get: vi.fn(() => undefined),
+    };
+    deps.lifecycle.beginPinnedActivity = vi.fn(() => {
+      active = true;
+      return () => { active = false; };
+    });
+    const materialization = vi.fn(async (_profileId: string, _url: string, _commit: string, opts: { signal?: AbortSignal }) => {
+      return new Promise<never>((_resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => reject(opts.signal?.reason), { once: true });
+      });
+    });
+    (deps.repos as typeof deps.repos & { withVersionMaterialized: Function }).withVersionMaterialized = materialization;
+
+    await createProfileHandlers(deps).addRepoVersion(
+      { params: { id: 'p1' }, body: { url, commit } } as never,
+      makeReply() as never
+    );
+    const controller = new AbortController();
+    const running = runner({ log: () => {}, signal: controller.signal });
+    await vi.waitFor(() => expect(materialization).toHaveBeenCalledOnce());
+    const runningRejected = expect(running).rejects.toThrow('job cancelled');
+
+    controller.abort(new Error('job cancelled'));
+    onSettled({ state: 'cancelled', startedAt: new Date().toISOString() });
+
+    expect(active).toBe(true);
+    await runningRejected;
+    expect(active).toBe(false);
+    expect(deps.versionStore.addMembership).not.toHaveBeenCalled();
+    expect(materialization).toHaveBeenCalledWith(
+      'p1', url, commit, expect.objectContaining({ signal: controller.signal }), expect.any(Function)
+    );
+  });
+
   it('dedupes active adds per profile while allowing another profile to start its own job', async () => {
     const deps = makeDeps();
     const records = new Map<string, { id: string; state: 'queued' }>();

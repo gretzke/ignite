@@ -230,6 +230,53 @@ describe('RepoService version materialization', () => {
     ).toBe(true);
   });
 
+  it('aborts materialization when the caller cancels its job signal', async () => {
+    const home = await temp('ignite-version-home-');
+    const url = 'file:///cancelled/repo';
+    FileSystem.resetInstance();
+    const fileSystem = FileSystem.getInstance(home);
+    const versions = new VersionStore(fileSystem);
+    await versions.approveOrigins(profileId, [url]);
+    const controller = new AbortController();
+    const run = vi.fn(
+      async (
+        _command: string,
+        args: string[],
+        options?: { signal?: AbortSignal }
+      ) => {
+        if (args.includes('rev-parse'))
+          return { code: 1, stdout: '', stderr: 'missing' };
+        if (args.includes('fetch')) {
+          return new Promise<never>((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              'abort',
+              () => reject(options.signal?.reason),
+              { once: true }
+            );
+          });
+        }
+        return { code: 0, stdout: '', stderr: '' };
+      }
+    );
+    const repos = new RepoService({
+      fileSystem,
+      profiles: {
+        getCurrentProfile: () => profileId,
+      } as unknown as ProfileManager,
+      run: run as typeof runCommand,
+    });
+
+    const materializing = repos.ensureVersion(profileId, url, testCommit, {
+      signal: controller.signal,
+    });
+    await vi.waitFor(() =>
+      expect(run.mock.calls.some((call) => call[1].includes('fetch'))).toBe(true)
+    );
+    controller.abort(new Error('job cancelled'));
+
+    await expect(materializing).rejects.toThrow('job cancelled');
+  });
+
   it('materializes independent real clones for two versions using one bare cache', async () => {
     const remote = await sourceRepo();
     const home = await temp('ignite-version-home-');

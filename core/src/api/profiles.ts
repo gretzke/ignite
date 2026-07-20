@@ -753,28 +753,33 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           'repo.version.add',
           { url: source.url, commit, ref: body.ref },
           async (ctx: JobContext) => {
-            if ('ambiguous' in resolved && resolved.ambiguous && !body.refKind)
-              ctx.log(`warning: ref '${body.ref}' matches both a branch and tag; using branch\n`);
-            const withMaterialized = d.repos.withVersionMaterialized?.bind(d.repos) ?? (async <T>(profileId: string, url: string, versionCommit: string, opts: Parameters<RepoService['withVersionMaterialized']>[3], fn: Parameters<RepoService['withVersionMaterialized']>[4]): Promise<T> => {
-              await d.repos.ensureVersion(profileId, url, versionCommit, opts);
-              return fn({ checkout: d.versionStore.checkoutPath(url, versionCommit), rematerialize: () => d.repos.ensureVersion(profileId, url, versionCommit, opts) }) as Promise<T>;
-            });
-            ctx.log('phase: materialize\n');
-            return withMaterialized(
-              id, source.url, commit,
-              { ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}), onLog: (text) => ctx.log(text) },
-              async (materialized) => {
-                ctx.log('phase: add user membership\n');
-                await d.versionStore.addMembership(id, source.url, commit, 'user');
-                ctx.log('phase: detect and compile\n');
-                return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized, true);
-              }
-            );
+            try {
+              if ('ambiguous' in resolved && resolved.ambiguous && !body.refKind)
+                ctx.log(`warning: ref '${body.ref}' matches both a branch and tag; using branch\n`);
+              const withMaterialized = d.repos.withVersionMaterialized?.bind(d.repos) ?? (async <T>(profileId: string, url: string, versionCommit: string, opts: Parameters<RepoService['withVersionMaterialized']>[3], fn: Parameters<RepoService['withVersionMaterialized']>[4]): Promise<T> => {
+                await d.repos.ensureVersion(profileId, url, versionCommit, opts);
+                return fn({ checkout: d.versionStore.checkoutPath(url, versionCommit), rematerialize: () => d.repos.ensureVersion(profileId, url, versionCommit, opts) }) as Promise<T>;
+              });
+              ctx.log('phase: materialize\n');
+              return await withMaterialized(
+                id, source.url, commit,
+                { ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}), ...(source.localFallbackPath ? { localFallbackPath: source.localFallbackPath } : {}), onLog: (text) => ctx.log(text), signal: ctx.signal },
+                async (materialized) => {
+                  if (ctx.signal.aborted) throw ctx.signal.reason;
+                  ctx.log('phase: add user membership\n');
+                  await d.versionStore.addMembership(id, source.url, commit, 'user');
+                  ctx.log('phase: detect and compile\n');
+                  return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized, true);
+                }
+              );
+            } finally {
+              releaseActivity();
+            }
           },
           {
             onSettled: (record) => {
               d.pendingVersionAdds.delete(key);
-              releaseActivity();
+              if (!record.startedAt) releaseActivity();
               if (record.state === 'failed' || record.state === 'cancelled') {
                 void markVersionFailure(source.url, commit, record).catch((error) =>
                   getLogger().warn(`version failure persist: ${String(error)}`)

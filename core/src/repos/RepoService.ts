@@ -68,6 +68,7 @@ export interface EnsureVersionOptions {
   ref?: string;
   fetchUrl?: string;
   onLog?: (text: string) => void;
+  signal?: AbortSignal;
   localFallbackPath?: string;
   refLabel?: string;
   refKind?: RefKind;
@@ -408,6 +409,15 @@ export class RepoService {
     const groupDir = this.versionStore.groupDir(url);
     const checkout = this.versionStore.checkoutPath(url, commit);
     const controller = new AbortController();
+    if (opts.signal?.aborted) {
+      controller.abort(opts.signal.reason);
+    } else {
+      opts.signal?.addEventListener(
+        'abort',
+        () => controller.abort(opts.signal?.reason),
+        { once: true }
+      );
+    }
     const deadline = Date.now() + this.materializationTimeoutMs;
     const timer = setTimeout(
       () =>
