@@ -7,7 +7,6 @@ import { getRepoName } from '../../../utils/repo';
 import { jobStarted } from '../jobs/jobsSlice';
 import { wsSend } from '../../middleware/websocket';
 import {
-  clearRepositoryList,
   clearRepositories,
   setRepositories,
   setRepositoryInitialized,
@@ -54,8 +53,6 @@ export const repositoriesApi = {
   // Fetch repositories for a specific profile
   fetchRepositories: (profileId: string) => {
     const generation = ++repositoriesRequestGeneration;
-    // Clear repositories immediately (flash of empty content)
-    const clearAction = clearRepositoryList();
 
     // Create API action with enhanced client
     const apiAction = apiClient.dispatch.listRepos({
@@ -123,8 +120,7 @@ export const repositoriesApi = {
       },
     });
 
-    // Return array of actions to dispatch
-    return [clearAction, apiAction];
+    return [apiAction];
   },
 
   // Checkout branch

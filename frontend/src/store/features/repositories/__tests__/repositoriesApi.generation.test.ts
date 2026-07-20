@@ -14,11 +14,18 @@ const list = (pathOrUrl: string): RepoList => ({
 });
 
 describe('repository fetch generation guard', () => {
+  it('does not clear the rendered list before a routine refetch', () => {
+    const actions = repositoriesApi.fetchRepositories('refetch-profile');
+
+    expect(actions).toHaveLength(1);
+    expect(isApiDispatchAction(actions[0])).toBe(true);
+  });
+
   it('drops an older profile response after a newer profile fetch has started', () => {
     const oldActions = repositoriesApi.fetchRepositories('old-profile');
     const newActions = repositoriesApi.fetchRepositories('new-profile');
-    const oldRequest = oldActions[1];
-    const newRequest = newActions[1];
+    const oldRequest = oldActions[0];
+    const newRequest = newActions[0];
     expect(isApiDispatchAction(oldRequest)).toBe(true);
     expect(isApiDispatchAction(newRequest)).toBe(true);
     if (!isApiDispatchAction(oldRequest) || !isApiDispatchAction(newRequest)) return;

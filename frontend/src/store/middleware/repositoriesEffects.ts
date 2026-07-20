@@ -4,6 +4,7 @@ import {
   setCurrentProfile,
 } from '../features/profiles/profilesSlice';
 import { repositoriesApi } from '../features/repositories/repositoriesApi';
+import { clearRepositoryList } from '../features/repositories/repositoriesSlice';
 import type { AppDispatch } from '../store';
 
 // Create a listener middleware for repositories effects
@@ -37,6 +38,12 @@ repositoriesEffects.startListening({
       lastFetchedProfileId = newProfileId;
 
       if (newProfileId) {
+        // A profile change owns the clear. Routine list refetches (including
+        // lifecycle terminals) leave the existing cards rendered until the
+        // replacement payload arrives.
+        if (setCurrentProfile.match(action)) {
+          dispatch(clearRepositoryList());
+        }
         const actions = repositoriesApi.fetchRepositories(newProfileId);
         // Dispatch all actions (start loading + API call)
         actions.forEach((actionToDispatch) => dispatch(actionToDispatch));
