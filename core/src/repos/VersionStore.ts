@@ -457,19 +457,22 @@ export class VersionStore {
     url: string,
     commit: string,
     deleteCheckout: () => Promise<void>
-  ): Promise<boolean> {
+  ): Promise<{ membershipRemoved: boolean; checkoutDeleted: boolean }> {
     const canonicalUrl = canonicalGitUrl(url);
     return this.withRmwLock(async () => {
       const memberships = await this.readMemberships(profileId);
       const entries = memberships[canonicalUrl];
-      if (entries) {
-        const remaining = entries.filter(
-          (entry) => entry.commit !== commit || entry.source !== 'user'
-        );
-        if (remaining.length === 0) delete memberships[canonicalUrl];
-        else memberships[canonicalUrl] = remaining;
-        await this.fileSystem.writeJsonFile(this.membershipPath(profileId), memberships);
-      }
+      const membershipRemoved = Boolean(
+        entries?.some((entry) => entry.commit === commit && entry.source === 'user')
+      );
+      if (!membershipRemoved)
+        return { membershipRemoved: false, checkoutDeleted: false };
+      const remaining = entries!.filter(
+        (entry) => entry.commit !== commit || entry.source !== 'user'
+      );
+      if (remaining.length === 0) delete memberships[canonicalUrl];
+      else memberships[canonicalUrl] = remaining;
+      await this.fileSystem.writeJsonFile(this.membershipPath(profileId), memberships);
 
       const profiles = await this.fileSystem.listProfiles();
       let count = 0;
@@ -479,7 +482,7 @@ export class VersionStore {
             (entry) => entry.commit === commit
           ).length ?? 0;
       }
-      if (count !== 0) return false;
+      if (count !== 0) return { membershipRemoved: true, checkoutDeleted: false };
 
       await deleteCheckout();
       const registry = await this.readRegistry();
@@ -487,7 +490,7 @@ export class VersionStore {
         (record) => canonicalGitUrl(record.url) !== canonicalUrl || record.commit !== commit
       );
       await this.fileSystem.writeJsonFile(this.registryPath(), registry);
-      return true;
+      return { membershipRemoved: true, checkoutDeleted: true };
     });
   }
 

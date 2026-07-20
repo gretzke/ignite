@@ -656,7 +656,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             busy = true;
             return Promise.resolve(false);
           }
-          return d.versionStore.removeUserMembershipAndDeleteIfUnreferenced(id, url, commit, deleteLocked);
+          return d.versionStore
+            .removeUserMembershipAndDeleteIfUnreferenced(
+              id,
+              url,
+              commit,
+              deleteLocked
+            )
+            .then((result) => result.checkoutDeleted);
         });
         if (busy) return reply.status(409).send({ statusCode: 409, error: 'Conflict', code: ErrorCodes.REPO_BUSY, message: 'Pinned repository is busy', details: { url, commit } }) as unknown as null;
         return reply.status(204).send(null);
@@ -868,7 +875,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
       }
       try {
         let busy = false;
-        const deleted = await d.repos.removeVersionCheckout(
+        await d.repos.removeVersionCheckout(
           url,
           commit,
           (deleteLocked) => {
@@ -876,21 +883,18 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
               busy = true;
               return Promise.resolve(false);
             }
-            return d.versionStore.removeUserMembershipAndDeleteIfUnreferenced(id, url, commit, deleteLocked);
+            return d.versionStore
+              .removeUserMembershipAndDeleteIfUnreferenced(
+                id,
+                url,
+                commit,
+                deleteLocked
+              )
+              .then((result) => result.checkoutDeleted);
           }
         );
         if (busy) {
           return reply.status(409).send({ statusCode: 409, error: 'Conflict', code: ErrorCodes.REPO_BUSY, message: 'Repository version is busy', details: { url, commit } }) as unknown as null;
-        }
-        if (!deleted) {
-          return reply.status(409).send({
-            statusCode: 409,
-            error: 'Conflict',
-            code: ErrorCodes.VERSION_IN_USE,
-            message:
-              'Repository version is still referenced by a workflow or another profile',
-            details: { url, commit },
-          }) as unknown as null;
         }
         return reply.status(204).send(null);
       } catch (error) {

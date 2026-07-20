@@ -72,7 +72,7 @@ function makeDeps(): any {
       beginPinnedActivity: vi.fn(() => () => {}),
     },
     versionStore: {
-      removeUserMembershipAndDeleteIfUnreferenced: vi.fn(async (_profileId: string, _url: string, _commit: string, remove: () => Promise<void>) => { await remove(); return true; }),
+      removeUserMembershipAndDeleteIfUnreferenced: vi.fn(async (_profileId: string, _url: string, _commit: string, remove: () => Promise<void>) => { await remove(); return { membershipRemoved: true, checkoutDeleted: true }; }),
       checkoutPath: vi.fn((url: string, commit: string) => `/versions/${encodeURIComponent(url)}/${commit}`),
       list: vi.fn(async () => []),
       listMemberships: vi.fn(async () => ({})),
@@ -826,10 +826,10 @@ describe('profile handlers', () => {
     expect(deps.repos.removeVersionCheckout).toHaveBeenCalledWith('https://example.com/contracts.git', 'd'.repeat(40), expect.any(Function));
   });
 
-  it('returns VERSION_IN_USE after removing the user membership when a workflow still references it', async () => {
-    const deps = makeDeps(); deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced = vi.fn(async () => false);
+  it('returns 204 after removing the user membership when another reference retains the checkout', async () => {
+    const deps = makeDeps(); deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced = vi.fn(async () => ({ membershipRemoved: true, checkoutDeleted: false }));
     const reply = makeReply(); await createProfileHandlers(deps).removeRepoVersion({ params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'e'.repeat(40) } } as never, reply as never);
-    expect(reply.statusCode).toBe(409); expect(reply.body).toMatchObject({ code: 'VERSION_IN_USE' });
+    expect(reply.statusCode).toBe(204);
   });
 
   it('returns memberships without a registered-origin match as orphan version groups', async () => {

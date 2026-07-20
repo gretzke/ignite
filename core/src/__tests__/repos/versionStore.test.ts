@@ -129,7 +129,10 @@ describe('VersionStore', () => {
     }));
 
     expect(await versions.referenceCount(ssh, commitA)).toBe(1);
-    await expect(versions.removeUserMembershipAndDeleteIfUnreferenced('p2', ssh, commitA, async () => {})).resolves.toBe(false);
+    await expect(versions.removeUserMembershipAndDeleteIfUnreferenced('p2', ssh, commitA, async () => {})).resolves.toEqual({
+      membershipRemoved: false,
+      checkoutDeleted: false,
+    });
   });
 
   it('migrates a raw-URL cache group before reconciling a canonicalized record', async () => {
@@ -261,6 +264,35 @@ describe('VersionStore', () => {
       { commit: commitA, addedAt: expect.any(String), source: 'workflow' },
     ]);
     expect(await versions.referenceCount(urlA, commitA)).toBe(1);
+  });
+
+  it('removes a caller membership but retains a checkout referenced by another profile', async () => {
+    const home = await temp('ignite-version-remove-');
+    const { store: versions } = await store(home);
+    await versions.upsert(record());
+    await versions.addMembership('p1', urlA, commitA, 'user');
+    await versions.addMembership('p2', urlA, commitA, 'workflow');
+    const remove = vi.fn(async () => {});
+
+    await expect(
+      versions.removeUserMembershipAndDeleteIfUnreferenced(
+        'p1',
+        urlA,
+        commitA,
+        remove
+      )
+    ).resolves.toEqual({ membershipRemoved: true, checkoutDeleted: false });
+    expect(remove).not.toHaveBeenCalled();
+    expect((await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]).toBeUndefined();
+
+    await expect(
+      versions.removeUserMembershipAndDeleteIfUnreferenced(
+        'p1',
+        urlA,
+        commitA,
+        remove
+      )
+    ).resolves.toEqual({ membershipRemoved: false, checkoutDeleted: false });
   });
 
   it('bumps lastUsedAt without changing the original record metadata', async () => {

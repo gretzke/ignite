@@ -547,14 +547,6 @@ export const repositoriesApi = {
         }),
       ],
       onError: (error) => {
-        if (error.body.code === 'VERSION_IN_USE') {
-          return triggerToast({
-            title: 'Version still in use',
-            description: error.body.message,
-            variant: 'warning',
-            duration: 6000,
-          });
-        }
         if (error.body.code === 'REPO_BUSY') {
           return triggerToast({
             title: 'Repository version is busy',
