@@ -121,6 +121,7 @@ export interface RepoVersionSummary {
   activeJobId?: string;
   lastUsedAt: string;
   localFallback?: boolean;
+  lastError?: { code: string; message: string; at: string };
 }
 
 export interface OrphanVersionGroup {
@@ -296,6 +297,7 @@ export const RepoListEntrySchema = z.object({
       activeJobId: z.string().optional(),
       lastUsedAt: z.string(),
       localFallback: z.boolean().optional(),
+      lastError: z.object({ code: z.string(), message: z.string(), at: z.string() }).optional(),
     }),
   ).default([]),
 });
@@ -318,6 +320,7 @@ export const GetReposResponseSchema = createApiResponseSchema<RepoList>(
         activeJobId: z.string().optional(),
         lastUsedAt: z.string(),
         localFallback: z.boolean().optional(),
+        lastError: z.object({ code: z.string(), message: z.string(), at: z.string() }).optional(),
       })),
     })),
     // Deprecated response-shape compatibility field.

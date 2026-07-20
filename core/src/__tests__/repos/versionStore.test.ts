@@ -138,7 +138,10 @@ describe('VersionStore', () => {
 
     await versions.reconcile();
 
-    expect(await versions.list()).toEqual([record(canonical, commitA)]);
+    expect(await versions.list()).toEqual([expect.objectContaining({
+      ...record(canonical, commitA),
+      lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
+    })]);
     await expect(fs.stat(versions.checkoutPath(canonical, commitA))).resolves.toMatchObject({
       isDirectory: expect.any(Function),
     });
@@ -229,6 +232,37 @@ describe('VersionStore', () => {
     expect(await versions.isOriginApproved('p2', urlA)).toBe(false);
   });
 
+  it('sets and clears durable version failures with a null lastError patch', async () => {
+    const home = await temp('ignite-version-errors-');
+    const { store: versions } = await store(home);
+    await versions.upsert(record());
+    const lastError = { code: 'COMPILE_FAILED', message: 'compile failed', at: '2026-07-21T00:00:00.000Z' };
+
+    await versions.updateState(urlA, commitA, { lastError });
+    expect(await versions.get(urlA, commitA)).toMatchObject({ lastError });
+
+    await versions.updateState(urlA, commitA, { lastError: null });
+    expect((await versions.get(urlA, commitA))?.lastError).toBeUndefined();
+  });
+
+  it('marks only incomplete checkout-bearing records as interrupted during reconcile', async () => {
+    const home = await temp('ignite-version-interrupted-');
+    const { store: versions } = await store(home);
+    const interrupted = record(urlA, commitA);
+    const detected = { ...record(urlA, commitB), detectedAt: '2026-07-21T00:00:00.000Z' };
+    const failed = { ...record(urlA, 'c'.repeat(40)), lastError: { code: 'CANCELLED', message: 'cancelled', at: '2026-07-21T00:00:00.000Z' } };
+    for (const entry of [interrupted, detected, failed]) {
+      await versions.upsert(entry);
+      await fs.mkdir(versions.checkoutPath(entry.url, entry.commit), { recursive: true });
+    }
+
+    await versions.reconcile();
+
+    expect((await versions.get(urlA, commitA))?.lastError).toMatchObject({ code: 'INTERRUPTED' });
+    expect((await versions.get(urlA, commitB))?.lastError).toBeUndefined();
+    expect((await versions.get(urlA, 'c'.repeat(40)))?.lastError).toMatchObject({ code: 'CANCELLED' });
+  });
+
   it('tolerates a corrupt global registry as an empty registry and warns', async () => {
     const home = await temp('ignite-version-home-');
     const { fileSystem, store: versions } = await store(home);
@@ -262,7 +296,10 @@ describe('VersionStore', () => {
     const warning = vi.spyOn(getLogger(), 'warn').mockImplementation(() => undefined);
 
     await expect(versions.reconcile()).resolves.toBeUndefined();
-    expect(await versions.list()).toEqual([valid]);
+    expect(await versions.list()).toEqual([expect.objectContaining({
+      ...valid,
+      lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
+    })]);
     expect(warning).toHaveBeenCalledWith(
       'Ignoring invalid version cache registry record(s)'
     );
@@ -312,7 +349,10 @@ describe('VersionStore', () => {
 
     await versions.reconcile();
 
-    expect(await versions.list()).toEqual([live]);
+    expect(await versions.list()).toEqual([expect.objectContaining({
+      ...live,
+      lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
+    })]);
     await expect(
       fs.access(versions.checkoutPath(urlA, orphanCommit))
     ).rejects.toThrow();

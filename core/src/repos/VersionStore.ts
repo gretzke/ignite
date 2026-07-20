@@ -16,6 +16,7 @@ export interface VersionRecord {
   frameworks?: RepoFrameworkState[];
   detectedAt?: string;
   compiledWith?: { pluginId: string; version: string };
+  lastError?: { code: string; message: string; at: string };
   createdAt: string;
   lastUsedAt: string;
 }
@@ -42,6 +43,7 @@ export interface VersionStatePatch {
   frameworks?: RepoFrameworkState[];
   detectedAt?: string;
   compiledWith?: { pluginId: string; version: string };
+  lastError?: { code: string; message: string; at: string } | null;
 }
 
 /** Convert Git's scp shorthand into a WHATWG-parsable SSH URL. */
@@ -257,7 +259,10 @@ export class VersionStore {
         (entry) => canonicalGitUrl(entry.url) === canonicalUrl && entry.commit === commit
       );
       if (!record) return;
-      Object.assign(record, patch);
+      const { lastError, ...state } = patch;
+      Object.assign(record, state);
+      if (lastError === null) delete record.lastError;
+      else if (lastError !== undefined) record.lastError = lastError;
       await this.fileSystem.writeJsonFile(this.registryPath(), registry);
     });
   }
@@ -273,7 +278,16 @@ export class VersionStore {
           const checkout = this.checkoutPath(record.url, record.commit);
           // eslint-disable-next-line security/detect-non-literal-fs-filename -- URL is hashed and commit is validated under the version cache root.
           const stats = await fs.stat(checkout);
-          if (stats.isDirectory()) liveRecords.push(record);
+          if (stats.isDirectory()) {
+            if (!record.detectedAt && !record.lastError) {
+              record.lastError = {
+                code: 'INTERRUPTED',
+                message: 'Version add did not complete before the last shutdown',
+                at: new Date().toISOString(),
+              };
+            }
+            liveRecords.push(record);
+          }
         } catch {
           // Missing checkouts are disposable cache entries and must not survive startup.
         }

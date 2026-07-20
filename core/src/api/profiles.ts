@@ -42,6 +42,7 @@ import { ErrorCodes } from '../types/errors.js';
 import { sendCaughtError } from './utils/errors.js';
 import { JobManager, type JobContext } from '../jobs/JobManager.js';
 import { inspectGitRemote } from '../plugins/install/gitRemote.js';
+import { getLogger } from '../utils/logger.js';
 
 // The subset of ProfileManager the handlers use (tests pass fakes).
 export interface ProfileManagerLike {
@@ -86,6 +87,7 @@ export interface ProfileHandlerDeps {
     | 'listMemberships'
     | 'isOriginApproved'
     | 'addMembership'
+    | 'updateState'
   >;
   repos: Pick<
     RepoService,
@@ -131,6 +133,7 @@ function versionSummary(
     ...(activeJobId ? { activeJobId } : {}),
     lastUsedAt: record.lastUsedAt,
     ...(record.localFallback ? { localFallback: true } : {}),
+    ...(record.lastError ? { lastError: record.lastError } : {}),
   };
 }
 
@@ -171,6 +174,21 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     jobs: deps?.jobs ?? JobManager.getInstance(),
     inspectGitRemote: deps?.inspectGitRemote ?? inspectGitRemote,
     pendingVersionAdds: deps?.pendingVersionAdds ?? new Map(),
+  };
+
+  const markVersionFailure = async (
+    url: string,
+    commit: string,
+    record: JobRecord
+  ): Promise<void> => {
+    const cancelled = record.state === 'cancelled';
+    await d.versionStore.updateState(url, commit, {
+      lastError: {
+        code: cancelled ? 'CANCELLED' : record.error?.code ?? ErrorCodes.OPERATION_EXECUTION_FAILED,
+        message: cancelled ? 'Version add was cancelled' : record.error?.message ?? 'Version add failed',
+        at: record.finishedAt ?? new Date().toISOString(),
+      },
+    });
   };
 
   // Enrich a persisted record with computed state for the list response.
@@ -714,9 +732,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             );
           },
           {
-            onSettled: () => {
+            onSettled: (record) => {
               d.pendingVersionAdds.delete(key);
               releaseActivity();
+              if (record.state === 'failed' || record.state === 'cancelled') {
+                void markVersionFailure(source.url, commit, record).catch((error) =>
+                  getLogger().warn(`version failure persist: ${String(error)}`)
+                );
+              }
             },
           }
         );

@@ -244,6 +244,7 @@ describe('RepoLifecycle', () => {
         'a'.repeat(40),
         expect.objectContaining({
           frameworks: [expect.objectContaining({ id: 'foundry' })],
+          lastError: null,
           compiledWith: { pluginId: 'foundry', version: '1.0.0' },
         })
       );

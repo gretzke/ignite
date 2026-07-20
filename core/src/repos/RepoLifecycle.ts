@@ -664,6 +664,7 @@ export class RepoLifecycle {
       await this.deps.versionStore.updateState(pin.url, pin.commit, {
         frameworks,
         detectedAt,
+        lastError: null,
         ...(plugin
           ? {
               compiledWith: {

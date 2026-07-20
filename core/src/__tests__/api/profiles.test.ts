@@ -76,6 +76,7 @@ function makeDeps(): any {
       listMemberships: vi.fn(async () => ({})),
       isOriginApproved: vi.fn(async () => true),
       addMembership: vi.fn(async () => {}),
+      updateState: vi.fn(async () => {}),
     },
     repos: {
       removeVersionCheckout: vi.fn(async (_url: string, _commit: string, beforeDelete: (remove: () => Promise<void>) => Promise<boolean>) => beforeDelete(async () => {})),
@@ -446,6 +447,7 @@ describe('profile handlers', () => {
     const deps = makeDeps();
     const pending = new Map();
     const release = vi.fn();
+    deps.versionStore.updateState = vi.fn(async () => {});
     let onSettled!: (record: { state: 'cancelled' }) => void;
     deps.pendingVersionAdds = pending;
     deps.lifecycle.beginPinnedActivity = vi.fn(() => release);
@@ -463,6 +465,11 @@ describe('profile handlers', () => {
     );
     expect(pending.size).toBe(1);
     onSettled({ state: 'cancelled' });
+    await vi.waitFor(() => expect(deps.versionStore.updateState).toHaveBeenCalledWith(
+      'https://example.com/contracts.git',
+      'a'.repeat(40),
+      expect.objectContaining({ lastError: expect.objectContaining({ code: 'CANCELLED' }) })
+    ));
 
     expect(pending.size).toBe(0);
     expect(release).toHaveBeenCalledOnce();
@@ -484,6 +491,20 @@ describe('profile handlers', () => {
     expect((reply.body as { data: { versionGroups: Array<{ url: string; versions: Array<Record<string, unknown>> }> } }).data.versionGroups).toEqual([
       { url, versions: [expect.objectContaining({ commit, refLabel: 'main', activeJobId: 'job-pending' })] },
     ]);
+  });
+
+  it('includes a persisted version failure in the repo-list summary', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.com/contracts.git';
+    const commit = 'a'.repeat(40);
+    const lastError = { code: 'COMPILE_FAILED', message: 'compiler failed', at: '2026-07-21T00:00:00.000Z' };
+    deps.versionStore.listMemberships = vi.fn(async () => ({ [url]: [{ commit, source: 'user', addedAt: '2026-07-21T00:00:00.000Z' }] }));
+    deps.versionStore.list = vi.fn(async () => [{ url, commit, createdAt: '2026-07-21T00:00:00.000Z', lastUsedAt: '2026-07-21T00:00:00.000Z', lastError }]);
+
+    const reply = makeReply();
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
+
+    expect((reply.body as { data: { versionGroups: Array<{ versions: Array<{ lastError?: unknown }> }> } }).data.versionGroups[0].versions[0].lastError).toEqual(lastError);
   });
 
   it('resolves a seven-character commit prefix to the full remote commit before materialization', async () => {
