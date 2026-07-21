@@ -1886,6 +1886,48 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('prunes failed backoff for a removed framework before it is re-added', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const framework: RepoFrameworkState = {
+        id: 'foundry', name: 'Foundry', watchPaths: WATCH.data as RepoFrameworkState['watchPaths'],
+        fingerprint: { sources: 'before', artifacts: 'before' },
+      };
+      const record: RepoRecord = { pathOrUrl: '/repo-a', frameworks: [framework] };
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [record],
+        responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, compile: {
+          success: false, error: { code: 'COMPILE_FAILED', message: 'boom' },
+        } } },
+      });
+      vi.spyOn(lifecycle, 'measureFramework').mockResolvedValue({
+        comparable: true, sources: 'failed', artifacts: 'failed', drifted: true,
+      });
+      const internals = lifecycle as unknown as {
+        lastRecompile: Map<string, number>;
+        failedRecompileTuples: Map<string, unknown>;
+      };
+
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      await jobs.runAll();
+      expect(internals.failedRecompileTuples).toHaveLength(1);
+
+      record.frameworks = [];
+      internals.lastRecompile.clear();
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      expect(internals.failedRecompileTuples).toHaveLength(0);
+
+      record.frameworks = [framework];
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      expect(jobs.started).toHaveLength(2);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('persists the source fingerprint captured immediately before compile', async () => {
     const dir = await createTestDirectory();
     try {

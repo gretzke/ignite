@@ -653,6 +653,10 @@ export class RepoLifecycle {
     for (const key of this.quietObservations.keys()) {
       if (key.startsWith(prefix) && !currentFrameworks.has(key.slice(prefix.length))) {
         this.quietObservations.delete(key);
+      }
+    }
+    for (const key of this.failedRecompileTuples.keys()) {
+      if (key.startsWith(prefix) && !currentFrameworks.has(key.slice(prefix.length))) {
         this.failedRecompileTuples.delete(key);
       }
     }
