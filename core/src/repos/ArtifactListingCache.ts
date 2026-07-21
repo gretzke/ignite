@@ -1,5 +1,10 @@
 import type { ArtifactLocation } from '@ignite/api';
 import { statFingerprint } from './fingerprint.js';
+import { canonicalGitUrl } from './VersionStore.js';
+
+export function artifactCacheIdentity(pathOrUrl: string): string {
+  return canonicalGitUrl(pathOrUrl);
+}
 
 export interface ArtifactListingCacheKeyParts {
   profileId?: string;

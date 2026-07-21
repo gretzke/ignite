@@ -21,6 +21,11 @@ import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
 import { RepoKind, RepoService, deriveRepoKind } from './RepoService.js';
 import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { statFingerprint } from './fingerprint.js';
+import {
+  ArtifactListingCache,
+  artifactCacheIdentity,
+  artifactListingCache,
+} from './ArtifactListingCache.js';
 import { ErrorCodes } from '../types/errors.js';
 import { getLogger } from '../utils/logger.js';
 import { Semaphore } from '../utils/Semaphore.js';
@@ -108,6 +113,7 @@ export interface RepoLifecycleDeps {
   registry: Pick<ProfileRepoRegistry, 'list' | 'updateRepoState'>;
   sessionPath: () => string | null;
   versionStore: Pick<VersionStore, 'checkoutPath' | 'get' | 'updateState'>;
+  artifactCache?: ArtifactListingCache;
 }
 
 function isTerminal(state: JobRecord['state']): boolean {
@@ -139,6 +145,7 @@ export class RepoLifecycle {
   private static instance: RepoLifecycle;
 
   private readonly deps: RepoLifecycleDeps;
+  private readonly artifactCache: ArtifactListingCache;
   // Per-CLI-run memory. sweptProfiles implements the "first switch after
   // startup sweeps, later switches don't" semantics; activeJobs enforces one
   // lifecycle job per repo; sessionRecords holds derived state for the
@@ -173,7 +180,9 @@ export class RepoLifecycle {
       sessionPath:
         deps?.sessionPath ?? (() => process.env.IGNITE_WORKSPACE_PATH || null),
       versionStore: deps?.versionStore ?? new VersionStore(),
+      artifactCache: deps?.artifactCache ?? artifactListingCache,
     };
+    this.artifactCache = this.deps.artifactCache ?? artifactListingCache;
   }
 
   static getInstance(): RepoLifecycle {
@@ -790,6 +799,31 @@ export class RepoLifecycle {
     }
   }
 
+  // A compile mutates framework artifacts. Drop every cached listing for the
+  // repository and persist the absent generation before the executor starts,
+  // so a concurrent reader can never serve the previous artifact set.
+  private async invalidateArtifactsBeforeCompile(
+    fw: RepoFrameworkState,
+    frameworks: RepoFrameworkState[],
+    pathOrUrl: string,
+    profileId: string,
+    mode: LifecycleMode,
+    pin?: { url: string; commit: string }
+  ): Promise<void> {
+    this.artifactCache.invalidate(artifactCacheIdentity(pin?.url ?? pathOrUrl));
+    const hadGeneration = fw.artifactGeneration !== undefined;
+    delete fw.artifactGeneration;
+    if (!hadGeneration) return;
+    if (mode === 'pinned' && pin) {
+      await this.deps.versionStore.updateState(pin.url, pin.commit, { frameworks });
+    } else if (this.isSessionPath(pathOrUrl)) {
+      const prior = this.sessionRecords.get(pathOrUrl);
+      this.sessionRecords.set(pathOrUrl, { ...prior, pathOrUrl, frameworks });
+    } else {
+      await this.deps.registry.updateRepoState(profileId, pathOrUrl, { frameworks });
+    }
+  }
+
   // === The lifecycle runner ===
 
   private async runLifecycle(
@@ -990,6 +1024,9 @@ export class RepoLifecycle {
             ])
           );
         }
+        await this.invalidateArtifactsBeforeCompile(
+          fw, frameworks, pathOrUrl, profileId, mode, pin
+        );
         await this.runCompile(fw, pathOrUrl, workspacePath, ctx);
         fw.compiledAt = new Date().toISOString();
         compiledThisRun.add(fw.id);
@@ -1016,6 +1053,9 @@ export class RepoLifecycle {
               ])
             );
           }
+          await this.invalidateArtifactsBeforeCompile(
+            fw, frameworks, pathOrUrl, profileId, mode, pin
+          );
           await this.runCompile(fw, pathOrUrl, workspacePath, ctx);
           fw.compiledAt = new Date().toISOString();
           compiledThisRun.add(fw.id);

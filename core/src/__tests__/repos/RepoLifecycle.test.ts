@@ -13,6 +13,7 @@ import {
 import type { JobRunner } from '../../jobs/JobManager.js';
 import { createTestDirectory, cleanupTestDirectory } from '../setup.js';
 import { KeyedMutex } from '../../utils/KeyedMutex.js';
+import { ArtifactListingCache, artifactCacheIdentity, artifactListingCacheKey } from '../../repos/ArtifactListingCache.js';
 
 interface StartedJob {
   record: JobRecord;
@@ -118,6 +119,7 @@ function makeLifecycle(opts: {
   responses?: Record<string, Record<string, PluginResponse<unknown>>>;
   sessionPath?: string | null;
   pinnedPath?: string;
+  artifactCache?: ArtifactListingCache;
 }) {
   const jobs = makeFakeJobs();
   const executor = makeFakeExecutor(opts.responses ?? {});
@@ -191,6 +193,7 @@ function makeLifecycle(opts: {
     registry: registry as unknown as RepoLifecycleDeps['registry'],
     sessionPath: () => opts.sessionPath ?? null,
     versionStore: versionStore as unknown as RepoLifecycleDeps['versionStore'],
+    artifactCache: opts.artifactCache,
   };
   const lifecycle = new RepoLifecycle(deps);
   return {
@@ -219,6 +222,34 @@ const WATCH: PluginResponse<unknown> = {
 const OK: PluginResponse<unknown> = { success: true, data: {} };
 
 describe('RepoLifecycle', () => {
+  it('invalidates and clears a framework generation before starting its compile', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const cache = new ArtifactListingCache();
+      const key = artifactListingCacheKey({
+        canonicalIdentity: artifactCacheIdentity('/repo-a'), frameworkId: 'foundry',
+        pluginId: 'foundry', pluginVersion: '1.0.0', generation: 9,
+      });
+      cache.set(key, [{ contractName: 'Old', sourcePath: 'A.sol', artifactPath: 'out/A.json' }]);
+      const { lifecycle, jobs, executor, registry } = makeLifecycle({
+        workspaceDir: dir,
+        artifactCache: cache,
+        repos: [{ pathOrUrl: '/repo-a', frameworks: [{ id: 'foundry', name: 'Foundry', artifactGeneration: 9 }] }],
+        responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK } },
+      });
+      executor.execute.mockImplementation(async (pluginId: string, op: string) => {
+        if (op === 'compile') {
+          expect(cache.get(key)).toBeUndefined();
+          expect(registry.updates.some((update) => update.patch.frameworks?.[0]?.artifactGeneration === undefined)).toBe(true);
+        }
+        return ({ detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK }[op] ?? OK) as PluginResponse<unknown>;
+      });
+      lifecycle.startLifecycle('/repo-a', 'p1', 'add');
+      await jobs.runAll();
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
   it('initializes before taking the live lifecycle lock and releases it and the permit after an error', async () => {
     const dir = await createTestDirectory();
     try {

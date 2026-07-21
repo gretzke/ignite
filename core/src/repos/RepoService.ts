@@ -28,6 +28,7 @@ import {
   pinnedOrigin,
   type VersionRecord,
 } from './VersionStore.js';
+import { artifactCacheIdentity, artifactListingCache } from './ArtifactListingCache.js';
 
 export enum RepoKind {
   LOCAL = 'local',
@@ -314,6 +315,7 @@ export class RepoService {
       `version-group:${this.versionStore.groupDir(url)}`,
       async () => {
         await this.withVersionCheckoutLock(url, commit, async () => {
+          await this.invalidateVersionArtifacts(url, commit);
           const deleteLocked = () =>
             fs.rm(this.versionStore.checkoutPath(url, commit), {
               recursive: true,
@@ -478,9 +480,12 @@ export class RepoService {
           getLogger().warn(
             `Rebuilding version checkout after integrity failure: url=${url} commit=${commit} code=${code}`
           );
+          await this.invalidateVersionArtifacts(url, commit, stored);
           await fs.rm(checkout, { recursive: true, force: true });
         }
       }
+
+      if (!checkoutExists) await this.invalidateVersionArtifacts(url, commit, stored);
 
       await this.ensureBareVersionRepo(
         groupDir,
@@ -552,6 +557,22 @@ export class RepoService {
       if (temp)
         await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
     }
+  }
+
+  private async invalidateVersionArtifacts(
+    url: string,
+    commit: string,
+    known?: VersionRecord
+  ): Promise<void> {
+    artifactListingCache.invalidate(artifactCacheIdentity(url));
+    const record = known ?? await this.versionStore.get(url, commit);
+    if (!record?.frameworks?.some((framework) => framework.artifactGeneration !== undefined)) return;
+    await this.versionStore.updateState(url, commit, {
+      frameworks: record.frameworks.map((framework) => {
+        const { artifactGeneration: _generation, ...rest } = framework;
+        return rest;
+      }),
+    });
   }
 
   private async ensureBareVersionRepo(
@@ -2003,6 +2024,7 @@ export class RepoService {
     const kind = deriveRepoKind(pathOrUrl);
     if (kind === RepoKind.LOCAL) return;
     await this.locks.run(this.lockKey(pathOrUrl), async () => {
+      artifactListingCache.invalidate(artifactCacheIdentity(pathOrUrl));
       try {
         const workspacePath = await this.resolveWorkspacePath(
           pathOrUrl,

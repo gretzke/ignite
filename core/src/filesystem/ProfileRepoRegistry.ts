@@ -4,6 +4,7 @@ import path from 'path';
 import type { RepoRecord } from '@ignite/api';
 import { FileSystem } from './FileSystem.js';
 import { RepoService, RepoKind, deriveRepoKind } from '../repos/RepoService.js';
+import { artifactCacheIdentity, artifactListingCache } from '../repos/ArtifactListingCache.js';
 import { isGitRepository } from '../utils/startup.js';
 import { hasUrlCredentials } from '../utils/redact.js';
 import { KeyedMutex } from '../utils/KeyedMutex.js';
@@ -146,6 +147,7 @@ export class ProfileRepoRegistry {
 
   async remove(profileId: string, pathOrUrl: string): Promise<void> {
     await ProfileRepoRegistry.profileMutex.run(profileId, async () => {
+      artifactListingCache.invalidate(artifactCacheIdentity(pathOrUrl));
       const kind = deriveRepoKind(pathOrUrl);
       const p = this.registryPath(profileId, kind);
       if (!(await this.deps.fileSystem.fileExists(p))) {
