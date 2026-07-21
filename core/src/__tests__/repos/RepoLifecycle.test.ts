@@ -6,10 +6,12 @@ import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import {
   RepoLifecycle,
+  withLifecyclePermit,
   type RepoLifecycleDeps,
 } from '../../repos/RepoLifecycle.js';
 import type { JobRunner } from '../../jobs/JobManager.js';
 import { createTestDirectory, cleanupTestDirectory } from '../setup.js';
+import { KeyedMutex } from '../../utils/KeyedMutex.js';
 
 interface StartedJob {
   record: JobRecord;
@@ -147,6 +149,7 @@ function makeLifecycle(opts: {
       localFallbackPath: opts.workspaceDir,
     })),
     resolveWorkspacePath: vi.fn(async () => opts.workspaceDir),
+    withRepoLifecycleLock: vi.fn(async (_pathOrUrl, _profileId, fn) => fn()),
     withVersionMaterialized: vi.fn(
       async (_profileId, _url, _commit, _opts, fn) =>
         fn({
@@ -204,6 +207,71 @@ const WATCH: PluginResponse<unknown> = {
 const OK: PluginResponse<unknown> = { success: true, data: {} };
 
 describe('RepoLifecycle', () => {
+  it('initializes before taking the live lifecycle lock and releases it and the permit after an error', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const mutex = new KeyedMutex();
+      const lockKey = 'repo:/repo-a';
+      const jobs = makeFakeJobs();
+      const permitGates = [0, 1].map(() => {
+        let resolve!: () => void;
+        return {
+          promise: new Promise<void>((done) => { resolve = done; }),
+          resolve: () => resolve(),
+        };
+      });
+      let compileFails = true;
+      let detects = 0;
+      const repos = {
+        init: vi.fn(() => mutex.run(lockKey, async () => ({ success: true as const, data: null }))),
+        resolveWorkspacePath: vi.fn(async () => dir),
+        withRepoLifecycleLock: vi.fn((_pathOrUrl: string, _profileId: string, fn: () => Promise<unknown>) => mutex.run(lockKey, fn)),
+        getVersionSource: vi.fn(async () => ({ url: `file://${dir}`, workspacePath: dir })),
+        withVersionMaterialized: vi.fn(),
+      };
+      const lifecycle = new RepoLifecycle({
+        jobs: jobs as never,
+        executor: {
+          execute: vi.fn(async (_pluginId: string, operation: string) => {
+            if (operation === 'detect') {
+              detects += 1;
+              return DETECTED;
+            }
+            if (operation === 'getWatchPaths') return WATCH;
+            if (operation === 'compile' && compileFails) {
+              return { success: false, error: { message: 'compile failed', code: 'COMPILE_FAILED' } };
+            }
+            return OK;
+          }),
+        } as never,
+        registryLoader: { getPluginsByType: vi.fn(async () => makeCompilerConfigs(['foundry'])) } as never,
+        repos: repos as never,
+        registry: { list: vi.fn(async () => ({ local: [], cloned: [] })), updateRepoState: vi.fn(async () => {}) } as never,
+        sessionPath: () => null,
+        versionStore: { checkoutPath: vi.fn(), get: vi.fn(), updateState: vi.fn() } as never,
+      });
+      const permits = permitGates.map((gate) =>
+        withLifecyclePermit(() => gate.promise)
+      );
+
+      lifecycle.startLifecycle('/repo-a', 'p1', 'add');
+      await expect(jobs.started[0].runner({ log: () => {}, signal: new AbortController().signal })).rejects.toThrow('compile failed');
+      expect(detects).toBe(1);
+      expect(mutex.isBusy(lockKey)).toBe(false);
+
+      compileFails = false;
+      lifecycle.startLifecycle('/repo-a', 'p1', 'add');
+      const second = jobs.started[1].runner({ log: () => {}, signal: new AbortController().signal });
+      await vi.waitFor(() => expect(detects).toBe(2));
+      await second;
+      permitGates.forEach((gate) => gate.resolve());
+      await Promise.all(permits);
+      expect(repos.withRepoLifecycleLock).toHaveBeenCalledTimes(2);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('bounds concurrent lifecycle job runners to three permits', async () => {
     const dir = await createTestDirectory();
     try {

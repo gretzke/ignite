@@ -282,6 +282,17 @@ export class RepoService {
     );
   }
 
+  // Live lifecycle work must serialize with checkout/pull/reset operations
+  // using the same repo key as init. Callers must complete init first because
+  // KeyedMutex is intentionally non-reentrant.
+  async withRepoLifecycleLock<T>(
+    pathOrUrl: string,
+    _profileId: string,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return this.locks.run(this.lockKey(pathOrUrl), fn);
+  }
+
   private async withVersionCheckoutLock<T>(
     url: string,
     commit: string,

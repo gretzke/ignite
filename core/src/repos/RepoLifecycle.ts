@@ -64,6 +64,7 @@ export interface RepoLifecycleDeps {
     RepoService,
     | 'init'
     | 'resolveWorkspacePath'
+    | 'withRepoLifecycleLock'
     | 'withVersionMaterialized'
     | 'getVersionSource'
   >;
@@ -555,7 +556,47 @@ export class RepoLifecycle {
         pathOrUrl,
         profileId
       );
+      return this.deps.repos.withRepoLifecycleLock(
+        pathOrUrl,
+        profileId,
+        () =>
+          this.runLifecycleBody(
+            pathOrUrl,
+            profileId,
+            mode,
+            ctx,
+            workspacePath,
+            pin,
+            pinnedCompilers
+          )
+      );
     }
+
+    return this.runLifecycleBody(
+      pathOrUrl,
+      profileId,
+      mode,
+      ctx,
+      workspacePath,
+      pin,
+      pinnedCompilers
+    );
+  }
+
+  // Live lifecycle callers arrive here only after init has released its
+  // non-reentrant repo lock. Pinned callers already hold their version group
+  // and checkout locks. This body deliberately takes neither lock itself.
+  private async runLifecycleBody(
+    pathOrUrl: string,
+    profileId: string,
+    mode: LifecycleMode,
+    ctx: JobContext,
+    workspacePath: string,
+    pin?: { url: string; commit: string },
+    pinnedCompilers?: Awaited<
+      ReturnType<PluginRegistryLoader['getPluginsByType']>
+    >
+  ): Promise<LifecycleResult> {
 
     ctx.log('phase: detect\n');
     const compilers =
