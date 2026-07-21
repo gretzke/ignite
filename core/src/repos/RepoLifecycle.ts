@@ -534,6 +534,7 @@ export class RepoLifecycle {
       ctx.log(`phase: init (${mode})\n`);
       const initResult = await this.deps.repos.init(pathOrUrl, {
         signal: ctx.signal,
+        profileId,
       });
       if (!initResult.success)
         throw coded(initResult.error.message, initResult.error.code);

@@ -521,6 +521,27 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('initializes a non-pinned lifecycle with its captured profile', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, repoService } = makeLifecycle({
+        workspaceDir: dir,
+        responses: { foundry: { detect: NOT_DETECTED } },
+      });
+
+      // The ambient profile may have changed since this job was started.
+      lifecycle.startLifecycle('/repo-a', 'A', 'sweep');
+      await jobs.runAll();
+
+      expect(repoService.init).toHaveBeenCalledWith('/repo-a', {
+        signal: expect.any(AbortSignal),
+        profileId: 'A',
+      });
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('ensureProfileSwept is once per profile per run, and sweeps the session workspace', async () => {
     const dir = await createTestDirectory();
     try {

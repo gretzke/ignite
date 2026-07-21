@@ -1088,22 +1088,23 @@ export class RepoService {
   // that later ops would happily treat as ready.
   async init(
     pathOrUrl: string,
-    opts?: { signal?: AbortSignal }
+    opts?: { signal?: AbortSignal; profileId?: string }
   ): Promise<RepoResult<null>> {
     if (this.isReadOnlyWorkspace(pathOrUrl))
       return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
-      this.initLocked(pathOrUrl, opts?.signal)
+      this.initLocked(pathOrUrl, opts?.signal, opts?.profileId)
     );
   }
 
   private async initLocked(
     pathOrUrl: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    profileId?: string
   ): Promise<RepoResult<null>> {
     try {
       const kind = deriveRepoKind(pathOrUrl);
-      const workspacePath = await this.resolveWorkspacePath(pathOrUrl);
+      const workspacePath = await this.resolveWorkspacePath(pathOrUrl, profileId);
 
       if (kind === RepoKind.LOCAL) {
         const ensured = await this.ensureGitRepo(workspacePath);
