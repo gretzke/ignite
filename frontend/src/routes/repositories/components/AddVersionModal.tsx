@@ -102,11 +102,11 @@ export function versionSubmitPayload(
               : ('branch' as const),
         };
 
-  // A local worktree can resolve unpublished refs. Cloned worktrees retain
-  // their remote-origin behavior while still being available for switching.
-  return (source.local && selection.tab !== 'releases') || !source.url
-    ? { repoPathOrUrl: source.repoPathOrUrl!, ...target }
-    : { url: source.url, ...target };
+  // A live workspace retains Git's verbatim remote URL, including a required
+  // trailing .git. Only orphaned cache groups must submit canonical identity.
+  return source.repoPathOrUrl
+    ? { repoPathOrUrl: source.repoPathOrUrl, ...target }
+    : { url: source.url!, ...target };
 }
 
 export function existingVersionHint(

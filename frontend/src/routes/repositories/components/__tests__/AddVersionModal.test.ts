@@ -106,7 +106,7 @@ describe('AddVersionModal picker behavior', () => {
     expect(
       versionSubmitPayload(source, { tab: 'releases', value: 'v1.1.0' })
     ).toEqual({
-      url: source.url,
+      repoPathOrUrl: source.repoPathOrUrl,
       ref: 'v1.1.0',
       refKind: 'tag',
     });
@@ -120,5 +120,17 @@ describe('AddVersionModal picker behavior', () => {
     expect(
       versionSubmitPayload(source, { tab: 'commit', value: 'abcdef0' })
     ).toEqual({ repoPathOrUrl: source.repoPathOrUrl, commit: 'abcdef0' });
+  });
+
+  it('submits a cloned workspace release through its workspace path', () => {
+    const cloned: VersionSource = { ...source, local: false };
+
+    expect(
+      versionSubmitPayload(cloned, { tab: 'releases', value: 'v1.1.0' })
+    ).toEqual({
+      repoPathOrUrl: cloned.repoPathOrUrl,
+      ref: 'v1.1.0',
+      refKind: 'tag',
+    });
   });
 });
