@@ -403,6 +403,7 @@ describe('RepoLifecycle', () => {
         'getWatchPaths',
         'install',
         'compile',
+        'listArtifacts',
       ]);
       expect(registry.updates).toHaveLength(0);
       expect(versionStore.updateState).toHaveBeenCalledWith(
@@ -644,8 +645,10 @@ describe('RepoLifecycle', () => {
       expect(executor.calls.some((c) => c.op === 'compile')).toBe(true);
       expect(executor.calls.some((c) => c.op === 'install')).toBe(true);
 
-      expect(registry.updates).toHaveLength(1);
-      const patch = registry.updates[0].patch;
+      // Finalization persists the successful framework before the lifecycle's
+      // final metadata write, so a later framework failure cannot erase it.
+      expect(registry.updates).toHaveLength(2);
+      const patch = registry.updates.at(-1)!.patch;
       expect(patch.frameworks).toHaveLength(1);
       expect(patch.frameworks?.[0].id).toBe('foundry');
       expect(patch.frameworks?.[0].watchPaths?.sources).toEqual(['src']);
@@ -983,6 +986,7 @@ describe('RepoLifecycle', () => {
       expect(fw).toHaveLength(2);
       for (const f of fw ?? []) {
         expect(f.compiledAt).toBeDefined();
+        expect(f.artifactGeneration).toBeTypeOf('number');
         expect(f.fingerprint?.sources).toMatch(/^[0-9a-f]{64}$/);
         expect(f.fingerprint?.artifacts).toMatch(/^[0-9a-f]{64}$/);
       }
@@ -1036,7 +1040,9 @@ describe('RepoLifecycle', () => {
           'foundry:install',
           'hardhat:install',
           'foundry:compile',
+          'foundry:listArtifacts',
           'hardhat:compile',
+          'hardhat:listArtifacts',
         ]);
       } finally {
         await cleanupTestDirectory(dir);

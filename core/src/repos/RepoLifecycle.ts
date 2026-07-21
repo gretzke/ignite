@@ -26,6 +26,7 @@ import {
   artifactCacheIdentity,
   artifactListingCache,
 } from './ArtifactListingCache.js';
+import { finalizeCompile } from './finalizeCompile.js';
 import { ErrorCodes } from '../types/errors.js';
 import { getLogger } from '../utils/logger.js';
 import { Semaphore } from '../utils/Semaphore.js';
@@ -824,6 +825,26 @@ export class RepoLifecycle {
     }
   }
 
+  private async persistCompiledFramework(
+    framework: RepoFrameworkState,
+    frameworks: RepoFrameworkState[],
+    pathOrUrl: string,
+    profileId: string,
+    mode: LifecycleMode,
+    pin?: { url: string; commit: string }
+  ): Promise<void> {
+    const index = frameworks.findIndex((candidate) => candidate.id === framework.id);
+    if (index !== -1) frameworks[index] = framework;
+    if (mode === 'pinned' && pin) {
+      await this.deps.versionStore.updateState(pin.url, pin.commit, { frameworks });
+    } else if (this.isSessionPath(pathOrUrl)) {
+      const prior = this.sessionRecords.get(pathOrUrl);
+      this.sessionRecords.set(pathOrUrl, { ...prior, pathOrUrl, frameworks });
+    } else {
+      await this.deps.registry.updateRepoState(profileId, pathOrUrl, { frameworks });
+    }
+  }
+
   // === The lifecycle runner ===
 
   private async runLifecycle(
@@ -1029,6 +1050,18 @@ export class RepoLifecycle {
         );
         await this.runCompile(fw, pathOrUrl, workspacePath, ctx);
         fw.compiledAt = new Date().toISOString();
+        const plugin = compilers.find((candidate) => candidate.metadata.id === fw.id);
+        if (plugin) {
+          await finalizeCompile({
+            workspacePath, pathOrUrl, framework: fw,
+            identity: artifactCacheIdentity(pin?.url ?? pathOrUrl), profileId,
+            pluginId: plugin.metadata.id, pluginVersion: plugin.metadata.version,
+            sourceFingerprint: preCompileSources.get(fw.id),
+            executor: this.deps.executor, artifactCache: this.artifactCache,
+            persist: (framework) => this.persistCompiledFramework(framework, frameworks, pathOrUrl, profileId, mode, pin),
+            log: (message) => ctx.log(message),
+          });
+        }
         compiledThisRun.add(fw.id);
       }
     } else if (mode === 'recompile') {
@@ -1058,25 +1091,21 @@ export class RepoLifecycle {
           );
           await this.runCompile(fw, pathOrUrl, workspacePath, ctx);
           fw.compiledAt = new Date().toISOString();
+          const plugin = compilers.find((candidate) => candidate.metadata.id === fw.id);
+          if (plugin) {
+            await finalizeCompile({
+              workspacePath, pathOrUrl, framework: fw,
+              identity: artifactCacheIdentity(pin?.url ?? pathOrUrl), profileId,
+              pluginId: plugin.metadata.id, pluginVersion: plugin.metadata.version,
+              sourceFingerprint: preCompileSources.get(fw.id),
+              executor: this.deps.executor, artifactCache: this.artifactCache,
+              persist: (framework) => this.persistCompiledFramework(framework, frameworks, pathOrUrl, profileId, mode, pin),
+              log: (message) => ctx.log(message),
+            });
+          }
           compiledThisRun.add(fw.id);
         }
       }
-    }
-
-    // Capture fingerprints ONLY for frameworks compiled this run — the
-    // stored fingerprint's meaning is "tree state at last compile".
-    for (const fw of frameworks) {
-      if (!fw.watchPaths || !compiledThisRun.has(fw.id)) continue;
-      fw.fingerprint = {
-        sources: preCompileSources.get(fw.id) ?? await statFingerprint(workspacePath, [
-          ...fw.watchPaths.config,
-          ...fw.watchPaths.sources,
-        ]),
-        artifacts: await statFingerprint(
-          workspacePath,
-          fw.watchPaths.artifacts
-        ),
-      };
     }
 
     ctx.log('phase: persist\n');
