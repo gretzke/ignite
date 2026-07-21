@@ -136,7 +136,7 @@ export class RepoLifecycle {
           this.startLifecycle(record.pathOrUrl, profileId, 'sweep');
         }
         const session = this.deps.sessionPath();
-        if (session) {
+        if (session && !this.activeJobFor(session)) {
           this.startLifecycle(session, profileId, 'sweep');
         }
       } catch (error) {
@@ -166,7 +166,7 @@ export class RepoLifecycle {
         this.startLifecycle(record.pathOrUrl, profileId, 'sweep');
       }
       const session = this.deps.sessionPath();
-      if (session) {
+      if (session && !this.activeJobFor(session)) {
         this.startLifecycle(session, profileId, 'sweep');
       }
     } catch (error) {
@@ -177,8 +177,9 @@ export class RepoLifecycle {
   }
 
   // Start (or return the already-running) lifecycle job for one repo.
-  // Callers must consult activeJobFor first: mutation reservations created by
-  // beginRepoActivity/beginPinnedActivity may only be bypassed by their owner.
+  // Reservation-yielding is the caller's responsibility: callers consult
+  // activeJobFor first; the reservation owner deliberately starts its
+  // switch/recompile job while holding its own direct ref.
   startLifecycle(
     pathOrUrl: string,
     profileId: string,
@@ -440,6 +441,7 @@ export class RepoLifecycle {
       }
       if (!drifted) continue;
 
+      if (this.activeJobFor(record.pathOrUrl)) continue;
       this.lastRecompile.set(record.pathOrUrl, Date.now());
       const job = this.startLifecycle(record.pathOrUrl, profileId, 'recompile');
       started.push({ pathOrUrl: record.pathOrUrl, jobId: job.id });

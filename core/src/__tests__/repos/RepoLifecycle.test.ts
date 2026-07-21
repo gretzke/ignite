@@ -567,6 +567,26 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('does not sweep a session workspace reserved for a direct mutation', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        sessionPath: '/ws/session',
+        responses: { foundry: { detect: NOT_DETECTED } },
+      });
+      const release = lifecycle.beginRepoActivity('/ws/session');
+
+      lifecycle.ensureProfileSwept('p1');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(jobs.started).toHaveLength(0);
+      release();
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('resweepProfile re-runs a completed sweep (plugin catalog changed)', async () => {
     const dir = await createTestDirectory();
     try {
@@ -1122,6 +1142,31 @@ describe('RepoLifecycle', () => {
       const during = await lifecycle.checkAndRecompile('p1');
       expect(during.started).toEqual([]);
       await jobs.runAll();
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('does not start a recompile when a mutation reserves the repo during drift checks', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const record: RepoRecord = {
+        pathOrUrl: '/repo-a',
+        frameworks: [{
+          id: 'foundry',
+          name: 'Foundry',
+          watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+          fingerprint: { sources: 'before', artifacts: 'before' },
+        }],
+      };
+      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir, repos: [record] });
+      vi.spyOn(lifecycle as never, 'frameworkDrifted').mockResolvedValue(true);
+      vi.spyOn(lifecycle, 'activeJobFor')
+        .mockReturnValueOnce(undefined)
+        .mockReturnValueOnce('direct:local:/repo-a');
+
+      await expect(lifecycle.checkAndRecompile('p1')).resolves.toEqual({ started: [] });
+      expect(jobs.started).toHaveLength(0);
     } finally {
       await cleanupTestDirectory(dir);
     }
