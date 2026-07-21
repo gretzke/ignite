@@ -1,4 +1,4 @@
-import { EllipsisVertical, Pin, RotateCcw, Trash2 } from 'lucide-react';
+import { EllipsisVertical, Pin, RotateCcw, X } from 'lucide-react';
 import type { OrphanVersionGroup, RepoVersionSummary } from '@ignite/api';
 import Dropdown from '../../../components/Dropdown';
 import { FrameworkChips } from './RepoCard';
@@ -100,16 +100,26 @@ export function VersionRows({
               </button>
             </Tooltip>
           )}
-          <button
-            type="button"
-            className="btn btn-sm btn-secondary"
-            onClick={(event) => {
-              event.stopPropagation();
-              onRemove(version.url, version);
-            }}
-          >
-            <Trash2 size={14} /> Remove
-          </button>
+          <Tooltip label="Remove" placement="top">
+            <button
+              type="button"
+              className="row-action btn btn-secondary btn-secondary-borderless"
+              style={{
+                width: 40,
+                height: 36,
+                paddingLeft: 0,
+                paddingRight: 0,
+              }}
+              aria-label="Remove version"
+              title="Remove"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemove(version.url, version);
+              }}
+            >
+              <X size={16} />
+            </button>
+          </Tooltip>
           </div>
         );
       })}
