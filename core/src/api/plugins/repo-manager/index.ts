@@ -188,7 +188,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
       }
       const release = d.lifecycle.beginRepoActivity(pathOrUrl);
       try {
-        const result = await d.repos.checkoutBranch(pathOrUrl, branch);
+        const result = await d.repos.checkoutBranch(pathOrUrl, branch, profileId);
         if (!result.success) {
           return sendRepoError(
             reply,
@@ -221,7 +221,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
       }
       const release = d.lifecycle.beginRepoActivity(pathOrUrl);
       try {
-        const result = await d.repos.checkoutCommit(pathOrUrl, commit);
+        const result = await d.repos.checkoutCommit(pathOrUrl, commit, profileId);
         if (!result.success) {
           return sendRepoError(
             reply,
@@ -252,7 +252,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
       }
       const release = d.lifecycle.beginRepoActivity(pathOrUrl);
       try {
-        const result = await d.repos.pullChanges(pathOrUrl);
+        const result = await d.repos.pullChanges(pathOrUrl, profileId);
         if (!result.success) {
           return sendRepoError(
             reply,
@@ -283,7 +283,7 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
       }
       const release = d.lifecycle.beginRepoActivity(pathOrUrl);
       try {
-        const result = await d.repos.reset(pathOrUrl);
+        const result = await d.repos.reset(pathOrUrl, profileId);
         if (!result.success) {
           return sendRepoError(
             reply,

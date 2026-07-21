@@ -1310,22 +1310,24 @@ export class RepoService {
 
   async checkoutBranch(
     pathOrUrl: string,
-    branch: string
+    branch: string,
+    profileId?: string
   ): Promise<RepoResult<null>> {
     if (this.isReadOnlyWorkspace(pathOrUrl))
       return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
-      this.checkoutBranchLocked(pathOrUrl, branch)
+      this.checkoutBranchLocked(pathOrUrl, branch, profileId)
     );
   }
 
   private async checkoutBranchLocked(
     pathOrUrl: string,
-    branch: string
+    branch: string,
+    profileId?: string
   ): Promise<RepoResult<null>> {
     try {
       const kind = deriveRepoKind(pathOrUrl);
-      const cwd = await this.resolveWorkspacePath(pathOrUrl);
+      const cwd = await this.resolveWorkspacePath(pathOrUrl, profileId);
 
       const ensured = await this.ensureGitRepo(cwd);
       if (!ensured.success) return ensured;
@@ -1386,22 +1388,24 @@ export class RepoService {
 
   async checkoutCommit(
     pathOrUrl: string,
-    commit: string
+    commit: string,
+    profileId?: string
   ): Promise<RepoResult<null>> {
     if (this.isReadOnlyWorkspace(pathOrUrl))
       return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
-      this.checkoutCommitLocked(pathOrUrl, commit)
+      this.checkoutCommitLocked(pathOrUrl, commit, profileId)
     );
   }
 
   private async checkoutCommitLocked(
     pathOrUrl: string,
-    commit: string
+    commit: string,
+    profileId?: string
   ): Promise<RepoResult<null>> {
     try {
       const kind = deriveRepoKind(pathOrUrl);
-      const cwd = await this.resolveWorkspacePath(pathOrUrl);
+      const cwd = await this.resolveWorkspacePath(pathOrUrl, profileId);
 
       const ensured = await this.ensureGitRepo(cwd);
       if (!ensured.success) return ensured;
@@ -1429,20 +1433,24 @@ export class RepoService {
     }
   }
 
-  async pullChanges(pathOrUrl: string): Promise<RepoResult<null>> {
+  async pullChanges(
+    pathOrUrl: string,
+    profileId?: string
+  ): Promise<RepoResult<null>> {
     if (this.isReadOnlyWorkspace(pathOrUrl))
       return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>
-      this.pullChangesLocked(pathOrUrl)
+      this.pullChangesLocked(pathOrUrl, profileId)
     );
   }
 
   private async pullChangesLocked(
-    pathOrUrl: string
+    pathOrUrl: string,
+    profileId?: string
   ): Promise<RepoResult<null>> {
     try {
       const kind = deriveRepoKind(pathOrUrl);
-      const cwd = await this.resolveWorkspacePath(pathOrUrl);
+      const cwd = await this.resolveWorkspacePath(pathOrUrl, profileId);
 
       if (kind === RepoKind.LOCAL) {
         const clean = await this.ensureCleanRepo(cwd);
@@ -1472,22 +1480,29 @@ export class RepoService {
 
   // Destructive by design (frontend confirms before calling): discard
   // uncommitted changes and remove untracked files. Identical for both kinds.
-  async reset(pathOrUrl: string): Promise<RepoResult<null>> {
+  async reset(pathOrUrl: string, profileId?: string): Promise<RepoResult<null>> {
     if (this.isReadOnlyWorkspace(pathOrUrl))
       return this.readOnlyWorkspaceResult(pathOrUrl);
-    return this.locks.run(this.lockKey(pathOrUrl), async () => {
-      try {
-        const cwd = await this.resolveWorkspacePath(pathOrUrl);
-        const ensured = await this.ensureGitRepo(cwd);
-        if (!ensured.success) return ensured;
-        return await this.makePristine(cwd);
-      } catch (error) {
-        return {
-          success: false as const,
-          error: { code: 'RESET_ERROR', message: errMsg(error) },
-        };
-      }
-    });
+    return this.locks.run(this.lockKey(pathOrUrl), () =>
+      this.resetLocked(pathOrUrl, profileId)
+    );
+  }
+
+  private async resetLocked(
+    pathOrUrl: string,
+    profileId?: string
+  ): Promise<RepoResult<null>> {
+    try {
+      const cwd = await this.resolveWorkspacePath(pathOrUrl, profileId);
+      const ensured = await this.ensureGitRepo(cwd);
+      if (!ensured.success) return ensured;
+      return await this.makePristine(cwd);
+    } catch (error) {
+      return {
+        success: false as const,
+        error: { code: 'RESET_ERROR', message: errMsg(error) },
+      };
+    }
   }
 
   private isReadOnlyWorkspace(pathOrUrl: string): boolean {

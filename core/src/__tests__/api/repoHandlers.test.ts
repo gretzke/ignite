@@ -258,7 +258,7 @@ describe('repo-manager API handlers', () => {
 
       expect(reply.statusCode).toBe(200);
       expect(reply.body).toEqual({ data: { jobId: 'lifecycle-1' } });
-      expect(repos.checkoutBranch).toHaveBeenCalledWith('/repo', 'main');
+      expect(repos.checkoutBranch).toHaveBeenCalledWith('/repo', 'main', 'p1');
       expect(lifecycle.startLifecycle).toHaveBeenCalledWith('/repo', 'p1', 'switch');
     });
 
@@ -297,6 +297,11 @@ describe('repo-manager API handlers', () => {
       finishFirst();
       await first;
 
+      expect(repos.checkoutBranch).toHaveBeenCalledWith(
+        '/repo-a',
+        'main',
+        'A'
+      );
       expect(lifecycle.startLifecycle).toHaveBeenNthCalledWith(
         1,
         '/repo-b',
@@ -434,7 +439,7 @@ describe('repo-manager API handlers', () => {
 
       expect(reply.statusCode).toBe(200);
       expect(reply.body).toEqual({ data: { jobId: 'lifecycle-1' } });
-      expect(repos.checkoutCommit).toHaveBeenCalledWith('/repo', 'abc123');
+      expect(repos.checkoutCommit).toHaveBeenCalledWith('/repo', 'abc123', 'p1');
       expect(lifecycle.startLifecycle).toHaveBeenCalledWith('/repo', 'p1', 'switch');
     });
 
@@ -481,7 +486,7 @@ describe('repo-manager API handlers', () => {
 
       expect(reply.statusCode).toBe(200);
       expect(reply.body).toEqual({ data: { jobId: 'lifecycle-1' } });
-      expect(repos.pullChanges).toHaveBeenCalledWith('/repo');
+      expect(repos.pullChanges).toHaveBeenCalledWith('/repo', 'p1');
       expect(lifecycle.startLifecycle).toHaveBeenCalledWith('/repo', 'p1', 'recompile');
     });
 
@@ -591,7 +596,7 @@ describe('repo-manager API handlers', () => {
 
       expect(reply.statusCode).toBe(200);
       expect(reply.body).toEqual({ data: { jobId: 'lifecycle-1' } });
-      expect(repos.reset).toHaveBeenCalledWith('/repo');
+      expect(repos.reset).toHaveBeenCalledWith('/repo', 'p1');
       expect(lifecycle.startLifecycle).toHaveBeenCalledWith('/repo', 'p1', 'recompile');
     });
 
