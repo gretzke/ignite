@@ -55,6 +55,7 @@ export function withLifecyclePermit<T>(fn: () => Promise<T>): Promise<T> {
 // this long — rapid focus events must not queue compile storms. Checks that
 // find no drift are not throttled (they are cheap stat walks).
 const RECOMPILE_COOLDOWN_MS = 5_000;
+const RECOMPILE_FAILURE_BACKOFF_MS = 60_000;
 
 interface DetectionResultShape {
   detected: boolean;
@@ -69,6 +70,17 @@ interface PendingForce {
   profileId: string;
   pathOrUrl: string;
   reason: 'catalog';
+}
+
+interface QuietObservation {
+  sources: string;
+  artifacts: string;
+  seenAt: number;
+}
+
+interface RecompileAttempt {
+  pathOrUrl: string;
+  observations: Array<{ frameworkId: string; sources: string; artifacts: string }>;
 }
 
 export type FrameworkMeasurement =
@@ -143,6 +155,12 @@ export class RepoLifecycle {
     string,
     Promise<{ started: Array<{ pathOrUrl: string; jobId: string }> }>
   >();
+  private readonly quietObservations = new Map<string, QuietObservation>();
+  private readonly failedRecompileTuples = new Map<
+    string,
+    { sources: string; artifacts: string; failedAt: number }
+  >();
+  private readonly recompileAttempts = new Map<string, RecompileAttempt>();
 
   constructor(deps?: Partial<RepoLifecycleDeps>) {
     this.deps = {
@@ -179,6 +197,9 @@ export class RepoLifecycle {
     this.lastRecompile.clear();
     this.pendingForces.clear();
     this.recompileChecks.clear();
+    this.quietObservations.clear();
+    this.failedRecompileTuples.clear();
+    this.recompileAttempts.clear();
   }
 
   // Sweep a profile's repos (init + detect + persist) exactly once per CLI
@@ -291,15 +312,23 @@ export class RepoLifecycle {
       }
     }
 
+    if (mode === 'recompile') this.clearQuietState(pathOrUrl);
     const job = this.deps.jobs.start(
       LIFECYCLE_JOB_TYPE,
       { pathOrUrl, mode, profileId, ...(options?.force ? { force: options.force } : {}) },
       async (ctx) => {
+        let succeeded = false;
         try {
-          return await withLifecyclePermit(() =>
+          const result = await withLifecyclePermit(() =>
             this.runLifecycle(pathOrUrl, profileId, mode, ctx, undefined, undefined, undefined, options)
           );
+          succeeded = true;
+          return result;
+        } catch (error) {
+          this.recordRecompileFailure(job.id);
+          throw error;
         } finally {
+          this.completeRecompileAttempt(job.id, succeeded);
           this.clearJob(pathOrUrl, job.id);
           this.startPendingForce(pathOrUrl);
         }
@@ -561,17 +590,41 @@ export class RepoLifecycle {
           profileId
         );
 
+        this.pruneQuietState(record);
         let drifted = false;
+        const attemptedFrameworks: RecompileAttempt['observations'] = [];
         for (const fw of record.frameworks ?? []) {
           const measurement = await this.measureFramework(workspacePath, fw);
           if (measurement.comparable && measurement.drifted) {
-            drifted = true;
-            break;
+            if (options.debounce === 'none') {
+              drifted = true;
+              attemptedFrameworks.push({
+                frameworkId: fw.id,
+                sources: measurement.sources,
+                artifacts: measurement.artifacts,
+              });
+              break;
+            }
+            if (this.isQuietEnough(record.pathOrUrl, fw.id, measurement)) {
+              drifted = true;
+              attemptedFrameworks.push({
+                frameworkId: fw.id,
+                sources: measurement.sources,
+                artifacts: measurement.artifacts,
+              });
+              break;
+            }
           }
         }
         if (!drifted) continue;
 
         const job = this.startLifecycle(record.pathOrUrl, profileId, 'recompile');
+        if (options.debounce === 'quiet-pause') {
+          this.recompileAttempts.set(job.id, {
+            pathOrUrl: record.pathOrUrl,
+            observations: attemptedFrameworks,
+          });
+        }
         this.lastRecompile.set(record.pathOrUrl, Date.now());
         started.push({ pathOrUrl: record.pathOrUrl, jobId: job.id });
       } catch {
@@ -581,6 +634,80 @@ export class RepoLifecycle {
       }
     }
     return { started };
+  }
+
+  private quietKey(pathOrUrl: string, frameworkId: string): string {
+    return `${this.activityKey(pathOrUrl)}:${frameworkId}`;
+  }
+
+  private pruneQuietState(record: RepoRecord): void {
+    const prefix = `${this.activityKey(record.pathOrUrl)}:`;
+    const currentFrameworks = new Set((record.frameworks ?? []).map((fw) => fw.id));
+    for (const key of this.quietObservations.keys()) {
+      if (key.startsWith(prefix) && !currentFrameworks.has(key.slice(prefix.length))) {
+        this.quietObservations.delete(key);
+        this.failedRecompileTuples.delete(key);
+      }
+    }
+  }
+
+  private clearQuietState(pathOrUrl: string): void {
+    const prefix = `${this.activityKey(pathOrUrl)}:`;
+    for (const key of this.quietObservations.keys()) {
+      if (key.startsWith(prefix)) this.quietObservations.delete(key);
+    }
+  }
+
+  private isQuietEnough(
+    pathOrUrl: string,
+    frameworkId: string,
+    measurement: Extract<FrameworkMeasurement, { comparable: true }>
+  ): boolean {
+    const key = this.quietKey(pathOrUrl, frameworkId);
+    const now = Date.now();
+    const prior = this.quietObservations.get(key);
+    const sameAsPrior =
+      prior?.sources === measurement.sources && prior.artifacts === measurement.artifacts;
+    this.quietObservations.set(key, {
+      sources: measurement.sources,
+      artifacts: measurement.artifacts,
+      seenAt: now,
+    });
+    if (!sameAsPrior) return false;
+
+    const failed = this.failedRecompileTuples.get(key);
+    if (
+      failed &&
+      (failed.sources !== measurement.sources || failed.artifacts !== measurement.artifacts)
+    ) {
+      this.failedRecompileTuples.delete(key);
+      return true;
+    }
+    return !failed || now - failed.failedAt >= RECOMPILE_FAILURE_BACKOFF_MS;
+  }
+
+  private recordRecompileFailure(jobId: string): void {
+    const attempt = this.recompileAttempts.get(jobId);
+    if (!attempt) return;
+    const failedAt = Date.now();
+    for (const observation of attempt.observations) {
+      this.failedRecompileTuples.set(
+        this.quietKey(attempt.pathOrUrl, observation.frameworkId),
+        { ...observation, failedAt }
+      );
+    }
+  }
+
+  private completeRecompileAttempt(jobId: string, succeeded: boolean): void {
+    const attempt = this.recompileAttempts.get(jobId);
+    if (succeeded && attempt) {
+      for (const observation of attempt.observations) {
+        this.failedRecompileTuples.delete(
+          this.quietKey(attempt.pathOrUrl, observation.frameworkId)
+        );
+      }
+    }
+    this.recompileAttempts.delete(jobId);
   }
 
   async measureFramework(
@@ -829,6 +956,7 @@ export class RepoLifecycle {
     }
 
     const compiledThisRun = new Set<string>();
+    const preCompileSources = new Map<string, string>();
     if (
       mode === 'add' ||
       mode === 'pinned' ||
@@ -839,6 +967,15 @@ export class RepoLifecycle {
         await this.runInstall(fw, pathOrUrl, workspacePath, ctx);
       }
       for (const fw of frameworks) {
+        if (fw.watchPaths) {
+          preCompileSources.set(
+            fw.id,
+            await statFingerprint(workspacePath, [
+              ...fw.watchPaths.config,
+              ...fw.watchPaths.sources,
+            ])
+          );
+        }
         await this.runCompile(fw, pathOrUrl, workspacePath, ctx);
         fw.compiledAt = new Date().toISOString();
         compiledThisRun.add(fw.id);
@@ -856,6 +993,15 @@ export class RepoLifecycle {
           await this.runInstall(fw, pathOrUrl, workspacePath, ctx);
         }
         for (const fw of targets) {
+          if (fw.watchPaths) {
+            preCompileSources.set(
+              fw.id,
+              await statFingerprint(workspacePath, [
+                ...fw.watchPaths.config,
+                ...fw.watchPaths.sources,
+              ])
+            );
+          }
           await this.runCompile(fw, pathOrUrl, workspacePath, ctx);
           fw.compiledAt = new Date().toISOString();
           compiledThisRun.add(fw.id);
@@ -868,7 +1014,7 @@ export class RepoLifecycle {
     for (const fw of frameworks) {
       if (!fw.watchPaths || !compiledThisRun.has(fw.id)) continue;
       fw.fingerprint = {
-        sources: await statFingerprint(workspacePath, [
+        sources: preCompileSources.get(fw.id) ?? await statFingerprint(workspacePath, [
           ...fw.watchPaths.config,
           ...fw.watchPaths.sources,
         ]),

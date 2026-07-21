@@ -1654,6 +1654,163 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('quiet-pause waits for one stable observation before recompiling', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const record: RepoRecord = {
+        pathOrUrl: '/repo-a',
+        frameworks: [{
+          id: 'foundry', name: 'Foundry',
+          watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+          fingerprint: { sources: 'before', artifacts: 'before' },
+        }],
+      };
+      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir, repos: [record] });
+      vi.spyOn(lifecycle, 'measureFramework').mockResolvedValue({
+        comparable: true, sources: 'after', artifacts: 'after', drifted: true,
+      });
+
+      await expect(lifecycle.checkAndRecompile('p1', {
+        scope: 'local', debounce: 'quiet-pause',
+      })).resolves.toEqual({ started: [] });
+      await expect(lifecycle.checkAndRecompile('p1', {
+        scope: 'local', debounce: 'quiet-pause',
+      })).resolves.toMatchObject({ started: [expect.anything()] });
+      expect(jobs.started).toHaveLength(1);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('quiet-pause restarts its wait when a framework tuple changes', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const record: RepoRecord = {
+        pathOrUrl: '/repo-a',
+        frameworks: [{
+          id: 'foundry', name: 'Foundry',
+          watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+          fingerprint: { sources: 'before', artifacts: 'before' },
+        }],
+      };
+      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir, repos: [record] });
+      const measure = vi.spyOn(lifecycle, 'measureFramework');
+      measure
+        .mockResolvedValueOnce({ comparable: true, sources: 'one', artifacts: 'one', drifted: true })
+        .mockResolvedValueOnce({ comparable: true, sources: 'two', artifacts: 'two', drifted: true })
+        .mockResolvedValueOnce({ comparable: true, sources: 'two', artifacts: 'two', drifted: true });
+
+      for (let tick = 0; tick < 2; tick += 1) {
+        await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      }
+      expect(jobs.started).toHaveLength(0);
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      expect(jobs.started).toHaveLength(1);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('quiet-pause tracks stable tuples per framework', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const framework = (id: string): RepoFrameworkState => ({
+        id, name: id,
+        watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+        fingerprint: { sources: 'before', artifacts: 'before' },
+      });
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a', frameworks: [framework('one'), framework('two')] }],
+      });
+      const measure = vi.spyOn(lifecycle, 'measureFramework');
+      measure
+        .mockResolvedValueOnce({ comparable: true, sources: 'a', artifacts: 'a', drifted: true })
+        .mockResolvedValueOnce({ comparable: true, sources: 'a', artifacts: 'a', drifted: true })
+        .mockResolvedValueOnce({ comparable: true, sources: 'b', artifacts: 'b', drifted: true })
+        .mockResolvedValueOnce({ comparable: true, sources: 'a', artifacts: 'a', drifted: true });
+
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      expect(jobs.started).toHaveLength(1);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('backs off a failed quiet-pause recompile until its tuple changes', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const record: RepoRecord = {
+        pathOrUrl: '/repo-a',
+        frameworks: [{
+          id: 'foundry', name: 'Foundry', watchPaths: WATCH.data as RepoFrameworkState['watchPaths'],
+          fingerprint: { sources: 'before', artifacts: 'before' },
+        }],
+      };
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [record],
+        responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, compile: {
+          success: false, error: { code: 'COMPILE_FAILED', message: 'boom' },
+        } } },
+      });
+      const measure = vi.spyOn(lifecycle, 'measureFramework');
+      measure.mockResolvedValue({
+        comparable: true, sources: 'failed', artifacts: 'failed', drifted: true,
+      });
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      await jobs.runAll();
+      (lifecycle as unknown as { lastRecompile: Map<string, number> }).lastRecompile.clear();
+
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      expect(jobs.started).toHaveLength(1);
+
+      measure.mockResolvedValue({
+        comparable: true, sources: 'changed', artifacts: 'failed', drifted: true,
+      });
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      expect(jobs.started).toHaveLength(2);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('persists the source fingerprint captured immediately before compile', async () => {
+    const dir = await createTestDirectory();
+    try {
+      await fs.mkdir(path.join(dir, 'src'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A {}');
+      const { statFingerprint } = await import('../../repos/fingerprint.js');
+      const beforeCompile = await statFingerprint(dir, ['foundry.toml', 'src']);
+      const { lifecycle, jobs, executor, registry } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a' }],
+        responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, compile: OK } },
+      });
+      executor.execute.mockImplementation(async (pluginId: string, op: string) => {
+        if (op === 'compile') {
+          await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A { uint edited; }');
+        }
+        const response = ({ detect: DETECTED, getWatchPaths: WATCH, compile: OK } as Record<string, PluginResponse<unknown>>)[op];
+        return response ?? { success: true, data: {} };
+      });
+
+      lifecycle.startLifecycle('/repo-a', 'p1', 'add');
+      await jobs.runAll();
+      expect(registry.updates.at(-1)?.patch.frameworks?.[0].fingerprint?.sources).toBe(beforeCompile);
+      await expect(lifecycle.measureFramework(
+        dir,
+        registry.updates.at(-1)?.patch.frameworks?.[0] as RepoFrameworkState
+      )).resolves.toMatchObject({ comparable: true, drifted: true });
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('does not start a recompile when a mutation reserves the repo during drift checks', async () => {
     const dir = await createTestDirectory();
     try {
