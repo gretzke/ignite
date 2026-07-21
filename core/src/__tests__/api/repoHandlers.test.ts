@@ -829,7 +829,10 @@ describe('repo-manager API handlers', () => {
       expect(reply.body).toEqual({
         data: { started: [{ pathOrUrl: '/repo-a', jobId: 'job-3' }] },
       });
-      expect(lifecycle.checkAndRecompile).toHaveBeenCalledWith('p1', undefined);
+      expect(lifecycle.checkAndRecompile).toHaveBeenCalledWith('p1', {
+        scope: 'local',
+        debounce: 'quiet-pause',
+      });
     });
 
     it('narrows the check to a single repo when pathOrUrl is provided', async () => {
@@ -847,7 +850,11 @@ describe('repo-manager API handlers', () => {
         { body: { pathOrUrl: '/repo-a' } } as never,
         reply as never
       );
-      expect(lifecycle.checkAndRecompile).toHaveBeenCalledWith('p1', '/repo-a');
+      expect(lifecycle.checkAndRecompile).toHaveBeenCalledWith('p1', {
+        scope: 'local',
+        debounce: 'quiet-pause',
+        pathOrUrl: '/repo-a',
+      });
     });
   });
 });

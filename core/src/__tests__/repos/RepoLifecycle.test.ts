@@ -113,6 +113,7 @@ function makeCompilerConfigs(ids: string[]) {
 function makeLifecycle(opts: {
   workspaceDir: string;
   repos?: RepoRecord[];
+  cloned?: RepoRecord[];
   compilers?: string[];
   responses?: Record<string, Record<string, PluginResponse<unknown>>>;
   sessionPath?: string | null;
@@ -135,7 +136,7 @@ function makeLifecycle(opts: {
     list: vi.fn(async () => ({
       session: opts.sessionPath ?? null,
       local: opts.repos ?? [],
-      cloned: [] as RepoRecord[],
+      cloned: opts.cloned ?? [],
     })),
     updateRepoState: vi.fn(
       async (
@@ -1462,7 +1463,7 @@ describe('RepoLifecycle', () => {
     }
   });
 
-  it('checkAndRecompile starts recompile jobs only for drifted repos and honors cooldown', async () => {
+  it('checkAndRecompile with debounce none immediately starts a drifted cloned repo', async () => {
     const dir = await createTestDirectory();
     try {
       await fs.mkdir(path.join(dir, 'src'), { recursive: true });
@@ -1488,28 +1489,109 @@ describe('RepoLifecycle', () => {
       };
       const { lifecycle, jobs } = makeLifecycle({
         workspaceDir: dir,
-        repos: [record],
+        cloned: [record],
         responses: {
           foundry: { detect: DETECTED, getWatchPaths: WATCH, compile: OK },
         },
       });
 
       // Unchanged tree: nothing starts.
-      const clean = await lifecycle.checkAndRecompile('p1');
+      const clean = await lifecycle.checkAndRecompile('p1', {
+        scope: 'all',
+        debounce: 'none',
+      });
       expect(clean.started).toEqual([]);
 
       // Change a source file -> drift. No-drift checks are not throttled
       // (they're cheap stat walks); the cooldown only starts once a
       // recompile job is actually started.
       await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A { uint x; }');
-      const drifted = await lifecycle.checkAndRecompile('p1');
+      const drifted = await lifecycle.checkAndRecompile('p1', {
+        scope: 'all',
+        debounce: 'none',
+      });
       expect(drifted.started).toHaveLength(1);
       expect(drifted.started[0].pathOrUrl).toBe('/repo-a');
 
       // Active job -> immediate re-check starts nothing.
-      const during = await lifecycle.checkAndRecompile('p1');
+      const during = await lifecycle.checkAndRecompile('p1', {
+        scope: 'all',
+        debounce: 'none',
+      });
       expect(during.started).toEqual([]);
       await jobs.runAll();
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('checkAndRecompile local scope excludes cloned repos', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const record: RepoRecord = {
+        pathOrUrl: 'https://example.test/cloned.git',
+        frameworks: [{
+          id: 'foundry', name: 'Foundry',
+          watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+          fingerprint: { sources: 'before', artifacts: 'before' },
+        }],
+      };
+      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir, cloned: [record] });
+      vi.spyOn(lifecycle, 'measureFramework').mockResolvedValue({
+        comparable: true, sources: 'after', artifacts: 'after', drifted: true,
+      });
+
+      await expect(lifecycle.checkAndRecompile('p1', {
+        scope: 'local', debounce: 'none',
+      })).resolves.toEqual({ started: [] });
+      expect(jobs.started).toHaveLength(0);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('coalesces overlapping checks for one profile and reserves before resolution', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const record: RepoRecord = {
+        pathOrUrl: '/repo-a',
+        frameworks: [{
+          id: 'foundry', name: 'Foundry',
+          watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+          fingerprint: { sources: 'before', artifacts: 'before' },
+        }],
+      };
+      const { lifecycle, repoService } = makeLifecycle({ workspaceDir: dir, repos: [record] });
+      let resolveWorkspace!: (value: string) => void;
+      repoService.resolveWorkspacePath.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveWorkspace = resolve;
+      }));
+      vi.spyOn(lifecycle, 'measureFramework').mockResolvedValue({
+        comparable: true, sources: 'after', artifacts: 'after', drifted: true,
+      });
+
+      const first = lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'none' });
+      await vi.waitFor(() =>
+        expect(lifecycle.activeJobFor('/repo-a')).toBe('direct:local:/repo-a')
+      );
+      const second = lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'none' });
+      expect(second).toBe(first);
+      resolveWorkspace(dir);
+      await first;
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('releases its reservation on a no-start path', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a', frameworks: [] }],
+      });
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'none' });
+      expect(lifecycle.activeJobFor('/repo-a')).toBeUndefined();
     } finally {
       await cleanupTestDirectory(dir);
     }
@@ -1534,12 +1616,13 @@ describe('RepoLifecycle', () => {
         artifacts: 'after',
         drifted: true,
       });
-      vi.spyOn(lifecycle, 'activeJobFor')
-        .mockReturnValueOnce(undefined)
-        .mockReturnValueOnce('direct:local:/repo-a');
+      const release = lifecycle.beginRepoActivity('/repo-a');
 
-      await expect(lifecycle.checkAndRecompile('p1')).resolves.toEqual({ started: [] });
+      await expect(lifecycle.checkAndRecompile('p1', {
+        scope: 'local', debounce: 'none',
+      })).resolves.toEqual({ started: [] });
       expect(jobs.started).toHaveLength(0);
+      release();
     } finally {
       await cleanupTestDirectory(dir);
     }

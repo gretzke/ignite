@@ -327,7 +327,13 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
         const profileId = await d.getProfileId();
         const result = await d.lifecycle.checkAndRecompile(
           profileId,
-          request.body?.pathOrUrl
+          {
+            scope: 'local',
+            debounce: 'quiet-pause',
+            ...(request.body?.pathOrUrl
+              ? { pathOrUrl: request.body.pathOrUrl }
+              : {}),
+          }
         );
         return reply.status(200).send({ data: result });
       } catch (error) {

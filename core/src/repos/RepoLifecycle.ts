@@ -35,6 +35,12 @@ export interface LifecycleOptions {
   force?: 'catalog';
 }
 
+export interface RecompileCheckOptions {
+  scope: 'all' | 'local';
+  debounce: 'none' | 'quiet-pause';
+  pathOrUrl?: string;
+}
+
 export const LIFECYCLE_JOB_TYPE = 'repo.lifecycle';
 export const LIFECYCLE_SEMAPHORE = new Semaphore(3);
 
@@ -133,6 +139,10 @@ export class RepoLifecycle {
   private readonly sessionRecords = new Map<string, RepoRecord>();
   private readonly lastRecompile = new Map<string, number>();
   private readonly pendingForces = new Map<string, PendingForce>();
+  private readonly recompileChecks = new Map<
+    string,
+    Promise<{ started: Array<{ pathOrUrl: string; jobId: string }> }>
+  >();
 
   constructor(deps?: Partial<RepoLifecycleDeps>) {
     this.deps = {
@@ -168,6 +178,7 @@ export class RepoLifecycle {
     this.sessionRecords.clear();
     this.lastRecompile.clear();
     this.pendingForces.clear();
+    this.recompileChecks.clear();
   }
 
   // Sweep a profile's repos (init + detect + persist) exactly once per CLI
@@ -470,21 +481,44 @@ export class RepoLifecycle {
 
   // Fingerprint-compare every repo (or one) with stored compile-time state;
   // start incremental recompile jobs for the drifted ones.
-  async checkAndRecompile(
+  checkAndRecompile(
     profileId: string,
-    pathOrUrl?: string
+    options: RecompileCheckOptions
+  ): Promise<{ started: Array<{ pathOrUrl: string; jobId: string }> }> {
+    const inFlight = this.recompileChecks.get(profileId);
+    if (inFlight) return inFlight;
+
+    const check = this.checkAndRecompileInner(profileId, options);
+    this.recompileChecks.set(profileId, check);
+    void check.then(() => {
+      if (this.recompileChecks.get(profileId) === check) {
+        this.recompileChecks.delete(profileId);
+      }
+    }, () => {
+      if (this.recompileChecks.get(profileId) === check) {
+        this.recompileChecks.delete(profileId);
+      }
+    });
+    return check;
+  }
+
+  private async checkAndRecompileInner(
+    profileId: string,
+    options: RecompileCheckOptions
   ): Promise<{ started: Array<{ pathOrUrl: string; jobId: string }> }> {
     const started: Array<{ pathOrUrl: string; jobId: string }> = [];
     const { local, cloned } = await this.deps.registry.list(profileId);
-    const candidates: RepoRecord[] = [...local, ...cloned];
+    const candidates: RepoRecord[] = options.scope === 'all'
+      ? [...local, ...cloned]
+      : [...local];
     const session = this.deps.sessionPath();
     if (session) {
       const sessionRecord = this.sessionRecords.get(session);
       if (sessionRecord) candidates.push(sessionRecord);
     }
 
-    const filtered = pathOrUrl
-      ? candidates.filter((r) => r.pathOrUrl === pathOrUrl)
+    const filtered = options.pathOrUrl
+      ? candidates.filter((r) => r.pathOrUrl === options.pathOrUrl)
       : candidates;
 
     for (const record of filtered) {
@@ -492,30 +526,31 @@ export class RepoLifecycle {
       const last = this.lastRecompile.get(record.pathOrUrl) ?? 0;
       if (Date.now() - last < RECOMPILE_COOLDOWN_MS) continue;
 
-      let workspacePath: string;
+      const release = this.beginRepoActivity(record.pathOrUrl);
       try {
-        workspacePath = await this.deps.repos.resolveWorkspacePath(
+        const workspacePath = await this.deps.repos.resolveWorkspacePath(
           record.pathOrUrl,
           profileId
         );
-      } catch {
-        continue;
-      }
 
-      let drifted = false;
-      for (const fw of record.frameworks ?? []) {
-        const measurement = await this.measureFramework(workspacePath, fw);
-        if (measurement.comparable && measurement.drifted) {
-          drifted = true;
-          break;
+        let drifted = false;
+        for (const fw of record.frameworks ?? []) {
+          const measurement = await this.measureFramework(workspacePath, fw);
+          if (measurement.comparable && measurement.drifted) {
+            drifted = true;
+            break;
+          }
         }
-      }
-      if (!drifted) continue;
+        if (!drifted) continue;
 
-      if (this.activeJobFor(record.pathOrUrl)) continue;
-      this.lastRecompile.set(record.pathOrUrl, Date.now());
-      const job = this.startLifecycle(record.pathOrUrl, profileId, 'recompile');
-      started.push({ pathOrUrl: record.pathOrUrl, jobId: job.id });
+        const job = this.startLifecycle(record.pathOrUrl, profileId, 'recompile');
+        this.lastRecompile.set(record.pathOrUrl, Date.now());
+        started.push({ pathOrUrl: record.pathOrUrl, jobId: job.id });
+      } catch {
+        // Resolution or measurement failures are deliberately best-effort.
+      } finally {
+        release();
+      }
     }
     return { started };
   }
