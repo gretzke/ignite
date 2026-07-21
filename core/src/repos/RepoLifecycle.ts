@@ -596,6 +596,11 @@ export class RepoLifecycle {
         const attemptedFrameworks: RecompileAttempt['observations'] = [];
         for (const fw of record.frameworks ?? []) {
           const measurement = await this.measureFramework(workspacePath, fw);
+          if (measurement.comparable && !measurement.drifted) {
+            // A clean tree interrupts quiet-pause stability, but a known-bad
+            // drift tuple remains backed off until it changes or expires.
+            this.quietObservations.delete(this.quietKey(record.pathOrUrl, fw.id));
+          }
           if (measurement.comparable && measurement.drifted) {
             if (options.debounce === 'none') {
               drifted = true;
