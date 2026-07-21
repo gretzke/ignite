@@ -590,7 +590,9 @@ export class VersionStore {
       record.commit
     );
     const winnerIsLegacy =
-      preferred.rawUrl === record[winnerSourceUrl] && Boolean(record.detectedAt);
+      Boolean(record.detectedAt) &&
+      (preferred.rawUrl === record[winnerSourceUrl] ||
+        preferred.rawUrl === record.legacySourceUrl);
 
     if (!canonicalExists) {
       try {

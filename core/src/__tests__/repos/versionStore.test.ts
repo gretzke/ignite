@@ -221,6 +221,51 @@ describe('VersionStore', () => {
     await expect(fs.access(legacyGroup)).rejects.toThrow();
   });
 
+  it('retries a failed legacy checkout migration using persisted winner provenance', async () => {
+    const home = await temp('ignite-version-legacy-retry-');
+    const { fileSystem, store: versions } = await store(home);
+    const legacyUrl = 'https://example.test/acme/retry-repo.git';
+    const canonicalUrl = canonicalGitUrl(legacyUrl);
+    const legacyHash = crypto
+      .createHash('sha256')
+      .update(legacyUrl)
+      .digest('hex')
+      .slice(0, 8);
+    const legacyGroup = path.join(
+      fileSystem.getVersionCachePath(),
+      `example-test-acme-retry-repo-${legacyHash}`
+    );
+    const canonicalCheckout = versions.checkoutPath(canonicalUrl, commitA);
+    const legacyCheckout = path.join(legacyGroup, 'versions', commitA);
+    await fs.mkdir(canonicalCheckout, { recursive: true });
+    await fs.mkdir(legacyCheckout, { recursive: true });
+    await fs.writeFile(path.join(canonicalCheckout, 'winner.txt'), 'canonical');
+    await fs.writeFile(path.join(legacyCheckout, 'winner.txt'), 'legacy');
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.writeFile(
+      fileSystem.getVersionRegistryPath(),
+      JSON.stringify({
+        versions: [
+          {
+            ...record(canonicalUrl, commitA),
+            detectedAt: '2026-07-21T00:00:00.000Z',
+            legacySourceUrl: legacyUrl,
+          },
+        ],
+      })
+    );
+
+    await versions.reconcile();
+
+    await expect(
+      fs.readFile(path.join(canonicalCheckout, 'winner.txt'), 'utf8')
+    ).resolves.toBe('legacy');
+    await expect(versions.get(canonicalUrl, commitA)).resolves.not.toHaveProperty(
+      'legacySourceUrl'
+    );
+    await expect(fs.access(legacyGroup)).rejects.toThrow();
+  });
+
   it('keeps the installed winner when migration quarantine cleanup fails', async () => {
     const home = await temp('ignite-version-duplicate-cleanup-failure-');
     const { fileSystem, store: versions } = await store(home);
