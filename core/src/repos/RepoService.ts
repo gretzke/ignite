@@ -409,6 +409,8 @@ export class RepoService {
   ): Promise<{ checkout: string }> {
     const groupDir = this.versionStore.groupDir(url);
     const checkout = this.versionStore.checkoutPath(url, commit);
+    const stored = await this.versionStore.get(url, commit);
+    const effectiveFetchUrl = opts.fetchUrl ?? stored?.fetchUrl ?? url;
     const controller = new AbortController();
     if (opts.signal?.aborted) {
       controller.abort(opts.signal.reason);
@@ -447,12 +449,13 @@ export class RepoService {
         try {
           await this.assertPinnedIntegrity(checkout, commit, budget);
           const now = new Date().toISOString();
-          const existing = await this.versionStore.get(url, commit);
           await this.versionStore.upsert({
-            ...(existing ?? { url, commit, createdAt: now }),
+            ...(stored ?? { url, commit, createdAt: now }),
             url,
             commit,
-            ...(opts.fetchUrl !== undefined ? { fetchUrl: opts.fetchUrl } : {}),
+            ...(effectiveFetchUrl !== url
+              ? { fetchUrl: effectiveFetchUrl }
+              : {}),
             ...(opts.refLabel !== undefined || opts.ref !== undefined
               ? { refLabel: opts.refLabel ?? opts.ref }
               : {}),
@@ -473,10 +476,10 @@ export class RepoService {
       await this.ensureBareVersionRepo(
         groupDir,
         url,
-        opts.fetchUrl ?? url,
+        effectiveFetchUrl,
         budget
       );
-      opts.onLog?.(`materialize: fetch ${opts.fetchUrl ?? url}\n`);
+      opts.onLog?.(`materialize: fetch ${effectiveFetchUrl}\n`);
       const localFallback = await this.fetchVersionCommit(
         url,
         commit,
@@ -529,7 +532,9 @@ export class RepoService {
         commit,
         refLabel: opts.refLabel ?? opts.ref,
         refKind: opts.refKind,
-        ...(opts.fetchUrl !== undefined ? { fetchUrl: opts.fetchUrl } : {}),
+        ...(effectiveFetchUrl !== url
+          ? { fetchUrl: effectiveFetchUrl }
+          : {}),
         ...(localFallback ? { localFallback: true } : {}),
         createdAt: now,
         lastUsedAt: now,

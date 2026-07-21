@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FileSystem } from '../../filesystem/FileSystem.js';
 import { RepoService } from '../../repos/RepoService.js';
-import { VersionStore } from '../../repos/VersionStore.js';
+import { canonicalGitUrl, VersionStore } from '../../repos/VersionStore.js';
 import type { ProfileManager } from '../../filesystem/ProfileManager.js';
 import { runCommand } from '../../utils/runCommand.js';
 import { getLogger } from '../../utils/logger.js';
@@ -169,6 +169,30 @@ describe('RepoService version materialization', () => {
       'materialize: submodules\n',
       'materialize: verify\n',
     ]);
+  });
+
+  it('rematerializes from the stored verbatim fetch URL', async () => {
+    const remote = await sourceRepo('ignite-version-fetch-url-source-');
+    const barePath = remote.remote.slice('file://'.length);
+    const fetchPath = `${barePath}.git`;
+    await fs.rename(barePath, fetchPath);
+    dirs.push(fetchPath);
+    const fetchUrl = `file://${fetchPath}`;
+    const url = canonicalGitUrl(fetchUrl);
+    const home = await temp('ignite-version-fetch-url-home-');
+    const { repos, versions } = await approved(home, url);
+
+    const { checkout } = await repos.ensureVersion(profileId, url, remote.first, {
+      fetchUrl,
+    });
+    await fs.rm(checkout, { recursive: true, force: true });
+
+    await repos.ensureVersion(profileId, url, remote.first);
+
+    expect(git(versions.bareRepoPath(url), ['remote', 'get-url', 'origin'])).toBe(fetchUrl);
+    expect(await versions.get(url, remote.first)).toEqual(
+      expect.objectContaining({ fetchUrl })
+    );
   });
 
   it('rejects unsafe refs and labels before any git invocation', async () => {

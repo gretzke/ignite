@@ -57,7 +57,7 @@ const { PluginInstaller } = await import('../../plugins/install/PluginInstaller.
 const { LocalFolderBuildBackend } = await import('../../plugins/install/LocalFolderBuildBackend.js');
 const { TrustManager } = await import('../../plugins/trust/TrustManager.js');
 const { RepoService } = await import('../../repos/RepoService.js');
-const { VersionStore, pinnedOrigin } = await import('../../repos/VersionStore.js');
+const { VersionStore, canonicalGitUrl, pinnedOrigin } = await import('../../repos/VersionStore.js');
 const { WorkflowPromotionService } = await import('../../workflows/WorkflowPromotionService.js');
 const { JobManager } = await import('../../jobs/JobManager.js');
 const { DeploymentHookService } = await import('../../deployments/DeploymentHookService.js');
@@ -240,20 +240,23 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
     const resolved = await waitForJob(jobs, (resolveReply.body as { data: { jobId: string } }).data.jobId);
     expect(resolved).toMatchObject({ state: 'succeeded', result: { sources: [{ status: 'ready' }] } });
     expect(await fs.stat(pins.checkoutPath(retentionRemote.url, retentionRemote.v1))).toBeTruthy();
-    expect((await pins.listMemberships(PROFILE))[retentionRemote.url]).toEqual([
+    expect((await pins.listMemberships(PROFILE))[canonicalGitUrl(retentionRemote.url)]).toEqual([
       expect.objectContaining({ commit: retentionRemote.v1, source: 'workflow' }),
     ]);
 
-    const blockedDelete = reply();
-    await profileHandlers.removeRepoVersion({ params: { id: PROFILE }, body: { url: retentionRemote.url, commit: retentionRemote.v1 } } as never, blockedDelete);
-    expect(blockedDelete.statusCode).toBe(409);
-    expect(blockedDelete.body).toMatchObject({ code: 'VERSION_IN_USE' });
+    const retainedDelete = reply();
+    await profileHandlers.removeRepoVersion({ params: { id: PROFILE }, body: { url: retentionRemote.url, commit: retentionRemote.v1 } } as never, retainedDelete);
+    expect(retainedDelete.statusCode).toBe(204);
+    expect((await pins.listMemberships(PROFILE))[canonicalGitUrl(retentionRemote.url)]).toEqual([
+      expect.objectContaining({ commit: retentionRemote.v1, source: 'workflow' }),
+    ]);
+    await expect(fs.stat(pins.checkoutPath(retentionRemote.url, retentionRemote.v1))).resolves.toBeTruthy();
 
     await fs.rm(path.join(workspace, 'ignite', 'workflows', `${name}.json`));
     await fs.rm(pins.checkoutPath(retentionRemote.url, retentionRemote.v1), { recursive: true, force: true });
     await pins.reconcile();
     expect(await pins.get(retentionRemote.url, retentionRemote.v1)).toBeUndefined();
-    expect((await pins.listMemberships(PROFILE))[retentionRemote.url]).toBeUndefined();
+    expect((await pins.listMemberships(PROFILE))[canonicalGitUrl(retentionRemote.url)]).toBeUndefined();
   }, 180_000);
 
   it('deploys both versions and a pointer, copies the artifact, and delivers chronicles idempotently', async () => {
