@@ -12,6 +12,40 @@ import { runtimeHost } from './runtime/RuntimeHost';
 
 type CSSVars = React.CSSProperties & { ['--profile-color']?: string };
 
+interface FocusEventTarget {
+  addEventListener(type: 'focus' | 'blur', listener: () => void): void;
+  removeEventListener(type: 'focus' | 'blur', listener: () => void): void;
+}
+
+// Kept outside App so the focus lifecycle remains small and directly testable.
+// The interval exists only while the window is focused, and entering focus
+// gets an immediate poll instead of waiting for the first interval tick.
+export function startFocusGatedRepoPoll(
+  checkRepos: () => void,
+  target: FocusEventTarget = window,
+  isFocused: () => boolean = () => document.hasFocus()
+): () => void {
+  let interval: ReturnType<typeof setInterval> | undefined;
+  const start = () => {
+    if (interval) return;
+    checkRepos();
+    interval = setInterval(checkRepos, 5_000);
+  };
+  const stop = () => {
+    if (!interval) return;
+    clearInterval(interval);
+    interval = undefined;
+  };
+  target.addEventListener('focus', start);
+  target.addEventListener('blur', stop);
+  if (isFocused()) start();
+  return () => {
+    stop();
+    target.removeEventListener('focus', start);
+    target.removeEventListener('blur', stop);
+  };
+}
+
 export default function App() {
   // Read current theme from Redux and provide an explicit dispatcher
   const dispatch = useAppDispatch();
@@ -52,21 +86,13 @@ export default function App() {
     });
   }, []);
 
-  // Focus-triggered fingerprint check: when the user comes back to the tab
-  // after editing sources, the backend compares stat fingerprints and starts
-  // incremental recompile jobs for drifted repos. Debounced so alt-tab
-  // storms don't spam checks (the server also cools down per repo).
+  // Poll for fingerprint drift while the tab is focused. The backend applies
+  // quiet-pause debounce and per-repo cooldown before starting recompiles.
   useEffect(() => {
     if (versionScopedRoute) return;
-    let last = 0;
-    const onFocus = () => {
-      const now = Date.now();
-      if (now - last < 10_000) return;
-      last = now;
+    return startFocusGatedRepoPoll(() => {
       dispatch(repositoriesApi.checkRepos());
-    };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    });
   }, [dispatch, versionScopedRoute]);
 
   return (
