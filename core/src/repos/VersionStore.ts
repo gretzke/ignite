@@ -623,16 +623,14 @@ export class VersionStore {
       await fs.rename(legacyCheckout, canonicalCheckout);
       if (!(await this.isDirectory(canonicalCheckout)))
         throw new Error('replacement checkout is missing');
-      await fs.rm(quarantine, { recursive: true, force: true });
-      delete record.legacySourceUrl;
-      return canonicalCheckout;
     } catch (error) {
-      // Preserve the prior canonical checkout when the replacement cannot be
-      // completed. The legacy group stays eligible for a later retry.
-      if (await this.isDirectory(quarantine)) {
-        await fs.rm(canonicalCheckout, { recursive: true, force: true });
+      // Roll back only if the swap did not complete. Never delete a good
+      // canonical checkout here.
+      if (
+        !(await this.isDirectory(canonicalCheckout)) &&
+        (await this.isDirectory(quarantine))
+      )
         await fs.rename(quarantine, canonicalCheckout).catch(() => {});
-      }
       record.legacySourceUrl = preferred.rawUrl;
       getLogger().warn(`Version checkout replacement will retry: ${String(error)}`);
       return (await this.isDirectory(canonicalCheckout))
@@ -641,6 +639,10 @@ export class VersionStore {
           ? legacyCheckout
           : undefined;
     }
+    // Success is locked in; cleanup is best-effort and must not trigger rollback.
+    await fs.rm(quarantine, { recursive: true, force: true }).catch(() => {});
+    delete record.legacySourceUrl;
+    return canonicalCheckout;
   }
 
   private assertCommit(commit: string): void {
