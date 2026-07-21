@@ -102,14 +102,7 @@ describe('AddVersionModal picker behavior', () => {
     ).toEqual({ kind: 'commit', commit: 'b'.repeat(40) });
   });
 
-  it('submits only the active tab selection with its matching ref kind', () => {
-    expect(
-      versionSubmitPayload(source, { tab: 'releases', value: 'v1.1.0' })
-    ).toEqual({
-      repoPathOrUrl: source.repoPathOrUrl,
-      ref: 'v1.1.0',
-      refKind: 'tag',
-    });
+  it('submits local branches and commits through the workspace path', () => {
     expect(
       versionSubmitPayload(source, { tab: 'branches', value: 'work' })
     ).toEqual({
@@ -122,6 +115,16 @@ describe('AddVersionModal picker behavior', () => {
     ).toEqual({ repoPathOrUrl: source.repoPathOrUrl, commit: 'abcdef0' });
   });
 
+  it('submits a local workspace release through its remote URL', () => {
+    expect(
+      versionSubmitPayload(source, { tab: 'releases', value: 'v1.1.0' })
+    ).toEqual({
+      url: source.url,
+      ref: 'v1.1.0',
+      refKind: 'tag',
+    });
+  });
+
   it('submits a cloned workspace release through its workspace path', () => {
     const cloned: VersionSource = { ...source, local: false };
 
@@ -129,6 +132,18 @@ describe('AddVersionModal picker behavior', () => {
       versionSubmitPayload(cloned, { tab: 'releases', value: 'v1.1.0' })
     ).toEqual({
       repoPathOrUrl: cloned.repoPathOrUrl,
+      ref: 'v1.1.0',
+      refKind: 'tag',
+    });
+  });
+
+  it('submits an orphaned cache group through its remote URL', () => {
+    const orphan: VersionSource = { ...source, repoPathOrUrl: undefined };
+
+    expect(
+      versionSubmitPayload(orphan, { tab: 'releases', value: 'v1.1.0' })
+    ).toEqual({
+      url: orphan.url,
       ref: 'v1.1.0',
       refKind: 'tag',
     });

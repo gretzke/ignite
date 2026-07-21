@@ -104,7 +104,7 @@ export function versionSubmitPayload(
 
   // A live workspace retains Git's verbatim remote URL, including a required
   // trailing .git. Only orphaned cache groups must submit canonical identity.
-  return source.repoPathOrUrl
+  return source.repoPathOrUrl && !(source.local && selection.tab === 'releases')
     ? { repoPathOrUrl: source.repoPathOrUrl, ...target }
     : { url: source.url!, ...target };
 }
