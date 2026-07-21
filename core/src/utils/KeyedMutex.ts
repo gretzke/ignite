@@ -4,6 +4,10 @@
 export class KeyedMutex {
   private tails = new Map<string, Promise<unknown>>();
 
+  isBusy(key: string): boolean {
+    return this.tails.has(key);
+  }
+
   async run<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const tail = this.tails.get(key) ?? Promise.resolve();
     const next = tail.then(fn, fn);
@@ -19,5 +23,13 @@ export class KeyedMutex {
         this.tails.delete(key);
       }
     }
+  }
+
+  async tryRun<T>(
+    key: string,
+    fn: () => Promise<T>
+  ): Promise<{ acquired: true; value: T } | { acquired: false }> {
+    if (this.isBusy(key)) return { acquired: false };
+    return { acquired: true, value: await this.run(key, fn) };
   }
 }
