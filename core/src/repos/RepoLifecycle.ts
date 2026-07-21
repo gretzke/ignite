@@ -55,6 +55,15 @@ export interface LifecycleResult {
   frameworks: RepoFrameworkState[];
 }
 
+export type FrameworkMeasurement =
+  | { comparable: false }
+  | {
+      comparable: true;
+      sources: string;
+      artifacts: string;
+      drifted: boolean;
+    };
+
 // Injectable dependencies (tests pass fakes; production uses real singletons).
 export interface RepoLifecycleDeps {
   jobs: Pick<JobManager, 'start' | 'get'>;
@@ -431,11 +440,6 @@ export class RepoLifecycle {
       const last = this.lastRecompile.get(record.pathOrUrl) ?? 0;
       if (Date.now() - last < RECOMPILE_COOLDOWN_MS) continue;
 
-      const comparable = (record.frameworks ?? []).filter(
-        (f) => f.watchPaths && f.fingerprint
-      );
-      if (comparable.length === 0) continue;
-
       let workspacePath: string;
       try {
         workspacePath = await this.deps.repos.resolveWorkspacePath(
@@ -447,8 +451,9 @@ export class RepoLifecycle {
       }
 
       let drifted = false;
-      for (const fw of comparable) {
-        if (await this.frameworkDrifted(workspacePath, fw)) {
+      for (const fw of record.frameworks ?? []) {
+        const measurement = await this.measureFramework(workspacePath, fw);
+        if (measurement.comparable && measurement.drifted) {
           drifted = true;
           break;
         }
@@ -463,22 +468,28 @@ export class RepoLifecycle {
     return { started };
   }
 
-  private async frameworkDrifted(
+  async measureFramework(
     workspacePath: string,
     fw: RepoFrameworkState
-  ): Promise<boolean> {
-    if (!fw.watchPaths || !fw.fingerprint) return false;
+  ): Promise<FrameworkMeasurement> {
+    if (!fw.watchPaths || !fw.fingerprint) return { comparable: false };
     const sources = await statFingerprint(workspacePath, [
       ...fw.watchPaths.config,
       ...fw.watchPaths.sources,
     ]);
-    if (sources !== fw.fingerprint.sources) return true;
     // Artifacts drifting alone (e.g. `forge clean`) also warrants a rebuild.
     const artifacts = await statFingerprint(
       workspacePath,
       fw.watchPaths.artifacts
     );
-    return artifacts !== fw.fingerprint.artifacts;
+    return {
+      comparable: true,
+      sources,
+      artifacts,
+      drifted:
+        sources !== fw.fingerprint.sources ||
+        artifacts !== fw.fingerprint.artifacts,
+    };
   }
 
   private async runInstall(
@@ -711,10 +722,8 @@ export class RepoLifecycle {
     } else if (mode === 'recompile') {
       const targets: RepoFrameworkState[] = [];
       for (const fw of frameworks) {
-        if (
-          !fw.compiledAt ||
-          (await this.frameworkDrifted(workspacePath, fw))
-        ) {
+        const measurement = await this.measureFramework(workspacePath, fw);
+        if (!fw.compiledAt || (measurement.comparable && measurement.drifted)) {
           targets.push(fw);
         }
       }

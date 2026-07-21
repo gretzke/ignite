@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import type { JobRecord, RepoRecord } from '@ignite/api';
+import type { JobRecord, RepoFrameworkState, RepoRecord } from '@ignite/api';
 import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import {
@@ -1233,6 +1233,68 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('measures frameworks as non-comparable without watch paths or a fingerprint', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle } = makeLifecycle({ workspaceDir: dir });
+      await expect(
+        (lifecycle as never as { measureFramework: (workspacePath: string, framework: RepoFrameworkState) => Promise<unknown> }).measureFramework(
+          dir,
+          { id: 'foundry', name: 'Foundry' }
+        )
+      ).resolves.toEqual({ comparable: false });
+      await expect(
+        (lifecycle as never as { measureFramework: (workspacePath: string, framework: RepoFrameworkState) => Promise<unknown> }).measureFramework(
+          dir,
+          {
+            id: 'foundry',
+            name: 'Foundry',
+            watchPaths: { config: [], sources: [], artifacts: [] },
+          }
+        )
+      ).resolves.toEqual({ comparable: false });
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('measures source and artifact fingerprints and reports drift', async () => {
+    const dir = await createTestDirectory();
+    try {
+      await fs.mkdir(path.join(dir, 'src'), { recursive: true });
+      await fs.mkdir(path.join(dir, 'out'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A {}');
+      await fs.writeFile(path.join(dir, 'out/A.json'), '{}');
+      const { statFingerprint } = await import('../../repos/fingerprint.js');
+      const sources = await statFingerprint(dir, ['foundry.toml', 'src']);
+      const artifacts = await statFingerprint(dir, ['out']);
+      const { lifecycle } = makeLifecycle({ workspaceDir: dir });
+      const fw: RepoFrameworkState = {
+        id: 'foundry',
+        name: 'Foundry',
+        watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+        fingerprint: { sources, artifacts },
+      };
+
+      await expect(
+        (lifecycle as never as { measureFramework: (workspacePath: string, framework: RepoFrameworkState) => Promise<unknown> }).measureFramework(dir, fw)
+      ).resolves.toEqual({ comparable: true, sources, artifacts, drifted: false });
+
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A { uint x; }');
+      await expect(
+        (lifecycle as never as { measureFramework: (workspacePath: string, framework: RepoFrameworkState) => Promise<{ comparable: boolean; drifted?: boolean }> }).measureFramework(dir, fw)
+      ).resolves.toMatchObject({ comparable: true, drifted: true });
+
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A {}');
+      await fs.writeFile(path.join(dir, 'out/A.json'), '{"changed":true}');
+      await expect(
+        (lifecycle as never as { measureFramework: (workspacePath: string, framework: RepoFrameworkState) => Promise<{ comparable: boolean; drifted?: boolean }> }).measureFramework(dir, fw)
+      ).resolves.toMatchObject({ comparable: true, drifted: true });
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('checkAndRecompile starts recompile jobs only for drifted repos and honors cooldown', async () => {
     const dir = await createTestDirectory();
     try {
@@ -1299,7 +1361,12 @@ describe('RepoLifecycle', () => {
         }],
       };
       const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir, repos: [record] });
-      vi.spyOn(lifecycle as never, 'frameworkDrifted').mockResolvedValue(true);
+      vi.spyOn(lifecycle as never, 'measureFramework').mockResolvedValue({
+        comparable: true,
+        sources: 'after',
+        artifacts: 'after',
+        drifted: true,
+      });
       vi.spyOn(lifecycle, 'activeJobFor')
         .mockReturnValueOnce(undefined)
         .mockReturnValueOnce('direct:local:/repo-a');
