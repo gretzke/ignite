@@ -29,7 +29,7 @@ import type {
 import type { PathOptions } from '@ignite/plugin-types';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
-import { RepoLifecycle } from '../repos/RepoLifecycle.js';
+import { RepoLifecycle, withLifecyclePermit } from '../repos/RepoLifecycle.js';
 import {
   RepoService,
   RepoKind,
@@ -781,32 +781,34 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           { url: source.url, commit, ref: body.ref },
           async (ctx: JobContext) => {
             try {
-              if ('ambiguous' in resolved && resolved.ambiguous && !body.refKind)
-                ctx.log(`warning: ref '${body.ref}' matches both a branch and tag; using branch\n`);
-              const withMaterialized = d.repos.withVersionMaterialized?.bind(d.repos) ?? (async <T>(profileId: string, url: string, versionCommit: string, opts: Parameters<RepoService['withVersionMaterialized']>[3], fn: Parameters<RepoService['withVersionMaterialized']>[4]): Promise<T> => {
-                await d.repos.ensureVersion(profileId, url, versionCommit, opts);
-                return fn({ checkout: d.versionStore.checkoutPath(url, versionCommit), rematerialize: () => d.repos.ensureVersion(profileId, url, versionCommit, opts) }) as Promise<T>;
+              return await withLifecyclePermit(async () => {
+                if ('ambiguous' in resolved && resolved.ambiguous && !body.refKind)
+                  ctx.log(`warning: ref '${body.ref}' matches both a branch and tag; using branch\n`);
+                const withMaterialized = d.repos.withVersionMaterialized?.bind(d.repos) ?? (async <T>(profileId: string, url: string, versionCommit: string, opts: Parameters<RepoService['withVersionMaterialized']>[3], fn: Parameters<RepoService['withVersionMaterialized']>[4]): Promise<T> => {
+                  await d.repos.ensureVersion(profileId, url, versionCommit, opts);
+                  return fn({ checkout: d.versionStore.checkoutPath(url, versionCommit), rematerialize: () => d.repos.ensureVersion(profileId, url, versionCommit, opts) }) as Promise<T>;
+                });
+                ctx.log('phase: materialize\n');
+                return withMaterialized(
+                  id, source.url, commit,
+                  {
+                    ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}),
+                    ...(source.fetchUrl ? { fetchUrl: source.fetchUrl } : {}),
+                    ...(source.localFallbackPath
+                      ? { localFallbackPath: source.localFallbackPath }
+                      : {}),
+                    onLog: (text) => ctx.log(text),
+                    signal: ctx.signal,
+                  },
+                  async (materialized) => {
+                    if (ctx.signal.aborted) throw ctx.signal.reason;
+                    ctx.log('phase: add user membership\n');
+                    await d.versionStore.addMembership(id, source.url, commit, 'user');
+                    ctx.log('phase: detect and compile\n');
+                    return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized, true);
+                  }
+                );
               });
-              ctx.log('phase: materialize\n');
-              return await withMaterialized(
-                id, source.url, commit,
-                {
-                  ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}),
-                  ...(source.fetchUrl ? { fetchUrl: source.fetchUrl } : {}),
-                  ...(source.localFallbackPath
-                    ? { localFallbackPath: source.localFallbackPath }
-                    : {}),
-                  onLog: (text) => ctx.log(text),
-                  signal: ctx.signal,
-                },
-                async (materialized) => {
-                  if (ctx.signal.aborted) throw ctx.signal.reason;
-                  ctx.log('phase: add user membership\n');
-                  await d.versionStore.addMembership(id, source.url, commit, 'user');
-                  ctx.log('phase: detect and compile\n');
-                  return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized, true);
-                }
-              );
             } finally {
               releaseActivity();
             }

@@ -3,6 +3,13 @@ import type { RepoRecord } from '@ignite/api';
 import { createProfileHandlers } from '../../api/profiles.js';
 import { RepoLifecycle } from '../../repos/RepoLifecycle.js';
 import { canonicalGitUrl } from '../../repos/VersionStore.js';
+import { withLifecyclePermit } from '../../repos/RepoLifecycle.js';
+import { KeyedMutex } from '../../utils/KeyedMutex.js';
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  return { promise: new Promise<void>((done) => { resolve = done; }), resolve };
+}
 
 function makeReply() {
   const reply = {
@@ -97,6 +104,89 @@ function makeDeps(): any {
 }
 
 describe('profile handlers', () => {
+  it('bounds concurrent repo.version.add runners to three lifecycle permits', async () => {
+    const deps = makeDeps();
+    const runners: Array<(ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>> = [];
+    const materialized = deferred();
+    let running = 0;
+    let peak = 0;
+    deps.jobs = {
+      start: vi.fn((_type: string, _params: Record<string, unknown>, runner: typeof runners[number]) => {
+        runners.push(runner);
+        return { id: `job-${runners.length}`, type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
+      get: vi.fn(() => undefined),
+    };
+    (deps.repos as typeof deps.repos & { withVersionMaterialized: Function }).withVersionMaterialized = vi.fn(async (_profileId: string, _url: string, _commit: string, _opts: object, fn: Function) => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await materialized.promise;
+      running -= 1;
+      return fn({ checkout: '/versions/version', rematerialize: async () => ({ checkout: '/versions/version' }) });
+    });
+
+    const handlers = createProfileHandlers(deps);
+    for (let index = 0; index < 4; index += 1) {
+      await handlers.addRepoVersion(
+        { params: { id: 'p1' }, body: { url: `https://example.test/repo-${index}.git`, commit: `${index}`.repeat(40) } } as never,
+        makeReply() as never
+      );
+    }
+    const runningJobs = runners.map((runner) => runner({ log: () => {}, signal: new AbortController().signal }));
+    await vi.waitFor(() => expect(peak).toBe(3));
+    materialized.resolve();
+    await Promise.all(runningJobs);
+  });
+
+  it('waits on a permit before the real repo.version.add runner acquires its version lock', async () => {
+    const deps = makeDeps();
+    const url = 'https://example.test/repo.git';
+    const commit = 'a'.repeat(40);
+    const canonicalUrl = canonicalGitUrl(url);
+    const locks = new KeyedMutex();
+    const groupKey = `version-group:${canonicalUrl}`;
+    const checkoutKey = `version:${canonicalUrl}/${commit}`;
+    const checkoutHeld = deferred();
+    const lifecycleHeld = deferred();
+    const permitsHeld = deferred();
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.jobs = {
+      start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => {
+        runner = value;
+        return { id: 'job-contention', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
+      get: vi.fn(() => undefined),
+    };
+    deps.lifecycle.runPinnedLifecycle = vi.fn(async () => lifecycleHeld.promise);
+    (deps.repos as typeof deps.repos & { withVersionMaterialized: Function }).withVersionMaterialized = async (_profileId: string, versionUrl: string, versionCommit: string, _opts: object, fn: Function) =>
+      locks.run(`version-group:${versionUrl}`, () =>
+        locks.run(`version:${versionUrl}/${versionCommit}`, () =>
+          fn({ checkout: '/versions/version', rematerialize: async () => ({ checkout: '/versions/version' }) })
+        )
+      );
+
+    const holdingCheckout = locks.run(checkoutKey, () => checkoutHeld.promise);
+    const heldPermits = [0, 1, 2].map(() => withLifecyclePermit(() => permitsHeld.promise));
+    await vi.waitFor(() => expect(locks.isBusy(checkoutKey)).toBe(true));
+    await createProfileHandlers(deps).addRepoVersion(
+      { params: { id: 'p1' }, body: { url, commit } } as never,
+      makeReply() as never
+    );
+    const adding = runner({ log: () => {}, signal: new AbortController().signal });
+
+    await Promise.resolve();
+    expect(locks.isBusy(groupKey)).toBe(false);
+    checkoutHeld.resolve();
+    await holdingCheckout;
+    await Promise.resolve();
+    expect(locks.isBusy(groupKey)).toBe(false);
+
+    permitsHeld.resolve();
+    await vi.waitFor(() => expect(locks.isBusy(groupKey)).toBe(true));
+    lifecycleHeld.resolve();
+    await Promise.all([...heldPermits, adding]);
+  });
+
   it('listProfiles returns currentId and profiles', async () => {
     const handlers = createProfileHandlers(makeDeps());
     const reply = makeReply();

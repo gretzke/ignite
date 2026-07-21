@@ -22,6 +22,7 @@ import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { statFingerprint } from './fingerprint.js';
 import { ErrorCodes } from '../types/errors.js';
 import { getLogger } from '../utils/logger.js';
+import { Semaphore } from '../utils/Semaphore.js';
 import {
   VersionStore,
   canonicalGitUrl,
@@ -31,6 +32,14 @@ import {
 export type LifecycleMode = 'sweep' | 'add' | 'recompile' | 'pinned' | 'switch';
 
 export const LIFECYCLE_JOB_TYPE = 'repo.lifecycle';
+export const LIFECYCLE_SEMAPHORE = new Semaphore(3);
+
+// Lifecycle work is globally bounded before it can acquire any repo or
+// version lock. Callers that already own a repo/version lock must use this at
+// their outer job runner, never around a nested lifecycle call.
+export function withLifecyclePermit<T>(fn: () => Promise<T>): Promise<T> {
+  return LIFECYCLE_SEMAPHORE.run(fn);
+}
 
 // After starting a recompile for a repo, ignore further drift checks for
 // this long — rapid focus events must not queue compile storms. Checks that
@@ -198,7 +207,9 @@ export class RepoLifecycle {
       { pathOrUrl, mode, profileId },
       async (ctx) => {
         try {
-          return await this.runLifecycle(pathOrUrl, profileId, mode, ctx);
+          return await withLifecyclePermit(() =>
+            this.runLifecycle(pathOrUrl, profileId, mode, ctx)
+          );
         } finally {
           this.clearJob(pathOrUrl, job.id);
         }
@@ -228,7 +239,9 @@ export class RepoLifecycle {
       { pathOrUrl: worktree, mode: 'pinned', profileId, url, commit },
       async (ctx) => {
         try {
-          return await this.runPinnedLifecycle(url, commit, profileId, ctx);
+          return await withLifecyclePermit(() =>
+            this.runPinnedLifecycle(url, commit, profileId, ctx)
+          );
         } finally {
           this.clearJob(worktree, job.id);
         }

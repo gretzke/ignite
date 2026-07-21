@@ -204,6 +204,56 @@ const WATCH: PluginResponse<unknown> = {
 const OK: PluginResponse<unknown> = { success: true, data: {} };
 
 describe('RepoLifecycle', () => {
+  it('bounds concurrent lifecycle job runners to three permits', async () => {
+    const dir = await createTestDirectory();
+    try {
+      let running = 0;
+      let peak = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        responses: {
+          foundry: {
+            detect: {
+              success: true,
+              data: { detected: true },
+            },
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: OK,
+          },
+        },
+      });
+      const originalExecute = lifecycle['deps'].executor.execute;
+      lifecycle['deps'].executor.execute = vi.fn(async (...args) => {
+        if (args[1] === 'detect') {
+          running += 1;
+          peak = Math.max(peak, running);
+          await gate;
+          running -= 1;
+        }
+        return (originalExecute as (...params: any[]) => Promise<PluginResponse<unknown>>)(
+          ...args
+        );
+      });
+
+      for (let index = 0; index < 4; index += 1) {
+        lifecycle.startLifecycle(`/repo-${index}`, 'p1', 'add');
+      }
+      const run = Promise.all(
+        jobs.started.map((started) =>
+          started.runner({ log: () => {}, signal: new AbortController().signal })
+        )
+      );
+      await vi.waitFor(() => expect(peak).toBe(3));
+      release();
+      await run;
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('pinned: materializes, detects, installs, compiles, and persists frameworks', async () => {
     const dir = await createTestDirectory();
     try {

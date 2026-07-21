@@ -16,7 +16,7 @@ import {
 } from '@ignite/api';
 import { RepoService } from '../repos/RepoService.js';
 import { JobManager, type JobContext } from '../jobs/JobManager.js';
-import { RepoLifecycle } from '../repos/RepoLifecycle.js';
+import { RepoLifecycle, withLifecyclePermit } from '../repos/RepoLifecycle.js';
 import { VersionStore, pinnedOrigin } from '../repos/VersionStore.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
@@ -214,7 +214,14 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
               // successful compile. Reconcile removes this if no registry
               // record was ever materialized.
               await d.versionStore.addMembership(profileId, source.repo.url, source.repo.commit, 'workflow');
-              const lifecycle = await d.lifecycle.runPinnedLifecycle(source.repo.url, source.repo.commit, profileId, ctx);
+              const lifecycle = await withLifecyclePermit(() =>
+                d.lifecycle.runPinnedLifecycle(
+                  source.repo.url,
+                  source.repo.commit,
+                  profileId,
+                  ctx
+                )
+              );
               if (!lifecycle.frameworks.some((framework) => framework.id === source.frameworkId)) throw new Error(`Framework '${source.frameworkId}' was not detected`);
               ctx.log(`source ${source.id}: compiling\n`);
               if (!(await d.artifactReadable(source, profileId))) throw new Error('Compiled artifact is not readable');

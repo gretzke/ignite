@@ -21,6 +21,37 @@ const workflow = {
 };
 
 describe('workflow resolve and origin approval', () => {
+  it('bounds workflow.resolve lifecycle work to three permits', async () => {
+    const runners: JobRunner[] = [];
+    const gate = new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    let running = 0;
+    let peak = 0;
+    const lifecycle = {
+      runPinnedLifecycle: vi.fn(async () => {
+        running += 1;
+        peak = Math.max(peak, running);
+        await gate;
+        running -= 1;
+        return { pathOrUrl: '/pin', frameworks: [{ id: 'foundry', name: 'Foundry' }] };
+      }),
+    };
+    const handlers = createWorkflowHandlers({
+      repos: { getFile: vi.fn(async () => ({ success: true, data: { content: JSON.stringify(workflow) } })) } as never,
+      jobs: { start: vi.fn((_type, _params, runner) => { runners.push(runner); return { id: `job-${runners.length}` }; }) } as never,
+      lifecycle: lifecycle as never,
+      versionStore: { isOriginApproved: async () => true, approveOrigins: async () => {}, addMembership: vi.fn(async () => {}) } as never,
+      getProfileId: async () => 'p1',
+      pluginStatus: async (id) => ({ id, status: 'installed', installedVersion: '1.0.0' }),
+      artifactReadable: async () => true,
+    });
+
+    for (let index = 0; index < 4; index += 1) {
+      await handlers.resolveWorkflow({ body: { repoPathOrUrl: '/workflow', name: 'test' } } as never, reply());
+    }
+    await Promise.all(runners.map((runner) => runner({ log: () => {}, signal: new AbortController().signal })));
+    expect(peak).toBe(3);
+  });
+
   it('runs pinned lifecycle awaitably and reports source/plugin readiness', async () => {
     let runner!: JobRunner;
     const lifecycle = { runPinnedLifecycle: vi.fn(async () => ({ pathOrUrl: '/pin', frameworks: [{ id: 'foundry', name: 'Foundry' }] })) };
