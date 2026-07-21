@@ -7,6 +7,7 @@
 // registry state and attaches to whatever jobs are still in flight.
 import type {
   JobRecord,
+  RepoDetectionCompiler,
   RepoRecord,
   RepoFrameworkState,
   RepoWatchPaths,
@@ -88,6 +89,23 @@ function isTerminal(state: JobRecord['state']): boolean {
 
 function coded(message: string, code: string): Error {
   return Object.assign(new Error(message), { code });
+}
+
+export function catalogMatches(
+  recorded: RepoDetectionCompiler[] | undefined,
+  current: RepoDetectionCompiler[]
+): boolean {
+  if (!recorded) return false;
+  const recordedSet = new Set(
+    recorded.map(({ pluginId, version }) => `${pluginId}@${version}`)
+  );
+  const currentSet = new Set(
+    current.map(({ pluginId, version }) => `${pluginId}@${version}`)
+  );
+  return (
+    recordedSet.size === currentSet.size &&
+    [...recordedSet].every((entry) => currentSet.has(entry))
+  );
 }
 
 export class RepoLifecycle {
@@ -757,6 +775,10 @@ export class RepoLifecycle {
 
     ctx.log('phase: persist\n');
     const detectedAt = new Date().toISOString();
+    const detectedWith = compilers.map((plugin) => ({
+      pluginId: plugin.metadata.id,
+      version: plugin.metadata.version,
+    }));
     if (mode === 'pinned' && pin) {
       const compiledWith = compilers
         .filter((plugin) => compiledThisRun.has(plugin.metadata.id))
@@ -787,12 +809,14 @@ export class RepoLifecycle {
         pathOrUrl,
         frameworks,
         detectedAt,
+        detectedWith,
         ...(originUrl ? { originUrl } : {}),
       });
       } else {
       await this.deps.registry.updateRepoState(profileId, pathOrUrl, {
         frameworks,
         detectedAt,
+        detectedWith,
         ...(originUrl ? { originUrl } : {}),
       });
       }

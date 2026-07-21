@@ -6,6 +6,7 @@ import type { PluginResponse } from '@ignite/plugin-types/types';
 import { PluginType } from '@ignite/plugin-types/types';
 import {
   RepoLifecycle,
+  catalogMatches,
   withLifecyclePermit,
   type RepoLifecycleDeps,
 } from '../../repos/RepoLifecycle.js';
@@ -122,7 +123,12 @@ function makeLifecycle(opts: {
   const updates: Array<{
     profileId: string;
     pathOrUrl: string;
-    patch: Partial<Pick<RepoRecord, 'frameworks' | 'detectedAt' | 'originUrl'>>;
+    patch: Partial<
+      Pick<
+        RepoRecord,
+        'frameworks' | 'detectedAt' | 'detectedWith' | 'originUrl'
+      >
+    >;
   }> = [];
   const registry = {
     updates,
@@ -135,7 +141,12 @@ function makeLifecycle(opts: {
       async (
         profileId: string,
         pathOrUrl: string,
-        patch: Partial<Pick<RepoRecord, 'frameworks' | 'detectedAt' | 'originUrl'>>
+        patch: Partial<
+          Pick<
+            RepoRecord,
+            'frameworks' | 'detectedAt' | 'detectedWith' | 'originUrl'
+          >
+        >
       ) => {
         updates.push({ profileId, pathOrUrl, patch });
       }
@@ -607,6 +618,10 @@ describe('RepoLifecycle', () => {
       expect(patch.frameworks?.[0].id).toBe('foundry');
       expect(patch.frameworks?.[0].watchPaths?.sources).toEqual(['src']);
       expect(patch.detectedAt).toBeDefined();
+      expect(patch.detectedWith).toEqual([
+        { pluginId: 'foundry', version: '1.0.0' },
+        { pluginId: 'hardhat', version: '1.0.0' },
+      ]);
       expect(patch.originUrl).toBe(`file://${dir}`);
       // Never compiled -> no fingerprint captured by a sweep.
       expect(patch.frameworks?.[0].fingerprint).toBeUndefined();
@@ -1256,6 +1271,36 @@ describe('RepoLifecycle', () => {
     } finally {
       await cleanupTestDirectory(dir);
     }
+  });
+
+  it('compares detection compiler catalogs as duplicate-normalized sets', () => {
+    const current = [
+      { pluginId: 'foundry', version: '1.0.0' },
+      { pluginId: 'hardhat', version: '2.0.0' },
+    ];
+    expect(catalogMatches(undefined, current)).toBe(false);
+    expect(
+      catalogMatches(
+        [
+          { pluginId: 'hardhat', version: '2.0.0' },
+          { pluginId: 'foundry', version: '1.0.0' },
+          { pluginId: 'foundry', version: '1.0.0' },
+        ],
+        current
+      )
+    ).toBe(true);
+    expect(
+      catalogMatches([{ pluginId: 'foundry', version: '1.0.0' }], current)
+    ).toBe(false);
+    expect(
+      catalogMatches(
+        [
+          { pluginId: 'foundry', version: '1.0.0' },
+          { pluginId: 'hardhat', version: '3.0.0' },
+        ],
+        current
+      )
+    ).toBe(false);
   });
 
   it('measures source and artifact fingerprints and reports drift', async () => {

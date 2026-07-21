@@ -118,11 +118,15 @@ describe('ProfileRepoRegistry', () => {
     await registry.updateRepoState('p1', '/abs/path/repo', {
       frameworks: [{ id: 'foundry', name: 'Foundry' }],
       detectedAt: '2026-07-06T00:00:00.000Z',
+      detectedWith: [{ pluginId: 'foundry', version: '1.2.3' }],
       originUrl: 'file:///abs/path/repo',
     });
     const { local } = await registry.list('p1');
     expect(local[0].frameworks?.[0].id).toBe('foundry');
     expect(local[0].detectedAt).toBe('2026-07-06T00:00:00.000Z');
+    expect(local[0].detectedWith).toEqual([
+      { pluginId: 'foundry', version: '1.2.3' },
+    ]);
     expect(local[0].originUrl).toBe('file:///abs/path/repo');
   });
 

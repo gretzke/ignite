@@ -113,14 +113,19 @@ export class ProfileRepoRegistry {
     });
   }
 
-  // Merge lifecycle results (frameworks, detectedAt) onto a registered repo's
+  // Merge lifecycle results onto a registered repo's
   // record. Best-effort by design: an unregistered repo (e.g. the session
   // workspace) or a corrupt registry is a silent no-op — persisting derived
   // state must never fail a lifecycle job.
   async updateRepoState(
     profileId: string,
     pathOrUrl: string,
-    patch: Partial<Pick<RepoRecord, 'frameworks' | 'detectedAt' | 'originUrl'>>
+    patch: Partial<
+      Pick<
+        RepoRecord,
+        'frameworks' | 'detectedAt' | 'detectedWith' | 'originUrl'
+      >
+    >
   ): Promise<void> {
     await ProfileRepoRegistry.profileMutex.run(profileId, async () => {
       const kind = deriveRepoKind(pathOrUrl);

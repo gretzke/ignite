@@ -93,10 +93,16 @@ export interface RepoFrameworkState {
   compiledAt?: string; // ISO timestamp of last successful compile
 }
 
+export interface RepoDetectionCompiler {
+  pluginId: string;
+  version: string;
+}
+
 export interface RepoRecord {
   pathOrUrl: string;
   frameworks?: RepoFrameworkState[]; // undefined = never detected
   detectedAt?: string;
+  detectedWith?: RepoDetectionCompiler[];
   /** Canonical origin used for version grouping, including file: URLs. */
   originUrl?: string;
 }
@@ -282,26 +288,32 @@ export const RepoFrameworkStateSchema = z.object({
   compiledAt: z.string().optional(),
 });
 
+export const RepoDetectionCompilerSchema = z.object({
+  pluginId: z.string(),
+  version: z.string(),
+});
+
+export const RepoVersionSummarySchema = z.object({
+  url: z.string().min(1),
+  commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
+  refLabel: z.string().optional(),
+  refKind: z.enum(['tag', 'branch', 'commit']).optional(),
+  frameworks: z.array(RepoFrameworkStateSchema).optional(),
+  activeJobId: z.string().optional(),
+  lastUsedAt: z.string(),
+  localFallback: z.boolean().optional(),
+  lastError: z.object({ code: z.string(), message: z.string(), at: z.string() }).optional(),
+});
+
 export const RepoListEntrySchema = z.object({
   pathOrUrl: z.string(),
   frameworks: z.array(RepoFrameworkStateSchema).optional(),
   detectedAt: z.string().optional(),
+  detectedWith: z.array(RepoDetectionCompilerSchema).optional(),
   originUrl: z.string().min(1).optional(),
   initialized: z.boolean(),
   activeJobId: z.string().optional(),
-  versions: z.array(
-    z.object({
-      url: z.string().min(1),
-      commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
-      refLabel: z.string().optional(),
-      refKind: z.enum(['tag', 'branch', 'commit']).optional(),
-      frameworks: z.array(RepoFrameworkStateSchema).optional(),
-      activeJobId: z.string().optional(),
-      lastUsedAt: z.string(),
-      localFallback: z.boolean().optional(),
-      lastError: z.object({ code: z.string(), message: z.string(), at: z.string() }).optional(),
-    }),
-  ).default([]),
+  versions: z.array(RepoVersionSummarySchema).default([]),
 });
 
 export const GetReposResponseSchema = createApiResponseSchema<RepoList>(
@@ -313,17 +325,7 @@ export const GetReposResponseSchema = createApiResponseSchema<RepoList>(
     cloned: z.array(RepoListEntrySchema),
     versionGroups: z.array(z.object({
       url: z.string(),
-      versions: z.array(z.object({
-        url: z.string().min(1),
-        commit: z.string().regex(/^[0-9a-fA-F]{40}$/),
-        refLabel: z.string().optional(),
-        refKind: z.enum(['tag', 'branch', 'commit']).optional(),
-        frameworks: z.array(RepoFrameworkStateSchema).optional(),
-        activeJobId: z.string().optional(),
-        lastUsedAt: z.string(),
-        localFallback: z.boolean().optional(),
-        lastError: z.object({ code: z.string(), message: z.string(), at: z.string() }).optional(),
-      })),
+      versions: z.array(RepoVersionSummarySchema),
     })),
     // Deprecated response-shape compatibility field.
     pinned: z.array(z.object({
