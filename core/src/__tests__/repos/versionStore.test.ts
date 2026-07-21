@@ -49,6 +49,19 @@ afterAll(async () => {
 });
 
 describe('VersionStore', () => {
+  it('persists per-framework artifact generations', async () => {
+    const home = await temp('ignite-version-generation-');
+    const { store: versions } = await store(home);
+    await versions.upsert(record());
+
+    await versions.updateState(urlA, commitA, {
+      frameworks: [{ id: 'foundry', name: 'Foundry', artifactGeneration: 7 }],
+    });
+
+    expect((await versions.get(urlA, commitA))?.frameworks).toEqual([
+      expect.objectContaining({ id: 'foundry', artifactGeneration: 7 }),
+    ]);
+  });
   it.each([
     ['https://example.test/team/repo.git', 'https://example.test/team/repo'],
     ['https://example.test/team/repo.GIT/', 'https://example.test/team/repo'],

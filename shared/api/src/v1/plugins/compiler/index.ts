@@ -9,7 +9,7 @@ import {
 import { PathRequestSchema, PathShape } from "../../shared.js";
 import { JobStartedResponseSchema } from "../../jobs.js";
 import type {
-  ArtifactListResult,
+  ArtifactLocation,
   ArtifactData,
   GetArtifactDataRequest,
 } from "./types.js";
@@ -32,21 +32,31 @@ export interface CompilerOperationRequest extends PathOptions {
   pin?: import('../../deployments.js').ContractSourcePin;
 }
 
+// HTTP-serving state is intentionally distinct from ArtifactListResult, the
+// compiler plugin contract. Plugins always return { artifacts }; the host can
+// additionally tell callers to attach to a lifecycle job or retry later.
+export type ArtifactListServeResult =
+  | { status: 'ready'; artifacts: ArtifactLocation[] }
+  | { status: 'pending'; jobId: string }
+  | { status: 'busy' };
+
+const ArtifactLocationSchema = z.object({
+  contractName: z.string(),
+  sourcePath: z.string(),
+  artifactPath: z.string(),
+  variant: z.object({
+    solcVersion: z.string().optional(),
+    profile: z.string().optional(),
+  }).optional(),
+});
+
 export const ArtifactListResponseSchema =
-  createApiResponseSchema<ArtifactListResult>("ArtifactListResponseSchema")(
-    z.object({
-      artifacts: z.array(
-        z.object({
-          contractName: z.string(),
-          sourcePath: z.string(),
-          artifactPath: z.string(),
-          variant: z.object({
-            solcVersion: z.string().optional(),
-            profile: z.string().optional(),
-          }).optional(),
-        }),
-      ),
-    }),
+  createApiResponseSchema<ArtifactListServeResult>("ArtifactListResponseSchema")(
+    z.discriminatedUnion('status', [
+      z.object({ status: z.literal('ready'), artifacts: z.array(ArtifactLocationSchema) }),
+      z.object({ status: z.literal('pending'), jobId: z.string() }),
+      z.object({ status: z.literal('busy') }),
+    ]),
   );
 
 export const CompilerOperationRequestSchema =

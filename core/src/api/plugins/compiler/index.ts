@@ -6,7 +6,7 @@ import type {
   DetectResponse,
   JobStartedData,
   CompilerOperationRequest,
-  ArtifactListResult,
+  ArtifactListServeResult,
   GetArtifactDataRequest,
   ArtifactData,
   ContractSource,
@@ -14,6 +14,7 @@ import type {
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import type { VerificationBundleData } from '@ignite/plugin-types/base/compiler';
+import type { ArtifactListResult } from '@ignite/plugin-types/base/compiler';
 import { PluginType } from '@ignite/plugin-types/types';
 import { PluginExecutor } from '../../../plugins/containers/PluginExecutor.js';
 import { PluginRegistryLoader } from '../../../assets/PluginRegistryLoader.js';
@@ -484,12 +485,12 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         Body: CompilerOperationRequest;
       }>,
       reply: FastifyReply
-    ): Promise<IApiResponse<ArtifactListResult>> => {
+    ): Promise<IApiResponse<ArtifactListServeResult>> => {
       try {
         const { pluginId, pathOrUrl } = request.body;
 
         if (await rejectNonCompilerPlugin(reply, pluginId)) {
-          return reply as unknown as IApiResponse<ArtifactListResult>;
+          return reply as unknown as IApiResponse<ArtifactListServeResult>;
         }
 
         // Get hostPath from request body or fall back to environment/cwd
@@ -498,7 +499,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
 
         const resolved = await resolveMutableWorkspaceOr400(reply, request.body);
         if (resolved === null) {
-          return reply as unknown as IApiResponse<ArtifactListResult>;
+          return reply as unknown as IApiResponse<ArtifactListServeResult>;
         }
         const execute = (workspacePath: string) => d.executor.execute(pluginId, 'listArtifacts', { pathOrUrl: hostPath }, { workspacePath });
         const result = resolved.pin
@@ -514,8 +515,11 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
           );
         }
 
-        const body: IApiResponse<ArtifactListResult> = {
-          data: result.data as ArtifactListResult,
+        const body: IApiResponse<ArtifactListServeResult> = {
+          data: {
+            status: 'ready',
+            artifacts: (result.data as ArtifactListResult | undefined)?.artifacts ?? [],
+          },
         };
         return reply.status(200).send(body);
       } catch (error) {

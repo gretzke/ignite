@@ -91,6 +91,8 @@ export interface RepoFrameworkState {
   watchPaths?: RepoWatchPaths;
   fingerprint?: RepoFingerprint; // captured after last successful compile
   compiledAt?: string; // ISO timestamp of last successful compile
+  /** In-memory artifact-listing cache generation from the last successful compile. */
+  artifactGeneration?: number;
 }
 
 export interface RepoDetectionCompiler {
@@ -286,6 +288,7 @@ export const RepoFrameworkStateSchema = z.object({
     .object({ sources: z.string(), artifacts: z.string() })
     .optional(),
   compiledAt: z.string().optional(),
+  artifactGeneration: z.number().int().nonnegative().optional(),
 });
 
 export const RepoDetectionCompilerSchema = z.object({
