@@ -31,6 +31,9 @@ import {
 } from './VersionStore.js';
 
 export type LifecycleMode = 'sweep' | 'add' | 'recompile' | 'pinned' | 'switch';
+export interface LifecycleOptions {
+  force?: 'catalog';
+}
 
 export const LIFECYCLE_JOB_TYPE = 'repo.lifecycle';
 export const LIFECYCLE_SEMAPHORE = new Semaphore(3);
@@ -54,6 +57,12 @@ interface DetectionResultShape {
 export interface LifecycleResult {
   pathOrUrl: string;
   frameworks: RepoFrameworkState[];
+}
+
+interface PendingForce {
+  profileId: string;
+  pathOrUrl: string;
+  reason: 'catalog';
 }
 
 export type FrameworkMeasurement =
@@ -123,6 +132,7 @@ export class RepoLifecycle {
   >();
   private readonly sessionRecords = new Map<string, RepoRecord>();
   private readonly lastRecompile = new Map<string, number>();
+  private readonly pendingForces = new Map<string, PendingForce>();
 
   constructor(deps?: Partial<RepoLifecycleDeps>) {
     this.deps = {
@@ -157,6 +167,7 @@ export class RepoLifecycle {
     this.activeJobs.clear();
     this.sessionRecords.clear();
     this.lastRecompile.clear();
+    this.pendingForces.clear();
   }
 
   // Sweep a profile's repos (init + detect + persist) exactly once per CLI
@@ -199,12 +210,15 @@ export class RepoLifecycle {
     try {
       const { local, cloned } = await this.deps.registry.list(profileId);
       for (const record of [...local, ...cloned]) {
-        if (this.activeJobFor(record.pathOrUrl)) continue;
-        this.startLifecycle(record.pathOrUrl, profileId, 'sweep');
+        this.startLifecycle(record.pathOrUrl, profileId, 'recompile', {
+          force: 'catalog',
+        });
       }
       const session = this.deps.sessionPath();
-      if (session && !this.activeJobFor(session)) {
-        this.startLifecycle(session, profileId, 'sweep');
+      if (session) {
+        this.startLifecycle(session, profileId, 'recompile', {
+          force: 'catalog',
+        });
       }
     } catch (error) {
       getLogger().error(
@@ -220,26 +234,35 @@ export class RepoLifecycle {
   startLifecycle(
     pathOrUrl: string,
     profileId: string,
-    mode: LifecycleMode
+    mode: LifecycleMode,
+    options?: LifecycleOptions
   ): JobRecord {
     const existingId = this.activeJobFor(pathOrUrl);
     if (existingId && !existingId.startsWith('direct:')) {
       const existing = this.deps.jobs.get(existingId);
       if (existing) {
+        if (options?.force === 'catalog') {
+          this.pendingForces.set(this.activityKey(pathOrUrl), {
+            profileId,
+            pathOrUrl,
+            reason: 'catalog',
+          });
+        }
         return existing;
       }
     }
 
     const job = this.deps.jobs.start(
       LIFECYCLE_JOB_TYPE,
-      { pathOrUrl, mode, profileId },
+      { pathOrUrl, mode, profileId, ...(options?.force ? { force: options.force } : {}) },
       async (ctx) => {
         try {
           return await withLifecyclePermit(() =>
-            this.runLifecycle(pathOrUrl, profileId, mode, ctx)
+            this.runLifecycle(pathOrUrl, profileId, mode, ctx, undefined, undefined, undefined, options)
           );
         } finally {
           this.clearJob(pathOrUrl, job.id);
+          this.startPendingForce(pathOrUrl);
         }
       }
     );
@@ -416,6 +439,17 @@ export class RepoLifecycle {
     active.directRefs = Math.max(0, active.directRefs - 1);
     if (active.directRefs === 0 && active.jobIds.size === 0)
       this.activeJobs.delete(key);
+    this.startPendingForce(pathOrUrl);
+  }
+
+  private startPendingForce(pathOrUrl: string): void {
+    const key = this.activityKey(pathOrUrl);
+    const pending = this.pendingForces.get(key);
+    if (!pending || this.activeJobFor(pending.pathOrUrl)) return;
+    this.pendingForces.delete(key);
+    this.startLifecycle(pending.pathOrUrl, pending.profileId, 'recompile', {
+      force: pending.reason,
+    });
   }
 
   // Keep lifecycle activity keyed exactly like RepoService's mutation lock so
@@ -563,7 +597,8 @@ export class RepoLifecycle {
     pinnedWorkspacePath?: string,
     pinnedCompilers?: Awaited<
       ReturnType<PluginRegistryLoader['getPluginsByType']>
-    >
+    >,
+    options?: LifecycleOptions
   ): Promise<LifecycleResult> {
     let workspacePath: string;
     if (mode === 'pinned') {
@@ -596,7 +631,8 @@ export class RepoLifecycle {
             ctx,
             workspacePath,
             pin,
-            pinnedCompilers
+            pinnedCompilers,
+            options
           )
       );
     }
@@ -608,7 +644,8 @@ export class RepoLifecycle {
       ctx,
       workspacePath,
       pin,
-      pinnedCompilers
+      pinnedCompilers,
+      options
     );
   }
 
@@ -624,7 +661,8 @@ export class RepoLifecycle {
     pin?: { url: string; commit: string },
     pinnedCompilers?: Awaited<
       ReturnType<PluginRegistryLoader['getPluginsByType']>
-    >
+    >,
+    options?: LifecycleOptions
   ): Promise<LifecycleResult> {
 
     ctx.log('phase: detect\n');
@@ -728,7 +766,12 @@ export class RepoLifecycle {
     }
 
     const compiledThisRun = new Set<string>();
-    if (mode === 'add' || mode === 'pinned' || mode === 'switch') {
+    if (
+      mode === 'add' ||
+      mode === 'pinned' ||
+      mode === 'switch' ||
+      options?.force === 'catalog'
+    ) {
       for (const fw of frameworks) {
         await this.runInstall(fw, pathOrUrl, workspacePath, ctx);
       }

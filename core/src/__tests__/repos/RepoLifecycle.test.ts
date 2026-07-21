@@ -741,13 +741,15 @@ describe('RepoLifecycle', () => {
     }
   });
 
-  it('resweepProfile re-runs a completed sweep (plugin catalog changed)', async () => {
+  it('resweepProfile forces detection, install, and compilation after a catalog change', async () => {
     const dir = await createTestDirectory();
     try {
-      const { lifecycle, jobs } = makeLifecycle({
+      const { lifecycle, jobs, executor } = makeLifecycle({
         workspaceDir: dir,
         repos: [{ pathOrUrl: '/repo-a' }],
-        responses: { foundry: { detect: NOT_DETECTED } },
+        responses: {
+          foundry: { detect: DETECTED, getWatchPaths: WATCH, compile: OK },
+        },
       });
       lifecycle.ensureProfileSwept('p1');
       await vi.waitFor(() => expect(jobs.started.length).toBe(1));
@@ -759,6 +761,8 @@ describe('RepoLifecycle', () => {
       // ...but a resweep after an install re-detects everything.
       lifecycle.resweepProfile('p1');
       await vi.waitFor(() => expect(jobs.started.length).toBe(2));
+      await jobs.runAll();
+      expect(executor.calls.filter((call) => call.op === 'compile')).toHaveLength(1);
     } finally {
       await cleanupTestDirectory(dir);
     }
@@ -1135,6 +1139,63 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('force:catalog installs and compiles clean and fingerprint-less frameworks', async () => {
+    const dir = await createTestDirectory();
+    try {
+      await fs.mkdir(path.join(dir, 'src'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'src/A.sol'), 'contract A {}');
+      const { statFingerprint } = await import('../../repos/fingerprint.js');
+      const sources = await statFingerprint(dir, ['foundry.toml', 'src']);
+      const artifacts = await statFingerprint(dir, ['out']);
+      const cleanRecord: RepoRecord = {
+        pathOrUrl: '/repo-a',
+        frameworks: [{
+          id: 'foundry',
+          name: 'Foundry',
+          watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+          fingerprint: { sources, artifacts },
+          compiledAt: '2026-07-01T00:00:00.000Z',
+        }],
+      };
+      const { lifecycle, jobs, executor } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [cleanRecord],
+        responses: {
+          foundry: { detect: DETECTED, getWatchPaths: WATCH, compile: OK },
+        },
+      });
+
+      lifecycle.startLifecycle('/repo-a', 'p1', 'recompile', { force: 'catalog' });
+      await jobs.runAll();
+      expect(executor.calls.map((call) => call.op)).toEqual(
+        expect.arrayContaining(['detect', 'install', 'compile'])
+      );
+
+      executor.calls.length = 0;
+      const fingerprintless: RepoRecord = {
+        ...cleanRecord,
+        frameworks: [{
+          ...cleanRecord.frameworks![0],
+          fingerprint: undefined,
+        }],
+      };
+      const second = makeLifecycle({
+        workspaceDir: dir,
+        repos: [fingerprintless],
+        responses: {
+          foundry: { detect: DETECTED, getWatchPaths: WATCH, compile: OK },
+        },
+      });
+      second.lifecycle.startLifecycle('/repo-a', 'p1', 'recompile', { force: 'catalog' });
+      await second.jobs.runAll();
+      expect(second.executor.calls.map((call) => call.op)).toEqual(
+        expect.arrayContaining(['install', 'compile'])
+      );
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('recompile: install runs before compile for a drifted framework (dependencies may be gone after a re-clone)', async () => {
     const dir = await createTestDirectory();
     try {
@@ -1207,6 +1268,67 @@ describe('RepoLifecycle', () => {
       await jobs.runAll();
       const third = lifecycle.startLifecycle('/repo-a', 'p1', 'sweep');
       expect(third.id).not.toBe(first.id);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('runs a pending catalog force after the active lifecycle job settles', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, executor } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a' }],
+        responses: {
+          foundry: { detect: DETECTED, getWatchPaths: WATCH, compile: OK },
+        },
+      });
+      const first = lifecycle.startLifecycle('/repo-a', 'p1', 'sweep');
+      const requested = lifecycle.startLifecycle('/repo-a', 'p1', 'recompile', {
+        force: 'catalog',
+      });
+      expect(requested.id).toBe(first.id);
+
+      await jobs.runAll();
+
+      expect(jobs.started).toHaveLength(2);
+      expect(jobs.started[1].record.params).toMatchObject({
+        pathOrUrl: '/repo-a',
+        profileId: 'p1',
+        mode: 'recompile',
+        force: 'catalog',
+      });
+      expect(executor.calls.filter((call) => call.op === 'compile')).toHaveLength(1);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('keeps a pending catalog force for profile B when profile A owns the same cloned URL', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const url = 'https://github.com/example/contracts.git';
+      const { lifecycle, jobs, executor } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: url }],
+        responses: {
+          foundry: { detect: DETECTED, getWatchPaths: WATCH, compile: OK },
+        },
+      });
+      lifecycle.startLifecycle(url, 'A', 'sweep');
+      lifecycle.startLifecycle('https://github.com/example/contracts', 'B', 'recompile', {
+        force: 'catalog',
+      });
+
+      await jobs.runAll();
+
+      expect(jobs.started).toHaveLength(2);
+      expect(jobs.started[1].record.params).toMatchObject({
+        pathOrUrl: 'https://github.com/example/contracts',
+        profileId: 'B',
+        force: 'catalog',
+      });
+      expect(executor.calls.filter((call) => call.op === 'compile')).toHaveLength(1);
     } finally {
       await cleanupTestDirectory(dir);
     }
