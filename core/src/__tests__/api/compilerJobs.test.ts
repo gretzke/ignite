@@ -15,6 +15,8 @@ import {
 import { ErrorCodes } from '../../types/errors.js';
 import type { PluginConfig } from '../../assets/PluginRegistryLoader.js';
 import type { JobContext, JobRunner } from '../../jobs/JobManager.js';
+import { KeyedMutex } from '../../utils/KeyedMutex.js';
+import { RepoLifecycle } from '../../repos/RepoLifecycle.js';
 
 function makeCtx(log: (line: string) => void = () => {}): JobContext {
   return { log, signal: new AbortController().signal };
@@ -94,6 +96,7 @@ function makeFakeRepos(
       async (pathOrUrl: string) => `${pathOrUrl}-workspace`
     ),
     ensureVersion: vi.fn(async (_profileId: string, _url: string, _commit: string) => ({ checkout: 'unused-version-workspace' })),
+    withRepoLifecycleLock: (async <T>(_pathOrUrl: string, _profileId: string | undefined, fn: () => Promise<T>): Promise<T> => fn()) as CompilerRepoServiceLike['withRepoLifecycleLock'],
     withVersionMaterialized: (async <T>(_profileId: string, _url: string, _commit: string, _opts: object, fn: (materialized: { checkout: string; rematerialize: () => Promise<{ checkout: string }> }) => Promise<T>) => fn({
       checkout: 'unused-version-workspace',
       rematerialize: async () => ({ checkout: 'unused-version-workspace' }),
@@ -515,6 +518,172 @@ describe('compiler API handlers (jobs)', () => {
   });
 
   describe('compile', () => {
+    it('runs a live manual compile under the lifecycle repo lock', async () => {
+      executor.execute.mockResolvedValue({ success: true, data: null });
+      const withRepoLifecycleLock = vi.fn(async (_pathOrUrl: string, _profileId: string | undefined, fn: () => Promise<unknown>) => fn());
+      repos = makeFakeRepos({ withRepoLifecycleLock: withRepoLifecycleLock as never });
+      const handlers = createCompilerHandlers({ jobs: fakeJobs, executor: executor as never, registryLoader, repos });
+      const localApp = fastify();
+      localApp.post('/api/v1/compile', handlers.compile);
+      await localApp.ready();
+
+      await localApp.inject({ method: 'POST', url: '/api/v1/compile', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
+      await fakeJobs.started[0].runner(makeCtx());
+      expect(withRepoLifecycleLock).toHaveBeenCalledWith('/repo', undefined, expect.any(Function));
+    });
+
+    it('serializes a manual live compile with an automatic live recompile', async () => {
+      const mutex = new KeyedMutex();
+      const order: string[] = [];
+      let releaseManualCompile!: () => void;
+      const manualCompileGate = new Promise<void>((resolve) => { releaseManualCompile = resolve; });
+      let compileCalls = 0;
+      const withRepoLifecycleLock = vi.fn(<T,>(_pathOrUrl: string, _profileId: string | undefined, fn: () => Promise<T>) =>
+        mutex.run('repo:/repo', fn)
+      ) as CompilerRepoServiceLike['withRepoLifecycleLock'];
+      repos = makeFakeRepos({ withRepoLifecycleLock });
+      Object.assign(repos, {
+        init: vi.fn(async () => ({ success: true, data: null })),
+        resolveWorkspacePath: vi.fn(async () => '/repo-workspace'),
+        getVersionSource: vi.fn(async () => ({ url: 'file:///repo', workspacePath: '/repo-workspace' })),
+      });
+      executor.execute.mockImplementation(async (_pluginId: string, operation: string) => {
+        if (operation === 'detect') {
+          order.push('automatic detect');
+          return { success: true, data: { detected: true } };
+        }
+        if (operation === 'getWatchPaths') {
+          return { success: true, data: { config: [], sources: [], artifacts: [] } };
+        }
+        if (operation === 'compile') {
+          compileCalls += 1;
+          if (compileCalls === 1) {
+            order.push('manual compile start');
+            await manualCompileGate;
+            order.push('manual compile end');
+          }
+          return { success: true, data: null };
+        }
+        return { success: true, data: null };
+      });
+      const handlers = createCompilerHandlers({ jobs: fakeJobs, executor: executor as never, registryLoader, repos });
+      const localApp = fastify();
+      localApp.post('/api/v1/compile', handlers.compile);
+      await localApp.ready();
+      await localApp.inject({ method: 'POST', url: '/api/v1/compile', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
+
+      let automaticRunner!: JobRunner;
+      const lifecycle = new RepoLifecycle({
+        jobs: {
+          start: vi.fn((_type: string, _params: Record<string, unknown>, runner: JobRunner) => {
+            automaticRunner = runner;
+            return { id: 'automatic', type: 'repo.lifecycle', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+          }),
+          get: vi.fn(() => undefined),
+        } as never,
+        executor: executor as never,
+        registryLoader: registryLoader as never,
+        repos: repos as never,
+        registry: { list: vi.fn(async () => ({ local: [], cloned: [] })), updateRepoState: vi.fn(async () => {}) } as never,
+        sessionPath: () => null,
+        versionStore: { checkoutPath: vi.fn(), get: vi.fn(), updateState: vi.fn() } as never,
+      });
+
+      const manual = fakeJobs.started[0].runner(makeCtx());
+      await vi.waitFor(() => expect(order).toEqual(['manual compile start']));
+      lifecycle.startLifecycle('/repo', 'p1', 'recompile');
+      const automatic = automaticRunner(makeCtx());
+      await Promise.resolve();
+      expect(order).toEqual(['manual compile start']);
+
+      releaseManualCompile();
+      await Promise.all([manual, automatic]);
+      expect(order).toEqual([
+        'manual compile start',
+        'manual compile end',
+        'automatic detect',
+        'automatic detect',
+      ]);
+    });
+
+    it('serializes a manual pinned compile with pinned lifecycle work in group then checkout order', async () => {
+      const pin = { url: 'https://example.test/repo.git', commit: 'a'.repeat(40), ref: 'v1', refKind: 'tag' as const };
+      const mutex = new KeyedMutex();
+      const groupKey = `group:${pin.url}`;
+      const checkoutKey = `checkout:${pin.url}:${pin.commit}`;
+      const order: string[] = [];
+      let materializations = 0;
+      let releaseManualCompile!: () => void;
+      const manualCompileGate = new Promise<void>((resolve) => { releaseManualCompile = resolve; });
+      let compileCalls = 0;
+      const withVersionMaterialized = vi.fn(async <T>(
+        _profileId: string,
+        _url: string,
+        _commit: string,
+        _opts: object,
+        fn: (materialized: { checkout: string; rematerialize: () => Promise<{ checkout: string }> }) => Promise<T>
+      ): Promise<T> => {
+        const label = materializations++ === 0 ? 'manual' : 'automatic';
+        return mutex.run(groupKey, async () => {
+          order.push(`${label} group`);
+          return mutex.run(checkoutKey, async () => {
+            order.push(`${label} checkout`);
+            return fn({ checkout: '/versions/pin', rematerialize: async () => ({ checkout: '/versions/pin' }) });
+          });
+        });
+      });
+      repos = makeFakeRepos({
+        ensureVersion: vi.fn(async () => ({ checkout: '/versions/pin' })),
+        withVersionMaterialized: withVersionMaterialized as never,
+      });
+      executor.execute.mockImplementation(async (_pluginId: string, operation: string) => {
+        if (operation === 'detect') {
+          order.push('automatic detect');
+          return { success: true, data: { detected: true } };
+        }
+        if (operation === 'getWatchPaths') return { success: true, data: { config: [], sources: [], artifacts: [] } };
+        if (operation === 'compile') {
+          compileCalls += 1;
+          if (compileCalls === 1) {
+            order.push('manual compile start');
+            await manualCompileGate;
+            order.push('manual compile end');
+          }
+        }
+        return { success: true, data: null };
+      });
+      const versionStore = { isCachePath: vi.fn(() => false), checkoutPath: vi.fn(() => '/versions/pin') };
+      const handlers = createCompilerHandlers({ jobs: fakeJobs, executor: executor as never, registryLoader, repos, versionStore: versionStore as never });
+      const localApp = fastify();
+      localApp.post('/api/v1/compile', handlers.compile);
+      await localApp.ready();
+      await localApp.inject({ method: 'POST', url: '/api/v1/compile', payload: { pathOrUrl: pin.url, pluginId: 'waffle', pin } });
+      const lifecycle = new RepoLifecycle({
+        jobs: { start: vi.fn(), get: vi.fn() } as never,
+        executor: executor as never,
+        registryLoader: registryLoader as never,
+        repos: repos as never,
+        registry: { list: vi.fn(async () => ({ local: [], cloned: [] })), updateRepoState: vi.fn(async () => {}) } as never,
+        sessionPath: () => null,
+        versionStore: { checkoutPath: vi.fn(() => '/versions/pin'), get: vi.fn(async () => undefined), updateState: vi.fn(async () => {}) } as never,
+      });
+
+      const manual = fakeJobs.started[0].runner(makeCtx());
+      await vi.waitFor(() => expect(order).toContain('manual compile start'));
+      const automatic = lifecycle.runPinnedLifecycle(pin.url, pin.commit, 'p1', makeCtx());
+      await Promise.resolve();
+      expect(order).toEqual(['manual group', 'manual checkout', 'manual compile start']);
+
+      releaseManualCompile();
+      await Promise.all([manual, automatic]);
+      expect(order.indexOf('manual compile end')).toBeLessThan(order.indexOf('automatic group'));
+      expect(order).toEqual(expect.arrayContaining([
+        'automatic group',
+        'automatic checkout',
+        'automatic detect',
+      ]));
+    });
+
     it('starts a job and returns { data: { jobId } } immediately', async () => {
       const res = await app.inject({
         method: 'POST',

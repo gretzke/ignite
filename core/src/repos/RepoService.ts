@@ -287,7 +287,7 @@ export class RepoService {
   // KeyedMutex is intentionally non-reentrant.
   async withRepoLifecycleLock<T>(
     pathOrUrl: string,
-    _profileId: string,
+    _profileId: string | undefined,
     fn: () => Promise<T>
   ): Promise<T> {
     return this.locks.run(this.lockKey(pathOrUrl), fn);

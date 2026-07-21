@@ -50,6 +50,7 @@ export interface CompilerRepoServiceLike {
   resolveExistingWorkspacePath: RepoService['resolveExistingWorkspacePath'];
   ensureVersion: RepoService['ensureVersion'];
   assertPinnedIntegrity?: RepoService['assertPinnedIntegrity'];
+  withRepoLifecycleLock: RepoService['withRepoLifecycleLock'];
   withVersionMaterialized: RepoService['withVersionMaterialized'];
 }
 
@@ -455,7 +456,11 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
               { ref: resolved.pin.ref, refLabel: resolved.pin.ref, refKind: resolved.pin.refKind },
               ({ checkout }) => execute(checkout)
             )
-            : await execute(resolved.workspacePath);
+            : await d.repos.withRepoLifecycleLock(
+              pathOrUrl,
+              resolved.profileId,
+              () => execute(resolved.workspacePath)
+            );
 
           if (!result.success) {
             throw Object.assign(
