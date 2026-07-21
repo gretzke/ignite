@@ -1,9 +1,18 @@
 # MISC
 
-- when multiple compiler profile, which one picked to deploy? and investigate 2 UR versions
-- upgradeable transparent/uups + initialization (alongside create/create2)
-  - initialization on the proxy itself
-- verifiers (initial ownership)
+- **[SHIPPED 2026-07-18 on feat/multi-version-authoring: multi-version contract authoring.]**
+  Global version cache (one bare reference repo per URL + self-contained per-version
+  clones — NOT worktrees: in-container git needs a real .git and submodule config must be
+  per-version), version rows on URL-grouped repo cards with add-version (copy-vs-switch
+  for local repos), version-scoped read-only browsing, pinned sources in ad-hoc deploy
+  flows, compiler profiles as artifact-variant selection (one forge build emits all
+  additional_compiler_profiles), workflow pins migrated onto the cache, opaque workflow
+  source ids. Spec: docs/superpowers/specs/2026-07-18-multi-version-authoring-design.md.
+  Deferred from the original notes: symlink-based submodule dedup across versions
+  (container-unsafe today; still an experiment idea) and cross-version submodule object
+  sharing. Unblocks the paused workflow lifecycle work.
+
+- verifier plugins (e.g., testing initial ownership)
 - ignite AI agents interacting with binary directly + mcp servers
 
 # TODO / Deferred Work
@@ -13,6 +22,17 @@ Items here have no current consumer or were triaged as follow-ups; they are not 
 blocking current functionality.
 
 ## Deferred features (no consumer yet)
+
+- **Contract-type follow-ups (2026-07-18, deferred from the transparent/UUPS proxy feature).**
+  Explorer "mark as proxy" after verification (verifier-plugin surface has no such
+  operation yet; Etherscan read/write-as-proxy tabs). Multiple wrappers per
+  implementation step and standalone wrappers over an already-deployed
+  implementation address (the plan model supports both; wizard affordances
+  deferred). A `_disableInitializers()` probe (simulation-tier check that the
+  bare implementation is not directly initializable). Reproduce-the-build
+  verification for third-party contract-type bundles (today they are marked
+  unverified provenance and require explicit confirmation before explorer
+  submission).
 
 - **[RETIRED 2026-07-11: shipped as the D1b secrets dimension; D4 verifier plugins are the consumer.]** Secret-scope permission dimension. The trust model is `{ repoWrite, net }` booleans.
   When explorer/verifier plugins land (they receive a user's block-explorer API key), the
