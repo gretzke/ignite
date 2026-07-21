@@ -581,8 +581,6 @@ export class RepoLifecycle {
 
     for (const record of filtered) {
       if (this.activeJobFor(record.pathOrUrl)) continue;
-      const last = this.lastRecompile.get(record.pathOrUrl) ?? 0;
-      if (Date.now() - last < RECOMPILE_COOLDOWN_MS) continue;
 
       const release = this.beginRepoActivity(record.pathOrUrl);
       try {
@@ -623,6 +621,9 @@ export class RepoLifecycle {
           }
         }
         if (!drifted) continue;
+
+        const last = this.lastRecompile.get(record.pathOrUrl) ?? 0;
+        if (Date.now() - last < RECOMPILE_COOLDOWN_MS) continue;
 
         const job = this.startLifecycle(record.pathOrUrl, profileId, 'recompile');
         if (options.debounce === 'quiet-pause') {

@@ -1785,6 +1785,39 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('measures quiet-pause drift during cooldown so it can start on the next stable tick', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const record: RepoRecord = {
+        pathOrUrl: '/repo-a',
+        frameworks: [{
+          id: 'foundry', name: 'Foundry',
+          watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+          fingerprint: { sources: 'before', artifacts: 'before' },
+        }],
+      };
+      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir, repos: [record] });
+      vi.spyOn(lifecycle, 'measureFramework').mockResolvedValue({
+        comparable: true, sources: 'during-cooldown', artifacts: 'during-cooldown', drifted: true,
+      });
+      const internals = lifecycle as unknown as {
+        lastRecompile: Map<string, number>;
+        quietObservations: Map<string, unknown>;
+      };
+      internals.lastRecompile.set('/repo-a', Date.now());
+
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      expect(jobs.started).toHaveLength(0);
+      expect(internals.quietObservations).toHaveLength(1);
+
+      internals.lastRecompile.clear();
+      await lifecycle.checkAndRecompile('p1', { scope: 'local', debounce: 'quiet-pause' });
+      expect(jobs.started).toHaveLength(1);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('quiet-pause tracks stable tuples per framework', async () => {
     const dir = await createTestDirectory();
     try {
