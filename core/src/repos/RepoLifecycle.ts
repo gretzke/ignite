@@ -190,14 +190,42 @@ export class RepoLifecycle {
     void (async () => {
       try {
         const { local, cloned } = await this.deps.registry.list(profileId);
-        for (const record of [...local, ...cloned]) {
-          if (this.activeJobFor(record.pathOrUrl)) continue;
-          this.startLifecycle(record.pathOrUrl, profileId, 'sweep');
-        }
+        const compilers = await this.deps.registryLoader.getPluginsByType(
+          PluginType.COMPILER
+        );
+        const currentCatalog = compilers.map((plugin) => ({
+          pluginId: plugin.metadata.id,
+          version: plugin.metadata.version,
+        }));
+        const records: RepoRecord[] = [...local, ...cloned];
         const session = this.deps.sessionPath();
-        if (session && !this.activeJobFor(session)) {
-          this.startLifecycle(session, profileId, 'sweep');
+        if (session) {
+          records.push(this.sessionRecords.get(session) ?? { pathOrUrl: session });
         }
+
+        for (const record of records) {
+          if (this.activeJobFor(record.pathOrUrl)) continue;
+          const frameworks = record.frameworks;
+          const needsCatalogLifecycle =
+            frameworks === undefined ||
+            (frameworks.length > 0 && (
+              frameworks.some((fw) => !fw.watchPaths || !fw.fingerprint) ||
+              !catalogMatches(record.detectedWith, currentCatalog)
+            ));
+          if (needsCatalogLifecycle) {
+            this.startLifecycle(record.pathOrUrl, profileId, 'recompile', {
+              force: 'catalog',
+            });
+          }
+        }
+
+        // Persisted, comparable records avoid a startup lifecycle, but still
+        // need one immediate drift measure. Active forced jobs above are
+        // excluded by their reservation, so this only starts the "else" set.
+        await this.checkAndRecompile(profileId, {
+          scope: 'all',
+          debounce: 'none',
+        });
       } catch (error) {
         // Allow a retry on the next trigger rather than wedging the profile.
         this.sweptProfiles.delete(profileId);

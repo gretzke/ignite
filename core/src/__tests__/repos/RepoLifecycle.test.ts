@@ -591,7 +591,7 @@ describe('RepoLifecycle', () => {
       await cleanupTestDirectory(dir);
     }
   });
-  it('sweep: init -> detect -> watchPaths -> persist, no install/compile', async () => {
+  it('startup gate gives an uninitialized repo a full detect and compile lifecycle', async () => {
     const dir = await createTestDirectory();
     try {
       const { lifecycle, jobs, executor, registry } = makeLifecycle({
@@ -610,8 +610,8 @@ describe('RepoLifecycle', () => {
       expect(executor.calls.map((c) => c.op)).toEqual(
         expect.arrayContaining(['detect', 'getWatchPaths'])
       );
-      expect(executor.calls.some((c) => c.op === 'compile')).toBe(false);
-      expect(executor.calls.some((c) => c.op === 'install')).toBe(false);
+      expect(executor.calls.some((c) => c.op === 'compile')).toBe(true);
+      expect(executor.calls.some((c) => c.op === 'install')).toBe(true);
 
       expect(registry.updates).toHaveLength(1);
       const patch = registry.updates[0].patch;
@@ -624,8 +624,7 @@ describe('RepoLifecycle', () => {
         { pluginId: 'hardhat', version: '1.0.0' },
       ]);
       expect(patch.originUrl).toBe(`file://${dir}`);
-      // Never compiled -> no fingerprint captured by a sweep.
-      expect(patch.frameworks?.[0].fingerprint).toBeUndefined();
+      expect(patch.frameworks?.[0].fingerprint).toBeDefined();
     } finally {
       await cleanupTestDirectory(dir);
     }
@@ -714,7 +713,8 @@ describe('RepoLifecycle', () => {
 
       expect(jobs.started[0].record.params).toMatchObject({
         pathOrUrl: '/repo-b',
-        mode: 'sweep',
+        mode: 'recompile',
+        force: 'catalog',
       });
       release();
     } finally {
@@ -763,7 +763,64 @@ describe('RepoLifecycle', () => {
       lifecycle.resweepProfile('p1');
       await vi.waitFor(() => expect(jobs.started.length).toBe(2));
       await jobs.runAll();
-      expect(executor.calls.filter((call) => call.op === 'compile')).toHaveLength(1);
+      expect(executor.calls.filter((call) => call.op === 'compile')).toHaveLength(2);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('startup gate skips empty frameworks and forces missing fingerprints or catalog mismatches', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const comparable = {
+        id: 'foundry', name: 'Foundry', watchPaths: WATCH.data as RepoFrameworkState['watchPaths'],
+        fingerprint: { sources: 'before', artifacts: 'before' },
+      };
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [
+          { pathOrUrl: '/empty', frameworks: [] },
+          { pathOrUrl: '/missing', frameworks: [{ id: 'foundry', name: 'Foundry' }] },
+          { pathOrUrl: '/catalog', frameworks: [comparable], detectedWith: [] },
+        ],
+      });
+
+      lifecycle.ensureProfileSwept('p1');
+      await vi.waitFor(() => expect(jobs.started).toHaveLength(2));
+      expect(jobs.started.map((job) => job.record.params)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ pathOrUrl: '/missing', force: 'catalog' }),
+          expect.objectContaining({ pathOrUrl: '/catalog', force: 'catalog' }),
+        ])
+      );
+      expect(jobs.started.some((job) => job.record.params.pathOrUrl === '/empty')).toBe(false);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('startup scan catches drift in a matching cloned repo without a focus check', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const record: RepoRecord = {
+        pathOrUrl: 'https://example.test/cloned.git',
+        frameworks: [{
+          id: 'foundry', name: 'Foundry', watchPaths: WATCH.data as RepoFrameworkState['watchPaths'],
+          fingerprint: { sources: 'before', artifacts: 'before' },
+        }],
+        detectedWith: [{ pluginId: 'foundry', version: '1.0.0' }],
+      };
+      const { lifecycle, jobs } = makeLifecycle({ workspaceDir: dir, cloned: [record] });
+      vi.spyOn(lifecycle, 'measureFramework').mockResolvedValue({
+        comparable: true, sources: 'after', artifacts: 'after', drifted: true,
+      });
+
+      lifecycle.ensureProfileSwept('p1');
+      await vi.waitFor(() => expect(jobs.started).toHaveLength(1));
+      expect(jobs.started[0].record.params).toMatchObject({
+        pathOrUrl: 'https://example.test/cloned.git', mode: 'recompile',
+      });
+      expect(jobs.started[0].record.params).not.toHaveProperty('force');
     } finally {
       await cleanupTestDirectory(dir);
     }
