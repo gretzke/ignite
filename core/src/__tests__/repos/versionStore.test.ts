@@ -211,6 +211,10 @@ describe('VersionStore', () => {
         refLabel: 'v1.0.0',
         refKind: 'tag',
         detectedAt: '2026-07-21T00:00:00.000Z',
+        // The verbatim .git spelling the winner was stored under is preserved
+        // as the fetch URL so rematerialization uses it rather than the
+        // canonical identity.
+        fetchUrl: legacyUrl,
       }),
     ]);
     await expect(fs.readFile(path.join(canonicalCheckout, 'winner.txt'), 'utf8')).resolves.toBe('legacy');

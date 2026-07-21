@@ -699,9 +699,10 @@ export class VersionStore {
     const winnerHasHumanLabel =
       winner.refKind === 'tag' || winner.refKind === 'branch';
     const rawSpellings = [...new Set(records.map((record) => record.url))].sort();
+    const canonicalUrl = canonicalGitUrl(winner.url);
     const merged: MigrationRecord = {
       ...winner,
-      url: canonicalGitUrl(winner.url),
+      url: canonicalUrl,
       createdAt: records.reduce(
         (earliest, record) =>
           record.createdAt.localeCompare(earliest) < 0 ? record.createdAt : earliest,
@@ -713,7 +714,16 @@ export class VersionStore {
         winner.lastUsedAt
       ),
       localFallback: records.some((record) => record.localFallback) || undefined,
-      fetchUrl: winner.fetchUrl ?? records.find((record) => record.fetchUrl)?.fetchUrl,
+      // Preserve a verbatim fetch URL. Pre-D1 records carry no explicit
+      // fetchUrl, so reconstruct from a raw spelling that differs from the
+      // canonical identity (a stored `.git` suffix): that is what Git
+      // originally fetched from, and some servers require it verbatim.
+      fetchUrl:
+        winner.fetchUrl ??
+        records.find((record) => record.fetchUrl)?.fetchUrl ??
+        (winner.url !== canonicalUrl
+          ? winner.url
+          : rawSpellings.find((raw) => raw !== canonicalUrl)),
     };
     if (!winnerHasHumanLabel && human) {
       merged.refLabel = human.refLabel;
