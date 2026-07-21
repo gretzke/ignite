@@ -1640,6 +1640,50 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('runs an all/none check independently of an in-flight local quiet-pause check', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const framework: RepoFrameworkState = {
+        id: 'foundry', name: 'Foundry',
+        watchPaths: { config: ['foundry.toml'], sources: ['src'], artifacts: ['out'] },
+        fingerprint: { sources: 'before', artifacts: 'before' },
+      };
+      const { lifecycle, jobs, repoService } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/local', frameworks: [framework] }],
+        cloned: [{ pathOrUrl: 'https://example.test/cloned.git', frameworks: [framework] }],
+      });
+      let resolveWorkspace!: (value: string) => void;
+      repoService.resolveWorkspacePath.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveWorkspace = resolve;
+      }));
+      vi.spyOn(lifecycle, 'measureFramework').mockResolvedValue({
+        comparable: true, sources: 'after', artifacts: 'after', drifted: true,
+      });
+
+      const localCheck = lifecycle.checkAndRecompile('p1', {
+        scope: 'local', debounce: 'quiet-pause',
+      });
+      await vi.waitFor(() =>
+        expect(lifecycle.activeJobFor('/local')).toBe('direct:local:/local')
+      );
+
+      const startupCheck = lifecycle.checkAndRecompile('p1', {
+        scope: 'all', debounce: 'none',
+      });
+      expect(startupCheck).not.toBe(localCheck);
+      await expect(startupCheck).resolves.toMatchObject({
+        started: [{ pathOrUrl: 'https://example.test/cloned.git' }],
+      });
+      expect(jobs.started).toHaveLength(1);
+
+      resolveWorkspace(dir);
+      await localCheck;
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('releases its reservation on a no-start path', async () => {
     const dir = await createTestDirectory();
     try {

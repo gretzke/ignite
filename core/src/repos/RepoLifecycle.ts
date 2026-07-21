@@ -542,18 +542,19 @@ export class RepoLifecycle {
     profileId: string,
     options: RecompileCheckOptions
   ): Promise<{ started: Array<{ pathOrUrl: string; jobId: string }> }> {
-    const inFlight = this.recompileChecks.get(profileId);
+    const checkKey = `${profileId}\0${options.scope}\0${options.debounce}`;
+    const inFlight = this.recompileChecks.get(checkKey);
     if (inFlight) return inFlight;
 
     const check = this.checkAndRecompileInner(profileId, options);
-    this.recompileChecks.set(profileId, check);
+    this.recompileChecks.set(checkKey, check);
     void check.then(() => {
-      if (this.recompileChecks.get(profileId) === check) {
-        this.recompileChecks.delete(profileId);
+      if (this.recompileChecks.get(checkKey) === check) {
+        this.recompileChecks.delete(checkKey);
       }
     }, () => {
-      if (this.recompileChecks.get(profileId) === check) {
-        this.recompileChecks.delete(profileId);
+      if (this.recompileChecks.get(checkKey) === check) {
+        this.recompileChecks.delete(checkKey);
       }
     });
     return check;
