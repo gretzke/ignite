@@ -644,11 +644,14 @@ export class RepoLifecycle {
   }
 
   private quietKey(pathOrUrl: string, frameworkId: string): string {
-    return `${this.activityKey(pathOrUrl)}:${frameworkId}`;
+    // NUL separates the activity key from the framework id: activityKey can
+    // contain ':' (URL ports, ssh://) so a ':' delimiter would let one repo's
+    // prefix cross-match a sibling's key and clear its debounce/backoff state.
+    return `${this.activityKey(pathOrUrl)}\u0000${frameworkId}`;
   }
 
   private pruneQuietState(record: RepoRecord): void {
-    const prefix = `${this.activityKey(record.pathOrUrl)}:`;
+    const prefix = `${this.activityKey(record.pathOrUrl)}\u0000`;
     const currentFrameworks = new Set((record.frameworks ?? []).map((fw) => fw.id));
     for (const key of this.quietObservations.keys()) {
       if (key.startsWith(prefix) && !currentFrameworks.has(key.slice(prefix.length))) {
@@ -663,7 +666,7 @@ export class RepoLifecycle {
   }
 
   private clearQuietState(pathOrUrl: string): void {
-    const prefix = `${this.activityKey(pathOrUrl)}:`;
+    const prefix = `${this.activityKey(pathOrUrl)}\u0000`;
     for (const key of this.quietObservations.keys()) {
       if (key.startsWith(prefix)) this.quietObservations.delete(key);
     }
