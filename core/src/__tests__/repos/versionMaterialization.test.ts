@@ -195,6 +195,45 @@ describe('RepoService version materialization', () => {
     );
   });
 
+  it('clears a stored fetch URL when an explicit canonical URL supersedes it', async () => {
+    const remote = await sourceRepo('ignite-version-clear-fetch-url-source-');
+    const barePath = remote.remote.slice('file://'.length);
+    const fetchPath = `${barePath}.git`;
+    await fs.rename(barePath, fetchPath);
+    dirs.push(fetchPath);
+    const fetchUrl = `file://${fetchPath}`;
+    const url = canonicalGitUrl(fetchUrl);
+    const home = await temp('ignite-version-clear-fetch-url-home-');
+    const { repos, versions } = await approved(home, url);
+
+    await repos.ensureVersion(profileId, url, remote.first, { fetchUrl });
+    await repos.ensureVersion(profileId, url, remote.first, { fetchUrl: url });
+
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(home, 'repos', 'cache.json'), 'utf8')
+    ) as { versions: Array<Record<string, unknown>> };
+    expect(persisted.versions[0]).not.toHaveProperty('fetchUrl');
+  });
+
+  it('preserves a stored fetch URL when no explicit fetch URL is provided', async () => {
+    const remote = await sourceRepo('ignite-version-preserve-fetch-url-source-');
+    const barePath = remote.remote.slice('file://'.length);
+    const fetchPath = `${barePath}.git`;
+    await fs.rename(barePath, fetchPath);
+    dirs.push(fetchPath);
+    const fetchUrl = `file://${fetchPath}`;
+    const url = canonicalGitUrl(fetchUrl);
+    const home = await temp('ignite-version-preserve-fetch-url-home-');
+    const { repos, versions } = await approved(home, url);
+
+    await repos.ensureVersion(profileId, url, remote.first, { fetchUrl });
+    await repos.ensureVersion(profileId, url, remote.first);
+
+    await expect(versions.get(url, remote.first)).resolves.toEqual(
+      expect.objectContaining({ fetchUrl })
+    );
+  });
+
   it('rejects unsafe refs and labels before any git invocation', async () => {
     const remote = await sourceRepo();
     const home = await temp('ignite-version-home-');

@@ -453,9 +453,7 @@ export class RepoService {
             ...(stored ?? { url, commit, createdAt: now }),
             url,
             commit,
-            ...(effectiveFetchUrl !== url
-              ? { fetchUrl: effectiveFetchUrl }
-              : {}),
+            fetchUrl: effectiveFetchUrl !== url ? effectiveFetchUrl : undefined,
             ...(opts.refLabel !== undefined || opts.ref !== undefined
               ? { refLabel: opts.refLabel ?? opts.ref }
               : {}),
@@ -532,9 +530,7 @@ export class RepoService {
         commit,
         refLabel: opts.refLabel ?? opts.ref,
         refKind: opts.refKind,
-        ...(effectiveFetchUrl !== url
-          ? { fetchUrl: effectiveFetchUrl }
-          : {}),
+        fetchUrl: effectiveFetchUrl !== url ? effectiveFetchUrl : undefined,
         ...(localFallback ? { localFallback: true } : {}),
         createdAt: now,
         lastUsedAt: now,
