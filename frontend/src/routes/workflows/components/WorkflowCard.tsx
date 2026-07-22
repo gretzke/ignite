@@ -70,7 +70,7 @@ export default function WorkflowCard({
     if (install?.status === 'queued' || install?.status === 'running') return;
     installRequested.current = false;
     setInstallPending(false);
-  }, [install?.status]);
+  }, [install]);
 
   if (!workflow.valid) {
     return (
