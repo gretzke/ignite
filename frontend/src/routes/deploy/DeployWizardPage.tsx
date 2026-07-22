@@ -24,7 +24,6 @@ import { workflowsApi } from '../../store/features/workflows/workflowsApi';
 import { selectWorkflowDocument } from '../../store/features/workflows/workflowsSlice';
 import {
   workflowDocumentFromDraft,
-  workflowDraftIsDirty,
 } from '../../store/features/deployments/workflowDraft';
 import { collectUnboundWorkflowSlots, projectWorkflowPlan } from './projection';
 import { cloneJson } from '../../utils/cloneJson';
@@ -60,6 +59,21 @@ export function explorerBlocker(
       return `${chainName(chainId)}: ${needsConfig.label ?? needsConfig.url} needs configuration`;
   }
   return undefined;
+}
+
+export function needsWorkflowDraftHydration(
+  workflowRepo: string | null,
+  workflowName: string | null,
+  workflowState: unknown,
+  workflowRef?: { repoPathOrUrl: string; name: string }
+): boolean {
+  return Boolean(
+    workflowRepo &&
+      workflowName &&
+      workflowState &&
+      (workflowRef?.repoPathOrUrl !== workflowRepo ||
+        workflowRef.name !== workflowName)
+  );
 }
 
 function WizardNav({
@@ -143,12 +157,16 @@ export default function DeployWizardPage() {
       dispatch(workflowsApi.get(workflowRepo, workflowName));
   }, [dispatch, workflowName, workflowRepo, workflowState]);
   useEffect(() => {
-    if (!workflowRepo || !workflowName || !workflowState) return;
     if (
-      draft.workflowRef?.repoPathOrUrl === workflowRepo &&
-      draft.workflowRef.name === workflowName
+      !needsWorkflowDraftHydration(
+        workflowRepo,
+        workflowName,
+        workflowState,
+        draft.workflowRef
+      )
     )
       return;
+    if (!workflowRepo || !workflowName || !workflowState) return;
     dispatch(
       hydrateWorkflowDraft({
         repoPathOrUrl: workflowRepo,
@@ -280,25 +298,6 @@ export default function DeployWizardPage() {
             Create a frozen, recoverable deployment run.
           </p>
         </div>
-        {draft.workflowRef && (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={!workflowDraftIsDirty(draft)}
-            onClick={() =>
-              dispatch(
-                workflowsApi.put(
-                  draft.workflowRef!.repoPathOrUrl,
-                  draft.workflowRef!.name,
-                  workflowDocumentFromDraft(draft),
-                  draft.workflowRef!.baseDocHash
-                )
-              )
-            }
-          >
-            Save workflow{workflowDraftIsDirty(draft) ? ' · unsaved' : ''}
-          </button>
-        )}
         {draftActive && !draft.workflowRef && plan && (
           <button
             type="button"
@@ -309,18 +308,6 @@ export default function DeployWizardPage() {
           </button>
         )}
       </div>
-      {draft.workflowRef && (
-        <div className="card-milky px-4 py-3 mb-4 text-sm flex items-center justify-between">
-          <span>
-            Workflow mode · <strong>{draft.workflowRef.name}</strong>
-          </span>
-          <span
-            className={workflowDraftIsDirty(draft) ? 'text-warn' : 'text-muted'}
-          >
-            {workflowDraftIsDirty(draft) ? 'Unsaved changes' : 'Saved'}
-          </span>
-        </div>
-      )}
       <ConfirmDialog
         open={confirmDiscard}
         onOpenChange={setConfirmDiscard}

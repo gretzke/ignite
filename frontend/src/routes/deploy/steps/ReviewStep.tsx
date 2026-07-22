@@ -6,7 +6,8 @@ import type {
   ValidationReport,
 } from '@ignite/api';
 import { Loader2, RefreshCw, Rocket } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { type NavigateFunction, useNavigate } from 'react-router-dom';
+import { ApiError } from '@ignite/api/client';
 import { apiClient } from '../../../store/api/client';
 import { useAppDispatch, useAppSelector } from '../../../store';
 import { verifierPluginLabel } from '../../../store/features/plugins/pluginsSlice';
@@ -29,6 +30,7 @@ import {
   pluginsApi,
 } from '../../../store/features/plugins/pluginsSlice';
 import { reviewPredictedAddresses } from '../reviewPredictions';
+import { triggerToast } from '../../../store/middleware/toastListener';
 
 function validationGreen(report: ValidationReport | null): boolean {
   return Boolean(
@@ -38,6 +40,29 @@ function validationGreen(report: ValidationReport | null): boolean {
     ) &&
     Object.values(report.run ?? {}).every((item) => !item?.blocking || item.ok)
   );
+}
+
+export function bounceOutOfSyncWorkflowRun(
+  cause: unknown,
+  dispatch: (action: ReturnType<typeof triggerToast>) => unknown,
+  navigate: NavigateFunction
+): boolean {
+  if (
+    !(cause instanceof ApiError) ||
+    cause.status !== 409 ||
+    cause.body.code !== 'WORKFLOW_OUT_OF_SYNC'
+  )
+    return false;
+  dispatch(
+    triggerToast({
+      title: 'Workflow is out of sync',
+      description: 'Install or update it first.',
+      variant: 'error',
+      duration: 8000,
+    })
+  );
+  navigate('/workflows', { replace: true });
+  return true;
 }
 
 interface ReviewStepProps {
@@ -159,11 +184,12 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
       });
     } catch (cause) {
       setReport(null);
+      if (bounceOutOfSyncWorkflowRun(cause, dispatch, navigate)) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(false);
     }
-  }, [draft.explorerSelection, plan, rpcSelection, workflowRequest]);
+  }, [dispatch, draft.explorerSelection, navigate, plan, rpcSelection, workflowRequest]);
 
   useEffect(() => {
     void validate();
@@ -190,6 +216,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
       dispatch(draftLaunched(launchedKey));
       navigate(`/deployments/${response.data.run.id}`, { replace: true });
     } catch (cause) {
+      if (bounceOutOfSyncWorkflowRun(cause, dispatch, navigate)) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLaunching(false);
