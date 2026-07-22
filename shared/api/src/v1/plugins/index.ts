@@ -5,6 +5,23 @@ import { PluginType } from "@ignite/plugin-types/types";
 import { V1_BASE_PATH } from "../constants.js";
 import { createApiResponseSchema } from "../../utils/schema.js";
 
+export type PluginInstallSourceData =
+  | { kind: "local"; contextDir: string; dockerfile?: string }
+  | {
+      kind: "git";
+      url: string;
+      ref?: string;
+      track?:
+        | { mode: "release"; version: string }
+        | { mode: "branch"; branch: string }
+        | { mode: "commit" };
+      commit?: string;
+    };
+
+export type PluginListEntry = PluginMetadata & {
+  source?: PluginInstallSourceData;
+};
+
 // Re-export the manifest types so API consumers (frontend) don't need a
 // direct dependency on @ignite/plugin-types.
 export type {
@@ -22,7 +39,7 @@ export { isSecretScopeField } from "@ignite/plugin-types/types";
 // Interface definitions
 export interface ListPluginsData {
   plugins: {
-    [key: string]: PluginMetadata;
+    [key: string]: PluginListEntry;
   };
 }
 
@@ -94,11 +111,44 @@ export const PluginMetadataSchema = z.object({
   bundledInImage: z.boolean().optional(),
 }) satisfies z.ZodType<PluginMetadata>;
 
+const PluginInstallSourceSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("local"),
+      contextDir: z.string().min(1),
+      dockerfile: z.string().min(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("git"),
+      url: z.string().min(1),
+      ref: z.string().min(1).optional(),
+      track: z
+        .discriminatedUnion("mode", [
+          z
+            .object({ mode: z.literal("release"), version: z.string().min(1) })
+            .strict(),
+          z
+            .object({ mode: z.literal("branch"), branch: z.string().min(1) })
+            .strict(),
+          z.object({ mode: z.literal("commit") }).strict(),
+        ])
+        .optional(),
+      commit: z.string().min(1).optional(),
+    })
+    .strict(),
+]) satisfies z.ZodType<PluginInstallSourceData>;
+
+const PluginListEntrySchema = PluginMetadataSchema.extend({
+  source: PluginInstallSourceSchema.optional(),
+}) satisfies z.ZodType<PluginListEntry>;
+
 // Type-safe IApiResponse schemas that enforce interface compliance
 export const ListPluginsResponseSchema =
   createApiResponseSchema<ListPluginsData>("ListPluginsResponseSchema")(
     z.object({
-      plugins: z.record(z.string(), PluginMetadataSchema),
+      plugins: z.record(z.string(), PluginListEntrySchema),
     }),
   );
 

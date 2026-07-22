@@ -26,9 +26,45 @@ export const pluginHandlers = {
 
       const builtin = await PluginRegistryLoader.getInstance().getAllPlugins();
       const merged: ListPluginsData['plugins'] = {};
+      const pluginManager = PluginManager.getInstance();
       for (const [id, config] of Object.entries(builtin)) {
         if (!validType || config.metadata.types.includes(validType)) {
-          merged[id] = config.metadata;
+          const installSource =
+            config.origin === 'installed'
+              ? await pluginManager.getInstallSource(id)
+              : undefined;
+          // The install record carries a server-only description for git
+          // sources. The workflow schema intentionally accepts only the
+          // reproducibility fields below.
+          merged[id] = {
+            ...config.metadata,
+            ...(installSource
+              ? {
+                  source:
+                    installSource.kind === 'local'
+                      ? {
+                          kind: 'local' as const,
+                          contextDir: installSource.contextDir,
+                          ...(installSource.dockerfile
+                            ? { dockerfile: installSource.dockerfile }
+                            : {}),
+                        }
+                      : {
+                          kind: 'git' as const,
+                          url: installSource.url,
+                          ...(installSource.ref
+                            ? { ref: installSource.ref }
+                            : {}),
+                          ...(installSource.track
+                            ? { track: installSource.track }
+                            : {}),
+                          ...(installSource.commit
+                            ? { commit: installSource.commit }
+                            : {}),
+                        },
+                }
+              : {}),
+          };
         }
       }
       const body: IApiResponse<ListPluginsData> = { data: { plugins: merged } };
