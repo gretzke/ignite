@@ -9,6 +9,7 @@ import { canonicalGitUrl, VersionStore } from '../../repos/VersionStore.js';
 import type { ProfileManager } from '../../filesystem/ProfileManager.js';
 import { runCommand } from '../../utils/runCommand.js';
 import { getLogger } from '../../utils/logger.js';
+import { artifactCacheIdentity, artifactListingCache, artifactListingCacheKey } from '../../repos/ArtifactListingCache.js';
 
 const profileId = 'profile-1';
 const dirs: string[] = [];
@@ -193,6 +194,60 @@ describe('RepoService version materialization', () => {
     expect(await versions.get(url, remote.first)).toEqual(
       expect.objectContaining({ fetchUrl })
     );
+  });
+
+  it('invalidates artifacts before rematerialization deletes the checkout', async () => {
+    const remote = await sourceRepo('ignite-version-rematerialize-invalidate-');
+    const home = await temp('ignite-version-rematerialize-invalidate-home-');
+    const { repos, versions } = await approved(home, remote.remote);
+    const { checkout } = await repos.ensureVersion(profileId, remote.remote, remote.first);
+    const key = artifactListingCacheKey({
+      profileId,
+      canonicalIdentity: artifactCacheIdentity(remote.remote),
+      frameworkId: 'waffle',
+      pluginId: 'waffle',
+      pluginVersion: '1.0.0',
+      generation: 44,
+    });
+    artifactListingCache.set(key, [{ contractName: 'Old', sourcePath: 'src/Old.sol', artifactPath: 'artifacts/Old.json' }]);
+    await versions.updateState(remote.remote, remote.first, {
+      frameworks: [{ id: 'waffle', name: 'Waffle', artifactGeneration: 44 }],
+    });
+    let deletionStarted!: () => void;
+    const deleting = new Promise<void>((resolve) => { deletionStarted = resolve; });
+    let releaseDeletion!: () => void;
+    const deleteGate = new Promise<void>((resolve) => { releaseDeletion = resolve; });
+    const remove = fs.rm;
+    const rm = vi.spyOn(fs, 'rm').mockImplementation(async (target, options) => {
+      if (target === checkout) {
+        deletionStarted();
+        await deleteGate;
+      }
+      return remove(target, options);
+    });
+    try {
+      await repos.withVersionMaterialized(
+        profileId,
+        remote.remote,
+        remote.first,
+        {},
+        async ({ rematerialize }) => {
+          const rematerializing = rematerialize();
+          await deleting;
+
+          expect(artifactListingCache.get(key)).toBeUndefined();
+          await expect(versions.get(remote.remote, remote.first)).resolves.toEqual(
+            expect.objectContaining({ frameworks: [expect.not.objectContaining({ artifactGeneration: expect.anything() })] })
+          );
+
+          releaseDeletion();
+          await rematerializing;
+        }
+      );
+    } finally {
+      rm.mockRestore();
+      artifactListingCache.invalidate(artifactCacheIdentity(remote.remote));
+    }
   });
 
   it('clears a stored fetch URL when an explicit canonical URL supersedes it', async () => {

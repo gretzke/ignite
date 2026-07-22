@@ -357,6 +357,7 @@ export class RepoService {
           return fn({
             ...materialized,
             rematerialize: async () => {
+              await this.invalidateVersionArtifacts(url, commit);
               await fs.rm(this.versionStore.checkoutPath(url, commit), {
                 recursive: true,
                 force: true,
