@@ -423,6 +423,7 @@ export default function ArtifactPicker({
         ))}
       </section>
       <AddVersionModal
+        variant="add"
         open={addVersionOpen}
         onOpenChange={setAddVersionOpen}
         source={versionSource}

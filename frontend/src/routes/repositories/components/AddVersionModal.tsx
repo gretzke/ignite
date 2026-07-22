@@ -28,16 +28,32 @@ export type WorkspaceSwitchTarget =
   | { kind: 'branch'; branch: string }
   | { kind: 'commit'; commit: string };
 
-interface AddVersionModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  source: VersionSource | null;
-  onSubmit: (request: AddRepoVersionRequest) => void;
-  onSwitchWorkspace: (
-    path: string,
-    target: WorkspaceSwitchTarget
-  ) => Promise<void>;
-}
+type AddVersionModalProps =
+  | {
+      variant: 'add';
+      open: boolean;
+      onOpenChange: (open: boolean) => void;
+      source: VersionSource | null;
+      onSubmit: (request: AddRepoVersionRequest) => void;
+      onSwitchWorkspace: (
+        path: string,
+        target: WorkspaceSwitchTarget
+      ) => Promise<void>;
+    }
+  | {
+      variant: 'pick';
+      open: boolean;
+      onOpenChange: (open: boolean) => void;
+      source: VersionSource | null;
+      onPick: (pick: {
+        url: string;
+        commit: string;
+        ref?: string;
+        refKind?: 'tag' | 'branch';
+      }) => void;
+    };
+
+type AddVersionModalAddProps = Extract<AddVersionModalProps, { variant: 'add' }>;
 
 export function versionPickerSections(
   source: VersionSource | null,
@@ -109,6 +125,25 @@ export function versionSubmitPayload(
     : { url: source.url!, ...target };
 }
 
+export function versionPickPayload(
+  source: VersionSource,
+  selection: VersionSelection,
+  inspect: InspectGitRemoteData | null
+): { url: string; commit: string; ref?: string; refKind?: 'tag' | 'branch' } | null {
+  if (!source.url) return null;
+  const value = selection.value.trim();
+  if (selection.tab === 'commit')
+    return /^[0-9a-f]{40}$/i.test(value)
+      ? { url: source.url, commit: value }
+      : null;
+  const commit = selection.tab === 'releases'
+    ? inspect?.releases.find((release) => release.tag === value)?.sha ?? inspect?.tagHeads?.[value]
+    : inspect?.branchHeads?.[value];
+  return commit && /^[0-9a-f]{40}$/i.test(commit)
+    ? { url: source.url, commit, ref: value, refKind: selection.tab === 'releases' ? 'tag' : 'branch' }
+    : null;
+}
+
 export function existingVersionHint(
   source: VersionSource | null,
   selection: VersionSelection,
@@ -151,13 +186,8 @@ function switchErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unable to switch branch';
 }
 
-export default function AddVersionModal({
-  open,
-  onOpenChange,
-  source,
-  onSubmit,
-  onSwitchWorkspace,
-}: AddVersionModalProps) {
+export default function AddVersionModal(props: AddVersionModalProps) {
+  const { variant, open, onOpenChange, source } = props;
   const dispatch = useAppDispatch();
   const commitInput = useRef<HTMLInputElement>(null);
   const [inspect, setInspect] = useState<InspectGitRemoteData | null>(null);
@@ -187,7 +217,7 @@ export default function AddVersionModal({
     setSelection({ tab: initialTab, value: initialValue });
     setMode('copy');
 
-    if (source.repoPathOrUrl) {
+    if (variant === 'add' && source.repoPathOrUrl) {
       dispatch(
         apiClient.dispatch.getBranches({
           body: { pathOrUrl: source.repoPathOrUrl },
@@ -240,7 +270,7 @@ export default function AddVersionModal({
         },
       })
     );
-  }, [dispatch, open, source]);
+  }, [dispatch, open, source, variant]);
 
   useEffect(() => {
     if (open && source?.initialCommit) commitInput.current?.focus();
@@ -254,8 +284,9 @@ export default function AddVersionModal({
   const showReleasesTab = Boolean(source?.url);
   const hasWorkspace = Boolean(source?.repoPathOrUrl);
   const commitValid =
-    activeTab !== 'commit' || /^[0-9a-f]{7,40}$/i.test(selection.value.trim());
-  const canSubmit = Boolean(source && selection.value.trim() && commitValid);
+    activeTab !== 'commit' || (variant === 'pick' ? /^[0-9a-f]{40}$/i.test(selection.value.trim()) : /^[0-9a-f]{7,40}$/i.test(selection.value.trim()));
+  const pick = source ? versionPickPayload(source, selection, inspect) : null;
+  const canSubmit = Boolean(source && selection.value.trim() && commitValid && (variant === 'add' || pick));
   const switchTarget = versionSwitchTarget(selection, inspect);
   const canSwitch = canSwitchWorkspaceVersion({
     hasWorkspace,
@@ -269,12 +300,18 @@ export default function AddVersionModal({
     // A tab is the selection model: changing it deliberately discards the
     // other tab's value, so a submit can never contain multiple ref kinds.
     setSelection({ tab: next, value: '' });
-    setMode('copy');
+    if (variant === 'add') setMode('copy');
     setSwitchError('');
   };
 
   const handleSubmit = async () => {
     if (!source || !canSubmit) return;
+    if (props.variant === 'pick') {
+      props.onPick(pick!);
+      onOpenChange(false);
+      return;
+    }
+    const { onSubmit, onSwitchWorkspace } = props as AddVersionModalAddProps;
     if (mode === 'switch' && canSwitch && source.repoPathOrUrl && switchTarget) {
       setSwitching(true);
       setSwitchError('');
@@ -402,7 +439,7 @@ export default function AddVersionModal({
               <input
                 ref={commitInput}
                 type="text"
-                placeholder="Full or short commit hash"
+                placeholder={variant === 'pick' ? 'Full commit hash' : 'Full or short commit hash'}
                 value={selection.tab === 'commit' ? selection.value : ''}
                 onChange={(event) =>
                   setSelection({ tab: 'commit', value: event.target.value })
@@ -412,13 +449,15 @@ export default function AddVersionModal({
               />
               {!commitValid && (
                 <div className="text-xs text-err mt-1">
-                  Enter 7–40 hexadecimal characters.
+                  {variant === 'pick'
+                    ? 'Enter all 40 hexadecimal characters. Abbreviated hashes cannot be resolved without fetching.'
+                    : 'Enter 7–40 hexadecimal characters.'}
                 </div>
               )}
             </Tabs.Content>
           </Tabs.Root>
 
-          {shouldShowVersionMode(hasWorkspace) && (
+          {variant === 'add' && shouldShowVersionMode(hasWorkspace) && (
             <fieldset className="mb-4">
               <legend className="block text-sm font-medium mb-2">
                 For this repository
@@ -459,7 +498,7 @@ export default function AddVersionModal({
             </fieldset>
           )}
 
-          {duplicateHint && (
+          {variant === 'add' && duplicateHint && (
             <div className="text-xs opacity-70 mb-4">{duplicateHint}</div>
           )}
 
@@ -478,10 +517,12 @@ export default function AddVersionModal({
               className="btn btn-primary"
               onClick={() => void handleSubmit()}
               disabled={
-                !canSubmit || switching || (mode === 'switch' && !canSwitch)
+                !canSubmit || switching || (variant === 'add' && mode === 'switch' && !canSwitch)
               }
             >
-              {switching
+              {variant === 'pick'
+                ? 'Use version'
+                : switching
                 ? 'Switching…'
                 : mode === 'switch' && canSwitch
                   ? activeTab === 'branches'

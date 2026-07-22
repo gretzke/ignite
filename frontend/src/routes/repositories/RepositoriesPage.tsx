@@ -540,6 +540,7 @@ export default function RepositoriesPage() {
       />
 
       <AddVersionModal
+        variant="add"
         open={addVersionOpen}
         onOpenChange={setAddVersionOpen}
         source={versionSource}

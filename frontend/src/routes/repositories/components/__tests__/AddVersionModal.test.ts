@@ -4,6 +4,7 @@ import {
   canSwitchWorkspaceVersion,
   shouldShowVersionMode,
   versionSubmitPayload,
+  versionPickPayload,
   versionPickerSections,
   versionSwitchTarget,
   existingVersionHint,
@@ -147,5 +148,22 @@ describe('AddVersionModal picker behavior', () => {
       ref: 'v1.1.0',
       refKind: 'tag',
     });
+  });
+
+  it('resolves release, tag, and branch picks to full inspected pins', () => {
+    expect(
+      versionPickPayload(source, { tab: 'releases', value: 'v1.1.0' }, inspected)
+    ).toEqual({ url: source.url, commit: 'b'.repeat(40), ref: 'v1.1.0', refKind: 'tag' });
+    expect(
+      versionPickPayload(source, { tab: 'releases', value: 'v1.0.0' }, inspected)
+    ).toEqual({ url: source.url, commit: 'a'.repeat(40), ref: 'v1.0.0', refKind: 'tag' });
+    expect(
+      versionPickPayload(source, { tab: 'branches', value: 'main' }, { ...inspected, branchHeads: { main: 'c'.repeat(40) } })
+    ).toEqual({ url: source.url, commit: 'c'.repeat(40), ref: 'main', refKind: 'branch' });
+  });
+
+  it('rejects abbreviated commit picks while preserving add-version short hashes', () => {
+    expect(versionPickPayload(source, { tab: 'commit', value: 'abcdef0' }, inspected)).toBeNull();
+    expect(versionSubmitPayload(source, { tab: 'commit', value: 'abcdef0' })).toEqual({ repoPathOrUrl: source.repoPathOrUrl, commit: 'abcdef0' });
   });
 });
