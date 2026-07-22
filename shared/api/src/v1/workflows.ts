@@ -102,6 +102,31 @@ export type WorkflowPluginReadiness =
   | { id: string; status: 'untrusted'; installedVersion: string };
 export interface WorkflowResolveResult { sources: WorkflowSourceReadiness[]; plugins: WorkflowPluginReadiness[] }
 
+export type InstalledSourceSnapshot =
+  | { kind: 'repo'; id: string; pin: WorkflowPin; frameworkId: string; sourcePath: string; contractName: string; artifactPath: string; artifactHash?: string }
+  | { kind: 'contract-type'; id: string; pluginId: string; artifactKey: string; versionLabel?: string; contentHash: string };
+export interface InstalledWorkflowRecord {
+  repoPathOrUrl: string;
+  name: string;
+  installed?: {
+    docHash: string;
+    at: string;
+    sources: InstalledSourceSnapshot[];
+    plugins: Array<{ id: string; version: string; source?: string }>;
+    stepsHash: string;
+    hooksHash: string;
+  };
+  lastAttempt?: {
+    docHash: string;
+    at: string;
+    status: 'failed' | 'interrupted';
+    error: string;
+    failedSources?: Array<{ id: string; reason: string; code?: 'ARTIFACT_NOT_FOUND' | 'FRAMEWORK_MISSING' | 'LIFECYCLE_FAILED'; artifactPath?: string }>;
+    pins: Array<{ url: string; commit: string }>;
+  };
+}
+export interface InstalledWorkflowsFile { schemaVersion: 1; records: InstalledWorkflowRecord[] }
+
 export interface WorkflowPromotionSourcePreview { sourceId: string; origin: string; commit: string; tagChoices: string[]; dirty: boolean; error?: string }
 export type WorkflowPromoteRequest =
   | { mode: 'preview'; target: { repoPathOrUrl: string; name: string }; plan?: DeploymentPlan; runId?: string }
@@ -225,6 +250,18 @@ export function makeWorkflowDocumentSchema(options: { allowFileUrls?: boolean } 
 }
 
 export const WorkflowDocumentSchema = makeWorkflowDocumentSchema();
+
+export const InstalledSourceSnapshotSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('repo'), id: z.string().min(1), pin: z.object({ url: z.string().min(1), commit: z.string().regex(COMMIT), ref: z.string().min(1).optional(), refKind: z.enum(['tag', 'branch']).optional() }).strict(), frameworkId: z.string().min(1), sourcePath: z.string().min(1), contractName: z.string().min(1), artifactPath: z.string().min(1), artifactHash: z.string().regex(SHA256_HEX).optional() }).strict(),
+  z.object({ kind: z.literal('contract-type'), id: z.string().min(1), pluginId: z.string().min(1), artifactKey: z.string().min(1), versionLabel: z.string().min(1).optional(), contentHash: z.string().regex(SHA256_HEX) }).strict(),
+]) as z.ZodType<InstalledSourceSnapshot>;
+export const InstalledWorkflowRecordSchema = z.object({
+  repoPathOrUrl: z.string().min(1), name: z.string().min(1),
+  installed: z.object({ docHash: z.string().regex(SHA256_HEX), at: z.string().min(1), sources: z.array(InstalledSourceSnapshotSchema), plugins: z.array(z.object({ id: z.string().min(1), version: z.string().min(1), source: z.string().min(1).optional() }).strict()), stepsHash: z.string().regex(SHA256_HEX), hooksHash: z.string().regex(SHA256_HEX) }).strict().optional(),
+  lastAttempt: z.object({ docHash: z.string().regex(SHA256_HEX), at: z.string().min(1), status: z.enum(['failed', 'interrupted']), error: z.string(), failedSources: z.array(z.object({ id: z.string().min(1), reason: z.string().min(1), code: z.enum(['ARTIFACT_NOT_FOUND', 'FRAMEWORK_MISSING', 'LIFECYCLE_FAILED']).optional(), artifactPath: z.string().min(1).optional() }).strict()).optional(), pins: z.array(z.object({ url: z.string().min(1), commit: z.string().regex(COMMIT) }).strict()) }).strict().optional(),
+}).strict() as z.ZodType<InstalledWorkflowRecord>;
+// Parse records separately so invalid records stay opaque across unrelated writes.
+export const InstalledWorkflowsFileSchema = z.object({ schemaVersion: z.literal(1), records: z.array(z.unknown()) }).strict();
 
 export function validateWorkflowClosure(document: WorkflowDocument): string[] {
   const plugins = new Set(document.requiredPlugins.map((plugin) => plugin.id));

@@ -133,6 +133,14 @@ export class FileSystem {
     return path.join(this.getProfileReposPath(profileId), 'versions.json');
   }
 
+  getProfileInstalledWorkflowsPath(profileId: string): string {
+    return path.join(
+      this.getProfilePath(profileId),
+      'workflows',
+      'installed.json'
+    );
+  }
+
   // === Archive Paths ===
 
   getArchivedProfilesPath(): string {
