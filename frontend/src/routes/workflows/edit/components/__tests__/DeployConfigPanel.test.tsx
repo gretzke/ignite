@@ -8,6 +8,7 @@ import {
 import {
   applyDeployStrategy,
   deployStrategyPlugins,
+  validateStrategyParams,
 } from '../DeployConfigPanel';
 import type { PluginRow } from '../../../../../store/features/plugins/pluginsSlice';
 
@@ -80,5 +81,34 @@ describe('DeployConfigPanel helpers', () => {
     );
     expect(validateWorkflowClosure(next)).toEqual([]);
     expect(makeWorkflowDocumentSchema().safeParse(next).success).toBe(true);
+  });
+
+  it('rejects missing, invalid, and unknown descriptor params', () => {
+    const descriptor = {
+      pluginId: 'strategy',
+      label: 'Strategy',
+      description: '',
+      validateSupported: true,
+      params: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          type: 'select' as const,
+          required: true,
+          options: [{ value: 'safe', label: 'Safe' }],
+        },
+        { key: 'retries', label: 'Retries', type: 'number' as const },
+      ],
+    };
+    expect(
+      validateStrategyParams(
+        { mode: 'unsafe', retries: '2', old: true },
+        descriptor
+      )
+    ).toEqual({
+      mode: 'Choose one of the listed values.',
+      retries: 'Use a number value.',
+      old: 'This parameter is not supported by the selected deployment type.',
+    });
   });
 });

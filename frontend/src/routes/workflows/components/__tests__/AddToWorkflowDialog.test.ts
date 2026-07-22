@@ -71,6 +71,24 @@ describe('AddToWorkflowDialog helpers', () => {
     });
   });
 
+  it('strips credentials before recording a compiler plugin source', () => {
+    const required = compilerRequiredPlugin(
+      'foundry',
+      pluginRow({
+        source: {
+          kind: 'git',
+          url: 'https://user:secret@example.test/foundry.git',
+          commit: 'b'.repeat(40),
+        },
+      })
+    );
+    expect(required.plugin?.source).toMatchObject({
+      kind: 'git',
+      url: 'https://example.test/foundry.git',
+    });
+    expect(required.credentialsRemoved).toBe(true);
+  });
+
   it('blocks missing, untrusted, and non-compiler framework plugins', () => {
     expect(compilerRequiredPlugin('foundry', undefined).error).toContain(
       'Install and trust'
