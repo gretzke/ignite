@@ -212,6 +212,33 @@ describe('WorkflowInstallService', () => {
     expect(service.activeAttemptPins('profile')).toEqual([]);
   });
 
+  it('sweeps memberships after a guard-refused install settles', async () => {
+    const removeVersionCheckout = vi.fn(async () => true);
+    const { service, jobs, deps } = makeService({
+      registry: {
+        list: vi.fn(async () => ({ session: null, local: [], cloned: [] })),
+      } as never,
+      repos: {
+        removeVersionCheckout,
+        resolveWorkspacePath: vi.fn(async () => '/workspace'),
+      } as never,
+    });
+    const versionStore = deps.versionStore as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    versionStore.listMemberships.mockResolvedValue({
+      'https://example.test/box': [{
+        commit: 'a'.repeat(40), source: 'workflow', addedAt: '2026-07-22T00:00:00.000Z',
+      }],
+    });
+
+    await service.start('profile', request);
+    await expect(jobs.started[0].runner(ctx)).rejects.toMatchObject({
+      code: 'REPO_NOT_FOUND',
+    });
+    await jobs.started[0].opts?.onSettled?.({ id: 'job-1', state: 'failed' } as never);
+
+    await vi.waitFor(() => expect(removeVersionCheckout).toHaveBeenCalled());
+  });
+
   it('persists a failed attempt before rejecting with the result in error details', async () => {
     const { service, jobs, store } = makeService({
       artifactReadable: async () => false,

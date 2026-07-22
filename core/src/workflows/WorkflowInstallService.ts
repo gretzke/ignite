@@ -302,6 +302,11 @@ export class WorkflowInstallService {
         onSettled: () => {
           const current = this.activeAttempts.get(key);
           if (current?.jobId === jobId) this.activeAttempts.delete(key);
+          void this.sweep(profileId).catch((error) => {
+            getLogger().warn(
+              `Post-settlement workflow membership sweep failed for ${profileId}: ${String(error)}`
+            );
+          });
         },
       }
     );
@@ -316,6 +321,20 @@ export class WorkflowInstallService {
     return [...this.activeAttempts]
       .filter(([key]) => key.startsWith(`${profileId}\0`))
       .flatMap(([, attempt]) => attempt.pins.map((pin) => ({ ...pin })));
+  }
+
+  private hasActiveAttemptPin(
+    profileId: string,
+    url: string,
+    commit: string
+  ): boolean {
+    const key = this.pinKey(url, commit);
+    for (const [attemptKey, attempt] of this.activeAttempts) {
+      if (!attemptKey.startsWith(`${profileId}\0`)) continue;
+      if (attempt.pins.some((pin) => this.pinKey(pin.url, pin.commit) === key))
+        return true;
+    }
+    return false;
   }
 
   async sweep(profileId: string): Promise<void> {
@@ -347,7 +366,8 @@ export class WorkflowInstallService {
       for (const entry of entries) {
         if (
           entry.source !== 'workflow' ||
-          desired.has(this.pinKey(url, entry.commit))
+          desired.has(this.pinKey(url, entry.commit)) ||
+          this.hasActiveAttemptPin(profileId, url, entry.commit)
         ) {
           continue;
         }

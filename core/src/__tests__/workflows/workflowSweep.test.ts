@@ -348,6 +348,42 @@ describe('WorkflowInstallService membership sweep', () => {
     expect(repos.removeVersionCheckout).not.toHaveBeenCalled();
   });
 
+  it('rechecks active pins after the membership snapshot is gated', async () => {
+    let releaseMemberships!: (value: Record<string, unknown[]>) => void;
+    const memberships = new Promise<Record<string, unknown[]>>((resolve) => {
+      releaseMemberships = resolve;
+    });
+    const jobs = {
+      start: vi.fn(() => ({ id: 'job-1', state: 'queued' })),
+      get: vi.fn(() => ({ id: 'job-1', state: 'running' })),
+      list: vi.fn(() => []),
+    };
+    const { service, versionStore, repos } = makeService({
+      jobs: jobs as never,
+      readDocument: async () => ({
+        document: {
+          schemaVersion: 1,
+          sources: [{ id: 'box', repo: { url, commit }, frameworkId: 'foundry', sourcePath: 'src/Box.sol', contractName: 'Box', artifactPath: 'out/Box.json' }],
+          steps: [], requiredPlugins: [], outputs: { hooks: [] },
+        },
+        docHash: 'd'.repeat(64),
+      }),
+    });
+    versionStore.listMemberships.mockImplementation(() => memberships);
+
+    const sweep = service.sweep('p1');
+    await vi.waitFor(() => expect(versionStore.listMemberships).toHaveBeenCalled());
+    await service.start('p1', {
+      repoPathOrUrl: '/repo', name: 'active', expectedDocHash: 'd'.repeat(64),
+    });
+    releaseMemberships({
+      [canonicalUrl]: [{ commit, source: 'workflow', addedAt: '2026-07-22T00:00:00.000Z' }],
+    });
+    await sweep;
+
+    expect(repos.removeVersionCheckout).not.toHaveBeenCalled();
+  });
+
   it('startup removes unregistered and file-gone records but retains stat errors', async () => {
     const repoRoot = await fs.mkdtemp(
       path.join(os.tmpdir(), 'ignite-workflow-startup-')
