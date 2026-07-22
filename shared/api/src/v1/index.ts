@@ -28,6 +28,7 @@ export * from "./contractTypes.js";
 export * from "./explorers.js";
 export * from "./verifications.js";
 export * from "./workflows.js";
+export * from "./workflowEdit.js";
 
 import { systemRoutes } from "./system.js";
 import { profileRoutes } from "./profiles.js";
