@@ -117,9 +117,10 @@ export default function RepositoryPage() {
   const loadingMessage =
     repositories === null
       ? 'Loading repositories...'
-    : isSaved && (!effectiveRepoData || effectiveRepoData.initialized === undefined)
+    : isSaved && !effectiveRepoData?.lastError && (!effectiveRepoData || effectiveRepoData.initialized === undefined)
         ? 'Initializing repository...'
         : isSaved &&
+            !effectiveRepoData?.lastError &&
             effectiveRepoData?.initialized === true &&
             effectiveRepoData.frameworks === undefined
           ? 'Detecting frameworks...'
@@ -247,6 +248,7 @@ export default function RepositoryPage() {
           frameworks={frameworks}
           compilations={repoCompilations}
           pin={pin}
+          lifecycleError={lifecycleError}
         />
       </div>
 

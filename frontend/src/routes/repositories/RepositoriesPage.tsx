@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
-import { repositoriesApi } from '../../store/features/repositories/repositoriesApi';
+import {
+  repositoriesApi,
+  retryRepositoryLifecycle,
+} from '../../store/features/repositories/repositoriesApi';
 import {
   selectRepositories,
   selectRepositoriesData,
@@ -200,6 +203,11 @@ export default function RepositoriesPage() {
     }
   };
 
+  const handleRetryLifecycle = (path: string) => {
+    const action = retryRepositoryLifecycle(currentId, path);
+    if (action) dispatch(action);
+  };
+
   const handlePull = (path: string) => {
     dispatch(repositoriesApi.pullChanges(path));
   };
@@ -282,6 +290,7 @@ export default function RepositoriesPage() {
               repositoriesData
             )}
             onResetRepo={setResetRepoPath}
+            onRetry={handleRetryLifecycle}
             onAddVersion={(path, initial) =>
               openVersionModal({
                 sourceKey: path,
@@ -335,6 +344,7 @@ export default function RepositoriesPage() {
                       repositoriesData
                     )}
                     onResetRepo={setResetRepoPath}
+                    onRetry={handleRetryLifecycle}
                     onAddVersion={(path, initial) =>
                       openVersionModal({
                         sourceKey: path,
@@ -388,6 +398,7 @@ export default function RepositoriesPage() {
                       repositoriesData
                     )}
                     onResetRepo={setResetRepoPath}
+                    onRetry={handleRetryLifecycle}
                     onAddVersion={(path, initial) =>
                       openVersionModal({
                         sourceKey: path,

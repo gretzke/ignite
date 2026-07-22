@@ -3,13 +3,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configureStore } from '@reduxjs/toolkit';
 import {
   artifactListReceived,
+  artifactListingFailed,
   artifactListingJobSettled,
   clearArtifactWait,
   compilerReducer,
   setCompilationStatus,
 } from '../../features/compiler/compilerSlice';
 import { jobsReducer, jobSnapshotReceived } from '../../features/jobs/jobsSlice';
-import { removeRepositoryAction, repositoriesReducer, setRepositoryFrameworks } from '../../features/repositories/repositoriesSlice';
+import {
+  clearRepositoryList,
+  removeRepositoryAction,
+  repositoriesReducer,
+  setRepositoryFrameworks,
+} from '../../features/repositories/repositoriesSlice';
 import { ARTIFACT_BUSY_RETRY_INITIAL_MS, ARTIFACT_BUSY_RETRY_MAX_MS, compilerEffects } from '../compilerEffects';
 
 const settleEffects = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -106,6 +112,22 @@ describe('compiler artifact serve orchestration', () => {
     expect(store.getState().compiler.compilations['/repo'].foundry.status).toBe('idle');
   });
 
+  it('clears waiting when a busy retry request fails', async () => {
+    const actions: unknown[] = [];
+    const store = makeStore(actions);
+    store.dispatch(artifactListReceived({
+      repoPath: '/repo', frameworkId: 'foundry', pathOrUrl: '/repo', result: { status: 'busy' },
+    }));
+    store.dispatch(artifactListingFailed({
+      repoPath: '/repo', frameworkId: 'foundry', error: 'network failed',
+    }));
+
+    expect(store.getState().compiler.compilations['/repo'].foundry).toMatchObject({
+      status: 'error', error: 'network failed',
+    });
+    expect(store.getState().compiler.compilations['/repo'].foundry.waiting).toBeUndefined();
+  });
+
   it('immediately reloads a pending listing when its lifecycle job is already terminal', async () => {
     const actions: unknown[] = [];
     const store = makeStore(actions);
@@ -165,5 +187,17 @@ describe('compiler artifact serve orchestration', () => {
 
     expect(actions.filter(isListArtifacts)).toHaveLength(0);
     expect(store.getState().compiler.compilations['/repo']).toBeUndefined();
+  });
+
+  it('cancels busy retries on a profile-list clear', async () => {
+    vi.useFakeTimers();
+    const actions: unknown[] = [];
+    const store = makeStore(actions);
+    store.dispatch(artifactListReceived({
+      repoPath: '/repo', frameworkId: 'foundry', pathOrUrl: '/repo', result: { status: 'busy' },
+    }));
+    store.dispatch(clearRepositoryList());
+    await vi.advanceTimersByTimeAsync(ARTIFACT_BUSY_RETRY_INITIAL_MS);
+    expect(actions.filter(isListArtifacts)).toHaveLength(0);
   });
 });

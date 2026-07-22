@@ -1,14 +1,19 @@
 import { createListenerMiddleware } from '@reduxjs/toolkit';
-import { setRepositoryFrameworks } from '../features/repositories/repositoriesSlice';
+import {
+  clearRepositories,
+  clearRepositoryList,
+  removeRepositoryAction,
+  setRepositoryFrameworks,
+} from '../features/repositories/repositoriesSlice';
 import {
   setCompilationStatus,
   compileProject,
   listArtifacts,
   artifactListReceived,
   artifactListingJobSettled,
+  artifactListingFailed,
   clearArtifactWait,
 } from '../features/compiler/compilerSlice';
-import { removeRepositoryAction } from '../features/repositories/repositoriesSlice';
 import { jobStarted } from '../features/jobs/jobsSlice';
 import { wsSend } from './websocket';
 import type { AppDispatch, RootState } from '../store';
@@ -43,6 +48,12 @@ function cancelBusyRetry(repoPath: string, frameworkId?: string): void {
     busyRetryDelays.delete(key);
     }
   }
+}
+
+function cancelAllBusyRetries(): void {
+  for (const timer of busyRetryTimers.values()) clearTimeout(timer);
+  busyRetryTimers.clear();
+  busyRetryDelays.clear();
 }
 
 // On framework detection, load any artifacts from a previous compile but do
@@ -157,10 +168,25 @@ compilerEffects.startListening({
 });
 
 compilerEffects.startListening({
-  matcher: (action): action is ReturnType<typeof clearArtifactWait> | ReturnType<typeof removeRepositoryAction> =>
-    clearArtifactWait.match(action) || removeRepositoryAction.match(action),
+  actionCreator: artifactListingFailed,
+  effect: async (action) => {
+    cancelBusyRetry(action.payload.repoPath, action.payload.frameworkId);
+  },
+});
+
+compilerEffects.startListening({
+  matcher: (action): action is
+    | ReturnType<typeof clearArtifactWait>
+    | ReturnType<typeof removeRepositoryAction>
+    | ReturnType<typeof clearRepositoryList>
+    | ReturnType<typeof clearRepositories> =>
+    clearArtifactWait.match(action) ||
+    removeRepositoryAction.match(action) ||
+    clearRepositoryList.match(action) ||
+    clearRepositories.match(action),
   effect: async (action) => {
     if (clearArtifactWait.match(action)) cancelBusyRetry(action.payload.repoPath, action.payload.frameworkId);
-    else cancelBusyRetry(action.payload);
+    else if (removeRepositoryAction.match(action)) cancelBusyRetry(action.payload);
+    else cancelAllBusyRetries();
   },
 });

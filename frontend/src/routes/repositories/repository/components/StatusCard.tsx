@@ -2,7 +2,7 @@ import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { CheckCircle, Clock, AlertCircle, Loader2, Hammer } from 'lucide-react';
 import { useAppDispatch } from '../../../../store/hooks';
-import type { ContractSourcePin } from '@ignite/api';
+import type { ContractSourcePin, RepoRecord } from '@ignite/api';
 import {
   cleanCompile,
   compileProject,
@@ -15,6 +15,7 @@ interface StatusCardProps {
   frameworks: IFramework[];
   compilations: Record<string, { status: CompilationStatus; error?: string }>;
   pin?: ContractSourcePin;
+  lifecycleError?: RepoRecord['lastError'];
 }
 
 export default function StatusCard({
@@ -22,6 +23,7 @@ export default function StatusCard({
   frameworks,
   compilations,
   pin,
+  lifecycleError,
 }: StatusCardProps) {
   const dispatch = useAppDispatch();
   // Compilation error shown in the details dialog; null = closed
@@ -48,6 +50,9 @@ export default function StatusCard({
       | 'idle';
     message: string;
   } => {
+    if (lifecycleError) {
+      return { status: 'error', message: 'Compilation failed' };
+    }
     if (frameworks.length === 0) {
       return { status: 'pending', message: 'No frameworks detected' };
     }

@@ -152,6 +152,17 @@ const compilerSlice = createSlice({
       };
     },
     artifactListingJobSettled(_state, _action: PayloadAction<{ jobId: string }>) {},
+    artifactListingFailed(
+      state,
+      action: PayloadAction<{ repoPath: string; frameworkId: string; error: string }>
+    ) {
+      const compilation = state.compilations[action.payload.repoPath]?.[action.payload.frameworkId];
+      if (!compilation || compilation.status !== 'waiting') return;
+      compilation.status = 'error';
+      compilation.error = action.payload.error;
+      delete compilation.waiting;
+      delete compilation.waitingJobId;
+    },
     clearArtifactWait(_state, _action: PayloadAction<{ repoPath: string; frameworkId?: string }>) {},
   },
   extraReducers: (builder) => {
@@ -168,6 +179,7 @@ export const {
   setArtifacts,
   artifactListReceived,
   artifactListingJobSettled,
+  artifactListingFailed,
   clearArtifactWait,
 } = compilerSlice.actions;
 
@@ -304,6 +316,11 @@ export const listArtifacts = ({
       ];
     },
     onError: (error: ApiError) => [
+      artifactListingFailed({
+        repoPath: stateKey ?? compilerScopeKey(pathOrUrl, pin),
+        frameworkId: pluginId,
+        error: formatApiError(error).description,
+      }),
       triggerToast({
         title: 'Failed to Load Artifacts',
         description: `${getRepoName(pathOrUrl)}: ${

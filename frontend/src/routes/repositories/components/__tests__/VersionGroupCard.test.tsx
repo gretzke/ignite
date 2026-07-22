@@ -79,6 +79,28 @@ describe('repository version groups', () => {
     expect(html).toContain('Retry');
   });
 
+  it('shows a failure instead of detecting when a first pinned lifecycle fails', () => {
+    const html = renderToStaticMarkup(
+      <VersionRows
+        url="https://example.test/contracts.git"
+        versions={[{
+          ...version,
+          frameworks: undefined,
+          lastError: {
+            code: 'COMPILE_FAILED',
+            message: 'first pinned compile failed',
+            at: '2026-07-22T00:00:00.000Z',
+          },
+        }]}
+        onRemove={() => undefined}
+        onRetry={() => undefined}
+      />
+    );
+    expect(html).toContain('Failed');
+    expect(html).toContain('Retry');
+    expect(html).not.toContain('Detecting');
+  });
+
   it('renders orphan URL groups with an overflow action menu', () => {
     const html = renderToStaticMarkup(
       <OrphanVersionGroupCard

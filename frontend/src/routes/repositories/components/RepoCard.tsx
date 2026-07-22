@@ -10,6 +10,7 @@ import {
   GitPullRequest,
   FileEdit,
   EllipsisVertical,
+  RotateCcw,
 } from 'lucide-react';
 import { useAppSelector } from '../../../store/hooks';
 import {
@@ -67,7 +68,12 @@ function isRepoClickable(
 // Status indicator component
 function StatusIndicator({ path }: { path: string }) {
   const repositoriesData = useAppSelector(selectRepositoriesData);
+  const lifecycleError = repositoriesData[path]?.lastError;
   const status = getRepoInitStatus(path, repositoriesData);
+
+  if (lifecycleError) {
+    return <span className="chip chip-err"><span className="chip-dot" /> Failed</span>;
+  }
 
   switch (status) {
     case 'loading':
@@ -309,6 +315,8 @@ function FrameworkBadges({ path }: { path: string }) {
   // Only show framework information if repo is successfully initialized
   if (status !== 'success') return null;
 
+  if (repoData?.lastError) return null;
+
   return <FrameworkChips frameworks={repoData?.frameworks} />;
 }
 
@@ -326,6 +334,7 @@ export interface RepoCardProps {
   onPull?: (path: string) => void;
   showPullButton: boolean;
   onResetRepo: (path: string) => void;
+  onRetry?: (path: string) => void;
   onAddVersion?: (path: string, initial?: VersionModalInitialValue) => void;
 }
 
@@ -338,6 +347,7 @@ export default function RepoCard({
   onPull,
   showPullButton,
   onResetRepo,
+  onRetry,
   onAddVersion,
 }: RepoCardProps) {
   const navigate = useNavigate();
@@ -378,6 +388,13 @@ export default function RepoCard({
       </div>
 
       <div className="flex items-center gap-3 shrink-0">
+        {repositoriesData[repo.path]?.lastError && onRetry && (
+          <Tooltip label={repositoriesData[repo.path].lastError?.message ?? 'Retry lifecycle'} placement="top">
+            <button type="button" className="btn btn-secondary btn-sm row-action" onClick={() => onRetry(repo.path)}>
+              <RotateCcw size={14} /> Retry
+            </button>
+          </Tooltip>
+        )}
         {showPullButton && onPull && (
           <Tooltip label="Pull Changes" placement="top">
             <button

@@ -63,6 +63,20 @@ describe('RepositoryPage version scope validation', () => {
       local: [{ ...repositories.local[0], lastError: { code: 'COMPILE_FAILED', message: 'compile failed', at: '2026-07-22T00:00:00.000Z' } }],
     }));
     expect(render(failureStore)).toContain('Retry');
+
+    const detectingFailureStore = makeStore();
+    detectingFailureStore.dispatch(setRepositories({
+      ...repositories,
+      local: [{
+        ...repositories.local[0],
+        frameworks: undefined,
+        lastError: { code: 'COMPILE_FAILED', message: 'first compile failed', at: '2026-07-22T00:00:00.000Z' },
+      }],
+    }));
+    const failureHtml = render(detectingFailureStore);
+    expect(failureHtml).toContain('Retry');
+    expect(failureHtml).toContain('first compile failed');
+    expect(failureHtml).not.toContain('Detecting frameworks');
   });
 
   it('renders version-not-installed and mints no pin for an unknown version query', () => {
