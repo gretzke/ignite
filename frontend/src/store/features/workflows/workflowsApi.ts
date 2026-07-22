@@ -10,8 +10,8 @@ import {
   workflowListRequested,
   workflowOriginsApprovalCleared,
   workflowOriginsApprovalRequested,
-  workflowResolveFailed,
-  workflowResolveStarted,
+  workflowInstallFailed,
+  workflowInstallStarted,
   workflowUpdatesFailed,
   workflowUpdatesLoaded,
   workflowUpdatesRequested,
@@ -24,6 +24,9 @@ function originDetails(error: { body?: { code?: string; details?: unknown } }): 
   const origins = (error.body.details as { origins?: unknown } | undefined)?.origins;
   return Array.isArray(origins) && origins.every((origin) => typeof origin === 'string') ? origins : undefined;
 }
+
+const installDocHashes = new Map<string, string>();
+const installKey = (repoPathOrUrl: string, name: string) => `${repoPathOrUrl}\0${name}`;
 
 export const workflowsApi = {
   list: (repoPathOrUrl: string) => [
@@ -50,22 +53,25 @@ export const workflowsApi = {
       return triggerToast({ title: 'Workflow save failed', description: formatApiError(error).description, variant: 'error' });
     },
   }),
-  resolve: (repoPathOrUrl: string, name: string) => apiClient.dispatch.resolveWorkflow({
-    body: { repoPathOrUrl, name },
+  install: (repoPathOrUrl: string, name: string, expectedDocHash: string) => {
+    installDocHashes.set(installKey(repoPathOrUrl, name), expectedDocHash);
+    return apiClient.dispatch.installWorkflow({
+    body: { repoPathOrUrl, name, expectedDocHash },
     onSuccess: ({ jobId }) => [
-      workflowResolveStarted({ repoPathOrUrl, name, jobId }),
-      jobStarted({ jobId, type: 'workflow.resolve', params: { repoPathOrUrl, name } }),
+      workflowInstallStarted({ repoPathOrUrl, name, jobId }),
+      jobStarted({ jobId, type: 'workflow.install', params: { repoPathOrUrl, name } }),
       wsSend({ type: 'subscribe', jobId }),
     ],
     onError: (error) => {
       const origins = originDetails(error);
-      if (origins) return workflowOriginsApprovalRequested({ repoPathOrUrl, name, origins });
-      return workflowResolveFailed({ repoPathOrUrl, name, error: formatApiError(error).description });
+      if (origins) return workflowOriginsApprovalRequested({ repoPathOrUrl, name, origins, retry: 'install' });
+      return workflowInstallFailed({ repoPathOrUrl, name, error: formatApiError(error).description });
     },
-  }),
-  approveOrigins: (repoPathOrUrl: string, name: string, origins: string[], retry: 'resolve' | 'updates' = 'resolve') => apiClient.dispatch.approveWorkflowOrigins({
+    });
+  },
+  approveOrigins: (repoPathOrUrl: string, name: string, origins: string[], retry: 'install' | 'updates' = 'install') => apiClient.dispatch.approveWorkflowOrigins({
     body: { origins },
-    onSuccess: () => [workflowOriginsApprovalCleared(), ...(retry === 'updates' ? workflowsApi.checkUpdates(repoPathOrUrl, name) : [workflowsApi.resolve(repoPathOrUrl, name)])],
+    onSuccess: () => [workflowOriginsApprovalCleared(), ...(retry === 'updates' ? workflowsApi.checkUpdates(repoPathOrUrl, name) : [workflowsApi.install(repoPathOrUrl, name, installDocHashes.get(installKey(repoPathOrUrl, name)) ?? '')])],
   }),
   checkUpdates: (repoPathOrUrl: string, name: string) => [
     workflowUpdatesRequested({ repoPathOrUrl, name }),

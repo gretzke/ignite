@@ -6,7 +6,7 @@ import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { workflowsApi } from '../../../store/features/workflows/workflowsApi';
 import {
   selectWorkflowDocument,
-  selectWorkflowResolve,
+  selectWorkflowInstall,
   selectWorkflowUpdates,
   workflowOriginsApprovalRequested,
 } from '../../../store/features/workflows/workflowsSlice';
@@ -18,20 +18,20 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const documentState = useAppSelector((state) => selectWorkflowDocument(state, repoPathOrUrl, workflow.name));
-  const resolve = useAppSelector((state) => selectWorkflowResolve(state, repoPathOrUrl, workflow.name));
+  const install = useAppSelector((state) => selectWorkflowInstall(state, repoPathOrUrl, workflow.name));
   const updates = useAppSelector((state) => selectWorkflowUpdates(state, repoPathOrUrl, workflow.name));
   const plugins = useAppSelector(selectPluginRows);
-  const resolveJob = useAppSelector((state) => resolve?.jobId ? state.jobs.byId[resolve.jobId] : undefined);
-  const readinessReady = Boolean(resolve?.result && resolve.result.sources.every((source) => source.status === 'ready') && resolve.result.plugins.every((plugin) => plugin.status === 'installed'));
+  const installJob = useAppSelector((state) => install?.jobId ? state.jobs.byId[install.jobId] : undefined);
+  const readinessReady = Boolean(install?.result && install.result.sources.every((source) => source.status === 'ready') && install.result.plugins.every((plugin) => plugin.status === 'installed'));
 
   useEffect(() => {
     if (workflow.valid && !documentState) dispatch(workflowsApi.get(repoPathOrUrl, workflow.name));
   }, [dispatch, documentState, repoPathOrUrl, workflow.name, workflow.valid]);
   useEffect(() => {
-    if (resolve?.status === 'succeeded' && readinessReady) {
+    if (install?.status === 'succeeded' && readinessReady) {
       navigate(`/deploy?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}`);
     }
-  }, [navigate, readinessReady, repoPathOrUrl, resolve?.status, workflow.name]);
+  }, [navigate, readinessReady, repoPathOrUrl, install?.status, workflow.name]);
 
   if (!workflow.valid) {
     return (
@@ -42,7 +42,7 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
     );
   }
 
-  const busy = resolve?.status === 'queued' || resolve?.status === 'running';
+  const busy = install?.status === 'queued' || install?.status === 'running';
   return (
     <div className="list-row block">
       <div className="flex items-start justify-between gap-4">
@@ -70,16 +70,16 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
           )}
         </div>
         <div className="flex gap-2 shrink-0">
-          <button className="btn btn-primary" disabled={busy} onClick={() => dispatch(workflowsApi.resolve(repoPathOrUrl, workflow.name))}>
+          <button className="btn btn-primary" disabled={busy || !documentState} onClick={() => documentState && dispatch(workflowsApi.install(repoPathOrUrl, workflow.name, documentState.docHash))}>
             {busy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} {busy ? 'Resolving…' : 'Run'}
           </button>
           <button className="btn btn-secondary" onClick={() => navigate(`/deploy?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}&edit=true`)}><Pencil size={15} /> Edit</button>
           <button className="btn btn-secondary" disabled={updates?.loading} onClick={() => workflowsApi.checkUpdates(repoPathOrUrl, workflow.name).forEach((action) => dispatch(action))}><RefreshCw size={15} className={updates?.loading ? 'animate-spin' : ''} /> Updates</button>
         </div>
       </div>
-      {resolve?.status === 'failed' && <div className="text-sm text-err mt-3">{resolve.error && decodeUrlEncodingForDisplay(resolve.error)}</div>}
-      {busy && resolveJob?.logTail.at(-1) && <div className="text-sm text-muted mt-3 mono-data">{decodeUrlEncodingForDisplay(resolveJob.logTail.at(-1)!)}</div>}
-      {resolve?.status === 'succeeded' && !readinessReady && resolve.result && <div className="mt-3 text-sm text-warn space-y-1">{resolve.result.sources.filter((source) => source.status === 'failed').map((source) => <div key={source.id}>{decodeUrlEncodingForDisplay(source.id)}: {decodeUrlEncodingForDisplay(source.reason ?? '')}</div>)}{resolve.result.plugins.filter((plugin) => plugin.status !== 'installed').map((plugin) => <div key={plugin.id}>{decodeUrlEncodingForDisplay(plugin.id)}: {decodeUrlEncodingForDisplay(plugin.status)}</div>)}</div>}
+      {install?.status === 'failed' && <div className="text-sm text-err mt-3">{install.error && decodeUrlEncodingForDisplay(install.error)}</div>}
+      {busy && installJob?.logTail.at(-1) && <div className="text-sm text-muted mt-3 mono-data">{decodeUrlEncodingForDisplay(installJob.logTail.at(-1)!)}</div>}
+      {install?.status === 'succeeded' && !readinessReady && install.result && <div className="mt-3 text-sm text-warn space-y-1">{install.result.sources.filter((source) => source.status === 'failed').map((source) => <div key={source.id}>{decodeUrlEncodingForDisplay(source.id)}: {decodeUrlEncodingForDisplay(source.reason ?? '')}</div>)}{install.result.plugins.filter((plugin) => plugin.status !== 'installed').map((plugin) => <div key={plugin.id}>{decodeUrlEncodingForDisplay(plugin.id)}: {decodeUrlEncodingForDisplay(plugin.status)}</div>)}</div>}
       {updates?.report && (
         <div className="mt-4 card-milky p-3 text-sm space-y-2">
           {updates.report.sources.length === 0 && updates.report.plugins.length === 0 && <div className="text-muted">Everything is up to date.</div>}

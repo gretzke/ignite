@@ -2,7 +2,7 @@ import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type {
   WorkflowCheckUpdatesData,
   WorkflowDocument,
-  WorkflowResolveResult,
+  WorkflowInstallResult,
   WorkflowSummary,
 } from '@ignite/api';
 import type { RootState } from '../../store';
@@ -23,10 +23,10 @@ export interface WorkflowDocumentState {
   docHash: string;
 }
 
-interface ResolveState {
+interface InstallState {
   status: 'queued' | 'running' | 'succeeded' | 'failed';
   jobId?: string;
-  result?: WorkflowResolveResult;
+  result?: WorkflowInstallResult;
   error?: string;
 }
 
@@ -40,13 +40,13 @@ interface WorkflowOriginApproval {
   repoPathOrUrl: string;
   name: string;
   origins: string[];
-  retry?: 'resolve' | 'updates';
+  retry?: 'install' | 'updates';
 }
 
 export interface WorkflowsState {
   byRepo: Record<string, WorkflowListState>;
   documentsByKey: Record<string, WorkflowDocumentState>;
-  resolveByKey: Record<string, ResolveState>;
+  installByKey: Record<string, InstallState>;
   updatesByKey: Record<string, UpdateState>;
   originApproval?: WorkflowOriginApproval;
 }
@@ -54,7 +54,7 @@ export interface WorkflowsState {
 const initialState: WorkflowsState = {
   byRepo: {},
   documentsByKey: {},
-  resolveByKey: {},
+  installByKey: {},
   updatesByKey: {},
 };
 
@@ -93,23 +93,23 @@ const slice = createSlice({
         docHash: action.payload.docHash,
       };
     },
-    workflowResolveStarted(state, action: PayloadAction<{ repoPathOrUrl: string; name: string; jobId: string }>) {
-      state.resolveByKey[workflowKey(action.payload.repoPathOrUrl, action.payload.name)] = {
+    workflowInstallStarted(state, action: PayloadAction<{ repoPathOrUrl: string; name: string; jobId: string }>) {
+      state.installByKey[workflowKey(action.payload.repoPathOrUrl, action.payload.name)] = {
         status: 'queued',
         jobId: action.payload.jobId,
       };
     },
-    workflowResolveRunning(state, action: PayloadAction<{ repoPathOrUrl: string; name: string }>) {
+    workflowInstallRunning(state, action: PayloadAction<{ repoPathOrUrl: string; name: string }>) {
       const key = workflowKey(action.payload.repoPathOrUrl, action.payload.name);
-      state.resolveByKey[key] = { ...state.resolveByKey[key], status: 'running' };
+      state.installByKey[key] = { ...state.installByKey[key], status: 'running' };
     },
-    workflowResolveSucceeded(state, action: PayloadAction<{ repoPathOrUrl: string; name: string; result?: WorkflowResolveResult }>) {
+    workflowInstallSucceeded(state, action: PayloadAction<{ repoPathOrUrl: string; name: string; result?: WorkflowInstallResult }>) {
       const key = workflowKey(action.payload.repoPathOrUrl, action.payload.name);
-      state.resolveByKey[key] = { ...state.resolveByKey[key], status: 'succeeded', result: action.payload.result };
+      state.installByKey[key] = { ...state.installByKey[key], status: 'succeeded', result: action.payload.result };
     },
-    workflowResolveFailed(state, action: PayloadAction<{ repoPathOrUrl: string; name: string; error: string }>) {
+    workflowInstallFailed(state, action: PayloadAction<{ repoPathOrUrl: string; name: string; error: string }>) {
       const key = workflowKey(action.payload.repoPathOrUrl, action.payload.name);
-      state.resolveByKey[key] = { ...state.resolveByKey[key], status: 'failed', error: action.payload.error };
+      state.installByKey[key] = { ...state.installByKey[key], status: 'failed', error: action.payload.error };
     },
     workflowOriginsApprovalRequested(state, action: PayloadAction<WorkflowOriginApproval>) {
       state.originApproval = action.payload;
@@ -133,7 +133,7 @@ const slice = createSlice({
 export const {
   workflowListRequested, workflowListLoaded, workflowListFailed,
   workflowDocumentLoaded,
-  workflowResolveStarted, workflowResolveRunning, workflowResolveSucceeded, workflowResolveFailed,
+  workflowInstallStarted, workflowInstallRunning, workflowInstallSucceeded, workflowInstallFailed,
   workflowOriginsApprovalRequested, workflowOriginsApprovalCleared,
   workflowUpdatesRequested, workflowUpdatesLoaded, workflowUpdatesFailed,
 } = slice.actions;
@@ -143,7 +143,7 @@ export const selectWorkflowList = (state: RootState, repoPathOrUrl: string) =>
   state.workflows.byRepo[repoPathOrUrl];
 export const selectWorkflowDocument = (state: RootState, repoPathOrUrl: string, name: string) =>
   state.workflows.documentsByKey[workflowKey(repoPathOrUrl, name)];
-export const selectWorkflowResolve = (state: RootState, repoPathOrUrl: string, name: string) =>
-  state.workflows.resolveByKey[workflowKey(repoPathOrUrl, name)];
+export const selectWorkflowInstall = (state: RootState, repoPathOrUrl: string, name: string) =>
+  state.workflows.installByKey[workflowKey(repoPathOrUrl, name)];
 export const selectWorkflowUpdates = (state: RootState, repoPathOrUrl: string, name: string) =>
   state.workflows.updatesByKey[workflowKey(repoPathOrUrl, name)];

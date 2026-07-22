@@ -6,9 +6,9 @@ import {
   workflowListRequested,
   workflowListLoaded,
   workflowListFailed,
-  workflowResolveStarted,
-  workflowResolveFailed,
-  workflowResolveSucceeded,
+  workflowInstallStarted,
+  workflowInstallFailed,
+  workflowInstallSucceeded,
   workflowUpdatesLoaded,
   workflowOriginsApprovalRequested,
   workflowOriginsApprovalCleared,
@@ -28,14 +28,14 @@ describe('workflowsSlice', () => {
 
   it('keeps resolve state and an origin approval retry scoped to a workflow', () => {
     const key = { repoPathOrUrl: '/repo', name: 'release' };
-    let state = workflowsReducer(undefined, workflowResolveStarted({ ...key, jobId: 'job-1' }));
+    let state = workflowsReducer(undefined, workflowInstallStarted({ ...key, jobId: 'job-1' }));
     state = workflowsReducer(state, workflowOriginsApprovalRequested({ ...key, origins: ['https://a.test/x', 'https://b.test/y'] }));
     expect(state.originApproval).toEqual({ ...key, origins: ['https://a.test/x', 'https://b.test/y'] });
     state = workflowsReducer(state, workflowOriginsApprovalCleared());
-    state = workflowsReducer(state, workflowResolveSucceeded(key));
-    expect(state.resolveByKey['/repo\0release'].status).toBe('succeeded');
-    state = workflowsReducer(state, workflowResolveFailed({ ...key, error: 'failed' }));
-    expect(state.resolveByKey['/repo\0release']).toMatchObject({ status: 'failed', error: 'failed' });
+    state = workflowsReducer(state, workflowInstallSucceeded(key));
+    expect(state.installByKey['/repo\0release'].status).toBe('succeeded');
+    state = workflowsReducer(state, workflowInstallFailed({ ...key, error: 'failed' }));
+    expect(state.installByKey['/repo\0release']).toMatchObject({ status: 'failed', error: 'failed' });
   });
 
   it('stores update reports per workflow', () => {

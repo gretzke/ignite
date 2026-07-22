@@ -44,8 +44,8 @@ import { getRepoName } from '../../utils/repo';
 import type { AppDispatch, RootState } from '../store';
 import {
   workflowOriginsApprovalRequested,
-  workflowResolveFailed,
-  workflowResolveSucceeded,
+  workflowInstallFailed,
+  workflowInstallSucceeded,
 } from '../features/workflows/workflowsSlice';
 
 // Job-driven compiler/plugin/repo flow. This is the sole place that turns a
@@ -131,11 +131,11 @@ export function routeTerminalJob(
     job.error?.message ?? 'Operation did not complete successfully';
 
   switch (job.type) {
-    case 'workflow.resolve': {
+    case 'workflow.install': {
       const repoPathOrUrl = job.params.repoPathOrUrl as string;
       const name = job.params.name as string;
       if (succeeded) {
-        dispatch(workflowResolveSucceeded({ repoPathOrUrl, name, result: job.result as import('@ignite/api').WorkflowResolveResult }));
+        dispatch(workflowInstallSucceeded({ repoPathOrUrl, name, result: job.result as import('@ignite/api').WorkflowInstallResult }));
       } else {
         const origins = (job.error?.details as { origins?: unknown } | undefined)?.origins;
         if (
@@ -144,7 +144,7 @@ export function routeTerminalJob(
         ) {
           dispatch(workflowOriginsApprovalRequested({ repoPathOrUrl, name, origins }));
         } else {
-          dispatch(workflowResolveFailed({ repoPathOrUrl, name, error: errorMessage }));
+          dispatch(workflowInstallFailed({ repoPathOrUrl, name, error: errorMessage }));
         }
       }
       break;
