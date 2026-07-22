@@ -59,6 +59,7 @@ const { TrustManager } = await import('../../plugins/trust/TrustManager.js');
 const { RepoService } = await import('../../repos/RepoService.js');
 const { VersionStore, canonicalGitUrl, pinnedOrigin } = await import('../../repos/VersionStore.js');
 const { WorkflowPromotionService } = await import('../../workflows/WorkflowPromotionService.js');
+const { WorkflowInstallService } = await import('../../workflows/WorkflowInstallService.js');
 const { JobManager } = await import('../../jobs/JobManager.js');
 const { DeploymentHookService } = await import('../../deployments/DeploymentHookService.js');
 const { PointerSuggestionService } = await import('../../deployments/PointerSuggestionService.js');
@@ -138,18 +139,21 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
     const handlers = createWorkflowHandlers({
       repos,
       devMode: () => true,
-      jobs,
       versionStore: pins,
       getProfileId: async () => PROFILE,
-      registry: { list: async () => ({ session: null, local: [{ pathOrUrl: workspace }], cloned: [] }) } as never,
-      lifecycle: {
+      installService: WorkflowInstallService.create({
+        jobs,
+        versionStore: pins,
+        registry: { list: async () => ({ session: null, local: [{ pathOrUrl: workspace }], cloned: [] }) } as never,
+        lifecycle: {
         runPinnedLifecycle: async (url, commit, profileId) => {
           const clone = await repos.ensureVersion(profileId, url, commit);
           const detected = await PluginExecutor.getInstance().execute('foundry', 'detect', {}, { workspacePath: clone.checkout });
           expect(detected).toMatchObject({ success: true, data: { detected: true } });
           return { pathOrUrl: clone.checkout, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
         },
-      },
+        },
+      }),
     });
 
     const blocked = reply();
@@ -226,16 +230,19 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
     const workflowHandlers = createWorkflowHandlers({
       repos,
       devMode: () => true,
-      jobs,
       versionStore: pins,
       getProfileId: async () => PROFILE,
-      registry: { list: async () => ({ session: null, local: [{ pathOrUrl: workspace }], cloned: [] }) } as never,
-      lifecycle: { runPinnedLifecycle: async (url, commit, profileId) => {
-        const clone = await repos.ensureVersion(profileId, url, commit);
-        return { pathOrUrl: clone.checkout, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
-      } },
-      artifactReadable: async () => true,
-      pluginStatus: async (id, requiredVersion) => ({ id, status: 'installed', installedVersion: requiredVersion }),
+      installService: WorkflowInstallService.create({
+        jobs,
+        versionStore: pins,
+        registry: { list: async () => ({ session: null, local: [{ pathOrUrl: workspace }], cloned: [] }) } as never,
+        lifecycle: { runPinnedLifecycle: async (url, commit, profileId) => {
+          const clone = await repos.ensureVersion(profileId, url, commit);
+          return { pathOrUrl: clone.checkout, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
+        } },
+        artifactReadable: async () => true,
+        pluginStatus: async (id, requiredVersion) => ({ id, status: 'installed', installedVersion: requiredVersion }),
+      }),
     });
     const installReply = reply();
     await workflowHandlers.installWorkflow({ body: { repoPathOrUrl: workspace, name, expectedDocHash: await workflowHash(workspace, name) } } as never, installReply);

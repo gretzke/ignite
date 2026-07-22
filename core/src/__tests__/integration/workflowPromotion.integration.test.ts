@@ -37,6 +37,7 @@ const { validatePlan } = await import('../../deployments/validation.js');
 const { createDeploymentHandlers } = await import('../../api/deployments.js');
 const { createWorkflowHandlers } = await import('../../api/workflows.js');
 const { WorkflowPromotionService } = await import('../../workflows/WorkflowPromotionService.js');
+const { WorkflowInstallService } = await import('../../workflows/WorkflowInstallService.js');
 const { SignerProviderService } = await import('../../signers/SignerProviderService.js');
 const { VaultStore } = await import('../../plugins/vault/VaultStore.js');
 const { PluginConfigStore } = await import('../../plugins/config/PluginConfigStore.js');
@@ -142,14 +143,18 @@ describe.skipIf(!ready)('workflow promotion integration (offline)', () => {
     const repos = RepoService.getInstance();
     const jobs = JobManager.getInstance();
     const workflowHandlers = createWorkflowHandlers({
-      repos, devMode: () => true, jobs, versionStore: pins, getProfileId: async () => PROFILE,
-      registry: { list: async () => ({ session: null, local: [{ pathOrUrl: target }], cloned: [] }) } as never,
-      lifecycle: { runPinnedLifecycle: async (url, sha, profileId) => {
-        const clone = await repos.ensureVersion(profileId, url, sha);
-        const detected = await PluginExecutor.getInstance().execute('foundry', 'detect', {}, { workspacePath: clone.checkout });
-        expect(detected).toMatchObject({ success: true, data: { detected: true } });
-        return { pathOrUrl: clone.checkout, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
-      } },
+      repos, devMode: () => true, versionStore: pins, getProfileId: async () => PROFILE,
+      installService: WorkflowInstallService.create({
+        jobs,
+        versionStore: pins,
+        registry: { list: async () => ({ session: null, local: [{ pathOrUrl: target }], cloned: [] }) } as never,
+        lifecycle: { runPinnedLifecycle: async (url, sha, profileId) => {
+          const clone = await repos.ensureVersion(profileId, url, sha);
+          const detected = await PluginExecutor.getInstance().execute('foundry', 'detect', {}, { workspacePath: clone.checkout });
+          expect(detected).toMatchObject({ success: true, data: { detected: true } });
+          return { pathOrUrl: clone.checkout, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
+        } },
+      }),
     });
     const resolving = reply();
     await workflowHandlers.installWorkflow({ body: { repoPathOrUrl: target, name: WORKFLOW, expectedDocHash: await workflowHash(target, WORKFLOW) } } as never, resolving);

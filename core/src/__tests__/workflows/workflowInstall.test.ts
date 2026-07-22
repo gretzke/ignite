@@ -48,6 +48,13 @@ function makeService(overrides: Partial<WorkflowInstallServiceDeps> = {}) {
 }
 
 describe('WorkflowInstallService', () => {
+  it('uses one production singleton for startup and API consumers', () => {
+    WorkflowInstallService.resetInstance();
+    const startup = WorkflowInstallService.getInstance();
+    expect(WorkflowInstallService.getInstance()).toBe(startup);
+    WorkflowInstallService.resetInstance();
+  });
+
   it('fences a changed document before creating a job', async () => {
     const { service, jobs } = makeService({ readDocument: async () => ({ document, docHash: 'c'.repeat(64) }) });
     await expect(service.start('profile', request)).rejects.toMatchObject({ statusCode: 409, code: 'WORKFLOW_DOC_CHANGED' });
@@ -64,6 +71,29 @@ describe('WorkflowInstallService', () => {
       pins: [{ url: 'https://example.test/box.git', commit: 'a'.repeat(40) }],
     }), expect.any(Function), expect.any(Object));
     expect(service.activeAttemptPins('profile')).toEqual([{ url: 'https://example.test/box.git', commit: 'a'.repeat(40) }]);
+  });
+
+  it('single-flights concurrent starts that cross the first active-attempt check', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const isOriginApproved = vi.fn(async () => {
+      await gate;
+      return true;
+    });
+    const { service, jobs } = makeService({
+      versionStore: { isOriginApproved, addMembership: vi.fn(async () => {}) } as never,
+    });
+
+    const first = service.start('profile', request);
+    const second = service.start('profile', request);
+    await vi.waitFor(() => expect(isOriginApproved).toHaveBeenCalledTimes(2));
+    release();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { jobId: 'job-1', attached: false },
+      { jobId: 'job-1', attached: true },
+    ]);
+    expect(jobs.start).toHaveBeenCalledTimes(1);
   });
 
   it('clears queued-cancel pins through onSettled without running the job', async () => {

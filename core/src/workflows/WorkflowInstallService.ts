@@ -13,6 +13,13 @@ import { VersionStore, pinnedOrigin } from '../repos/VersionStore.js';
 import { ProfileRepoRegistry } from '../filesystem/ProfileRepoRegistry.js';
 import { getLogger } from '../utils/logger.js';
 import { InstalledWorkflowStore } from './InstalledWorkflowStore.js';
+import { RepoService } from '../repos/RepoService.js';
+import { PluginRegistryLoader } from '../assets/PluginRegistryLoader.js';
+import { TrustManager } from '../plugins/trust/TrustManager.js';
+import { PluginExecutor } from '../plugins/containers/PluginExecutor.js';
+import { ContractTypeService } from '../deployments/ContractTypeService.js';
+import { getCompilerArtifactData } from '../api/plugins/compiler/index.js';
+import { readWorkflowDocument } from './WorkflowDocumentReader.js';
 
 export interface WorkflowInstallRequest {
   repoPathOrUrl: string;
@@ -77,9 +84,105 @@ function asCodedError(error: unknown): { code?: string; message: string } {
 }
 
 export class WorkflowInstallService {
+  private static instance: WorkflowInstallService | undefined;
   private readonly activeAttempts = new Map<string, ActiveAttempt>();
 
   constructor(private readonly deps: WorkflowInstallServiceDeps) {}
+
+  static create(
+    deps: Partial<WorkflowInstallServiceDeps> = {},
+  ): WorkflowInstallService {
+    return new WorkflowInstallService({
+      ...WorkflowInstallService.defaultDeps(),
+      ...deps,
+    });
+  }
+
+  static getInstance(): WorkflowInstallService {
+    if (!WorkflowInstallService.instance) {
+      WorkflowInstallService.instance = WorkflowInstallService.create();
+    }
+    return WorkflowInstallService.instance;
+  }
+
+  // Test-only: drop the singleton.
+  static resetInstance(): void {
+    WorkflowInstallService.instance = undefined;
+  }
+
+  private static defaultDeps(): WorkflowInstallServiceDeps {
+    const repos = RepoService.getInstance();
+    const pluginRegistry = PluginRegistryLoader.getInstance();
+    return {
+      readDocument: (repoPathOrUrl, name) =>
+        readWorkflowDocument(
+          repos,
+          repoPathOrUrl,
+          name,
+          process.env.NODE_ENV === 'development',
+        ),
+      jobs: JobManager.getInstance(),
+      lifecycle: RepoLifecycle.getInstance(),
+      versionStore: new VersionStore(),
+      registry: new ProfileRepoRegistry(),
+      store: new InstalledWorkflowStore(),
+      pluginStatus: async (id, requiredVersion, requiredRoles) => {
+        let config;
+        try {
+          config = await pluginRegistry.getPluginConfig(id);
+        } catch {
+          return { id, status: 'missing' };
+        }
+        const installedVersion = config.metadata.version;
+        if ((await TrustManager.getInstance().getGrant(id)).trust === 'untrusted') {
+          return { id, status: 'untrusted', installedVersion };
+        }
+        if (installedVersion !== requiredVersion) {
+          return { id, status: 'version-mismatch', installedVersion };
+        }
+        return [...requiredRoles].every((role) =>
+          config.metadata.types.includes(role)
+        )
+          ? { id, status: 'installed', installedVersion }
+          : { id, status: 'wrong-type', installedVersion };
+      },
+      artifactReadable: async (source, profileId) => {
+        if (source.origin === 'contract-type') {
+          const frozen = await ContractTypeService.getInstance().frozenDescriptor(
+            source.pluginId,
+          );
+          if (frozen.contentHash !== source.contentHash) {
+            throw new WorkflowInstallServiceError(
+              422,
+              'CONTRACT_TYPE_DRIFT',
+              `Contract type ${source.pluginId} no longer matches the workflow content hash`,
+            );
+          }
+          return true;
+        }
+        await getCompilerArtifactData(
+          {
+            executor: PluginExecutor.getInstance(),
+            registryLoader: pluginRegistry,
+            repos,
+          },
+          {
+            contract: {
+              id: source.id,
+              repoPathOrUrl: source.repo.url,
+              frameworkId: source.frameworkId,
+              artifactPath: source.artifactPath,
+              contractName: source.contractName,
+              sourcePath: source.sourcePath,
+              pin: source.repo,
+            },
+            profileId,
+          },
+        );
+        return true;
+      },
+    };
+  }
 
   async start(
     profileId: string,
@@ -95,14 +198,8 @@ export class WorkflowInstallService {
     }
 
     const key = this.attemptKey(profileId, request.repoPathOrUrl, request.name);
-    const active = this.activeAttempts.get(key);
-    if (active) {
-      const live = this.deps.jobs.get(active.jobId);
-      if (!live || (live.state !== 'succeeded' && live.state !== 'failed' && live.state !== 'cancelled')) {
-        return { jobId: active.jobId, attached: true };
-      }
-      this.activeAttempts.delete(key);
-    }
+    const existing = this.attachToLiveAttempt(key);
+    if (existing) return existing;
 
     const pins = this.pinsFor(loaded.document);
     await this.assertOriginsApproved(profileId, pins);
@@ -110,6 +207,10 @@ export class WorkflowInstallService {
     let jobId = '';
     const runner: JobRunner = async (ctx) =>
       this.runAttempt(profileId, request, loaded.document, loaded.docHash, pins, roles, ctx);
+    // All awaits are complete. Re-check and start/register synchronously so
+    // concurrent callers that crossed the earlier check cannot create two jobs.
+    const raced = this.attachToLiveAttempt(key);
+    if (raced) return raced;
     const job = this.deps.jobs.start(
       'workflow.install',
       {
@@ -347,5 +448,23 @@ export class WorkflowInstallService {
 
   private attemptKey(profileId: string, repoPathOrUrl: string, name: string): string {
     return `${profileId}\0${repoPathOrUrl}\0${name}`;
+  }
+
+  private attachToLiveAttempt(
+    key: string,
+  ): { jobId: string; attached: true } | undefined {
+    const active = this.activeAttempts.get(key);
+    if (!active) return undefined;
+    const live = this.deps.jobs.get(active.jobId);
+    if (
+      !live ||
+      (live.state !== 'succeeded' &&
+        live.state !== 'failed' &&
+        live.state !== 'cancelled')
+    ) {
+      return { jobId: active.jobId, attached: true };
+    }
+    this.activeAttempts.delete(key);
+    return undefined;
   }
 }
