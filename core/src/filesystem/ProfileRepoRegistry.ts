@@ -126,7 +126,7 @@ export class ProfileRepoRegistry {
         RepoRecord,
         'frameworks' | 'detectedAt' | 'detectedWith' | 'originUrl'
       >
-    >
+    > & { lastError?: RepoRecord['lastError'] | null }
   ): Promise<void> {
     await ProfileRepoRegistry.profileMutex.run(profileId, async () => {
       const kind = deriveRepoKind(pathOrUrl);
@@ -140,7 +140,10 @@ export class ProfileRepoRegistry {
       }
       const idx = records.findIndex((r) => r.pathOrUrl === pathOrUrl);
       if (idx === -1) return;
-      records[idx] = { ...records[idx], ...patch };
+      const { lastError, ...state } = patch;
+      records[idx] = { ...records[idx], ...state };
+      if (lastError === null) delete records[idx].lastError;
+      else if (lastError !== undefined) records[idx].lastError = lastError;
       await this.deps.fileSystem.writeJsonFile(p, records);
     });
   }

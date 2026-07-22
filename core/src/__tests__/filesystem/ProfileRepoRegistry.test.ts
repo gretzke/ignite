@@ -131,6 +131,18 @@ describe('ProfileRepoRegistry', () => {
     expect(local[0].originUrl).toBe('file:///abs/path/repo');
   });
 
+  it('persists and clears a live repository failure with a null lastError patch', async () => {
+    const registry = new ProfileRepoRegistry(deps);
+    await registry.save('p1', '/abs/path/repo');
+    const lastError = { code: 'COMPILE_FAILED', message: 'compiler failed', at: '2026-07-22T00:00:00.000Z' };
+
+    await registry.updateRepoState('p1', '/abs/path/repo', { lastError });
+    expect((await registry.list('p1')).local[0].lastError).toEqual(lastError);
+
+    await registry.updateRepoState('p1', '/abs/path/repo', { lastError: null });
+    expect((await registry.list('p1')).local[0].lastError).toBeUndefined();
+  });
+
   it('serializes same-profile state writes across registry instances', async () => {
     const firstRegistry = new ProfileRepoRegistry(deps);
     const secondRegistry = new ProfileRepoRegistry(deps);

@@ -71,9 +71,9 @@ const GetFileResponseSchema = createApiResponseSchema<RepoGetFileResult>(
   }),
 );
 
-const CheckReposRequestSchema = createRequestSchema<{ pathOrUrl?: string }>(
+const CheckReposRequestSchema = createRequestSchema<{ pathOrUrl?: string; force?: true }>(
   "CheckReposRequest",
-)(z.object({ pathOrUrl: z.string().min(1).optional() }));
+)(z.object({ pathOrUrl: z.string().min(1).optional(), force: z.literal(true).optional() }));
 
 const RepoCheckResponseSchema = createApiResponseSchema<RepoCheckResult>(
   "RepoCheckResponseSchema",

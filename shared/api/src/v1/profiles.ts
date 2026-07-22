@@ -105,6 +105,7 @@ export interface RepoRecord {
   frameworks?: RepoFrameworkState[]; // undefined = never detected
   detectedAt?: string;
   detectedWith?: RepoDetectionCompiler[];
+  lastError?: { code: string; message: string; at: string };
   /** Canonical origin used for version grouping, including file: URLs. */
   originUrl?: string;
 }
@@ -313,6 +314,7 @@ export const RepoListEntrySchema = z.object({
   frameworks: z.array(RepoFrameworkStateSchema).optional(),
   detectedAt: z.string().optional(),
   detectedWith: z.array(RepoDetectionCompilerSchema).optional(),
+  lastError: z.object({ code: z.string(), message: z.string(), at: z.string() }).optional(),
   originUrl: z.string().min(1).optional(),
   initialized: z.boolean(),
   activeJobId: z.string().optional(),

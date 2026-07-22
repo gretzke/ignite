@@ -856,5 +856,29 @@ describe('repo-manager API handlers', () => {
         pathOrUrl: '/repo-a',
       });
     });
+
+    it('starts a forced catalog recompile for Retry', async () => {
+      const lifecycle = makeFakeLifecycle({
+        checkAndRecompile: vi.fn(async () => ({ started: [] })),
+      });
+      const handlers = createRepoHandlers({
+        repos: makeFakeRepos(),
+        jobs: makeFakeJobs(),
+        lifecycle,
+        getProfileId: async () => 'p1',
+      });
+
+      await handlers.checkRepos(
+        { body: { pathOrUrl: '/repo-a', force: true } } as never,
+        makeReply() as never
+      );
+
+      expect(lifecycle.checkAndRecompile).toHaveBeenCalledWith('p1', {
+        scope: 'all',
+        debounce: 'none',
+        pathOrUrl: '/repo-a',
+        force: 'catalog',
+      });
+    });
   });
 });

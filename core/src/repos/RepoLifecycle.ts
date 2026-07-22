@@ -45,6 +45,7 @@ export interface RecompileCheckOptions {
   scope: 'all' | 'local';
   debounce: 'none' | 'quiet-pause';
   pathOrUrl?: string;
+  force?: 'catalog';
 }
 
 export const LIFECYCLE_JOB_TYPE = 'repo.lifecycle';
@@ -342,6 +343,27 @@ export class RepoLifecycle {
           this.clearJob(pathOrUrl, job.id);
           this.startPendingForce(pathOrUrl);
         }
+      },
+      {
+        onSettled: async (record) => {
+          if (this.isSessionPath(pathOrUrl)) return;
+          if (record.state === 'succeeded') {
+            await this.deps.registry.updateRepoState(profileId, pathOrUrl, {
+              lastError: null,
+            });
+            return;
+          }
+          if (record.state === 'failed' || record.state === 'cancelled') {
+            const error = record.error;
+            await this.deps.registry.updateRepoState(profileId, pathOrUrl, {
+              lastError: {
+                code: error?.code ?? ErrorCodes.OPERATION_EXECUTION_FAILED,
+                message: error?.message ?? 'Repository lifecycle was cancelled.',
+                at: record.finishedAt ?? new Date().toISOString(),
+              },
+            });
+          }
+        },
       }
     );
     // Safe: JobManager defers the runner to a microtask, so the map is
@@ -590,6 +612,16 @@ export class RepoLifecycle {
       : candidates;
 
     for (const record of filtered) {
+      // Retry is an explicit user request. Let startLifecycle either create
+      // the forced run immediately or retain it as this repo's pending force
+      // behind an active lifecycle job.
+      if (options.force === 'catalog') {
+        const job = this.startLifecycle(record.pathOrUrl, profileId, 'recompile', {
+          force: 'catalog',
+        });
+        started.push({ pathOrUrl: record.pathOrUrl, jobId: job.id });
+        continue;
+      }
       if (this.activeJobFor(record.pathOrUrl)) continue;
 
       const release = this.beginRepoActivity(record.pathOrUrl);

@@ -10,7 +10,7 @@ import {
   withLifecyclePermit,
   type RepoLifecycleDeps,
 } from '../../repos/RepoLifecycle.js';
-import type { JobRunner } from '../../jobs/JobManager.js';
+import type { JobRunner, JobStartOptions } from '../../jobs/JobManager.js';
 import { createTestDirectory, cleanupTestDirectory } from '../setup.js';
 import { KeyedMutex } from '../../utils/KeyedMutex.js';
 import { ArtifactListingCache, artifactCacheIdentity, artifactListingCacheKey } from '../../repos/ArtifactListingCache.js';
@@ -18,6 +18,7 @@ import { ArtifactListingCache, artifactCacheIdentity, artifactListingCacheKey } 
 interface StartedJob {
   record: JobRecord;
   runner: JobRunner;
+  opts?: JobStartOptions;
 }
 
 // Deferred-execution fake mirroring JobManager's contract: start() returns a
@@ -31,7 +32,7 @@ function makeFakeJobs() {
     started,
     states,
     start: vi.fn(
-      (type: string, params: Record<string, unknown>, runner: JobRunner) => {
+      (type: string, params: Record<string, unknown>, runner: JobRunner, opts?: JobStartOptions) => {
         const record: JobRecord = {
           id: `job-${nextId++}`,
           type,
@@ -41,7 +42,7 @@ function makeFakeJobs() {
           events: [],
         };
         states.set(record.id, 'running');
-        started.push({ record, runner });
+        started.push({ record, runner, opts });
         return record;
       }
     ),
@@ -60,8 +61,20 @@ function makeFakeJobs() {
         try {
           await next.runner(ctx);
           states.set(next.record.id, 'succeeded');
-        } catch {
+          await next.opts?.onSettled?.({ ...next.record, state: 'succeeded' });
+        } catch (error) {
           states.set(next.record.id, 'failed');
+          await next.opts?.onSettled?.({
+            ...next.record,
+            state: 'failed',
+            finishedAt: new Date().toISOString(),
+            error: {
+              code: error && typeof error === 'object' && 'code' in error
+                ? String((error as { code: unknown }).code)
+                : 'OPERATION_EXECUTION_FAILED',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
         }
         next = started.find((s) => states.get(s.record.id) === 'running');
       }
@@ -131,7 +144,7 @@ function makeLifecycle(opts: {
         RepoRecord,
         'frameworks' | 'detectedAt' | 'detectedWith' | 'originUrl'
       >
-    >;
+    > & { lastError?: RepoRecord['lastError'] | null };
   }> = [];
   const registry = {
     updates,
@@ -149,7 +162,7 @@ function makeLifecycle(opts: {
             RepoRecord,
             'frameworks' | 'detectedAt' | 'detectedWith' | 'originUrl'
           >
-        >
+        > & { lastError?: RepoRecord['lastError'] | null }
       ) => {
         updates.push({ profileId, pathOrUrl, patch });
       }
@@ -222,6 +235,63 @@ const WATCH: PluginResponse<unknown> = {
 const OK: PluginResponse<unknown> = { success: true, data: {} };
 
 describe('RepoLifecycle', () => {
+  it('persists a live lifecycle failure after the terminal job and clears it after success', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, registry, executor } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a' }],
+        responses: {
+          foundry: {
+            detect: DETECTED,
+            getWatchPaths: WATCH,
+            install: OK,
+            compile: { success: false, error: { code: 'COMPILE_FAILED', message: 'compiler failed' } },
+          },
+        },
+      });
+
+      lifecycle.startLifecycle('/repo-a', 'p1', 'add');
+      await jobs.runAll();
+      expect(registry.updates.at(-1)?.patch.lastError).toMatchObject({
+        code: 'COMPILE_FAILED',
+        message: 'compiler failed',
+      });
+
+      registry.updates.length = 0;
+      executor.execute.mockImplementation(async (_pluginId: string, op: string) =>
+        ({ detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK }[op] ?? OK) as PluginResponse<unknown>
+      );
+      lifecycle.startLifecycle('/repo-a', 'p1', 'add');
+      await jobs.runAll();
+      expect(registry.updates.at(-1)?.patch).toMatchObject({ lastError: null });
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('starts a catalog-forced recompile even when no framework has drifted', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a', frameworks: [] }],
+      });
+
+      const result = await lifecycle.checkAndRecompile('p1', {
+        scope: 'all',
+        debounce: 'none',
+        pathOrUrl: '/repo-a',
+        force: 'catalog',
+      });
+
+      expect(result.started).toEqual([{ pathOrUrl: '/repo-a', jobId: 'job-0' }]);
+      expect(jobs.started[0].record.params).toMatchObject({ force: 'catalog' });
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('invalidates and clears a framework generation before starting its compile', async () => {
     const dir = await createTestDirectory();
     try {
@@ -647,8 +717,8 @@ describe('RepoLifecycle', () => {
 
       // Finalization persists the successful framework before the lifecycle's
       // final metadata write, so a later framework failure cannot erase it.
-      expect(registry.updates).toHaveLength(2);
-      const patch = registry.updates.at(-1)!.patch;
+      expect(registry.updates).toHaveLength(3);
+      const patch = registry.updates.findLast((update) => update.patch.frameworks)!.patch;
       expect(patch.frameworks).toHaveLength(1);
       expect(patch.frameworks?.[0].id).toBe('foundry');
       expect(patch.frameworks?.[0].watchPaths?.sources).toEqual(['src']);
@@ -893,7 +963,7 @@ describe('RepoLifecycle', () => {
       lifecycle.startLifecycle('/repo-a', 'p1', 'sweep');
       await jobs.runAll();
 
-      const patch = registry.updates.at(-1)?.patch;
+      const patch = registry.updates.findLast((update) => update.patch.frameworks)?.patch;
       expect(patch?.frameworks?.map((f) => f.id)).toEqual(['foundry']);
       // Prior compile-time state carried over untouched.
       expect(patch?.frameworks?.[0].watchPaths).toEqual(
@@ -922,7 +992,7 @@ describe('RepoLifecycle', () => {
       });
       lifecycle.startLifecycle('/repo-a', 'p1', 'sweep');
       await jobs.runAll();
-      expect(registry.updates.at(-1)?.patch.frameworks).toEqual([]);
+      expect(registry.updates.findLast((update) => update.patch.frameworks)?.patch.frameworks).toEqual([]);
     } finally {
       await cleanupTestDirectory(dir);
     }
@@ -1987,10 +2057,11 @@ describe('RepoLifecycle', () => {
 
       lifecycle.startLifecycle('/repo-a', 'p1', 'add');
       await jobs.runAll();
-      expect(registry.updates.at(-1)?.patch.frameworks?.[0].fingerprint?.sources).toBe(beforeCompile);
+      const persistedFrameworks = registry.updates.findLast((update) => update.patch.frameworks)?.patch.frameworks;
+      expect(persistedFrameworks?.[0].fingerprint?.sources).toBe(beforeCompile);
       await expect(lifecycle.measureFramework(
         dir,
-        registry.updates.at(-1)?.patch.frameworks?.[0] as RepoFrameworkState
+        persistedFrameworks?.[0] as RepoFrameworkState
       )).resolves.toMatchObject({ comparable: true, drifted: true });
     } finally {
       await cleanupTestDirectory(dir);

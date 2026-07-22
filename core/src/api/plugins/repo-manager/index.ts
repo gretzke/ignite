@@ -320,14 +320,22 @@ export function createRepoHandlers(deps?: Partial<RepoHandlerDeps>) {
     },
 
     checkRepos: async (
-      request: FastifyRequest<{ Body: { pathOrUrl?: string } }>,
+      request: FastifyRequest<{ Body: { pathOrUrl?: string; force?: true } }>,
       reply: FastifyReply
     ): Promise<IApiResponse<RepoCheckResult>> => {
       try {
         const profileId = await d.getProfileId();
+        const forced = request.body?.force === true;
         const result = await d.lifecycle.checkAndRecompile(
           profileId,
-          {
+          forced ? {
+            scope: 'all',
+            debounce: 'none',
+            force: 'catalog',
+            ...(request.body?.pathOrUrl
+              ? { pathOrUrl: request.body.pathOrUrl }
+              : {}),
+          } : {
             scope: 'local',
             debounce: 'quiet-pause',
             ...(request.body?.pathOrUrl
