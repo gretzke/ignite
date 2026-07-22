@@ -3,6 +3,7 @@ import type {
   DeletePluginConfigQuery,
   GetPluginConfigData,
   PluginConfigField,
+  PluginInstallSourceData,
   PluginPermissionRequest,
   PluginVersionInfoData,
   SetPluginConfigValueRequest,
@@ -42,6 +43,7 @@ export interface PluginRow {
   // Effective metadata served by the API: repository reads are inherent to
   // container plugins and therefore informational rather than grantable.
   repoRead?: boolean;
+  source?: PluginInstallSourceData;
 }
 
 // Drives the global permissions modal: opened from a plugin card, after an
@@ -106,6 +108,7 @@ const pluginsSlice = createSlice({
             requested: PluginPermissionRequest[];
             configFields?: PluginConfigField[];
             repoRead?: boolean;
+            source?: PluginInstallSourceData;
           }
         >
       >
@@ -127,6 +130,7 @@ const pluginsSlice = createSlice({
           requested: m.requested,
           configFields: m.configFields,
           repoRead: m.repoRead,
+          source: m.source,
         };
       }
     },
@@ -243,6 +247,7 @@ export const pluginsApi = {
                   requested: m.permissions ?? [],
                   configFields: m.configFields,
                   repoRead: m.repoRead,
+                  source: m.source,
                 },
               ])
             )
@@ -313,7 +318,12 @@ export const pluginsApi = {
   setPermissions(
     pluginId: string,
     trust: 'trusted' | 'untrusted',
-    permissions: { repoWrite: boolean; net: boolean; contractBytecode: boolean; secrets: string[] }
+    permissions: {
+      repoWrite: boolean;
+      net: boolean;
+      contractBytecode: boolean;
+      secrets: string[];
+    }
   ) {
     return apiClient.dispatch.setPluginTrust({
       params: { pluginId },

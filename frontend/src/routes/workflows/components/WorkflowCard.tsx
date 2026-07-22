@@ -20,7 +20,10 @@ import {
   selectWorkflowUpdates,
   workflowOriginsApprovalRequested,
 } from '../../../store/features/workflows/workflowsSlice';
-import { selectPluginRows, type PluginRow } from '../../../store/features/plugins/pluginsSlice';
+import {
+  selectPluginRows,
+  type PluginRow,
+} from '../../../store/features/plugins/pluginsSlice';
 import {
   acceptWorkflowPinUpdate,
   hydrateWorkflowDraft,
@@ -88,20 +91,30 @@ export default function WorkflowCard({
     );
   }
 
-  const busy = entry?.attempt?.status === 'running' || installPending || install?.status === 'queued' || install?.status === 'running';
+  const busy =
+    entry?.attempt?.status === 'running' ||
+    installPending ||
+    install?.status === 'queued' ||
+    install?.status === 'running';
   const selectedPlugin = documentState?.document.requiredPlugins.find(
     (plugin) => plugin.id === pluginId
   );
-  const selectedInstalledPlugin = plugins.find((plugin) => plugin.pluginId === pluginId);
+  const selectedInstalledPlugin = plugins.find(
+    (plugin) => plugin.pluginId === pluginId
+  );
   const managePlugin = (plugin: PluginRow | undefined) => {
     if (!plugin) return undefined;
     return {
       pluginId: plugin.pluginId,
       name: plugin.name ?? plugin.pluginId,
-      ...(selectedPlugin?.source?.kind === 'git' ? { url: selectedPlugin.source.url } : {}),
-      currentRef: selectedPlugin?.source?.kind === 'git' && selectedPlugin.source.track?.mode === 'release'
-        ? selectedPlugin.source.track.version
-        : undefined,
+      ...(selectedPlugin?.source?.kind === 'git'
+        ? { url: selectedPlugin.source.url }
+        : {}),
+      currentRef:
+        selectedPlugin?.source?.kind === 'git' &&
+        selectedPlugin.source.track?.mode === 'release'
+          ? selectedPlugin.source.track.version
+          : undefined,
     };
   };
   const suppressStateAction = status?.loading && !entry;
@@ -212,7 +225,8 @@ export default function WorkflowCard({
               ))}
         </div>
         <div className="flex gap-2 shrink-0">
-          {!busy && !suppressStateAction &&
+          {!busy &&
+            !suppressStateAction &&
             entry?.installState === 'not-installed' && (
               <button
                 className="btn btn-primary"
@@ -222,7 +236,8 @@ export default function WorkflowCard({
                 <Download size={15} /> Install
               </button>
             )}
-          {!busy && !suppressStateAction &&
+          {!busy &&
+            !suppressStateAction &&
             entry?.installState === 'out-of-sync' && (
               <button
                 className="btn btn-primary"
@@ -232,19 +247,18 @@ export default function WorkflowCard({
                 <RefreshCw size={15} /> Update
               </button>
             )}
-          {!busy && !suppressStateAction &&
-            entry?.installState === 'ready' && (
-              <button
-                className="btn btn-primary"
-                onClick={() =>
-                  navigate(
-                    `/deploy?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}`
-                  )
-                }
-              >
-                <Play size={15} /> Run
-              </button>
-            )}
+          {!busy && !suppressStateAction && entry?.installState === 'ready' && (
+            <button
+              className="btn btn-primary"
+              onClick={() =>
+                navigate(
+                  `/deploy?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}`
+                )
+              }
+            >
+              <Play size={15} /> Run
+            </button>
+          )}
           <button
             className="btn btn-secondary"
             disabled={busy}
@@ -299,7 +313,9 @@ export default function WorkflowCard({
         </div>
       )}
       {install?.error && (
-        <div className="mt-3 text-sm text-err">{sanitizeDisplayText(install.error)}</div>
+        <div className="mt-3 text-sm text-err">
+          {sanitizeDisplayText(install.error)}
+        </div>
       )}
       {updates?.report && (
         <div className="mt-4 card-milky p-3 text-sm space-y-2">
@@ -388,7 +404,7 @@ export default function WorkflowCard({
                           })
                         );
                         navigate(
-                          `/workflows/edit?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}&acceptDocHash=${encodeURIComponent(updates.report!.docHash)}`
+                          `/workflows/edit?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}&acceptDocHash=${encodeURIComponent(updates.report!.docHash)}&acceptSourceId=${encodeURIComponent(row.sourceId)}&acceptCommit=${encodeURIComponent(commit)}${ref ? `&acceptRef=${encodeURIComponent(ref)}&acceptRefKind=${encodeURIComponent(upgrade ? 'tag' : (requiredSource?.repo.refKind ?? 'branch'))}` : ''}`
                         );
                       }}
                     >

@@ -7,6 +7,30 @@ import {
 } from '../workflowsSlice';
 
 describe('workflowsApi', () => {
+  it('surfaces both CAS conflict variants to the editor', () => {
+    for (const code of ['WORKFLOW_DOC_CONFLICT', 'WORKFLOW_DELETED'] as const) {
+      let received: string | undefined;
+      const action = workflowsApi.saveWorkflow({
+        repoPathOrUrl: '/repo', name: 'release', baseDocHash: 'a'.repeat(64),
+        document: { schemaVersion: 1, sources: [], steps: [], requiredPlugins: [], outputs: { hooks: [] } },
+        onConflict: (value) => { received = value; },
+      }) as unknown as { payload: { onError: (error: unknown) => unknown } };
+      expect(action.payload.onError({ status: 409, body: { code } })).toBeUndefined();
+      expect(received).toBe(code);
+    }
+  });
+
+  it('returns the saved hash to install with the new fence', () => {
+    let saved: string | undefined;
+    const action = workflowsApi.saveWorkflow({
+      repoPathOrUrl: '/repo', name: 'release', baseDocHash: 'a'.repeat(64),
+      document: { schemaVersion: 1, sources: [], steps: [], requiredPlugins: [], outputs: { hooks: [] } },
+      onSaved: (hash) => { saved = hash; },
+    }) as unknown as { payload: { onSuccess: (data: { docHash: string }) => unknown } };
+    action.payload.onSuccess({ docHash: 'b'.repeat(64) });
+    expect(saved).toBe('b'.repeat(64));
+  });
+
   it('sends the card document hash as the install fence', () => {
     const action = workflowsApi.installWorkflow({
       repoPathOrUrl: '/repo',
