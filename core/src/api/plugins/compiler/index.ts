@@ -595,7 +595,21 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
           profileId, canonicalIdentity: identity, frameworkId: pluginId,
           pluginId, pluginVersion: config.metadata.version, generation,
         });
-        const checkout = pin ? d.versionStore.checkoutPath(pin.url, pin.commit) : pathOrUrl;
+
+        // A cloned repo's pathOrUrl is its Git URL, not the host directory
+        // mounted into the compiler container. Resolve the live workspace
+        // before checking the cache, and treat an uninitialized workspace as
+        // an empty (but ready) artifact list rather than a phantom compile.
+        let checkout: string;
+        if (pin) {
+          checkout = d.versionStore.checkoutPath(pin.url, pin.commit);
+        } else {
+          try {
+            checkout = await d.repos.resolveExistingWorkspacePath(pathOrUrl, profileId);
+          } catch {
+            return reply.status(200).send({ data: { status: 'ready', artifacts: [] } });
+          }
+        }
         const exists = await fs.stat(checkout).then(() => true).catch(() => false);
         const cached = key && exists ? artifactListingCache.get(key) : undefined;
         if (cached) return reply.status(200).send({ data: { status: 'ready', artifacts: cached } });
@@ -604,32 +618,36 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         const active = RepoLifecycle.getInstance().activeJobFor(pathOrUrl);
         if (active && !active.startsWith('direct:')) return reply.status(200).send({ data: { status: 'pending', jobId: active } });
         if (active) return reply.status(200).send({ data: { status: 'busy' } });
-        if (!key || !state) return reply.status(200).send({ data: { status: 'busy' } });
 
-        const execute = async (workspacePath: string) => artifactListingCache.getOrLoad({
-          key, workspacePath, artifactPaths: state.watchPaths?.artifacts ?? [],
-          load: async () => {
-            const result = await d.executor.execute(pluginId, 'listArtifacts', { pathOrUrl }, { workspacePath });
-            if (!result.success) throw Object.assign(new Error(result.error?.message ?? 'Failed to list artifacts'), { result });
-            return (result.data as ArtifactListResult | undefined)?.artifacts ?? [];
-          },
-        });
+        const listArtifacts = async (workspacePath: string) => {
+          const result = await d.executor.execute(pluginId, 'listArtifacts', { pathOrUrl }, { workspacePath });
+          if (!result.success) throw Object.assign(new Error(result.error?.message ?? 'Failed to list artifacts'), { result });
+          return (result.data as ArtifactListResult | undefined)?.artifacts ?? [];
+        };
+        // Generations make cached results safe. Older/failed compiles lack
+        // one, but listArtifacts can still inspect the plugin's output dir;
+        // those reads deliberately remain uncached.
+        const execute = async (workspacePath: string) => key
+          ? artifactListingCache.getOrLoad({
+            key, workspacePath, artifactPaths: state?.watchPaths?.artifacts ?? [],
+            load: () => listArtifacts(workspacePath),
+          })
+          : listArtifacts(workspacePath);
         let attempted: { acquired: boolean; value?: Awaited<ReturnType<typeof execute>> };
         if (pin && d.repos.tryWithVersionMaterialized) {
           attempted = await d.repos.tryWithVersionMaterialized(profileId, pin.url, pin.commit, { ref: pin.ref }, ({ checkout: workspacePath }) => execute(workspacePath));
         } else if (!pin && d.repos.tryWithRepoLock) {
-          attempted = await d.repos.tryWithRepoLock(pathOrUrl, profileId, async () => {
-            const workspacePath = await d.repos.resolveExistingWorkspacePath(pathOrUrl);
-            return execute(workspacePath);
-          });
+          attempted = await d.repos.tryWithRepoLock(pathOrUrl, profileId, () => execute(checkout));
         } else {
           // Compatibility for narrow unit fakes. Production RepoService always
           // implements the non-blocking helpers above.
-          attempted = { acquired: true, value: await execute(pin ? checkout : pathOrUrl) };
+          attempted = { acquired: true, value: await execute(checkout) };
         }
         if (attempted.acquired) return reply.status(200).send({ data: { status: 'ready', artifacts: attempted.value ?? [] } });
         const after = RepoLifecycle.getInstance().activeJobFor(pathOrUrl);
-        return reply.status(200).send({ data: after && !after.startsWith('direct:') ? { status: 'pending', jobId: after } : { status: 'busy' } });
+        if (after && !after.startsWith('direct:')) return reply.status(200).send({ data: { status: 'pending', jobId: after } });
+        if (after) return reply.status(200).send({ data: { status: 'busy' } });
+        return reply.status(200).send({ data: { status: 'ready', artifacts: [] } });
       } catch (error) {
         return sendCaughtError(
           reply,
