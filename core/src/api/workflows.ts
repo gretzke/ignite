@@ -185,6 +185,8 @@ export function createWorkflowHandlers(deps?: Partial<WorkflowHandlerDeps>) {
           if (current !== null) {
             if (!request.body.baseDocHash) throw new WorkflowHttpError(409, 'WORKFLOW_BASE_HASH_REQUIRED', 'baseDocHash is required when updating an existing workflow');
             if (hash(current) !== request.body.baseDocHash) throw new WorkflowHttpError(409, 'WORKFLOW_DOC_CONFLICT', 'Workflow changed since it was loaded');
+          } else if (request.body.baseDocHash) {
+            throw new WorkflowHttpError(409, 'WORKFLOW_DELETED', 'Workflow was deleted since it was loaded');
           }
           await writeFile(relPath(request.params.name), raw);
           return hash(raw);

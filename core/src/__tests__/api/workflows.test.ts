@@ -103,6 +103,24 @@ describe('workflow discovery/read/save API', () => {
     expect([one.statusCode, two.statusCode].sort()).toEqual([200, 409]);
   });
 
+  it('does not recreate a workflow deleted after its base hash was loaded', async () => {
+    const url = `/api/v1/repos/workflows/valid?pathOrUrl=${encodeURIComponent(root)}`;
+    const created = await app.inject({ method: 'PUT', url, payload: { document: document() } });
+    const baseDocHash = created.json().data.docHash;
+    await fs.unlink(path.join(root, 'ignite', 'workflows', 'valid.json'));
+    const response = await app.inject({ method: 'PUT', url, payload: { document: document(), baseDocHash } });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ code: 'WORKFLOW_DELETED', message: 'Workflow was deleted since it was loaded' });
+    await expect(fs.stat(path.join(root, 'ignite', 'workflows', 'valid.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('creates a new workflow without a base hash', async () => {
+    const url = `/api/v1/repos/workflows/new?pathOrUrl=${encodeURIComponent(root)}`;
+    const response = await app.inject({ method: 'PUT', url, payload: { document: document() } });
+    expect(response.statusCode).toBe(200);
+    await expect(fs.stat(path.join(root, 'ignite', 'workflows', 'new.json'))).resolves.toBeDefined();
+  });
+
   it('rejects unsafe names, ssh pins, and closure violations; file URLs require dev mode', async () => {
     const put = (name: string, doc: unknown) => app.inject({ method: 'PUT', url: `/api/v1/repos/workflows/${name}?pathOrUrl=${encodeURIComponent(root)}`, payload: { document: doc } });
     expect((await put('..%2Fsecret', document())).statusCode).toBe(400);

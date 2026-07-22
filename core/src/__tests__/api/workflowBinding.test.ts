@@ -43,12 +43,14 @@ function handlers(overrides: Record<string, unknown> = {}) {
   const launch = vi.fn(async (args) => ({ id: 'run', ...args }));
   const validate = vi.fn(async () => ({ report, frozen: {} }));
   const readWorkflow = vi.fn(async () => ({ document, raw: '{}', docHash: HASH }));
+  const installedWorkflows = { get: vi.fn(async () => ({ installed: { docHash: HASH } })) };
   return {
-    launch, validate, readWorkflow,
+    launch, validate, readWorkflow, installedWorkflows,
     value: createDeploymentHandlers({
       engine: { launch, resolveLane: vi.fn(), resume: vi.fn(), abort: vi.fn() } as never,
       validate: validate as never,
       readWorkflow: readWorkflow as never,
+      installedWorkflows: installedWorkflows as never,
       getProfileManager: async () => ({ getCurrentProfile: () => 'p1' }),
       ...overrides,
     } as never),
@@ -68,6 +70,24 @@ describe('workflow deployment binding', () => {
     await h.value.createDeploymentRun({ body: { plan, rpcSelection: { '1': 'rpc' }, workflow, idempotencyKey: 'key' } } as never, launched);
     expect(launched.statusCode).toBe(200);
     expect(h.launch).toHaveBeenCalledWith(expect.objectContaining({ workflow: { ...workflow, docHash: HASH }, workflowDocument: document }));
+  });
+
+  it('rejects workflow-bound runs when no installed workflow record exists', async () => {
+    const h = handlers({ installedWorkflows: { get: vi.fn(async () => undefined) } });
+    const res = reply();
+    await h.value.createDeploymentRun({ body: { plan, rpcSelection: { '1': 'rpc' }, workflow, idempotencyKey: 'key' } } as never, res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toMatchObject({ code: 'WORKFLOW_OUT_OF_SYNC', message: expect.stringContaining('release') });
+    expect(h.launch).not.toHaveBeenCalled();
+  });
+
+  it('rejects workflow-bound runs when the document changed after installation', async () => {
+    const h = handlers({ installedWorkflows: { get: vi.fn(async () => ({ installed: { docHash: 'b'.repeat(64) } })) } });
+    const res = reply();
+    await h.value.createDeploymentRun({ body: { plan, rpcSelection: { '1': 'rpc' }, workflow, idempotencyKey: 'key' } } as never, res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toMatchObject({ code: 'WORKFLOW_OUT_OF_SYNC', message: expect.stringContaining('release') });
+    expect(h.launch).not.toHaveBeenCalled();
   });
 
   it.each([
