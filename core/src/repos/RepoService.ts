@@ -294,6 +294,14 @@ export class RepoService {
     return this.locks.run(this.lockKey(pathOrUrl), fn);
   }
 
+  async tryWithRepoLock<T>(
+    pathOrUrl: string,
+    _profileId: string | undefined,
+    fn: () => Promise<T>
+  ): Promise<{ acquired: true; value: T } | { acquired: false }> {
+    return this.locks.tryRun(this.lockKey(pathOrUrl), fn);
+  }
+
   private async withVersionCheckoutLock<T>(
     url: string,
     commit: string,
@@ -358,6 +366,41 @@ export class RepoService {
           });
         })
     );
+  }
+
+  async tryWithVersionMaterialized<T>(
+    profileId: string,
+    url: string,
+    commit: string,
+    opts: EnsureVersionOptions,
+    fn: (materialized: {
+      checkout: string;
+      rematerialize: () => Promise<{ checkout: string }>;
+    }) => Promise<T>
+  ): Promise<{ acquired: true; value: T } | { acquired: false }> {
+    const group = await this.locks.tryRun(
+      `version-group:${this.versionStore.groupDir(url)}`,
+      async () => this.locks.tryRun(
+        `version:${this.versionStore.checkoutPath(url, commit)}`,
+        async () => {
+          await this.validateVersionRequest(profileId, url, commit, opts);
+          // We already hold group -> checkout. Calling withVersionMaterialized
+          // here would re-enter KeyedMutex and deadlock.
+          const ensure = () => this.ensureVersionLocked(url, commit, opts);
+          const materialized = await ensure();
+          return fn({
+            ...materialized,
+            rematerialize: async () => {
+              await this.invalidateVersionArtifacts(url, commit);
+              await fs.rm(this.versionStore.checkoutPath(url, commit), { recursive: true, force: true });
+              return ensure();
+            },
+          });
+        }
+      )
+    );
+    if (!group.acquired || !group.value.acquired) return { acquired: false };
+    return { acquired: true, value: group.value.value };
   }
 
   // A normal clone rather than a worktree gives every version a real .git
