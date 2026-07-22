@@ -7,8 +7,8 @@ import {
   artifactListReceived,
   artifactListingJobSettled,
   clearArtifactWait,
-  removeRepository,
 } from '../features/compiler/compilerSlice';
+import { removeRepositoryAction } from '../features/repositories/repositoriesSlice';
 import { jobStarted } from '../features/jobs/jobsSlice';
 import { wsSend } from './websocket';
 import type { AppDispatch, RootState } from '../store';
@@ -22,16 +22,25 @@ import type { AppDispatch, RootState } from '../store';
 // for the compile chain (detect -> load artifacts; install -> compile ->
 // reload artifacts).
 export const compilerEffects = createListenerMiddleware();
-export const ARTIFACT_BUSY_RETRY_MS = 100;
+export const ARTIFACT_BUSY_RETRY_INITIAL_MS = 250;
+export const ARTIFACT_BUSY_RETRY_MAX_MS = 2_000;
 const busyRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const busyRetryDelays = new Map<string, number>();
 
 const retryKey = (repoPath: string, frameworkId: string) => `${repoPath}\u0000${frameworkId}`;
 function cancelBusyRetry(repoPath: string, frameworkId?: string): void {
+  const matchesScope = (key: string) =>
+    (key === repoPath || key.startsWith(`${repoPath}\u0000`)) &&
+    (!frameworkId || key === retryKey(repoPath, frameworkId));
   for (const [key, timer] of busyRetryTimers) {
-    if (key === repoPath || key.startsWith(`${repoPath}\u0000`)) {
-      if (frameworkId && key !== retryKey(repoPath, frameworkId)) continue;
+    if (matchesScope(key)) {
       clearTimeout(timer);
       busyRetryTimers.delete(key);
+    }
+  }
+  for (const key of busyRetryDelays.keys()) {
+    if (matchesScope(key)) {
+    busyRetryDelays.delete(key);
     }
   }
 }
@@ -109,6 +118,11 @@ compilerEffects.startListening({
     }
     if (result.status === 'pending') {
       cancelBusyRetry(repoPath, frameworkId);
+      const existingJob = (listenerApi.getState() as RootState).jobs.byId[result.jobId];
+      if (existingJob?.state === 'succeeded' || existingJob?.state === 'failed' || existingJob?.state === 'cancelled') {
+        dispatch(listArtifacts({ pathOrUrl, pluginId: frameworkId, ...(pin ? { pin } : {}), stateKey: repoPath }));
+        return;
+      }
       dispatch(jobStarted({
         jobId: result.jobId,
         type: 'repo.lifecycle',
@@ -118,10 +132,12 @@ compilerEffects.startListening({
       return;
     }
     if (busyRetryTimers.has(key)) return;
+    const delay = busyRetryDelays.get(key) ?? ARTIFACT_BUSY_RETRY_INITIAL_MS;
     busyRetryTimers.set(key, setTimeout(() => {
       busyRetryTimers.delete(key);
+      busyRetryDelays.set(key, Math.min(delay * 2, ARTIFACT_BUSY_RETRY_MAX_MS));
       dispatch(listArtifacts({ pathOrUrl, pluginId: frameworkId, ...(pin ? { pin } : {}), stateKey: repoPath }));
-    }, ARTIFACT_BUSY_RETRY_MS));
+    }, delay));
   },
 });
 
@@ -141,8 +157,8 @@ compilerEffects.startListening({
 });
 
 compilerEffects.startListening({
-  matcher: (action): action is ReturnType<typeof clearArtifactWait> | ReturnType<typeof removeRepository> =>
-    clearArtifactWait.match(action) || removeRepository.match(action),
+  matcher: (action): action is ReturnType<typeof clearArtifactWait> | ReturnType<typeof removeRepositoryAction> =>
+    clearArtifactWait.match(action) || removeRepositoryAction.match(action),
   effect: async (action) => {
     if (clearArtifactWait.match(action)) cancelBusyRetry(action.payload.repoPath, action.payload.frameworkId);
     else cancelBusyRetry(action.payload);

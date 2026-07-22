@@ -17,7 +17,7 @@ import {
   compilerScopeKey,
   clearArtifactWait,
 } from '../../../store/features/compiler/compilerSlice';
-import { repositoriesApi } from '../../../store/features/repositories/repositoriesApi';
+import { retryRepositoryLifecycle } from '../../../store/features/repositories/repositoriesApi';
 import type { ContractSourcePin, RepoVersionSummary } from '@ignite/api';
 
 export function pinForInstalledVersion(
@@ -50,6 +50,7 @@ export default function RepositoryPage() {
     (state) => state.repositories
   );
   const { compilations } = useAppSelector((state) => state.compiler);
+  const currentProfileId = useAppSelector((state) => state.profiles?.currentId);
 
   const version = useMemo<RepoVersionSummary | undefined>(() => {
     if (!versionCommit || !repositories) return undefined;
@@ -96,10 +97,12 @@ export default function RepositoryPage() {
         }
       });
     }
-    return () => {
-      dispatch(clearArtifactWait({ repoPath: scopeKey }));
-    };
   }, [effectiveRepoData?.frameworks, decodedPath, pin, repoCompilations, dispatch, scopeKey]);
+
+  const frameworkIds = effectiveRepoData?.frameworks?.map(({ id }) => id).join('\u0000') ?? '';
+  useEffect(() => () => {
+    dispatch(clearArtifactWait({ repoPath: scopeKey }));
+  }, [dispatch, scopeKey, frameworkIds]);
 
   // On a fresh page load the repo list, initialization, and framework
   // detection all happen asynchronously — show progress instead of jumping
@@ -199,7 +202,8 @@ export default function RepositoryPage() {
   const lifecycleError = effectiveRepoData.lastError;
   const retryLifecycle = () => {
     if (!decodedPath) return;
-    dispatch(repositoriesApi.checkRepos({ pathOrUrl: decodedPath, force: true }));
+    const action = retryRepositoryLifecycle(currentProfileId, decodedPath, pin);
+    if (action) dispatch(action);
   };
 
   // Get current framework from query params, fallback to first framework

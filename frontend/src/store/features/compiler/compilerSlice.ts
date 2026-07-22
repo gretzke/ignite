@@ -7,6 +7,7 @@ import { getRepoName } from '../../../utils/repo';
 import { jobStarted } from '../jobs/jobsSlice';
 import { wsSend } from '../../middleware/websocket';
 import type { ArtifactListServeResult, ArtifactLocation, ContractSourcePin } from '@ignite/api';
+import { removeRepositoryAction } from '../repositories/repositoriesSlice';
 
 export const compilerScopeKey = (pathOrUrl: string, pin?: ContractSourcePin) =>
   pin ? `${pathOrUrl}\u0000${pin.commit}` : pathOrUrl;
@@ -78,11 +79,6 @@ const compilerSlice = createSlice({
       if (state.compilations[repoPath]?.[frameworkId]) {
         delete state.compilations[repoPath][frameworkId].error;
       }
-    },
-
-    removeRepository(state, action: PayloadAction<string>) {
-      const repoPath = action.payload;
-      delete state.compilations[repoPath];
     },
 
     setArtifacts(
@@ -158,13 +154,17 @@ const compilerSlice = createSlice({
     artifactListingJobSettled(_state, _action: PayloadAction<{ jobId: string }>) {},
     clearArtifactWait(_state, _action: PayloadAction<{ repoPath: string; frameworkId?: string }>) {},
   },
+  extraReducers: (builder) => {
+    builder.addCase(removeRepositoryAction, (state, action) => {
+      delete state.compilations[action.payload];
+    });
+  },
 });
 
 // Action creators
 export const {
   setCompilationStatus,
   clearCompilationError,
-  removeRepository,
   setArtifacts,
   artifactListReceived,
   artifactListingJobSettled,

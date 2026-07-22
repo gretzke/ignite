@@ -21,7 +21,7 @@ import type { RootState, AppDispatch } from '../../../../store/store';
 import { fileCacheKey, filesApi } from '../../../../store/features/files/filesSlice';
 import { useSelector as useCompilerSelector } from 'react-redux';
 import { clearArtifactWait, compilerScopeKey, listArtifacts } from '../../../../store/features/compiler/compilerSlice';
-import { repositoriesApi } from '../../../../store/features/repositories/repositoriesApi';
+import { retryRepositoryLifecycle } from '../../../../store/features/repositories/repositoriesApi';
 import { SyntaxHighlighter } from '../../../../components/SyntaxHighlighter';
 import Select from '../../../../components/Select';
 import {
@@ -159,6 +159,7 @@ function CodeSection({
 
 export default function FilePage() {
   const dispatch = useDispatch<AppDispatch>();
+  const currentProfileId = useSelector((state: RootState) => state.profiles?.currentId);
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -253,10 +254,11 @@ export default function FilePage() {
         listArtifacts({ pathOrUrl: decodedRepoPath, pluginId: frameworkId, ...(pin ? { pin } : {}), stateKey: compilerKey })
       );
     }
-    return () => {
-      dispatch(clearArtifactWait({ repoPath: compilerKey, ...(frameworkId ? { frameworkId } : {}) }));
-    };
   }, [dispatch, decodedRepoPath, frameworkId, frameworkData, pin, compilerKey, invalidVersion]);
+
+  useEffect(() => () => {
+    dispatch(clearArtifactWait({ repoPath: compilerKey, ...(frameworkId ? { frameworkId } : {}) }));
+  }, [dispatch, compilerKey, frameworkId]);
 
   // Fetch file content
   useEffect(() => {
@@ -333,7 +335,9 @@ export default function FilePage() {
     frameworkId && frameworkData && frameworkData.artifacts === undefined;
   const lifecycleError = pin ? version?.lastError : liveRepoData?.lastError;
   const retryLifecycle = () => {
-    if (decodedRepoPath) dispatch(repositoriesApi.checkRepos({ pathOrUrl: decodedRepoPath, force: true }));
+    if (!decodedRepoPath) return;
+    const action = retryRepositoryLifecycle(currentProfileId, decodedRepoPath, pin);
+    if (action) dispatch(action);
   };
   const error = fileData?.error;
   const content = fileData?.content?.content;

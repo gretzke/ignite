@@ -1,6 +1,6 @@
 import { apiClient, apiDispatchAction } from '../../api/client';
 import { triggerToast } from '../../middleware/toastListener';
-import type { AddRepoVersionRequest } from '@ignite/api';
+import type { AddRepoVersionRequest, ContractSourcePin } from '@ignite/api';
 import { ApiError } from '@ignite/api/client';
 import { formatApiError } from '../../middleware/apiGate';
 import { getRepoName } from '../../../utils/repo';
@@ -21,6 +21,20 @@ import {
 } from './repositoriesSlice';
 
 let repositoriesRequestGeneration = 0;
+
+export function retryRepositoryLifecycle(
+  profileId: string | null | undefined,
+  pathOrUrl: string,
+  pin?: ContractSourcePin,
+) {
+  if (!pin) return repositoriesApi.checkRepos({ pathOrUrl, force: true });
+  if (!profileId) return undefined;
+  return repositoriesApi.addRepoVersion(
+    profileId,
+    { url: pin.url, commit: pin.commit },
+    () => undefined,
+  );
+}
 
 // Fetch live git state (branch/commit/dirty + branch list) for an
 // already-initialized repo. listRepos only carries persisted lifecycle

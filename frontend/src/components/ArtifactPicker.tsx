@@ -25,7 +25,7 @@ import {
 import AddVersionModal, {
   type WorkspaceSwitchTarget,
 } from '../routes/repositories/components/AddVersionModal';
-import { repositoriesApi } from '../store/features/repositories/repositoriesApi';
+import { repositoriesApi, retryRepositoryLifecycle } from '../store/features/repositories/repositoriesApi';
 import { setRepositoryInfo } from '../store/features/repositories/repositoriesSlice';
 import { jobStarted } from '../store/features/jobs/jobsSlice';
 import { wsSend } from '../store/middleware/websocket';
@@ -197,10 +197,10 @@ export default function ArtifactPicker({
           stateKey: scopeKey,
         })
       );
-    return () => {
-      dispatch(clearArtifactWait({ repoPath: scopeKey, ...(effectiveFramework ? { frameworkId: effectiveFramework } : {}) }));
-    };
   }, [artifacts, compilation?.status, dispatch, effectiveFramework, pin, repoPath, scopeKey]);
+  useEffect(() => () => {
+    dispatch(clearArtifactWait({ repoPath: scopeKey, ...(effectiveFramework ? { frameworkId: effectiveFramework } : {}) }));
+  }, [dispatch, scopeKey, effectiveFramework]);
   useEffect(() => {
     let cancelled = false;
     void apiClient.request('listContractTypes', {}).then((response) => {
@@ -308,7 +308,9 @@ export default function ArtifactPicker({
     setAddVersionOpen(false);
   };
   const retryLifecycle = () => {
-    if (repoPath) dispatch(repositoriesApi.checkRepos({ pathOrUrl: repoPath, force: true }));
+    if (!repoPath) return;
+    const action = retryRepositoryLifecycle(currentId, repoPath, pin);
+    if (action) dispatch(action);
   };
 
   return (

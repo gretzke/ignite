@@ -99,7 +99,6 @@ function isTerminal(state: JobState): boolean {
 // re-fire toasts, re-trigger the compiler chain, or re-open the permission
 // dialog.
 const handledJobIds = new Set<string>();
-export const REPO_LIFECYCLE_REFETCH_DELAY_MS = 50;
 
 // Jobs for which a GET /jobs/:jobId fetch is currently outstanding. Guards
 // against firing duplicate fetches if more than one terminal 'state' event
@@ -120,13 +119,16 @@ export function routeTerminalJob(
   getState: () => RootState
 ): void {
   if (!isTerminal(job.state)) return;
+  // Artifact listings can subscribe after a terminal job was already
+  // routed. Always wake their waiters, even if the user-facing terminal
+  // effects below were de-duplicated.
+  dispatch(artifactListingJobSettled({ jobId: job.id }));
   if (handledJobIds.has(job.id)) return;
   handledJobIds.add(job.id);
 
   const succeeded = job.state === 'succeeded';
   const errorMessage =
     job.error?.message ?? 'Operation did not complete successfully';
-  dispatch(artifactListingJobSettled({ jobId: job.id }));
 
   switch (job.type) {
     case 'workflow.resolve': {
@@ -259,15 +261,9 @@ export function routeTerminalJob(
           })
         );
       }
-      // JobManager broadcasts the terminal state before the lifecycle
-      // onSettled hook persists RepoRecord.lastError. Delay the authoritative
-      // list read so a failed recompile surfaces its durable error instead of
-      // racing it with an immediate stale response.
       const profileId = getState().profiles.currentId;
       if (profileId) {
-        setTimeout(() => {
-          repositoriesApi.fetchRepositories(profileId).forEach((action) => dispatch(action));
-        }, REPO_LIFECYCLE_REFETCH_DELAY_MS);
+        repositoriesApi.fetchRepositories(profileId).forEach((action) => dispatch(action));
       }
       break;
     }

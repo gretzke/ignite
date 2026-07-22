@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { JobRecord } from '@ignite/api';
 import { compilerScopeKey, setCompilationStatus } from '../../features/compiler/compilerSlice';
 import { permissionRequired } from '../../features/plugins/trustSlice';
-import { REPO_LIFECYCLE_REFETCH_DELAY_MS, routeTerminalJob } from '../jobsEffects';
+import { routeTerminalJob } from '../jobsEffects';
 import { repositoriesApi } from '../../features/repositories/repositoriesApi';
 import { setRepositoryLifecycleFailure } from '../../features/repositories/repositoriesSlice';
 
@@ -26,8 +26,7 @@ function job(overrides: Partial<JobRecord>): JobRecord {
 }
 
 describe('compiler terminal routing preserves version pins', () => {
-  it('defers the repo list refresh until durable lifecycle failure state is persisted', () => {
-    vi.useFakeTimers();
+  it('immediately refreshes a live lifecycle failure from its durable state', () => {
     try {
       const dispatch = vi.fn();
       const fetchRepositories = vi.spyOn(repositoriesApi, 'fetchRepositories')
@@ -56,14 +55,31 @@ describe('compiler terminal routing preserves version pins', () => {
       expect(dispatch).toHaveBeenCalledWith(
         setRepositoryLifecycleFailure({ pathOrUrl: '/workspace/contracts', error: 'compile failed' })
       );
-      expect(fetchRepositories).not.toHaveBeenCalled();
-      vi.advanceTimersByTime(REPO_LIFECYCLE_REFETCH_DELAY_MS);
       expect(fetchRepositories).toHaveBeenCalledWith('p1');
       expect(dispatch).toHaveBeenCalledWith({ type: 'repositories/deferredRefresh' });
     } finally {
-      vi.useRealTimers();
       vi.restoreAllMocks();
     }
+  });
+
+  it('does not refetch a lifecycle record when no current profile is in scope', () => {
+    const dispatch = vi.fn();
+    const fetchRepositories = vi.spyOn(repositoriesApi, 'fetchRepositories');
+    const record = job({
+      id: 'job-live-no-profile',
+      type: 'repo.lifecycle',
+      params: { pathOrUrl: '/workspace/contracts' },
+      state: 'failed',
+      error: { code: 'COMPILE_FAILED', message: 'compile failed' },
+    });
+
+    routeTerminalJob(record, dispatch as never, (() => ({
+      profiles: { currentId: null },
+      repositories: { repositoriesData: {} },
+    })) as never);
+
+    expect(fetchRepositories).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   it('updates the pinned compiler scope when a compile job succeeds', () => {

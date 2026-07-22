@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { RepoList } from '@ignite/api';
 import { isApiDispatchAction } from '../../../api/client';
 import { setRepositories } from '../repositoriesSlice';
-import { repositoriesApi } from '../repositoriesApi';
+import { repositoriesApi, retryRepositoryLifecycle } from '../repositoriesApi';
 
 const list = (pathOrUrl: string): RepoList => ({
   session: null,
@@ -28,6 +28,28 @@ describe('repository fetch generation guard', () => {
     expect(action.payload).toMatchObject({
       endpoint: 'checkRepos',
       body: { pathOrUrl: '/repo', force: true },
+    });
+  });
+
+  it('retries a pinned version through addRepoVersion and a live repository through checkRepos', () => {
+    const pin = { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) };
+    const pinned = retryRepositoryLifecycle('p1', '/workspace/contracts', pin);
+    const live = retryRepositoryLifecycle('p1', '/workspace/contracts');
+
+    expect(pinned).toBeDefined();
+    expect(live).toBeDefined();
+    if (!pinned || !live) return;
+    expect(isApiDispatchAction(pinned)).toBe(true);
+    expect(isApiDispatchAction(live)).toBe(true);
+    if (!isApiDispatchAction(pinned) || !isApiDispatchAction(live)) return;
+    expect(pinned.payload).toMatchObject({
+      endpoint: 'addRepoVersion',
+      params: { id: 'p1' },
+      body: { url: pin.url, commit: pin.commit },
+    });
+    expect(live.payload).toMatchObject({
+      endpoint: 'checkRepos',
+      body: { pathOrUrl: '/workspace/contracts', force: true },
     });
   });
 
