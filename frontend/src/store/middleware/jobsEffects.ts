@@ -20,6 +20,7 @@ import {
 import {
   setRepositoryFrameworks,
   setRepositoryInitialized,
+  setRepositoryLifecycleFailure,
   setRepositoryInfo,
   setRepositoryBranches,
   finishRepoVersionJob,
@@ -98,6 +99,7 @@ function isTerminal(state: JobState): boolean {
 // re-fire toasts, re-trigger the compiler chain, or re-open the permission
 // dialog.
 const handledJobIds = new Set<string>();
+export const REPO_LIFECYCLE_REFETCH_DELAY_MS = 50;
 
 // Jobs for which a GET /jobs/:jobId fetch is currently outstanding. Guards
 // against firing duplicate fetches if more than one terminal 'state' event
@@ -246,7 +248,7 @@ export function routeTerminalJob(
         );
         dispatch(hydrateRepoGitState(pathOrUrl));
       } else {
-        dispatch(setRepositoryInitialized({ pathOrUrl, success: false }));
+        dispatch(setRepositoryLifecycleFailure({ pathOrUrl, error: errorMessage }));
         dispatch(
           triggerToast({
             title: 'Repository Setup Failed',
@@ -255,6 +257,16 @@ export function routeTerminalJob(
             duration: 10000,
           })
         );
+      }
+      // JobManager broadcasts the terminal state before the lifecycle
+      // onSettled hook persists RepoRecord.lastError. Delay the authoritative
+      // list read so a failed recompile surfaces its durable error instead of
+      // racing it with an immediate stale response.
+      const profileId = getState().profiles.currentId;
+      if (profileId) {
+        setTimeout(() => {
+          repositoriesApi.fetchRepositories(profileId).forEach((action) => dispatch(action));
+        }, REPO_LIFECYCLE_REFETCH_DELAY_MS);
       }
       break;
     }

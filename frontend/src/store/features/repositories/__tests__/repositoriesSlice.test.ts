@@ -4,12 +4,78 @@ import type { RepoList } from '@ignite/api';
 import {
   finishRepoVersionJob,
   repositoriesReducer,
+  setRepositoryLifecycleFailure,
   setRepositories,
   startRepoVersionJob,
   versionAddJobKey,
 } from '../repositoriesSlice';
 
 describe('repositoriesSlice', () => {
+  it('keeps persisted frameworks and marks the repository compiling for an active lifecycle job', () => {
+    const state = repositoriesReducer(undefined, setRepositories({
+      session: null,
+      local: [{
+        pathOrUrl: '/projects/contracts',
+        initialized: true,
+        activeJobId: 'job-recompile',
+        frameworks: [{ id: 'foundry', name: 'Foundry' }],
+        versions: [],
+      }],
+      cloned: [],
+      versionGroups: [],
+      pinned: [],
+    }));
+
+    expect(state.repositoriesData['/projects/contracts']).toMatchObject({
+      initialized: true,
+      frameworks: [{ id: 'foundry', name: 'Foundry' }],
+      compiling: true,
+    });
+    expect(state.repoBusyJobs).toEqual({ 'job-recompile': '/projects/contracts' });
+  });
+
+  it('keeps a never-detected repository initializing while its lifecycle job is active', () => {
+    const state = repositoriesReducer(undefined, setRepositories({
+      session: null,
+      local: [{ pathOrUrl: '/projects/new', initialized: false, activeJobId: 'job-init', versions: [] }],
+      cloned: [],
+      versionGroups: [],
+      pinned: [],
+    }));
+
+    expect(state.repositoriesData['/projects/new']).toMatchObject({
+      initialized: undefined,
+      frameworks: undefined,
+      compiling: false,
+    });
+  });
+
+  it('keeps persisted frameworks usable and surfaces an error after a failed recompile', () => {
+    let state = repositoriesReducer(undefined, setRepositories({
+      session: null,
+      local: [{
+        pathOrUrl: '/projects/contracts',
+        initialized: true,
+        frameworks: [{ id: 'foundry', name: 'Foundry' }],
+        versions: [],
+      }],
+      cloned: [],
+      versionGroups: [],
+      pinned: [],
+    }));
+    state = repositoriesReducer(
+      state,
+      setRepositoryLifecycleFailure({ pathOrUrl: '/projects/contracts', error: 'compile failed' })
+    );
+
+    expect(state.repositoriesData['/projects/contracts']).toMatchObject({
+      initialized: true,
+      frameworks: [{ id: 'foundry', name: 'Foundry' }],
+      compiling: false,
+      lastError: expect.objectContaining({ message: 'compile failed' }),
+    });
+  });
+
   it('keeps repo versions and orphan version groups from RepoList', () => {
     const list: RepoList = {
       session: null,
@@ -176,6 +242,7 @@ describe('repositoriesSlice', () => {
         versionAddJobs: {
           [versionAddJobKey(url, commit)]: { jobId: `direct:${url}`, status: 'active' },
         },
+        repoBusyJobs: {},
       },
       finishRepoVersionJob({ url, commit, jobId: 'job-real', error: 'failed' })
     );

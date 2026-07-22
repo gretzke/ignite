@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import type { RepoInfoResult, RepoList, RepoListEntry } from '@ignite/api';
+import type { RepoInfoResult, RepoList, RepoListEntry, RepoRecord } from '@ignite/api';
 import type { RootState } from '../../store';
 
 export interface IFramework {
@@ -12,6 +12,8 @@ export interface IRepository {
   info?: RepoInfoResult; // Repository information after successful initialization
   branches: string[]; // Repository branches (defaults to empty array)
   frameworks?: IFramework[]; // undefined = detecting, empty array = no frameworks found
+  compiling?: boolean; // persisted frameworks remain usable while a recompile runs
+  lastError?: RepoRecord['lastError'];
 }
 
 export interface IVersionAddJob {
@@ -28,6 +30,7 @@ export interface IRepositoriesState {
   repositoriesData: Record<string, IRepository>;
   failedRepositories: string[]; // List of repositories that failed initialization
   versionAddJobs: Record<string, IVersionAddJob>;
+  repoBusyJobs: Record<string, string>; // lifecycle job id -> repository path
 }
 
 const initialState: IRepositoriesState = {
@@ -35,6 +38,7 @@ const initialState: IRepositoriesState = {
   failedRepositories: [],
   repositoriesData: {},
   versionAddJobs: {},
+  repoBusyJobs: {},
 };
 
 const repositoriesSlice = createSlice({
@@ -105,6 +109,7 @@ const repositoriesSlice = createSlice({
         ...(repositories.cloned || []),
         ...(repositories.session ? [repositories.session] : []),
       ];
+      state.repoBusyJobs = {};
 
       // Seed view state from the server's persisted records: the backend
       // swept/added these repos, so refresh renders instantly instead of
@@ -112,13 +117,22 @@ const repositoriesSlice = createSlice({
       // repo in the loading state until its terminal event routes.
       for (const entry of allEntries) {
         const existing = state.repositoriesData[entry.pathOrUrl];
+        const hasPersistedFrameworks = entry.frameworks !== undefined;
+        const persistedFrameworks = entry.frameworks;
+        if (entry.activeJobId) {
+          state.repoBusyJobs[entry.activeJobId] = entry.pathOrUrl;
+        }
         state.repositoriesData[entry.pathOrUrl] = {
           branches: existing?.branches ?? [],
           info: existing?.info,
-          initialized: entry.activeJobId ? undefined : entry.initialized,
-          frameworks: entry.frameworks
-            ? entry.frameworks.map((f) => ({ id: f.id, name: f.name }))
-            : existing?.frameworks,
+          initialized: entry.activeJobId && !hasPersistedFrameworks
+            ? undefined
+            : entry.initialized,
+          frameworks: hasPersistedFrameworks
+            ? persistedFrameworks!.map((f) => ({ id: f.id, name: f.name }))
+            : undefined,
+          compiling: Boolean(entry.activeJobId && hasPersistedFrameworks),
+          ...(entry.lastError ? { lastError: entry.lastError } : {}),
         };
         if (entry.initialized && !entry.activeJobId) {
           state.failedRepositories = state.failedRepositories.filter(
@@ -145,6 +159,7 @@ const repositoriesSlice = createSlice({
       state.repositoriesData = {};
       state.failedRepositories = [];
       state.versionAddJobs = {};
+      state.repoBusyJobs = {};
     },
     clearRepositoryList(state) {
       state.repositories = null;
@@ -163,6 +178,8 @@ const repositoriesSlice = createSlice({
         state.repositoriesData[pathOrUrl] = { branches: [] };
       }
       state.repositoriesData[pathOrUrl].initialized = success;
+      state.repositoriesData[pathOrUrl].compiling = false;
+      if (success) delete state.repositoriesData[pathOrUrl].lastError;
 
       if (success) {
         // Remove from failed list if it was there
@@ -171,6 +188,33 @@ const repositoriesSlice = createSlice({
         );
       } else {
         // Add to failed list
+        if (!state.failedRepositories.includes(pathOrUrl)) {
+          state.failedRepositories.push(pathOrUrl);
+        }
+      }
+    },
+    setRepositoryLifecycleFailure(
+      state,
+      action: PayloadAction<{ pathOrUrl: string; error: string }>
+    ) {
+      const { pathOrUrl, error } = action.payload;
+      if (!state.repositoriesData[pathOrUrl]) {
+        state.repositoriesData[pathOrUrl] = { branches: [] };
+      }
+      const repo = state.repositoriesData[pathOrUrl];
+      repo.compiling = false;
+      repo.lastError = {
+        code: 'LIFECYCLE_FAILED',
+        message: error,
+        at: new Date().toISOString(),
+      };
+      if (repo.frameworks !== undefined) {
+        repo.initialized = true;
+        state.failedRepositories = state.failedRepositories.filter(
+          (failed) => failed !== pathOrUrl
+        );
+      } else {
+        repo.initialized = false;
         if (!state.failedRepositories.includes(pathOrUrl)) {
           state.failedRepositories.push(pathOrUrl);
         }
@@ -336,6 +380,7 @@ export const {
   clearRepositories,
   clearRepositoryList,
   setRepositoryInitialized,
+  setRepositoryLifecycleFailure,
   addRepository,
   removeRepository: removeRepositoryAction,
   removePinnedRepository,
@@ -357,3 +402,5 @@ export const selectFailedRepositories = (state: RootState) =>
   state.repositories.failedRepositories;
 export const selectVersionAddJobs = (state: RootState) =>
   state.repositories.versionAddJobs;
+export const selectRepoBusyJobs = (state: RootState) =>
+  state.repositories.repoBusyJobs;
