@@ -24,6 +24,17 @@ describe('workflow wizard run scope', () => {
     ).toBe(false);
   });
 
+  it('rebuilds a loaded workflow target when the fetched document hash changes', () => {
+    expect(
+      needsWorkflowDraftHydration(
+        '/repo',
+        'release',
+        { docHash: 'b'.repeat(64) },
+        { repoPathOrUrl: '/repo', name: 'release', docHash: 'a'.repeat(64) }
+      )
+    ).toBe(true);
+  });
+
   it('bounces out-of-sync workflow validations and runs to workflows', () => {
     const dispatch = vi.fn();
     const navigate = vi.fn();

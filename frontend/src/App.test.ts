@@ -1,6 +1,6 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { startFocusGatedRepoPoll } from './App';
+import { startFocusGatedRepoPoll, startFocusRefetch } from './App';
 
 class FakeFocusTarget {
   private readonly listeners = new Map<string, Set<() => void>>();
@@ -48,6 +48,22 @@ describe('startFocusGatedRepoPoll', () => {
     target.emit('blur');
     vi.advanceTimersByTime(10_000);
     expect(checkRepos).toHaveBeenCalledTimes(2);
+    stop();
+  });
+});
+
+describe('startFocusRefetch', () => {
+  it('refetches on mount and focus without creating an interval', () => {
+    vi.useFakeTimers();
+    const target = new FakeFocusTarget();
+    const refetch = vi.fn();
+    const stop = startFocusRefetch(refetch, target, () => true);
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(10_000);
+    expect(refetch).toHaveBeenCalledTimes(1);
+    target.emit('focus');
+    expect(refetch).toHaveBeenCalledTimes(2);
     stop();
   });
 });

@@ -57,18 +57,27 @@ describe('workflowsSlice', () => {
   });
 
   it('keeps workflow status scoped to the current profile', () => {
-    let state = workflowsReducer(undefined, workflowStatusRequested({ profileId: 'profile-a', repoPathOrUrl: '/repo' }));
-    state = workflowsReducer(state, workflowStatusLoaded({ profileId: 'profile-a', repoPathOrUrl: '/repo', workflows: [status] }));
-    state = workflowsReducer(state, workflowStatusLoaded({ profileId: 'profile-b', repoPathOrUrl: '/repo', workflows: [] }));
+    let state = workflowsReducer(undefined, workflowStatusRequested({ profileId: 'profile-a', repoPathOrUrl: '/repo', generation: 1 }));
+    state = workflowsReducer(state, workflowStatusLoaded({ profileId: 'profile-a', repoPathOrUrl: '/repo', workflows: [status], generation: 1 }));
+    state = workflowsReducer(state, workflowStatusRequested({ profileId: 'profile-b', repoPathOrUrl: '/repo', generation: 1 }));
+    state = workflowsReducer(state, workflowStatusLoaded({ profileId: 'profile-b', repoPathOrUrl: '/repo', workflows: [], generation: 1 }));
 
     expect(state.statusByProfileAndRepo[workflowStatusKey('profile-a', '/repo')].workflows).toEqual([status]);
     expect(selectWorkflowStatus({ workflows: state, profiles: { currentId: 'profile-b' } } as never, '/repo')).toMatchObject({ workflows: [] });
   });
 
   it('clears workflow status when switching profiles', () => {
-    let state = workflowsReducer(undefined, workflowStatusLoaded({ profileId: 'profile-a', repoPathOrUrl: '/repo', workflows: [status] }));
+    let state = workflowsReducer(undefined, workflowStatusRequested({ profileId: 'profile-a', repoPathOrUrl: '/repo', generation: 1 }));
+    state = workflowsReducer(state, workflowStatusLoaded({ profileId: 'profile-a', repoPathOrUrl: '/repo', workflows: [status], generation: 1 }));
     state = workflowsReducer(state, setCurrentProfile('profile-b'));
 
     expect(state.statusByProfileAndRepo).toEqual({});
+  });
+
+  it('drops a stale status response without replacing the newer entry', () => {
+    let state = workflowsReducer(undefined, workflowStatusRequested({ profileId: 'profile-a', repoPathOrUrl: '/repo', generation: 1 }));
+    state = workflowsReducer(state, workflowStatusRequested({ profileId: 'profile-a', repoPathOrUrl: '/repo', generation: 2 }));
+    state = workflowsReducer(state, workflowStatusLoaded({ profileId: 'profile-a', repoPathOrUrl: '/repo', workflows: [status], generation: 1 }));
+    expect(state.statusByProfileAndRepo[workflowStatusKey('profile-a', '/repo')]).toMatchObject({ loading: true, workflows: [], generation: 2 });
   });
 });

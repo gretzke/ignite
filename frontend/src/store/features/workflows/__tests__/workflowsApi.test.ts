@@ -7,6 +7,20 @@ import {
 } from '../workflowsSlice';
 
 describe('workflowsApi', () => {
+  it('sends the card document hash as the install fence', () => {
+    const action = workflowsApi.installWorkflow({
+      repoPathOrUrl: '/repo',
+      name: 'release',
+      expectedDocHash: 'b'.repeat(64),
+    }, 'profile-a') as unknown as { payload: { body: unknown } };
+
+    expect(action.payload.body).toEqual({
+      repoPathOrUrl: '/repo',
+      name: 'release',
+      expectedDocHash: 'b'.repeat(64),
+    });
+  });
+
   it('refetches status when an install is fenced by a changed document', () => {
     let closed = false;
     const action = workflowsApi.installWorkflow(
@@ -36,6 +50,7 @@ describe('workflowsApi', () => {
       workflowStatusRequested({
         profileId: 'profile-a',
         repoPathOrUrl: '/repo',
+        generation: 1,
       })
     );
     expect(result[2]).toMatchObject({

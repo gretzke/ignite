@@ -19,6 +19,7 @@ import {
 } from '../../../../store/features/profiles/profilesSlice';
 import {
   workflowDocumentLoaded,
+  workflowStatusRequested,
   workflowStatusLoaded,
   workflowsReducer,
 } from '../../../../store/features/workflows/workflowsSlice';
@@ -44,11 +45,13 @@ function renderCard(entry: WorkflowStatusEntry): string {
     },
   });
   store.dispatch(setCurrentProfile('profile-a'));
+  store.dispatch(workflowStatusRequested({ profileId: 'profile-a', repoPathOrUrl, generation: 1 }));
   store.dispatch(
     workflowStatusLoaded({
       profileId: 'profile-a',
       repoPathOrUrl,
       workflows: [entry],
+      generation: 1,
     })
   );
   store.dispatch(
