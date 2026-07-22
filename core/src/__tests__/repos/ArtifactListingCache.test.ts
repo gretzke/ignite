@@ -75,4 +75,13 @@ describe('ArtifactListingCache', () => {
     const cache = new ArtifactListingCache();
     expect([cache.nextGeneration(), cache.nextGeneration(), cache.nextGeneration()]).toEqual([1, 2, 3]);
   });
+
+  it('clears cached entries and resets generations', () => {
+    const cache = new ArtifactListingCache();
+    cache.set(key(), [location]);
+    cache.nextGeneration();
+    cache.clear();
+    expect(cache.get(key())).toBeUndefined();
+    expect(cache.nextGeneration()).toBe(1);
+  });
 });

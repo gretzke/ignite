@@ -149,6 +149,7 @@ export class ProfileRepoRegistry {
   }
 
   async remove(profileId: string, pathOrUrl: string): Promise<void> {
+    let removeClone = false;
     await ProfileRepoRegistry.profileMutex.run(profileId, async () => {
       artifactListingCache.invalidate(artifactCacheIdentity(pathOrUrl));
       const kind = deriveRepoKind(pathOrUrl);
@@ -161,15 +162,12 @@ export class ProfileRepoRegistry {
         p,
         records.filter((r) => r.pathOrUrl !== pathOrUrl)
       );
-      // The clone is disposable host data we own; a LOCAL repo is the user's
-      // own directory and is never ours to delete (removeClone no-ops there
-      // too, but skip the call entirely to keep the CLONED-only contract
-      // explicit here). profileId is threaded through so removing a repo from
-      // a NON-active profile deletes that profile's clone, not the current
-      // profile's directory for the same URL.
-      if (kind === RepoKind.CLONED) {
-        await this.deps.removeClone(pathOrUrl, profileId);
-      }
+      // Keep the global lock order repo -> profile. removeClone takes the
+      // repository lock, so it must run after this profile-mutex RMW exits.
+      // A failed best-effort delete may leave an orphan clone; startup
+      // reconciliation/re-add handles that safely, unlike an AB-BA deadlock.
+      removeClone = kind === RepoKind.CLONED;
     });
+    if (removeClone) await this.deps.removeClone(pathOrUrl, profileId);
   }
 }

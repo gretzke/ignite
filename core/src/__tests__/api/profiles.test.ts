@@ -77,6 +77,7 @@ function makeDeps(): any {
       sessionState: vi.fn((): RepoRecord | null => null),
       runPinnedLifecycle: vi.fn(async () => ({ pathOrUrl: '/versions/version', frameworks: [] })),
       beginPinnedActivity: vi.fn(() => () => {}),
+      removeRepository: vi.fn(),
     },
     versionStore: {
       removeUserMembershipAndDeleteIfUnreferenced: vi.fn(async (_profileId: string, _url: string, _commit: string, remove: () => Promise<void>) => { await remove(); return { membershipRemoved: true, checkoutDeleted: true }; }),

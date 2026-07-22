@@ -12,6 +12,7 @@ import { FileSystem } from '../filesystem/FileSystem.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { JobManager } from '../jobs/JobManager.js';
 import { RepoLifecycle } from '../repos/RepoLifecycle.js';
+import { artifactListingCache } from '../repos/ArtifactListingCache.js';
 import { runCommand } from '../utils/runCommand.js';
 import { getLogger } from '../utils/logger.js';
 
@@ -103,6 +104,7 @@ export async function factoryReset(): Promise<void> {
   ProfileManager.resetInstance();
   await ProfileManager.getInstance();
   RepoLifecycle.getInstance().resetState();
+  artifactListingCache.clear();
 
   getLogger().warn('🧨 Factory reset complete — fresh installation state');
 }

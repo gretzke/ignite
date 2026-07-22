@@ -277,6 +277,84 @@ describe('RepoLifecycle', () => {
     }
   });
 
+  it('records session lifecycle failures and clears them after a successful retry', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, executor } = makeLifecycle({
+        workspaceDir: dir,
+        sessionPath: '/ws/session',
+        responses: {
+          foundry: {
+            detect: DETECTED, getWatchPaths: WATCH, install: OK,
+            compile: { success: false, error: { code: 'COMPILE_FAILED', message: 'session compiler failed' } },
+          },
+        },
+      });
+
+      lifecycle.startLifecycle('/ws/session', 'p1', 'add');
+      await jobs.runAll();
+      expect(lifecycle.sessionState()).toMatchObject({
+        pathOrUrl: '/ws/session',
+        lastError: { code: 'COMPILE_FAILED', message: 'session compiler failed' },
+      });
+
+      executor.execute.mockImplementation(async (_pluginId: string, op: string) =>
+        ({ detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: OK }[op] ?? OK) as PluginResponse<unknown>
+      );
+      lifecycle.startLifecycle('/ws/session', 'p1', 'add');
+      await jobs.runAll();
+      expect(lifecycle.sessionState()?.lastError).toBeUndefined();
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('keeps the original compiler error and records backoff when failure persistence fails', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, registry } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a' }],
+        responses: {
+          foundry: {
+            detect: DETECTED, getWatchPaths: WATCH, install: OK,
+            compile: { success: false, error: { code: 'COMPILE_FAILED', message: 'original compiler error' } },
+          },
+        },
+      });
+      registry.updateRepoState.mockRejectedValue(new Error('disk unavailable'));
+      lifecycle.startLifecycle('/repo-a', 'p1', 'add');
+      (lifecycle as unknown as { recompileAttempts: Map<string, unknown> }).recompileAttempts.set('job-0', {
+        pathOrUrl: '/repo-a',
+        observations: [{ frameworkId: 'foundry', sources: 'changed', artifacts: 'same' }],
+      });
+      await expect(
+        jobs.started[0].runner({ log: () => {}, signal: new AbortController().signal })
+      ).rejects.toThrow('original compiler error');
+      expect((lifecycle as unknown as { failedRecompileTuples: Map<string, unknown> }).failedRecompileTuples.size).toBe(1);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('does not persist an error when a lifecycle is cancelled', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs, registry } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a' }],
+        responses: { foundry: { detect: DETECTED, getWatchPaths: WATCH, install: OK, compile: { success: false, error: { code: 'COMPILE_FAILED', message: 'cancelled compile' } } } },
+      });
+      lifecycle.startLifecycle('/repo-a', 'p1', 'add');
+      const controller = new AbortController();
+      controller.abort();
+      await expect(jobs.started[0].runner({ log: () => {}, signal: controller.signal })).rejects.toThrow('cancelled compile');
+      expect(registry.updates.some((update) => update.patch.lastError)).toBe(false);
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
   it('starts a catalog-forced recompile even when no framework has drifted', async () => {
     const dir = await createTestDirectory();
     try {
@@ -809,7 +887,7 @@ describe('RepoLifecycle', () => {
     }
   });
 
-  it('skips repos reserved for a direct mutation during profile sweeps', async () => {
+  it('queues a catalog force behind a repo reserved during the startup gate', async () => {
     const dir = await createTestDirectory();
     try {
       const { lifecycle, jobs } = makeLifecycle({
@@ -828,6 +906,44 @@ describe('RepoLifecycle', () => {
         force: 'catalog',
       });
       release();
+      await vi.waitFor(() => expect(jobs.started).toHaveLength(2));
+      expect(jobs.started[1].record.params).toMatchObject({
+        pathOrUrl: '/repo-a',
+        mode: 'recompile',
+        force: 'catalog',
+        profileId: 'p1',
+      });
+    } finally {
+      await cleanupTestDirectory(dir);
+    }
+  });
+
+  it('cleans queued lifecycle state when a repository is removed', async () => {
+    const dir = await createTestDirectory();
+    try {
+      const { lifecycle, jobs } = makeLifecycle({
+        workspaceDir: dir,
+        repos: [{ pathOrUrl: '/repo-a' }],
+      });
+      lifecycle.startLifecycle('/repo-a', 'p1', 'add');
+      lifecycle.startLifecycle('/repo-a', 'p1', 'recompile', { force: 'catalog' });
+      const internal = lifecycle as unknown as {
+        pendingForces: Map<string, unknown>;
+        lastRecompile: Map<string, unknown>;
+        quietObservations: Map<string, unknown>;
+        failedRecompileTuples: Map<string, unknown>;
+      };
+      internal.lastRecompile.set('local:/repo-a', Date.now());
+      internal.quietObservations.set('local:/repo-a\u0000foundry', {});
+      internal.failedRecompileTuples.set('local:/repo-a\u0000foundry', {});
+
+      lifecycle.removeRepository('/repo-a');
+      expect(internal.pendingForces.size).toBe(0);
+      expect(internal.lastRecompile.size).toBe(0);
+      expect(internal.quietObservations.size).toBe(0);
+      expect(internal.failedRecompileTuples.size).toBe(0);
+      await jobs.runAll();
+      expect(jobs.started).toHaveLength(1);
     } finally {
       await cleanupTestDirectory(dir);
     }

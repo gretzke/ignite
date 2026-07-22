@@ -211,6 +211,28 @@ export class RepoLifecycle {
     this.quietObservations.clear();
     this.failedRecompileTuples.clear();
     this.recompileAttempts.clear();
+    this.artifactCache.clear();
+  }
+
+  // Called only after the registry record has been removed. Clear all
+  // per-run state by the same canonical activity key as the repo lock so a
+  // queued catalog retry cannot resurrect a removed repo.
+  removeRepository(pathOrUrl: string): void {
+    const activityKey = this.activityKey(pathOrUrl);
+    this.pendingForces.delete(activityKey);
+    this.lastRecompile.delete(activityKey);
+    const prefix = `${activityKey}\u0000`;
+    for (const key of this.quietObservations.keys()) {
+      if (key.startsWith(prefix)) this.quietObservations.delete(key);
+    }
+    for (const key of this.failedRecompileTuples.keys()) {
+      if (key.startsWith(prefix)) this.failedRecompileTuples.delete(key);
+    }
+    for (const [jobId, attempt] of this.recompileAttempts) {
+      if (this.activityKey(attempt.pathOrUrl) === activityKey) {
+        this.recompileAttempts.delete(jobId);
+      }
+    }
   }
 
   // Sweep a profile's repos (init + detect + persist) exactly once per CLI
@@ -236,7 +258,6 @@ export class RepoLifecycle {
         }
 
         for (const record of records) {
-          if (this.activeJobFor(record.pathOrUrl)) continue;
           const frameworks = record.frameworks;
           const needsCatalogLifecycle =
             frameworks === undefined ||
@@ -245,6 +266,14 @@ export class RepoLifecycle {
               !catalogMatches(record.detectedWith, currentCatalog)
             ));
           if (needsCatalogLifecycle) {
+            if (this.activeJobFor(record.pathOrUrl)) {
+              this.pendingForces.set(this.activityKey(record.pathOrUrl), {
+                profileId,
+                pathOrUrl: record.pathOrUrl,
+                reason: 'catalog',
+              });
+              continue;
+            }
             this.startLifecycle(record.pathOrUrl, profileId, 'recompile', {
               force: 'catalog',
             });
@@ -339,23 +368,33 @@ export class RepoLifecycle {
           // JobManager publishes the terminal transition after this runner
           // rejects. Persist the live record first so an immediate frontend
           // refresh observes the durable failure rather than a stale row.
-          if (!this.isSessionPath(pathOrUrl)) {
+          if (!ctx.signal.aborted) {
             const lifecycleError = error as { code?: unknown; message?: unknown };
-            await this.deps.registry.updateRepoState(profileId, pathOrUrl, {
-              lastError: {
-                code: typeof lifecycleError.code === 'string'
-                  ? lifecycleError.code
-                  : ErrorCodes.OPERATION_EXECUTION_FAILED,
-                message: error instanceof Error
-                  ? error.message
-                  : typeof lifecycleError.message === 'string'
-                    ? lifecycleError.message
-                    : String(error),
-                at: new Date().toISOString(),
-              },
-            });
+            const lastError = {
+              code: typeof lifecycleError.code === 'string'
+                ? lifecycleError.code
+                : ErrorCodes.OPERATION_EXECUTION_FAILED,
+              message: error instanceof Error
+                ? error.message
+                : typeof lifecycleError.message === 'string'
+                  ? lifecycleError.message
+                  : String(error),
+              at: new Date().toISOString(),
+            };
+            if (this.isSessionPath(pathOrUrl)) {
+              const prior = this.sessionRecords.get(pathOrUrl);
+              this.sessionRecords.set(pathOrUrl, { ...prior, pathOrUrl, lastError });
+            } else {
+              try {
+                await this.deps.registry.updateRepoState(profileId, pathOrUrl, { lastError });
+              } catch (persistError) {
+                getLogger().warn(
+                  `Failed to persist lifecycle failure for ${pathOrUrl}: ${persistError}`
+                );
+              }
+            }
+            this.recordRecompileFailure(job.id);
           }
-          this.recordRecompileFailure(job.id);
           throw error;
         } finally {
           this.completeRecompileAttempt(job.id, succeeded);
@@ -673,7 +712,8 @@ export class RepoLifecycle {
         }
         if (!drifted) continue;
 
-        const last = this.lastRecompile.get(record.pathOrUrl) ?? 0;
+        const activityKey = this.activityKey(record.pathOrUrl);
+        const last = this.lastRecompile.get(activityKey) ?? 0;
         if (Date.now() - last < RECOMPILE_COOLDOWN_MS) continue;
 
         const job = this.startLifecycle(record.pathOrUrl, profileId, 'recompile');
@@ -683,7 +723,7 @@ export class RepoLifecycle {
             observations: attemptedFrameworks,
           });
         }
-        this.lastRecompile.set(record.pathOrUrl, Date.now());
+        this.lastRecompile.set(activityKey, Date.now());
         started.push({ pathOrUrl: record.pathOrUrl, jobId: job.id });
       } catch {
         // Resolution or measurement failures are deliberately best-effort.

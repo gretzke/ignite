@@ -95,6 +95,22 @@ describe('ProfileRepoRegistry', () => {
     );
   });
 
+  it('releases the profile mutex before deleting a clone', async () => {
+    deps._store.set(`/profiles/p1/repos/${RepoKind.CLONED}.json`, [
+      { pathOrUrl: 'https://github.com/a/b' },
+    ]);
+    const registry = new ProfileRepoRegistry(deps);
+    deps.removeClone.mockImplementation(async () => {
+      // This takes the same process-wide profile mutex. If remove held it
+      // while acquiring the clone's repo lock, this await would deadlock.
+      await registry.updateRepoState('p1', 'https://github.com/a/b', {
+        detectedAt: 'after-removal',
+      });
+    });
+
+    await expect(registry.remove('p1', 'https://github.com/a/b')).resolves.toBeUndefined();
+  });
+
   it('remove does not call removeClone for a LOCAL repo', async () => {
     deps._store.set(`/profiles/p1/repos/${RepoKind.LOCAL}.json`, [
       { pathOrUrl: '/abs/path/repo' },

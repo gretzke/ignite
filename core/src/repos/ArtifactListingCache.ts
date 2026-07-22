@@ -54,6 +54,11 @@ export class ArtifactListingCache {
     }
   }
 
+  clear(): void {
+    this.entries.clear();
+    this.generation = 0;
+  }
+
   nextGeneration(): number {
     this.generation += 1;
     return this.generation;

@@ -84,6 +84,7 @@ export interface ProfileHandlerDeps {
     | 'sessionState'
     | 'runPinnedLifecycle'
     | 'beginPinnedActivity'
+    | 'removeRepository'
   >;
   // Cheap host check for the list endpoint's `initialized` field.
   hasWorkspace: (pathOrUrl: string, profileId: string) => Promise<boolean>;
@@ -619,6 +620,7 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     ): Promise<null> => {
       try {
         await d.repoRegistry.remove(request.params.id, request.query.pathOrUrl);
+        d.lifecycle.removeRepository(request.query.pathOrUrl);
         return reply.status(204).send(null);
       } catch (error) {
         return sendCaughtError(
