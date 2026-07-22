@@ -17,3 +17,16 @@ export function canonicalGitUrl(url: string): string {
     return normalizeForCanonicalUrl(url);
   }
 }
+
+/** Remove URL userinfo before a git URL is persisted or shown outside core. */
+export function stripGitUrlCredentials(url: string): string {
+  try {
+    const parsed = new URL(normalizeForCanonicalUrl(url));
+    if (!parsed.username && !parsed.password) return url;
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString();
+  } catch {
+    return url.replace(/^(\w+:\/\/)[^/@\s]+@/, "$1");
+  }
+}

@@ -1,5 +1,6 @@
 // Core plugin management route handlers
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { stripGitUrlCredentials } from '@ignite/api';
 import type {
   IApiError,
   IApiResponse,
@@ -51,7 +52,7 @@ export const pluginHandlers = {
                         }
                       : {
                           kind: 'git' as const,
-                          url: installSource.url,
+                          url: stripGitUrlCredentials(installSource.url),
                           ...(installSource.ref
                             ? { ref: installSource.ref }
                             : {}),
