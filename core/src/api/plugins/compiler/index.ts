@@ -632,10 +632,24 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
           }
         }
         const exists = await fs.stat(checkout).then(() => true).catch(() => false);
+        // Artifact paths come from the plugin's declared watchPaths. Resolve
+        // each under the checkout and refuse any that escape it (absolute or
+        // ".." segments): an escaping path must never count as "present" and
+        // validate a cache hit against files outside the workspace.
+        const contained = (artifactPath: string): string | undefined => {
+          const resolved = path.resolve(checkout, artifactPath);
+          const rel = path.relative(checkout, resolved);
+          return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+            ? resolved
+            : undefined;
+        };
         const artifactPathsExist = exists && await Promise.all(
-          (state?.watchPaths?.artifacts ?? []).map((artifactPath) =>
-            fs.stat(path.resolve(checkout, artifactPath)).then(() => true).catch(() => false)
-          )
+          (state?.watchPaths?.artifacts ?? []).map((artifactPath) => {
+            const resolved = contained(artifactPath);
+            return resolved
+              ? fs.stat(resolved).then(() => true).catch(() => false)
+              : Promise.resolve(false);
+          })
         ).then((paths) => paths.every(Boolean));
         const cached = key && artifactPathsExist ? artifactListingCache.get(key) : undefined;
         if (cached) return reply.status(200).send({ data: { status: 'ready', artifacts: cached } });
