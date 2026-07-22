@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProfileRepoRegistry } from '../../filesystem/ProfileRepoRegistry.js';
 import type { RepoRecord } from '@ignite/api';
 import { RepoKind } from '../../repos/RepoService.js';
+import { KeyedMutex } from '../../utils/KeyedMutex.js';
 
 function makeDeps(files: Record<string, unknown> = {}) {
   const store = new Map<string, unknown>(Object.entries(files));
@@ -109,6 +110,47 @@ describe('ProfileRepoRegistry', () => {
     });
 
     await expect(registry.remove('p1', 'https://github.com/a/b')).resolves.toBeUndefined();
+  });
+
+  it('lets a repo-locked lifecycle persist while concurrent removal waits for clone cleanup', async () => {
+    const pathOrUrl = 'https://github.com/a/b';
+    deps._store.set(`/profiles/p1/repos/${RepoKind.CLONED}.json`, [{ pathOrUrl }]);
+    const repoMutex = new KeyedMutex();
+    const order: string[] = [];
+    let releaseCompile!: () => void;
+    const compileMayPersist = new Promise<void>((resolve) => { releaseCompile = resolve; });
+    let compileHasRepoLock!: () => void;
+    const compileHoldingRepoLock = new Promise<void>((resolve) => { compileHasRepoLock = resolve; });
+    let cloneStarted!: () => void;
+    const cloneWaitingForRepoLock = new Promise<void>((resolve) => { cloneStarted = resolve; });
+    deps.removeClone.mockImplementation(async () => {
+      order.push('clone-waiting-for-repo');
+      cloneStarted();
+      await repoMutex.run('repo', async () => {
+        order.push('clone-deleted');
+      });
+    });
+    const registry = new ProfileRepoRegistry(deps);
+
+    const compile = repoMutex.run('repo', async () => {
+      order.push('compile-has-repo');
+      compileHasRepoLock();
+      await compileMayPersist;
+      await registry.updateRepoState('p1', pathOrUrl, { detectedAt: 'compile-persisted' });
+      order.push('compile-persisted');
+    });
+    await compileHoldingRepoLock;
+    const removal = registry.remove('p1', pathOrUrl);
+    await cloneWaitingForRepoLock;
+    releaseCompile();
+
+    await Promise.all([compile, removal]);
+    expect(order).toEqual([
+      'compile-has-repo',
+      'clone-waiting-for-repo',
+      'compile-persisted',
+      'clone-deleted',
+    ]);
   });
 
   it('remove does not call removeClone for a LOCAL repo', async () => {
