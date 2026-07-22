@@ -958,6 +958,46 @@ describe('compiler API handlers (jobs)', () => {
       }
     });
 
+    it('invalidates a warm cache and falls through when a configured artifacts path is missing', async () => {
+      const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-list-missing-artifacts-'));
+      const key = artifactListingCacheKey({
+        profileId: 'default', canonicalIdentity: artifactCacheIdentity('/repo'), frameworkId: 'waffle',
+        pluginId: 'waffle', pluginVersion: '1.0.0', generation: 9,
+      });
+      const stale = [{ contractName: 'Stale', sourcePath: 'src/Stale.sol', artifactPath: 'artifacts/Stale.json' }];
+      artifactListingCache.set(key, stale);
+      executor.execute.mockResolvedValue({ success: true, data: { artifacts: [] } });
+      try {
+        const handlers = createCompilerHandlers({
+          jobs: fakeJobs,
+          executor: executor as unknown as CompilerExecutorLike,
+          registryLoader,
+          repos: makeFakeRepos({ resolveExistingWorkspacePath: vi.fn(async () => workspace) }),
+          repoRegistry: {
+            list: vi.fn(async () => ({ local: [{ pathOrUrl: '/repo', frameworks: [{
+              id: 'waffle', name: 'Waffle', artifactGeneration: 9,
+              watchPaths: { config: [], sources: [], artifacts: ['artifacts'] },
+            }] }], cloned: [] })),
+            updateRepoState: vi.fn(),
+          } as never,
+        });
+        const localApp = fastify();
+        localApp.post('/api/v1/artifacts/list', handlers.listArtifacts);
+        await localApp.ready();
+
+        const res = await localApp.inject({ method: 'POST', url: '/api/v1/artifacts/list', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
+
+        expect(res.json().data).toEqual({ status: 'ready', artifacts: [] });
+        expect(executor.execute).toHaveBeenCalledWith(
+          'waffle', 'listArtifacts', { pathOrUrl: '/repo' }, { workspacePath: workspace }
+        );
+        expect(artifactListingCache.get(key)).not.toBe(stale);
+      } finally {
+        artifactListingCache.invalidate(artifactCacheIdentity('/repo'));
+        await fs.rm(workspace, { recursive: true, force: true });
+      }
+    });
+
     it('lists an uncached pinned version with no persisted generation', async () => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-list-pinned-'));
       const live = path.join(root, 'live');
@@ -1031,6 +1071,38 @@ describe('compiler API handlers (jobs)', () => {
       }
     });
 
+    it('finds pinned lifecycle activity under the materialized checkout key', async () => {
+      const checkout = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-list-pinned-activity-'));
+      const pin = { url: 'https://example.test/pinned-activity.git', commit: 'c'.repeat(40) };
+      const activeJobFor = vi.spyOn(RepoLifecycle.getInstance(), 'activeJobFor');
+      try {
+        activeJobFor.mockImplementation((key) => key === checkout ? 'pinned-compile' : undefined);
+        const handlers = createCompilerHandlers({
+          jobs: fakeJobs,
+          executor: executor as unknown as CompilerExecutorLike,
+          registryLoader,
+          repos: makeFakeRepos(),
+          versionStore: {
+            isCachePath: vi.fn(), checkoutPath: vi.fn(() => checkout),
+            get: vi.fn(async () => ({ frameworks: [{ id: 'waffle', name: 'Waffle' }] })),
+            updateState: vi.fn(),
+          } as never,
+        });
+        const localApp = fastify();
+        localApp.post('/api/v1/artifacts/list', handlers.listArtifacts);
+        await localApp.ready();
+
+        const res = await localApp.inject({ method: 'POST', url: '/api/v1/artifacts/list', payload: { pathOrUrl: pin.url, pluginId: 'waffle', pin } });
+
+        expect(res.json().data).toEqual({ status: 'pending', jobId: 'pinned-compile' });
+        expect(activeJobFor).toHaveBeenCalledWith(checkout);
+        expect(activeJobFor).not.toHaveBeenCalledWith(pin.url);
+      } finally {
+        activeJobFor.mockRestore();
+        await fs.rm(checkout, { recursive: true, force: true });
+      }
+    });
+
     it('never blocks when the live try-lock is held, and rechecks pending/direct activity', async () => {
       const tryWithRepoLock = vi.fn(async () => ({ acquired: false }));
       const lockedRepos = makeFakeRepos({ tryWithRepoLock: tryWithRepoLock as never });
@@ -1055,7 +1127,7 @@ describe('compiler API handlers (jobs)', () => {
 
         activeJobFor.mockReset().mockReturnValue(undefined);
         const idle = await localApp.inject({ method: 'POST', url: '/api/v1/artifacts/list', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
-        expect(idle.json().data).toEqual({ status: 'ready', artifacts: [] });
+        expect(idle.json().data).toEqual({ status: 'busy' });
         expect(executor.execute).not.toHaveBeenCalled();
       } finally {
         activeJobFor.mockRestore();

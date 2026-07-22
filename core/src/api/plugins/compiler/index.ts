@@ -1,6 +1,7 @@
 // Compiler plugin route handlers
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import type {
   IApiResponse,
   DetectionResult,
@@ -582,6 +583,12 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         // pinned branch materializes a checkout and can wait behind compile.
         const profileId = (await ProfileManager.getInstance()).getCurrentProfile();
         const pin = request.body.pin;
+        // Pinned lifecycle activity is registered against its materialized
+        // checkout. Live activity continues to use pathOrUrl, whose lookup is
+        // normalized by RepoLifecycle.
+        const activityLookupKey = pin
+          ? d.versionStore.checkoutPath(pin.url, pin.commit)
+          : pathOrUrl;
         const record = pin
           ? await d.versionStore.get(pin.url, pin.commit)
           : (() => undefined)();
@@ -611,11 +618,16 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
           }
         }
         const exists = await fs.stat(checkout).then(() => true).catch(() => false);
-        const cached = key && exists ? artifactListingCache.get(key) : undefined;
+        const artifactPathsExist = exists && await Promise.all(
+          (state?.watchPaths?.artifacts ?? []).map((artifactPath) =>
+            fs.stat(path.resolve(checkout, artifactPath)).then(() => true).catch(() => false)
+          )
+        ).then((paths) => paths.every(Boolean));
+        const cached = key && artifactPathsExist ? artifactListingCache.get(key) : undefined;
         if (cached) return reply.status(200).send({ data: { status: 'ready', artifacts: cached } });
         artifactListingCache.invalidate(identity);
 
-        const active = RepoLifecycle.getInstance().activeJobFor(pathOrUrl);
+        const active = RepoLifecycle.getInstance().activeJobFor(activityLookupKey);
         if (active && !active.startsWith('direct:')) return reply.status(200).send({ data: { status: 'pending', jobId: active } });
         if (active) return reply.status(200).send({ data: { status: 'busy' } });
 
@@ -644,10 +656,9 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
           attempted = { acquired: true, value: await execute(checkout) };
         }
         if (attempted.acquired) return reply.status(200).send({ data: { status: 'ready', artifacts: attempted.value ?? [] } });
-        const after = RepoLifecycle.getInstance().activeJobFor(pathOrUrl);
+        const after = RepoLifecycle.getInstance().activeJobFor(activityLookupKey);
         if (after && !after.startsWith('direct:')) return reply.status(200).send({ data: { status: 'pending', jobId: after } });
-        if (after) return reply.status(200).send({ data: { status: 'busy' } });
-        return reply.status(200).send({ data: { status: 'ready', artifacts: [] } });
+        return reply.status(200).send({ data: { status: 'busy' } });
       } catch (error) {
         return sendCaughtError(
           reply,
