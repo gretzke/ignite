@@ -235,7 +235,7 @@ const WATCH: PluginResponse<unknown> = {
 const OK: PluginResponse<unknown> = { success: true, data: {} };
 
 describe('RepoLifecycle', () => {
-  it('persists a live lifecycle failure after the terminal job and clears it after success', async () => {
+  it('persists a live lifecycle failure before its job goes terminal and clears it after success', async () => {
     const dir = await createTestDirectory();
     try {
       const { lifecycle, jobs, registry, executor } = makeLifecycle({
@@ -251,8 +251,15 @@ describe('RepoLifecycle', () => {
         },
       });
 
+      let stateWhenFailurePersisted: JobRecord['state'] | undefined;
+      registry.updateRepoState.mockImplementation(async (profileId, pathOrUrl, patch) => {
+        if (patch.lastError) stateWhenFailurePersisted = jobs.states.get('job-0');
+        registry.updates.push({ profileId, pathOrUrl, patch });
+      });
+
       lifecycle.startLifecycle('/repo-a', 'p1', 'add');
       await jobs.runAll();
+      expect(stateWhenFailurePersisted).toBe('running');
       expect(registry.updates.at(-1)?.patch.lastError).toMatchObject({
         code: 'COMPILE_FAILED',
         message: 'compiler failed',

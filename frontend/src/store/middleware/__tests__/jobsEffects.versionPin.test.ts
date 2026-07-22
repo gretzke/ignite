@@ -1,7 +1,7 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it, vi } from 'vitest';
 import type { JobRecord } from '@ignite/api';
-import { compilerScopeKey, setCompilationStatus } from '../../features/compiler/compilerSlice';
+import { artifactListingJobSettled, compilerScopeKey, setCompilationStatus } from '../../features/compiler/compilerSlice';
 import { permissionRequired } from '../../features/plugins/trustSlice';
 import { routeTerminalJob } from '../jobsEffects';
 import { repositoriesApi } from '../../features/repositories/repositoriesApi';
@@ -80,6 +80,26 @@ describe('compiler terminal routing preserves version pins', () => {
 
     expect(fetchRepositories).not.toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+
+  it('wakes artifact waiters when a failed lifecycle terminal record is replayed', () => {
+    const dispatch = vi.fn();
+    const record = job({
+      id: 'job-live-replayed-failure',
+      type: 'repo.lifecycle',
+      params: { pathOrUrl: '/workspace/contracts' },
+      state: 'failed',
+      error: { code: 'COMPILE_FAILED', message: 'compile failed' },
+    });
+    const state = () => ({ profiles: { currentId: null }, repositories: { repositoriesData: {} } }) as never;
+
+    routeTerminalJob(record, dispatch as never, state);
+    routeTerminalJob(record, dispatch as never, state);
+
+    expect(dispatch).toHaveBeenCalledTimes(4);
+    expect(dispatch).toHaveBeenCalledWith(artifactListingJobSettled({ jobId: record.id }));
+    const dispatched = dispatch.mock.calls as Array<[ { type?: string } ]>;
+    expect(dispatched.filter(([action]) => action.type === artifactListingJobSettled.type)).toHaveLength(2);
   });
 
   it('updates the pinned compiler scope when a compile job succeeds', () => {

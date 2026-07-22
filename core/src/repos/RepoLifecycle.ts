@@ -336,6 +336,25 @@ export class RepoLifecycle {
           succeeded = true;
           return result;
         } catch (error) {
+          // JobManager publishes the terminal transition after this runner
+          // rejects. Persist the live record first so an immediate frontend
+          // refresh observes the durable failure rather than a stale row.
+          if (!this.isSessionPath(pathOrUrl)) {
+            const lifecycleError = error as { code?: unknown; message?: unknown };
+            await this.deps.registry.updateRepoState(profileId, pathOrUrl, {
+              lastError: {
+                code: typeof lifecycleError.code === 'string'
+                  ? lifecycleError.code
+                  : ErrorCodes.OPERATION_EXECUTION_FAILED,
+                message: error instanceof Error
+                  ? error.message
+                  : typeof lifecycleError.message === 'string'
+                    ? lifecycleError.message
+                    : String(error),
+                at: new Date().toISOString(),
+              },
+            });
+          }
           this.recordRecompileFailure(job.id);
           throw error;
         } finally {
@@ -352,16 +371,6 @@ export class RepoLifecycle {
               lastError: null,
             });
             return;
-          }
-          if (record.state === 'failed' || record.state === 'cancelled') {
-            const error = record.error;
-            await this.deps.registry.updateRepoState(profileId, pathOrUrl, {
-              lastError: {
-                code: error?.code ?? ErrorCodes.OPERATION_EXECUTION_FAILED,
-                message: error?.message ?? 'Repository lifecycle was cancelled.',
-                at: record.finishedAt ?? new Date().toISOString(),
-              },
-            });
           }
         },
       }
