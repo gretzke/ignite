@@ -519,6 +519,108 @@ describe('compiler API handlers (jobs)', () => {
   });
 
   describe('compile', () => {
+    it('invalidates the old generation before a manual compile can be served', async () => {
+      const key = artifactListingCacheKey({
+        profileId: 'default', canonicalIdentity: artifactCacheIdentity('/repo'), frameworkId: 'waffle',
+        pluginId: 'waffle', pluginVersion: '1.0.0', generation: 31,
+      });
+      const stale = [{ contractName: 'Stale', sourcePath: 'src/Stale.sol', artifactPath: 'artifacts/Stale.json' }];
+      artifactListingCache.set(key, stale);
+      let frameworks = [{ id: 'waffle', name: 'Waffle', artifactGeneration: 31 }];
+      let releaseCompile!: () => void;
+      const compileGate = new Promise<void>((resolve) => { releaseCompile = resolve; });
+      const repoRegistry = {
+        list: vi.fn(async () => ({ local: [{ pathOrUrl: '/repo', frameworks }], cloned: [] })),
+        updateRepoState: vi.fn(async (_profileId, _pathOrUrl, patch) => { frameworks = patch.frameworks; }),
+      };
+      executor.execute.mockImplementation(async (_pluginId: string, operation: string) => {
+        if (operation === 'compile') {
+          await compileGate;
+          return { success: true, data: null };
+        }
+        return { success: true, data: { artifacts: [] } };
+      });
+      repos = makeFakeRepos({ tryWithRepoLock: vi.fn(async () => ({ acquired: false })) as never });
+      const handlers = createCompilerHandlers({ jobs: fakeJobs, executor: executor as never, registryLoader, repos, repoRegistry: repoRegistry as never });
+      const localApp = fastify();
+      localApp.post('/api/v1/compile', handlers.compile);
+      localApp.post('/api/v1/artifacts/list', handlers.listArtifacts);
+      await localApp.ready();
+      await localApp.inject({ method: 'POST', url: '/api/v1/compile', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
+
+      const compiling = fakeJobs.started[0].runner(makeCtx());
+      await vi.waitFor(() => expect(executor.execute).toHaveBeenCalledWith('waffle', 'compile', expect.anything(), expect.anything()));
+      const served = await localApp.inject({ method: 'POST', url: '/api/v1/artifacts/list', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
+
+      expect(artifactListingCache.get(key)).toBeUndefined();
+      expect(frameworks[0]).not.toHaveProperty('artifactGeneration');
+      expect(served.json().data).toEqual({ status: 'busy' });
+      releaseCompile();
+      await compiling;
+      artifactListingCache.invalidate(artifactCacheIdentity('/repo'));
+    });
+
+    it('does not leave an old generation serveable after a failed manual compile', async () => {
+      const key = artifactListingCacheKey({
+        profileId: 'default', canonicalIdentity: artifactCacheIdentity('/repo'), frameworkId: 'waffle',
+        pluginId: 'waffle', pluginVersion: '1.0.0', generation: 32,
+      });
+      const stale = [{ contractName: 'Stale', sourcePath: 'src/Stale.sol', artifactPath: 'artifacts/Stale.json' }];
+      artifactListingCache.set(key, stale);
+      let frameworks = [{ id: 'waffle', name: 'Waffle', artifactGeneration: 32 }];
+      const repoRegistry = {
+        list: vi.fn(async () => ({ local: [{ pathOrUrl: '/repo', frameworks }], cloned: [] })),
+        updateRepoState: vi.fn(async (_profileId, _pathOrUrl, patch) => { frameworks = patch.frameworks; }),
+      };
+      executor.execute.mockImplementation(async (_pluginId: string, operation: string) => operation === 'compile'
+        ? { success: false, error: { code: 'COMPILE_FAILED', message: 'compile failed' } }
+        : { success: true, data: { artifacts: [] } });
+      const handlers = createCompilerHandlers({ jobs: fakeJobs, executor: executor as never, registryLoader, repos, repoRegistry: repoRegistry as never });
+      const localApp = fastify();
+      localApp.post('/api/v1/compile', handlers.compile);
+      localApp.post('/api/v1/artifacts/list', handlers.listArtifacts);
+      await localApp.ready();
+      await localApp.inject({ method: 'POST', url: '/api/v1/compile', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
+
+      await expect(fakeJobs.started[0].runner(makeCtx())).rejects.toMatchObject({ code: ErrorCodes.COMPILE_FAILED });
+      const served = await localApp.inject({ method: 'POST', url: '/api/v1/artifacts/list', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
+
+      expect(artifactListingCache.get(key)).toBeUndefined();
+      expect(frameworks[0]).not.toHaveProperty('artifactGeneration');
+      expect(served.json().data).toEqual({ status: 'ready', artifacts: [] });
+      artifactListingCache.invalidate(artifactCacheIdentity('/repo'));
+    });
+
+    it('finalizes a manual compile before releasing its repo lock', async () => {
+      const order: string[] = [];
+      const withRepoLifecycleLock = vi.fn(async (_pathOrUrl: string, _profileId: string | undefined, fn: () => Promise<unknown>) => {
+        const result = await fn();
+        order.push('lock released');
+        return result;
+      });
+      const repoRegistry = {
+        list: vi.fn(async () => ({ local: [{ pathOrUrl: '/repo', frameworks: [{ id: 'waffle', name: 'Waffle' }] }], cloned: [] })),
+        updateRepoState: vi.fn(async () => { order.push('finalized'); }),
+      };
+      executor.execute.mockImplementation(async (_pluginId: string, operation: string) => {
+        order.push(operation);
+        return operation === 'compile'
+          ? { success: true, data: null }
+          : { success: true, data: { artifacts: [] } };
+      });
+      repos = makeFakeRepos({ withRepoLifecycleLock: withRepoLifecycleLock as never });
+      const handlers = createCompilerHandlers({ jobs: fakeJobs, executor: executor as never, registryLoader, repos, repoRegistry: repoRegistry as never });
+      const localApp = fastify();
+      localApp.post('/api/v1/compile', handlers.compile);
+      await localApp.ready();
+      await localApp.inject({ method: 'POST', url: '/api/v1/compile', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
+
+      await fakeJobs.started[0].runner(makeCtx());
+
+      expect(order).toEqual(['compile', 'finalized', 'listArtifacts', 'lock released']);
+      artifactListingCache.invalidate(artifactCacheIdentity('/repo'));
+    });
+
     it('runs a live manual compile under the lifecycle repo lock', async () => {
       executor.execute.mockResolvedValue({ success: true, data: null });
       const withRepoLifecycleLock = vi.fn(async (_pathOrUrl: string, _profileId: string | undefined, fn: () => Promise<unknown>) => fn());
