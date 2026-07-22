@@ -523,6 +523,68 @@ describe('VersionStore', () => {
     expect(await versions.get(urlA, commitA)).toBeUndefined();
   });
 
+  it('keeps an orphan record when a membership lands before the CAS recheck', async () => {
+    const home = await temp('ignite-version-orphan-cas-race-');
+    const { fileSystem, store: versions } = await store(home);
+    await versions.upsert(record());
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deleteCheckout = vi.fn(async () => {
+      await gate;
+    });
+
+    const deletion = versions.deleteIfZeroReferencesCAS(
+      urlA,
+      commitA,
+      deleteCheckout
+    );
+    await vi.waitFor(() => expect(deleteCheckout).toHaveBeenCalled());
+    const membershipPath = fileSystem.getVersionMembershipPath('p1');
+    await fs.mkdir(path.dirname(membershipPath), { recursive: true });
+    await fs.writeFile(
+      membershipPath,
+      JSON.stringify({
+        [canonicalGitUrl(urlA)]: [{
+          commit: commitA,
+          source: 'workflow',
+          addedAt: '2026-07-22T00:00:00.000Z',
+        }],
+      })
+    );
+    release();
+
+    await expect(deletion).resolves.toBe(false);
+    expect(await versions.get(urlA, commitA)).toBeDefined();
+  });
+
+  it('fails closed on another profile’s unreadable memberships while removing healthy workflow memberships', async () => {
+    const home = await temp('ignite-version-unreadable-memberships-');
+    const { fileSystem, store: versions } = await store(home);
+    await versions.upsert(record());
+    await versions.addMembership('p1', urlA, commitA, 'workflow');
+    const unreadablePath = fileSystem.getVersionMembershipPath('p2');
+    await fs.mkdir(path.dirname(unreadablePath), { recursive: true });
+    await fs.writeFile(unreadablePath, '{not json', 'utf8');
+    const remove = vi.fn(async () => {});
+
+    await expect(
+      versions.removeWorkflowMembershipAndDeleteIfUnreferenced(
+        'p1',
+        urlA,
+        commitA,
+        remove
+      )
+    ).resolves.toEqual({ membershipRemoved: true, checkoutDeleted: false });
+    expect(remove).not.toHaveBeenCalled();
+    expect(await versions.get(urlA, commitA)).toBeDefined();
+    await expect(
+      versions.deleteIfZeroReferencesCAS(urlA, commitA, remove)
+    ).resolves.toBe(false);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
   it('bumps lastUsedAt without changing the original record metadata', async () => {
     const home = await temp('ignite-version-home-');
     const { store: versions } = await store(home);

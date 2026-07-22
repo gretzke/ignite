@@ -126,7 +126,7 @@ export interface InstalledWorkflowRecord {
     pins: Array<{ url: string; commit: string }>;
   };
 }
-export interface InstalledWorkflowsFile { schemaVersion: 1; records: InstalledWorkflowRecord[] }
+export interface InstalledWorkflowsFile { schemaVersion: 1; records: InstalledWorkflowRecord[]; quarantinedAt?: string }
 
 export interface WorkflowPromotionSourcePreview { sourceId: string; origin: string; commit: string; tagChoices: string[]; dirty: boolean; error?: string }
 export type WorkflowPromoteRequest =
@@ -180,6 +180,7 @@ export interface WorkflowInstallDiff {
   sourcesRenamed: Array<{ from: string; to: string; detail: WorkflowSourceDetail }>;
   versionsChanged: Array<{ detail: WorkflowSourceDetail; from: { ref?: string; commit: string }; to: { ref?: string; commit: string } }>;
   artifactsChanged: Array<{ detail: WorkflowSourceDetail; from: string; to: string }>;
+  sourcesModified: Array<{ detail: WorkflowSourceDetail; changes: string[] }>;
   pluginsChanged: Array<{ id: string; kind: 'added' | 'removed' | 'version' | 'source'; from?: string; to?: string }>;
   stepsChanged: boolean;
   hooksChanged: boolean;
@@ -303,7 +304,7 @@ export const InstalledWorkflowRecordSchema = z.object({
   lastAttempt: z.object({ docHash: z.string().regex(SHA256_HEX), at: z.string().min(1), status: z.enum(['failed', 'interrupted']), error: z.string(), failedSources: z.array(z.object({ id: z.string().min(1), reason: z.string().min(1), code: z.enum(['ARTIFACT_NOT_FOUND', 'FRAMEWORK_MISSING', 'LIFECYCLE_FAILED']).optional(), artifactPath: z.string().min(1).optional() }).strict()).optional(), pins: z.array(z.object({ url: z.string().min(1), commit: z.string().regex(COMMIT) }).strict()) }).strict().optional(),
 }).strict() as z.ZodType<InstalledWorkflowRecord>;
 // Parse records separately so invalid records stay opaque across unrelated writes.
-export const InstalledWorkflowsFileSchema = z.object({ schemaVersion: z.literal(1), records: z.array(z.unknown()) }).strict();
+export const InstalledWorkflowsFileSchema = z.object({ schemaVersion: z.literal(1), records: z.array(z.unknown()), quarantinedAt: z.string().min(1).optional() }).strict();
 
 export function validateWorkflowClosure(document: WorkflowDocument): string[] {
   const plugins = new Set(document.requiredPlugins.map((plugin) => plugin.id));
@@ -387,6 +388,7 @@ const WorkflowInstallDiffSchema = z.object({
   sourcesRenamed: z.array(z.object({ from: z.string(), to: z.string(), detail: WorkflowSourceDetailSchema }).strict()),
   versionsChanged: z.array(z.object({ detail: WorkflowSourceDetailSchema, from: z.object({ ref: z.string().optional(), commit: z.string().regex(COMMIT) }).strict(), to: z.object({ ref: z.string().optional(), commit: z.string().regex(COMMIT) }).strict() }).strict()),
   artifactsChanged: z.array(z.object({ detail: WorkflowSourceDetailSchema, from: z.string(), to: z.string() }).strict()),
+  sourcesModified: z.array(z.object({ detail: WorkflowSourceDetailSchema, changes: z.array(z.string()) }).strict()),
   pluginsChanged: z.array(z.object({ id: z.string(), kind: z.enum(['added', 'removed', 'version', 'source']), from: z.string().optional(), to: z.string().optional() }).strict()),
   stepsChanged: z.boolean(), hooksChanged: z.boolean(), formattingOnly: z.boolean(),
 }).strict() satisfies z.ZodType<WorkflowInstallDiff>;

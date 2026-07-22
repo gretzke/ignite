@@ -141,6 +141,31 @@ describe('InstalledWorkflowStore', () => {
     ).toBe(true);
   });
 
+  it('keeps quarantine degradation across an attempted install until success rewrites it', async () => {
+    const home = await temp('ignite-installed-workflows-quarantine-attempt-');
+    const { fileSystem, store: workflows } = await store(home);
+    const registryPath = fileSystem.getProfileInstalledWorkflowsPath(profileId);
+    await fs.mkdir(path.dirname(registryPath), { recursive: true });
+    await fs.writeFile(registryPath, '{not json', 'utf8');
+
+    await workflows.read(profileId);
+    await workflows.writeAttempt(profileId, keyA, attempt());
+
+    await expect(workflows.read(profileId)).resolves.toMatchObject({
+      degraded: true,
+      records: [expect.objectContaining({ ...keyA, lastAttempt: attempt() })],
+    });
+    expect(JSON.parse(await fs.readFile(registryPath, 'utf8'))).toMatchObject({
+      quarantinedAt: expect.any(String),
+    });
+
+    await workflows.writeInstalled(profileId, keyA, installed());
+    await expect(workflows.read(profileId)).resolves.toMatchObject({
+      degraded: false,
+      records: [expect.objectContaining({ ...keyA, installed: installed() })],
+    });
+  });
+
   it('reports a fresh profile without a registry or quarantine as healthy', async () => {
     const home = await temp('ignite-installed-workflows-fresh-');
     const { store: workflows } = await store(home);

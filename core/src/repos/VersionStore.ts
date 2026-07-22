@@ -502,8 +502,14 @@ export class VersionStore {
   ): Promise<boolean> {
     const canonicalUrl = canonicalGitUrl(url);
     return this.withRmwLock(async () => {
-      if (await this.referenceCountLocked(canonicalUrl, commit)) return false;
+      if ((await this.referenceCountLocked(canonicalUrl, commit)) !== 0)
+        return false;
       await deleteCheckout();
+      // The checkout callback can yield to lifecycle work. Recheck before
+      // removing cache.json so a membership that landed during that window
+      // keeps the materialization record for the next reconciliation pass.
+      if ((await this.referenceCountLocked(canonicalUrl, commit)) !== 0)
+        return false;
       const registry = await this.readRegistry();
       registry.versions = registry.versions.filter(
         (record) =>
@@ -565,7 +571,7 @@ export class VersionStore {
     return this.readMemberships(profileId);
   }
 
-  async referenceCount(url: string, commit: string): Promise<number> {
+  async referenceCount(url: string, commit: string): Promise<number | undefined> {
     const canonicalUrl = canonicalGitUrl(url);
     return this.referenceCountLocked(canonicalUrl, commit);
   }
@@ -573,14 +579,21 @@ export class VersionStore {
   private async referenceCountLocked(
     canonicalUrl: string,
     commit: string
-  ): Promise<number> {
+  ): Promise<number | undefined> {
     const profiles = await this.fileSystem.listProfiles();
     let count = 0;
     for (const profileId of profiles) {
-      count +=
-        (await this.readMemberships(profileId))[canonicalUrl]?.filter(
-          (entry) => entry.commit === commit
-        ).length ?? 0;
+      try {
+        count +=
+          (await this.readMemberships(profileId))[canonicalUrl]?.filter(
+            (entry) => entry.commit === commit
+          ).length ?? 0;
+      } catch (error) {
+        getLogger().warn(
+          `Cannot count version references: membership registry for ${profileId} is unreadable: ${String(error)}`
+        );
+        return undefined;
+      }
     }
     return count;
   }
@@ -865,12 +878,10 @@ export class VersionStore {
   private async readMemberships(
     profileId: string
   ): Promise<Record<string, VersionMembership[]>> {
-    if (!(await this.fileSystem.fileExists(this.membershipPath(profileId))))
-      return {};
     try {
-      const memberships = await this.fileSystem.readJsonFile<unknown>(
-        this.membershipPath(profileId)
-      );
+      const memberships = JSON.parse(
+        await fs.readFile(this.membershipPath(profileId), 'utf8')
+      ) as unknown;
       if (
         typeof memberships !== 'object' ||
         memberships === null ||
@@ -895,10 +906,11 @@ export class VersionStore {
       }
       return canonical;
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
       getLogger().warn(
-        `Ignoring corrupt version membership registry for ${profileId}: ${String(error)}`
+        `Membership registry for ${profileId} is unreadable: ${String(error)}`
       );
-      return {};
+      throw error;
     }
   }
 

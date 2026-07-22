@@ -21,6 +21,7 @@ interface RegistryState {
   records: InstalledWorkflowRecord[];
   opaqueRecords: unknown[];
   degraded: boolean;
+  quarantinedAt?: string;
 }
 
 export class InstalledWorkflowStore {
@@ -89,7 +90,7 @@ export class InstalledWorkflowStore {
         ...existing,
         ...key,
         lastAttempt: attempt,
-      });
+      }, true);
     });
   }
 
@@ -102,7 +103,7 @@ export class InstalledWorkflowStore {
       await this.writeFile(profileId, [
         ...state.records.filter((record) => !predicate(record)),
         ...state.opaqueRecords,
-      ]);
+      ], state.degraded ? state.quarantinedAt ?? new Date().toISOString() : undefined);
     });
   }
 
@@ -117,10 +118,14 @@ export class InstalledWorkflowStore {
     const registryPath =
       this.fileSystem.getProfileInstalledWorkflowsPath(profileId);
     if (!(await this.fileSystem.fileExists(registryPath))) {
+      const quarantined = await this.hasQuarantineSibling(registryPath, profileId);
       return {
         records: [],
         opaqueRecords: [],
-        degraded: await this.hasQuarantineSibling(registryPath, profileId),
+        degraded: quarantined,
+        ...(quarantined
+          ? { quarantinedAt: new Date().toISOString() }
+          : {}),
       };
     }
 
@@ -142,11 +147,17 @@ export class InstalledWorkflowStore {
       return {
         records,
         opaqueRecords,
-        degraded: opaqueRecords.length > 0,
+        degraded: Boolean(file.quarantinedAt) || opaqueRecords.length > 0,
+        ...(file.quarantinedAt ? { quarantinedAt: file.quarantinedAt } : {}),
       };
     } catch (error) {
       await this.quarantine(registryPath, profileId, error);
-      return { records: [], opaqueRecords: [], degraded: true };
+      return {
+        records: [],
+        opaqueRecords: [],
+        degraded: true,
+        quarantinedAt: new Date().toISOString(),
+      };
     }
   }
 
@@ -188,22 +199,27 @@ export class InstalledWorkflowStore {
     profileId: string,
     state: RegistryState,
     key: InstalledWorkflowKey,
-    replacement: InstalledWorkflowRecord
+    replacement: InstalledWorkflowRecord,
+    preserveQuarantine = false
   ): Promise<void> {
     await this.writeFile(profileId, [
       ...state.records.filter((record) => !this.matchesKey(record, key)),
       replacement,
       ...state.opaqueRecords.filter((record) => !this.matchesKey(record, key)),
-    ]);
+    ], preserveQuarantine && state.degraded
+      ? state.quarantinedAt ?? new Date().toISOString()
+      : undefined);
   }
 
   private async writeFile(
     profileId: string,
-    records: unknown[]
+    records: unknown[],
+    quarantinedAt?: string
   ): Promise<void> {
     const file: InstalledWorkflowsFile = {
       schemaVersion: 1,
       records: records as InstalledWorkflowRecord[],
+      ...(quarantinedAt ? { quarantinedAt } : {}),
     };
     await this.fileSystem.writeJsonFile(
       this.fileSystem.getProfileInstalledWorkflowsPath(profileId),
