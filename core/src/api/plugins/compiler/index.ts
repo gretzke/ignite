@@ -1,5 +1,6 @@
 // Compiler plugin route handlers
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import fs from 'node:fs/promises';
 import type {
   IApiResponse,
   DetectionResult,
@@ -27,6 +28,8 @@ import { ProfileRepoRegistry } from '../../../filesystem/ProfileRepoRegistry.js'
 import { statFingerprint } from '../../../repos/fingerprint.js';
 import { artifactCacheIdentity, artifactListingCache } from '../../../repos/ArtifactListingCache.js';
 import { finalizeCompile } from '../../../repos/finalizeCompile.js';
+import { artifactListingCacheKey } from '../../../repos/ArtifactListingCache.js';
+import { RepoLifecycle } from '../../../repos/RepoLifecycle.js';
 import { ProfileManager } from '../../../filesystem/ProfileManager.js';
 import { getLogger } from '../../../utils/logger.js';
 import { ErrorCodes } from '../../../types/errors.js';
@@ -58,6 +61,8 @@ export interface CompilerRepoServiceLike {
   assertPinnedIntegrity?: RepoService['assertPinnedIntegrity'];
   withRepoLifecycleLock: RepoService['withRepoLifecycleLock'];
   withVersionMaterialized: RepoService['withVersionMaterialized'];
+  tryWithRepoLock?: RepoService['tryWithRepoLock'];
+  tryWithVersionMaterialized?: RepoService['tryWithVersionMaterialized'];
 }
 
 export interface CompilerHandlerDeps {
@@ -248,8 +253,8 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
     let workspacePath: string;
     let profileId: string | undefined;
     try {
+      profileId = (await ProfileManager.getInstance()).getCurrentProfile();
       if (request.pin) {
-        profileId = (await ProfileManager.getInstance()).getCurrentProfile();
         workspacePath = await resolveContractWorkspace(
           {
             id: 'compiler-operation',
@@ -573,35 +578,58 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
           return reply as unknown as IApiResponse<ArtifactListServeResult>;
         }
 
-        // Get hostPath from request body or fall back to environment/cwd
-        const hostPath =
-          pathOrUrl || process.env.IGNITE_WORKSPACE_PATH || process.cwd();
+        // Deliberately do not call resolveMutableWorkspaceOr400 here: its
+        // pinned branch materializes a checkout and can wait behind compile.
+        const profileId = (await ProfileManager.getInstance()).getCurrentProfile();
+        const pin = request.body.pin;
+        const record = pin
+          ? await d.versionStore.get(pin.url, pin.commit)
+          : (() => undefined)();
+        const liveRecord = pin ? undefined : ([...(await d.repoRegistry.list(profileId)).local, ...(await d.repoRegistry.list(profileId)).cloned]
+          .find((candidate) => candidate.pathOrUrl === pathOrUrl));
+        const state = (record ?? liveRecord)?.frameworks?.find((framework) => framework.id === pluginId);
+        const config = await d.registryLoader.getPluginConfig(pluginId);
+        const generation = state?.artifactGeneration;
+        const identity = artifactCacheIdentity(pin?.url ?? pathOrUrl);
+        const key = generation === undefined ? undefined : artifactListingCacheKey({
+          profileId, canonicalIdentity: identity, frameworkId: pluginId,
+          pluginId, pluginVersion: config.metadata.version, generation,
+        });
+        const checkout = pin ? d.versionStore.checkoutPath(pin.url, pin.commit) : pathOrUrl;
+        const exists = await fs.stat(checkout).then(() => true).catch(() => false);
+        const cached = key && exists ? artifactListingCache.get(key) : undefined;
+        if (cached) return reply.status(200).send({ data: { status: 'ready', artifacts: cached } });
+        artifactListingCache.invalidate(identity);
 
-        const resolved = await resolveMutableWorkspaceOr400(reply, request.body);
-        if (resolved === null) {
-          return reply as unknown as IApiResponse<ArtifactListServeResult>;
-        }
-        const execute = (workspacePath: string) => d.executor.execute(pluginId, 'listArtifacts', { pathOrUrl: hostPath }, { workspacePath });
-        const result = resolved.pin
-          ? await d.repos.withVersionMaterialized(resolved.profileId!, resolved.pin.url, resolved.pin.commit, { ref: resolved.pin.ref }, ({ checkout }) => execute(checkout))
-          : await execute(resolved.workspacePath);
+        const active = RepoLifecycle.getInstance().activeJobFor(pathOrUrl);
+        if (active && !active.startsWith('direct:')) return reply.status(200).send({ data: { status: 'pending', jobId: active } });
+        if (active) return reply.status(200).send({ data: { status: 'busy' } });
+        if (!key || !state) return reply.status(200).send({ data: { status: 'busy' } });
 
-        if (!result.success) {
-          return sendPluginError(
-            reply,
-            result,
-            ErrorCodes.ARTIFACT_LISTING_ERROR,
-            'Failed to list artifacts'
-          );
-        }
-
-        const body: IApiResponse<ArtifactListServeResult> = {
-          data: {
-            status: 'ready',
-            artifacts: (result.data as ArtifactListResult | undefined)?.artifacts ?? [],
+        const execute = async (workspacePath: string) => artifactListingCache.getOrLoad({
+          key, workspacePath, artifactPaths: state.watchPaths?.artifacts ?? [],
+          load: async () => {
+            const result = await d.executor.execute(pluginId, 'listArtifacts', { pathOrUrl }, { workspacePath });
+            if (!result.success) throw Object.assign(new Error(result.error?.message ?? 'Failed to list artifacts'), { result });
+            return (result.data as ArtifactListResult | undefined)?.artifacts ?? [];
           },
-        };
-        return reply.status(200).send(body);
+        });
+        let attempted: { acquired: boolean; value?: Awaited<ReturnType<typeof execute>> };
+        if (pin && d.repos.tryWithVersionMaterialized) {
+          attempted = await d.repos.tryWithVersionMaterialized(profileId, pin.url, pin.commit, { ref: pin.ref }, ({ checkout: workspacePath }) => execute(workspacePath));
+        } else if (!pin && d.repos.tryWithRepoLock) {
+          attempted = await d.repos.tryWithRepoLock(pathOrUrl, profileId, async () => {
+            const workspacePath = await d.repos.resolveExistingWorkspacePath(pathOrUrl);
+            return execute(workspacePath);
+          });
+        } else {
+          // Compatibility for narrow unit fakes. Production RepoService always
+          // implements the non-blocking helpers above.
+          attempted = { acquired: true, value: await execute(pin ? checkout : pathOrUrl) };
+        }
+        if (attempted.acquired) return reply.status(200).send({ data: { status: 'ready', artifacts: attempted.value ?? [] } });
+        const after = RepoLifecycle.getInstance().activeJobFor(pathOrUrl);
+        return reply.status(200).send({ data: after && !after.startsWith('direct:') ? { status: 'pending', jobId: after } : { status: 'busy' } });
       } catch (error) {
         return sendCaughtError(
           reply,

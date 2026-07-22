@@ -529,7 +529,7 @@ describe('compiler API handlers (jobs)', () => {
 
       await localApp.inject({ method: 'POST', url: '/api/v1/compile', payload: { pathOrUrl: '/repo', pluginId: 'waffle' } });
       await fakeJobs.started[0].runner(makeCtx());
-      expect(withRepoLifecycleLock).toHaveBeenCalledWith('/repo', undefined, expect.any(Function));
+      expect(withRepoLifecycleLock).toHaveBeenCalledWith('/repo', 'default', expect.any(Function));
     });
 
     it('serializes a manual live compile with an automatic live recompile', async () => {
@@ -801,7 +801,7 @@ describe('compiler API handlers (jobs)', () => {
   });
 
   describe('listArtifacts', () => {
-    it('resolves workspacePath and passes it through executor.execute', async () => {
+    it('returns busy without a persisted generation instead of materializing', async () => {
       executor.execute.mockResolvedValue({
         success: true,
         data: { artifacts: [] },
@@ -814,16 +814,12 @@ describe('compiler API handlers (jobs)', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(repos.resolveExistingWorkspacePath).toHaveBeenCalledWith('/repo');
-      expect(executor.execute).toHaveBeenCalledWith(
-        'waffle',
-        'listArtifacts',
-        { pathOrUrl: '/repo' },
-        { workspacePath: '/repo-workspace' }
-      );
+      expect(res.json().data).toEqual({ status: 'busy' });
+      expect(repos.resolveExistingWorkspacePath).not.toHaveBeenCalled();
+      expect(executor.execute).not.toHaveBeenCalled();
     });
 
-    it('returns 400 synchronously when the workspace cannot be resolved', async () => {
+    it('does not resolve a workspace when no cached generation is serveable', async () => {
       repos = makeFakeRepos({
         resolveExistingWorkspacePath: vi.fn(async () => {
           throw new Error('no active profile');
@@ -845,12 +841,12 @@ describe('compiler API handlers (jobs)', () => {
         payload: { pathOrUrl: '/repo', pluginId: 'waffle' },
       });
 
-      expect(res.statusCode).toBe(400);
-      expect(res.json().code).toBe(ErrorCodes.INIT_ERROR);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual({ status: 'busy' });
       expect(executor.execute).not.toHaveBeenCalled();
     });
 
-    it('lists artifacts from the materialized pinned commit instead of the live workspace', async () => {
+    it('returns busy for a pinned request with no persisted generation', async () => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ignite-list-pinned-'));
       const live = path.join(root, 'live');
       const pinned = path.join(root, 'pinned');
@@ -895,8 +891,8 @@ describe('compiler API handlers (jobs)', () => {
         const res = await localApp.inject({ method: 'POST', url: '/api/v1/artifacts/list', payload: { pathOrUrl: pin.url, pluginId: 'waffle', pin } });
 
         expect(res.statusCode).toBe(200);
-        expect(res.json().data.artifacts.map((item: { contractName: string }) => item.contractName)).toEqual(['PinnedOnly']);
-        expect(pinnedExecutor.execute).toHaveBeenCalledWith('waffle', 'listArtifacts', { pathOrUrl: pin.url }, { workspacePath: pinned });
+        expect(res.json().data).toEqual({ status: 'busy' });
+        expect(pinnedExecutor.execute).not.toHaveBeenCalled();
       } finally {
         await fs.rm(root, { recursive: true, force: true });
       }
