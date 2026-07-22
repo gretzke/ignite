@@ -17,6 +17,10 @@ import {
 import { contractSourceId } from '../../../../utils/contractSourceId';
 import { artifactVariantLabel, requiresExplicitVariantPick } from '../../../../utils/artifactVariants';
 import type { ContractSourcePin } from '@ignite/api';
+import Tooltip from '../../../../components/Tooltip';
+import AddToWorkflowDialog, {
+  canAddToWorkflow,
+} from '../../../workflows/components/AddToWorkflowDialog';
 
 interface ArtifactBrowserProps {
   artifacts: ArtifactLocation[];
@@ -24,6 +28,57 @@ interface ArtifactBrowserProps {
   error?: string;
   frameworkId?: string;
   pin?: ContractSourcePin;
+}
+
+export function ArtifactBrowserSelectedActions({
+  selectedCount,
+  draftActive,
+  pin,
+  onAddToDeployment,
+  onAddToWorkflow,
+}: {
+  selectedCount: number;
+  draftActive: boolean;
+  pin?: ContractSourcePin;
+  onAddToDeployment: () => void;
+  onAddToWorkflow: () => void;
+}) {
+  if (!selectedCount) return null;
+  return (
+    <>
+      <button
+        type="button"
+        className="btn btn-sm btn-primary"
+        onClick={onAddToDeployment}
+      >
+        <Rocket size={14} />{' '}
+        {draftActive
+          ? `Add ${selectedCount} to deployment`
+          : `Deploy selected (${selectedCount})`}
+      </button>
+      {canAddToWorkflow(pin) ? (
+        <button
+          type="button"
+          className="btn btn-sm btn-secondary"
+          onClick={onAddToWorkflow}
+        >
+          Add to workflow
+        </button>
+      ) : (
+        <Tooltip label="Add to workflow is available only for a version-scoped repository.">
+          <span>
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              disabled
+            >
+              Add to workflow
+            </button>
+          </span>
+        </Tooltip>
+      )}
+    </>
+  );
 }
 
 export default function ArtifactBrowser({
@@ -61,6 +116,7 @@ export default function ArtifactBrowser({
   const [selected, setSelected] = useState<Record<string, ArtifactLocation>>(
     {}
   );
+  const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
 
   // Sync currentPath with URL params when it changes
   useEffect(() => {
@@ -217,18 +273,13 @@ export default function ArtifactBrowser({
             <span className="text-xs text-muted">
               {files.length} contract{files.length !== 1 ? 's' : ''}
             </span>
-            {Object.keys(selected).length > 0 && (
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                onClick={addSelected}
-              >
-                <Rocket size={14} />{' '}
-                {draftActive
-                  ? `Add ${Object.keys(selected).length} to deployment`
-                  : `Deploy selected (${Object.keys(selected).length})`}
-              </button>
-            )}
+            <ArtifactBrowserSelectedActions
+              selectedCount={Object.keys(selected).length}
+              draftActive={draftActive}
+              pin={pin}
+              onAddToDeployment={addSelected}
+              onAddToWorkflow={() => setWorkflowDialogOpen(true)}
+            />
           </div>
         </div>
       </div>
@@ -321,6 +372,16 @@ export default function ArtifactBrowser({
           );
         })}
       </div>
+      {pin && frameworkId && repoPath && (
+        <AddToWorkflowDialog
+          open={workflowDialogOpen}
+          onOpenChange={setWorkflowDialogOpen}
+          artifacts={Object.values(selected)}
+          frameworkId={frameworkId}
+          pin={pin}
+          onAdded={() => setSelected({})}
+        />
+      )}
     </div>
   );
 }
