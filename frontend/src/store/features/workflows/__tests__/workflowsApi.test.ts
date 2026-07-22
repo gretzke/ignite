@@ -8,13 +8,17 @@ import {
 
 describe('workflowsApi', () => {
   it('refetches status when an install is fenced by a changed document', () => {
+    let closed = false;
     const action = workflowsApi.installWorkflow(
       {
         repoPathOrUrl: '/repo',
         name: 'release',
         expectedDocHash: 'a'.repeat(64),
       },
-      'profile-a'
+      'profile-a',
+      () => {
+        closed = true;
+      }
     ) as unknown as { payload: { onError: (error: unknown) => unknown } };
     const result = action.payload.onError({
       status: 409,
@@ -41,5 +45,6 @@ describe('workflowsApi', () => {
         query: { pathOrUrl: '/repo' },
       },
     });
+    expect(closed).toBe(true);
   });
 });

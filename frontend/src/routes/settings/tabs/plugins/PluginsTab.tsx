@@ -15,6 +15,7 @@ import { isSecretScopeField } from '@ignite/api';
 import Dropdown from '../../../../components/Dropdown';
 import Tooltip from '../../../../components/Tooltip';
 import ConfirmDialog from '../../../../components/ConfirmDialog';
+import InstallPluginDialog from '../../../../components/plugins/InstallPluginDialog';
 import { useAppDispatch, useAppSelector } from '../../../../store';
 import {
   openConfigModal,
@@ -26,11 +27,7 @@ import {
   selectPluginVersions,
   type PluginRow,
 } from '../../../../store/features/plugins/pluginsSlice';
-import {
-  InstallFromGitModal,
-  InstallFromPathModal,
-  type ManageTarget,
-} from './InstallPluginModal';
+import { InstallFromPathModal, type ManageTarget } from './InstallPluginModal';
 import PluginUpdateModal from './PluginUpdateModal';
 import PluginStoreModal from './PluginStoreModal';
 
@@ -540,7 +537,7 @@ export default function PluginsTab() {
         </div>
       )}
 
-      <InstallFromGitModal
+      <InstallPluginDialog
         open={gitModalOpen}
         onOpenChange={(open) => {
           setGitModalOpen(open);

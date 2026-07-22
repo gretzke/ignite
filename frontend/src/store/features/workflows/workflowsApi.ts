@@ -64,7 +64,7 @@ export const workflowsApi = {
       return triggerToast({ title: 'Workflow save failed', description: formatApiError(error).description, variant: 'error' });
     },
   }),
-  installWorkflow: ({ repoPathOrUrl, name, expectedDocHash }: { repoPathOrUrl: string; name: string; expectedDocHash: string }, profileId?: string) => {
+  installWorkflow: ({ repoPathOrUrl, name, expectedDocHash }: { repoPathOrUrl: string; name: string; expectedDocHash: string }, profileId?: string, onDocumentChanged?: () => void) => {
     installDocHashes.set(installKey(repoPathOrUrl, name), expectedDocHash);
     return apiClient.dispatch.installWorkflow({
     body: { repoPathOrUrl, name, expectedDocHash },
@@ -78,6 +78,7 @@ export const workflowsApi = {
       if (origins) return workflowOriginsApprovalRequested({ repoPathOrUrl, name, origins, retry: 'install' });
       const installFailed = workflowInstallFailed({ repoPathOrUrl, name, error: formatApiError(error).description });
       if (error.status === 409 && error.body?.code === 'WORKFLOW_DOC_CHANGED' && profileId) {
+        onDocumentChanged?.();
         return [installFailed, ...workflowsApi.getWorkflowsStatus(repoPathOrUrl, profileId)];
       }
       return installFailed;

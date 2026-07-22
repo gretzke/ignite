@@ -43,6 +43,7 @@ interface GitModalProps {
   onOpenChange: (open: boolean) => void;
   manage?: ManageTarget | null;
   prefillUrl?: string;
+  requiredPlugin?: { id: string; version: string; source?: string };
 }
 
 export function InstallFromGitModal({
@@ -50,6 +51,7 @@ export function InstallFromGitModal({
   onOpenChange,
   manage,
   prefillUrl,
+  requiredPlugin,
 }: GitModalProps) {
   const dispatch = useAppDispatch();
   const [url, setUrl] = useState('');
@@ -203,6 +205,18 @@ export function InstallFromGitModal({
               ? 'Switch to a different release, branch, or commit of this plugin. Granted permissions carry over — this rebuilds from the same repository.'
               : 'Enter the URL of the plugin repository. The plugin is built in an isolated environment before it is installed.'}
           </div>
+          {requiredPlugin && (
+            <div className="card-milky p-3 mb-3 text-xs break-words">
+              <div>
+                Workflow requires{' '}
+                <span className="mono-data">{requiredPlugin.id}</span>@
+                <span className="mono-data">{requiredPlugin.version}</span>
+              </div>
+              {requiredPlugin.source && (
+                <div className="mt-1">Source: {requiredPlugin.source}</div>
+              )}
+            </div>
+          )}
 
           <div className="mb-3">
             <label className="block text-sm font-medium mb-2">
@@ -340,14 +354,22 @@ export function InstallFromGitModal({
 interface InstallModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  prefillPath?: string;
+  requiredPlugin?: { id: string; version: string; source?: string };
 }
 
 export function InstallFromPathModal({
   open,
   onOpenChange,
+  prefillPath,
+  requiredPlugin,
 }: InstallModalProps) {
   const dispatch = useAppDispatch();
   const [path, setPath] = useState('');
+
+  useEffect(() => {
+    if (open) setPath(prefillPath ?? '');
+  }, [open, prefillPath]);
 
   const canSubmit = path.trim() !== '' && isValidAbsolutePath(path.trim());
 
@@ -380,6 +402,18 @@ export function InstallFromPathModal({
             Select the plugin directory to build and install. This option is
             only available in development mode.
           </div>
+          {requiredPlugin && (
+            <div className="card-milky p-3 mb-3 text-xs break-words">
+              <div>
+                Workflow requires{' '}
+                <span className="mono-data">{requiredPlugin.id}</span>@
+                <span className="mono-data">{requiredPlugin.version}</span>
+              </div>
+              {requiredPlugin.source && (
+                <div className="mt-1">Source: {requiredPlugin.source}</div>
+              )}
+            </div>
+          )}
           <div className="mb-4">
             <label className="block text-sm font-medium mb-2">
               Plugin Path
