@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
+import { canonicalGitUrl } from '@ignite/api';
 import type { RepoFrameworkState } from '@ignite/api';
 import { FileSystem } from '../filesystem/FileSystem.js';
 import { KeyedMutex } from '../utils/KeyedMutex.js';
@@ -83,17 +84,8 @@ export function assertNoUrlCredentials(url: string): void {
 }
 
 /** Stable identity used by every cache registry and membership lookup. */
-export function canonicalGitUrl(url: string): string {
-  try {
-    const parsed = new URL(normalizeGitUrl(url));
-    parsed.pathname = parsed.pathname
-      .replace(/\/+$/, '')
-      .replace(/\.git$/i, '');
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return normalizeGitUrl(url);
-  }
-}
+// Kept as a core re-export for existing imports and external callers.
+export { canonicalGitUrl } from '@ignite/api';
 
 export function pinnedOrigin(url: string): string {
   const parsed = new URL(normalizeGitUrl(url));

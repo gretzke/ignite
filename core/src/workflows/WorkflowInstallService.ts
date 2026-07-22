@@ -8,6 +8,7 @@ import type {
   WorkflowPluginReadiness,
   WorkflowSource,
 } from '@ignite/api';
+import { canonicalJson } from '@ignite/api';
 import { PluginType } from '@ignite/plugin-types/types';
 import {
   JobManager,
@@ -50,7 +51,58 @@ export class WorkflowInstallServiceError extends Error {
 }
 
 type Pin = { url: string; commit: string };
-type RequiredRole = PluginType;
+export type RequiredRole = PluginType;
+
+/** Derives plugin capabilities from actual workflow usage, not doc claims. */
+export function deriveWorkflowRequiredRoles(
+  document: WorkflowDocument
+): Map<string, Set<RequiredRole>> {
+  const roles = new Map<string, Set<RequiredRole>>();
+  const add = (id: string, role: RequiredRole) => {
+    const set = roles.get(id) ?? new Set<RequiredRole>();
+    set.add(role);
+    roles.set(id, set);
+  };
+  for (const source of document.sources) {
+    if (source.origin === 'contract-type')
+      add(source.pluginId, PluginType.CONTRACT_TYPE);
+    else add(source.frameworkId, PluginType.COMPILER);
+  }
+  for (const step of document.steps) {
+    if (step.kind === 'deploy' && step.strategy?.kind === 'plugin')
+      add(step.strategy.pluginId, PluginType.DEPLOYMENT_TYPE);
+  }
+  for (const hook of document.outputs.hooks)
+    add(hook, PluginType.DEPLOYMENT_HOOK);
+  return roles;
+}
+
+/** Read-only plugin readiness used by both install and workflow status. */
+export async function getWorkflowPluginReadiness(
+  id: string,
+  requiredVersion: string,
+  requiredRoles: ReadonlySet<RequiredRole>
+): Promise<WorkflowPluginReadiness> {
+  const pluginRegistry = PluginRegistryLoader.getInstance();
+  let config;
+  try {
+    config = await pluginRegistry.getPluginConfig(id);
+  } catch {
+    return { id, status: 'missing' };
+  }
+  const installedVersion = config.metadata.version;
+  if ((await TrustManager.getInstance().getGrant(id)).trust === 'untrusted') {
+    return { id, status: 'untrusted', installedVersion };
+  }
+  if (installedVersion !== requiredVersion) {
+    return { id, status: 'version-mismatch', installedVersion };
+  }
+  return [...requiredRoles].every((role) =>
+    config.metadata.types.includes(role)
+  )
+    ? { id, status: 'installed', installedVersion }
+    : { id, status: 'wrong-type', installedVersion };
+}
 
 interface ActiveAttempt {
   jobId: string;
@@ -158,28 +210,7 @@ export class WorkflowInstallService {
       registry: new ProfileRepoRegistry(),
       store: new InstalledWorkflowStore(),
       repos,
-      pluginStatus: async (id, requiredVersion, requiredRoles) => {
-        let config;
-        try {
-          config = await pluginRegistry.getPluginConfig(id);
-        } catch {
-          return { id, status: 'missing' };
-        }
-        const installedVersion = config.metadata.version;
-        if (
-          (await TrustManager.getInstance().getGrant(id)).trust === 'untrusted'
-        ) {
-          return { id, status: 'untrusted', installedVersion };
-        }
-        if (installedVersion !== requiredVersion) {
-          return { id, status: 'version-mismatch', installedVersion };
-        }
-        return [...requiredRoles].every((role) =>
-          config.metadata.types.includes(role)
-        )
-          ? { id, status: 'installed', installedVersion }
-          : { id, status: 'wrong-type', installedVersion };
-      },
+      pluginStatus: getWorkflowPluginReadiness,
       artifactReadable: async (source, profileId) => {
         if (source.origin === 'contract-type') {
           const frozen =
@@ -241,7 +272,7 @@ export class WorkflowInstallService {
 
     const pins = this.pinsFor(loaded.document);
     await this.assertOriginsApproved(profileId, pins);
-    const roles = this.requiredRoles(loaded.document);
+    const roles = deriveWorkflowRequiredRoles(loaded.document);
     let jobId = '';
     const runner: JobRunner = async (ctx) =>
       this.runAttempt(
@@ -601,11 +632,11 @@ export class WorkflowInstallService {
           id: plugin.id,
           version: plugin.version,
           ...(plugin.source
-            ? { source: this.canonicalJson(plugin.source) }
+            ? { source: canonicalJson(plugin.source) }
             : {}),
         })),
-        stepsHash: sha256(this.canonicalJson(document.steps)),
-        hooksHash: sha256(this.canonicalJson(document.outputs)),
+        stepsHash: sha256(canonicalJson(document.steps)),
+        hooksHash: sha256(canonicalJson(document.outputs)),
       },
       async () => this.isRegistered(profileId, request.repoPathOrUrl)
     );
@@ -691,29 +722,6 @@ export class WorkflowInstallService {
     );
   }
 
-  private requiredRoles(
-    document: WorkflowDocument
-  ): Map<string, Set<RequiredRole>> {
-    const roles = new Map<string, Set<RequiredRole>>();
-    const add = (id: string, role: RequiredRole) => {
-      const set = roles.get(id) ?? new Set<RequiredRole>();
-      set.add(role);
-      roles.set(id, set);
-    };
-    for (const source of document.sources) {
-      if (source.origin === 'contract-type')
-        add(source.pluginId, PluginType.CONTRACT_TYPE);
-      else add(source.frameworkId, PluginType.COMPILER);
-    }
-    for (const step of document.steps) {
-      if (step.kind === 'deploy' && step.strategy?.kind === 'plugin')
-        add(step.strategy.pluginId, PluginType.DEPLOYMENT_TYPE);
-    }
-    for (const hook of document.outputs.hooks)
-      add(hook, PluginType.DEPLOYMENT_HOOK);
-    return roles;
-  }
-
   private snapshotSource(source: WorkflowSource): InstalledSourceSnapshot {
     if (source.origin === 'contract-type') {
       return {
@@ -747,21 +755,6 @@ export class WorkflowInstallService {
         .map((plugin) => `${plugin.id}: ${plugin.status}`),
     ];
     return `Workflow install failed: ${failures.join('; ')}`;
-  }
-
-  // TODO(task-1.4): move this shared canonical JSON implementation to @ignite/api.
-  private canonicalJson(value: unknown): string {
-    if (value === null || typeof value !== 'object')
-      return JSON.stringify(value);
-    if (Array.isArray(value))
-      return `[${value.map((item) => this.canonicalJson(item)).join(',')}]`;
-    return `{${Object.keys(value as Record<string, unknown>)
-      .sort()
-      .map(
-        (key) =>
-          `${JSON.stringify(key)}:${this.canonicalJson((value as Record<string, unknown>)[key])}`
-      )
-      .join(',')}}`;
   }
 
   private attemptKey(

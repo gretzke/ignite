@@ -39,7 +39,7 @@ describe('workflowsSlice', () => {
   });
 
   it('stores update reports per workflow', () => {
-    const report: WorkflowCheckUpdatesData = { sources: [], plugins: [] };
+    const report: WorkflowCheckUpdatesData = { docHash: 'a'.repeat(64), sources: [], plugins: [] };
     const state = workflowsReducer(undefined, workflowUpdatesLoaded({ repoPathOrUrl: '/repo', name: 'release', report }));
     expect(state.updatesByKey['/repo\0release'].report).toEqual(report);
   });

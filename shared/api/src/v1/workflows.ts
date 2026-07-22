@@ -155,7 +155,48 @@ export interface WorkflowPluginUpdate {
   updateAvailable: boolean;
   update?: PluginVersionInfoData;
 }
-export interface WorkflowCheckUpdatesData { sources: WorkflowSourceUpdate[]; plugins: WorkflowPluginUpdate[] }
+export interface WorkflowCheckUpdatesData { docHash: string; sources: WorkflowSourceUpdate[]; plugins: WorkflowPluginUpdate[] }
+
+export type WorkflowInstallState = 'not-installed' | 'out-of-sync' | 'ready';
+export type WorkflowAttemptStatus =
+  | { status: 'idle' }
+  | { status: 'running'; jobId: string }
+  | { status: 'failed' | 'interrupted'; error: string; failedSources?: NonNullable<InstalledWorkflowRecord['lastAttempt']>['failedSources']; atDocHash: string };
+export interface WorkflowSourceDetail {
+  id: string;
+  contractName?: string;
+  canonicalUrl?: string;
+  url?: string;
+  ref?: string;
+  commit?: string;
+  artifactPath?: string;
+  ready: boolean;
+  reason?: string;
+  code?: string;
+}
+export interface WorkflowInstallDiff {
+  sourcesAdded: WorkflowSourceDetail[];
+  sourcesRemoved: WorkflowSourceDetail[];
+  sourcesRenamed: Array<{ from: string; to: string; detail: WorkflowSourceDetail }>;
+  versionsChanged: Array<{ detail: WorkflowSourceDetail; from: { ref?: string; commit: string }; to: { ref?: string; commit: string } }>;
+  artifactsChanged: Array<{ detail: WorkflowSourceDetail; from: string; to: string }>;
+  pluginsChanged: Array<{ id: string; kind: 'added' | 'removed' | 'version' | 'source'; from?: string; to?: string }>;
+  stepsChanged: boolean;
+  hooksChanged: boolean;
+  formattingOnly: boolean;
+}
+export interface WorkflowStatusEntry {
+  name: string;
+  valid: boolean;
+  error?: string;
+  docHash?: string;
+  installedDocHash?: string;
+  installState?: WorkflowInstallState;
+  attempt?: WorkflowAttemptStatus;
+  diff?: WorkflowInstallDiff;
+  sources?: WorkflowSourceDetail[];
+  plugins?: WorkflowPluginReadiness[];
+}
 
 function jsonDepth(value: unknown, depth = 0): number {
   if (value === null || typeof value !== 'object') return depth;
@@ -323,11 +364,43 @@ const WorkflowPluginUpdateSchema = z.object({
   installedVersion: z.string().optional(), updateAvailable: z.boolean(), update: PluginVersionInfoSchema.optional(),
 }).strict() satisfies z.ZodType<WorkflowPluginUpdate>;
 export const WorkflowCheckUpdatesResponseSchema = createApiResponseSchema<WorkflowCheckUpdatesData>('WorkflowCheckUpdatesResponseSchema')(
-  z.object({ sources: z.array(WorkflowSourceUpdateSchema), plugins: z.array(WorkflowPluginUpdateSchema) }).strict(),
+  z.object({ docHash: z.string().regex(SHA256_HEX), sources: z.array(WorkflowSourceUpdateSchema), plugins: z.array(WorkflowPluginUpdateSchema) }).strict(),
+);
+const WorkflowSourceDetailSchema = z.object({
+  id: z.string(), contractName: z.string().optional(), canonicalUrl: z.string().optional(), url: z.string().optional(), ref: z.string().optional(), commit: z.string().regex(COMMIT).optional(), artifactPath: z.string().optional(),
+  ready: z.boolean(), reason: z.string().optional(), code: z.string().optional(),
+}).strict() satisfies z.ZodType<WorkflowSourceDetail>;
+const WorkflowPluginReadinessSchema = z.discriminatedUnion('status', [
+  z.object({ id: z.string(), status: z.literal('installed'), installedVersion: z.string() }).strict(),
+  z.object({ id: z.string(), status: z.literal('version-mismatch'), installedVersion: z.string() }).strict(),
+  z.object({ id: z.string(), status: z.literal('missing') }).strict(),
+  z.object({ id: z.string(), status: z.literal('untrusted'), installedVersion: z.string() }).strict(),
+  z.object({ id: z.string(), status: z.literal('wrong-type'), installedVersion: z.string() }).strict(),
+]) satisfies z.ZodType<WorkflowPluginReadiness>;
+const WorkflowAttemptStatusSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('idle') }).strict(),
+  z.object({ status: z.literal('running'), jobId: z.string() }).strict(),
+  z.object({ status: z.enum(['failed', 'interrupted']), error: z.string(), failedSources: z.array(z.object({ id: z.string(), reason: z.string(), code: z.enum(['ARTIFACT_NOT_FOUND', 'FRAMEWORK_MISSING', 'LIFECYCLE_FAILED']).optional(), artifactPath: z.string().optional() }).strict()).optional(), atDocHash: z.string().regex(SHA256_HEX) }).strict(),
+]) satisfies z.ZodType<WorkflowAttemptStatus>;
+const WorkflowInstallDiffSchema = z.object({
+  sourcesAdded: z.array(WorkflowSourceDetailSchema), sourcesRemoved: z.array(WorkflowSourceDetailSchema),
+  sourcesRenamed: z.array(z.object({ from: z.string(), to: z.string(), detail: WorkflowSourceDetailSchema }).strict()),
+  versionsChanged: z.array(z.object({ detail: WorkflowSourceDetailSchema, from: z.object({ ref: z.string().optional(), commit: z.string().regex(COMMIT) }).strict(), to: z.object({ ref: z.string().optional(), commit: z.string().regex(COMMIT) }).strict() }).strict()),
+  artifactsChanged: z.array(z.object({ detail: WorkflowSourceDetailSchema, from: z.string(), to: z.string() }).strict()),
+  pluginsChanged: z.array(z.object({ id: z.string(), kind: z.enum(['added', 'removed', 'version', 'source']), from: z.string().optional(), to: z.string().optional() }).strict()),
+  stepsChanged: z.boolean(), hooksChanged: z.boolean(), formattingOnly: z.boolean(),
+}).strict() satisfies z.ZodType<WorkflowInstallDiff>;
+const WorkflowStatusEntrySchema = z.object({
+  name: z.string(), valid: z.boolean(), error: z.string().optional(), docHash: z.string().regex(SHA256_HEX).optional(), installedDocHash: z.string().regex(SHA256_HEX).optional(), installState: z.enum(['not-installed', 'out-of-sync', 'ready']).optional(),
+  attempt: WorkflowAttemptStatusSchema.optional(), diff: WorkflowInstallDiffSchema.optional(), sources: z.array(WorkflowSourceDetailSchema).optional(), plugins: z.array(WorkflowPluginReadinessSchema).optional(),
+}).strict() satisfies z.ZodType<WorkflowStatusEntry>;
+const WorkflowStatusResponseSchema = createApiResponseSchema<{ workflows: WorkflowStatusEntry[] }>('WorkflowStatusResponseSchema')(
+  z.object({ workflows: z.array(WorkflowStatusEntrySchema) }).strict(),
 );
 
 export const workflowRoutes = {
   listWorkflows: { method: 'GET' as const, path: `${V1_BASE_PATH}/repos/workflows`, schema: { tags: ['repos'], querystring: WorkflowPathQuerySchema, response: { 200: WorkflowListResponseSchema } } },
+  getWorkflowsStatus: { method: 'GET' as const, path: `${V1_BASE_PATH}/repos/workflows/status`, schema: { tags: ['repos'], querystring: WorkflowPathQuerySchema, response: { 200: WorkflowStatusResponseSchema } } },
   getWorkflow: { method: 'GET' as const, path: `${V1_BASE_PATH}/repos/workflows/:name`, schema: { tags: ['repos'], params: WorkflowNameParamsSchema, querystring: WorkflowPathQuerySchema, response: { 200: WorkflowGetResponseSchema } } },
   putWorkflow: { method: 'PUT' as const, path: `${V1_BASE_PATH}/repos/workflows/:name`, schema: { tags: ['repos'], params: WorkflowNameParamsSchema, querystring: WorkflowPathQuerySchema, body: WorkflowPutBodySchema, response: { 200: WorkflowPutResponseSchema } } },
   installWorkflow: { method: 'POST' as const, path: `${V1_BASE_PATH}/workflows/install`, schema: { tags: ['workflows'], body: WorkflowInstallBodySchema, response: { 200: JobStartedResponseSchema } } },

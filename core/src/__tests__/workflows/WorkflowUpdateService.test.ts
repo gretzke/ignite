@@ -15,8 +15,9 @@ describe('WorkflowUpdateService', () => {
       return remote({ branchHeads: { main: B } });
     });
     const pluginRows = vi.fn(async () => [{ id: 'foundry', requiredVersion: '1', status: 'installed' as const, installedVersion: '1', updateAvailable: false }]);
-    const service = new WorkflowUpdateService({ readWorkflow: async () => document(), inspectRemote, pluginRows, getProfileId: async () => 'p1', isOriginApproved: async () => true });
+    const service = new WorkflowUpdateService({ readWorkflow: async () => ({ document: document(), docHash: 'a'.repeat(64) }), inspectRemote, pluginRows, getProfileId: async () => 'p1', isOriginApproved: async () => true });
     const result = await service.check({ repoPathOrUrl: '/repo', name: 'release' });
+    expect(result.docHash).toBe('a'.repeat(64));
     expect(result.sources).toEqual([
       expect.objectContaining({ sourceId: 'upgrade', status: 'upgrade-available', upgrades: [{ ref: 'v2.0.0', commit: B, version: '2.0.0' }] }),
       expect.objectContaining({ sourceId: 'retarget', status: 'tag-retargeted', latestCommit: B }),
@@ -33,7 +34,7 @@ describe('WorkflowUpdateService', () => {
   it('returns approval rows without inspecting unapproved origins', async () => {
     const inspectRemote = vi.fn();
     const service = new WorkflowUpdateService({
-      readWorkflow: async () => document(), inspectRemote, pluginRows: async () => [],
+      readWorkflow: async () => ({ document: document(), docHash: 'a'.repeat(64) }), inspectRemote, pluginRows: async () => [],
       getProfileId: async () => 'current-profile', isOriginApproved: async (_profile, url) => !url.includes('upgrade'),
     });
     const result = await service.check({ repoPathOrUrl: '/repo', name: 'release' });
@@ -61,7 +62,7 @@ describe('WorkflowUpdateService', () => {
   it('reports a contract-type descriptor hash change without dereferencing a repository', async () => {
     const document: WorkflowDocument = { schemaVersion: 1, sources: [{ id: 'proxy', origin: 'contract-type', contractName: 'Proxy', pluginId: 'proxy-plugin', artifactKey: 'proxy', versionLabel: '1', contentHash: 'a'.repeat(64) }], steps: [], requiredPlugins: [{ id: 'proxy-plugin', version: '1' }], outputs: { hooks: [] } };
     const inspectRemote = vi.fn();
-    const result = await new WorkflowUpdateService({ readWorkflow: async () => document, inspectRemote, pluginRows: async () => [], getProfileId: async () => 'p1', isOriginApproved: async () => true, contractTypeHash: async () => 'b'.repeat(64) }).check({ repoPathOrUrl: '/repo', name: 'release' });
+    const result = await new WorkflowUpdateService({ readWorkflow: async () => ({ document, docHash: 'a'.repeat(64) }), inspectRemote, pluginRows: async () => [], getProfileId: async () => 'p1', isOriginApproved: async () => true, contractTypeHash: async () => 'b'.repeat(64) }).check({ repoPathOrUrl: '/repo', name: 'release' });
     expect(result.sources).toEqual([{ sourceId: 'proxy', status: 'contract-type-drift', currentContentHash: 'a'.repeat(64), latestContentHash: 'b'.repeat(64) }]);
     expect(inspectRemote).not.toHaveBeenCalled();
   });

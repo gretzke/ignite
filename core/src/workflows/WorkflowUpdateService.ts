@@ -19,9 +19,10 @@ import type { PluginVersionInfoData } from '@ignite/api';
 import { VersionStore, pinnedOrigin } from '../repos/VersionStore.js';
 import { ProfileManager } from '../filesystem/ProfileManager.js';
 import { ContractTypeService } from '../deployments/ContractTypeService.js';
+import { hashWorkflowRaw } from './WorkflowDocumentReader.js';
 
 export interface WorkflowUpdateServiceDeps {
-  readWorkflow: (request: WorkflowCheckUpdatesRequest) => Promise<WorkflowDocument>;
+  readWorkflow: (request: WorkflowCheckUpdatesRequest) => Promise<{ document: WorkflowDocument; docHash: string }>;
   inspectRemote: (url: string) => Promise<InspectGitRemoteData>;
   pluginRows: (plugins: WorkflowRequiredPlugin[]) => Promise<WorkflowPluginUpdate[]>;
   getProfileId: () => Promise<string>;
@@ -43,7 +44,7 @@ export class WorkflowUpdateService {
   }
 
   async check(request: WorkflowCheckUpdatesRequest): Promise<WorkflowCheckUpdatesData> {
-    const document = await this.deps.readWorkflow(request);
+    const { document, docHash } = await this.deps.readWorkflow(request);
     const profileId = await this.deps.getProfileId();
     const sources: WorkflowSourceUpdate[] = [];
     for (const source of document.sources) {
@@ -88,14 +89,17 @@ export class WorkflowUpdateService {
         sources.push({ sourceId: source.id, status: 'error', currentCommit: pin.commit, error: error instanceof Error ? error.message : String(error) });
       }
     }
-    return { sources, plugins: await this.deps.pluginRows(document.requiredPlugins) };
+    return { docHash, sources, plugins: await this.deps.pluginRows(document.requiredPlugins) };
   }
 }
 
-async function readWorkflow(request: WorkflowCheckUpdatesRequest): Promise<WorkflowDocument> {
+async function readWorkflow(request: WorkflowCheckUpdatesRequest): Promise<{ document: WorkflowDocument; docHash: string }> {
   const result = await RepoService.getInstance().getFile(request.repoPathOrUrl, `ignite/workflows/${request.name}.json`);
   if (!result.success) throw Object.assign(new Error(result.error.message), { code: result.error.code });
-  return makeWorkflowDocumentSchema({ allowFileUrls: process.env.NODE_ENV === 'development' }).parse(JSON.parse(result.data.content));
+  return {
+    document: makeWorkflowDocumentSchema({ allowFileUrls: process.env.NODE_ENV === 'development' }).parse(JSON.parse(result.data.content)),
+    docHash: hashWorkflowRaw(result.data.content),
+  };
 }
 
 export async function requiredPluginRows(required: WorkflowRequiredPlugin[], deps?: {
