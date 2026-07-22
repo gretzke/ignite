@@ -5,6 +5,7 @@ import type {
   ValidationItem,
   ValidationReport,
 } from '@ignite/api';
+import { sanitizeDisplayText } from '@ignite/api';
 import { Loader2, RefreshCw, Rocket } from 'lucide-react';
 import { type NavigateFunction, useNavigate } from 'react-router-dom';
 import { ApiError } from '@ignite/api/client';
@@ -25,12 +26,11 @@ import ValidationChecklist from '../components/ValidationChecklist';
 import { explorersApi } from '../../../store/api/explorersApi';
 import { decodeUrlEncodingForDisplay, replaceIdsForDisplay } from '../../../utils/displayText';
 import { workflowRunRequestFromDraft } from '../../../store/features/deployments/workflowDraft';
-import {
-  openPermissionsModal,
-  pluginsApi,
-} from '../../../store/features/plugins/pluginsSlice';
+import { openPermissionsModal } from '../../../store/features/plugins/pluginsSlice';
 import { reviewPredictedAddresses } from '../reviewPredictions';
 import { triggerToast } from '../../../store/middleware/toastListener';
+import InstallPluginDialog from '../../../components/plugins/InstallPluginDialog';
+import { selectWorkflowDocument } from '../../../store/features/workflows/workflowsSlice';
 
 function validationGreen(report: ValidationReport | null): boolean {
   return Boolean(
@@ -76,6 +76,15 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
   const chains = useAppSelector((state) => state.chains.chains);
   const explorers = useAppSelector((state) => state.explorers.byChain);
   const pluginRows = useAppSelector((state) => state.plugins.rows);
+  const currentWorkflowDocument = useAppSelector((state) =>
+    draft.workflowRef
+      ? selectWorkflowDocument(
+          state,
+          draft.workflowRef.repoPathOrUrl,
+          draft.workflowRef.name
+        )
+      : undefined
+  );
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
@@ -84,6 +93,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
     []
   );
   const [hooksLoaded, setHooksLoaded] = useState(false);
+  const [pluginId, setPluginId] = useState<string | null>(null);
   const defaultName = `Deploy ${draft.contracts
     .map((item) => item.contractName)
     .join(', ')}`;
@@ -151,6 +161,9 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
     [draft, installedHookIds]
   );
   const selectedHooks = workflowRequest?.hooks ?? [];
+  const selectedPlugin = draft.workflowRequiredPlugins?.find(
+    (plugin) => plugin.id === pluginId
+  );
 
   // Explorer entries are normally loaded in the preceding step. Fetch any
   // missing chain here too, so the review always has each selected URL rather
@@ -197,6 +210,13 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
 
   const launch = async () => {
     if (!draft.idempotencyKey || !validationGreen(report)) return;
+    if (
+      draft.workflowRef &&
+      draft.workflowRef.docHash !== currentWorkflowDocument?.docHash
+    ) {
+      setError('The workflow changed on disk. Reload its draft before launching.');
+      return;
+    }
     const launchedKey = draft.idempotencyKey;
     setLaunching(true);
     setError(null);
@@ -370,7 +390,9 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
                 return (
                   <div key={id} className="list-row flex items-center gap-3">
                     <div className="flex-1">
-                      <span className="font-medium mono-data">{id}</span>
+                      <span className="font-medium mono-data">
+                        {sanitizeDisplayText(id)}
+                      </span>
                       <span className="text-xs text-warn block">
                         Required by the workflow but not installed; it will not
                         run.
@@ -380,24 +402,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
                       <button
                         type="button"
                         className="btn btn-sm btn-secondary"
-                        onClick={() =>
-                          dispatch(
-                            required.source!.kind === 'git'
-                              ? pluginsApi.installGit({
-                                  url: required.source!.url,
-                                  ...(required.source!.ref
-                                    ? { ref: required.source!.ref }
-                                    : {}),
-                                  ...(required.source!.track
-                                    ? { track: required.source!.track }
-                                    : {}),
-                                })
-                              : pluginsApi.install(
-                                  required.source!.contextDir,
-                                  required.source!.dockerfile
-                                )
-                          )
-                        }
+                        onClick={() => setPluginId(required.id)}
                       >
                         Install
                       </button>
@@ -461,7 +466,7 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
       )}
       {error && (
         <div className="card-milky p-4 text-err">
-          {replaceIdsForDisplay(error, stepLabels)}
+          {sanitizeDisplayText(replaceIdsForDisplay(error, stepLabels))}
         </div>
       )}
       {report && (
@@ -527,6 +532,11 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
           Launch deployment
         </button>
       </div>
+      <InstallPluginDialog
+        open={pluginId !== null}
+        onOpenChange={(open) => !open && setPluginId(null)}
+        requiredPlugin={selectedPlugin}
+      />
     </section>
   );
 }

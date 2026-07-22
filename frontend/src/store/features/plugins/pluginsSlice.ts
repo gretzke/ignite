@@ -215,6 +215,7 @@ export const pluginsReducer = pluginsSlice.reducer;
 export interface GitInstallTarget {
   url: string;
   ref?: string;
+  commit?: string;
   track?:
     | { mode: 'release'; version: string }
     | { mode: 'branch'; branch: string }

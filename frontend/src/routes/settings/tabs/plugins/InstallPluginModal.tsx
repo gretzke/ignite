@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import type { InspectGitRemoteData } from '@ignite/api';
+import { sanitizeDisplayText } from '@ignite/api';
 import { useAppDispatch } from '../../../../store';
 import { apiClient } from '../../../../store/api/client';
 import {
@@ -34,7 +35,7 @@ const isValidAbsolutePath = (path: string): boolean => {
 export interface ManageTarget {
   pluginId: string;
   name: string;
-  url: string;
+  url?: string;
   currentRef?: string;
 }
 
@@ -43,6 +44,12 @@ interface GitModalProps {
   onOpenChange: (open: boolean) => void;
   manage?: ManageTarget | null;
   prefillUrl?: string;
+  prefillSource?: {
+    url: string;
+    ref?: string;
+    track?: GitInstallTarget['track'];
+    commit?: string;
+  };
   requiredPlugin?: { id: string; version: string; source?: string };
 }
 
@@ -51,6 +58,7 @@ export function InstallFromGitModal({
   onOpenChange,
   manage,
   prefillUrl,
+  prefillSource,
   requiredPlugin,
 }: GitModalProps) {
   const dispatch = useAppDispatch();
@@ -62,23 +70,25 @@ export function InstallFromGitModal({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [branch, setBranch] = useState('');
   const [commit, setCommit] = useState('');
+  const [sourceEdited, setSourceEdited] = useState(false);
   const lastInspectedRef = useRef<string | null>(null);
 
-  const effectiveUrl = manage ? manage.url : url;
+  const effectiveUrl = manage?.url ?? url;
 
   // Seed state when the modal opens.
   useEffect(() => {
     if (!open) return;
-    setUrl(manage ? manage.url : (prefillUrl ?? ''));
+    setUrl(manage?.url ?? prefillSource?.url ?? prefillUrl ?? '');
     setInspect(null);
     setInspectError('');
-    setVersion('');
+    setVersion(prefillSource?.track?.mode === 'release' ? prefillSource.track.version : '');
     setAdvancedOpen(false);
-    setBranch('');
-    setCommit('');
+    setBranch(prefillSource?.track?.mode === 'branch' ? prefillSource.track.branch : '');
+    setCommit(prefillSource?.commit ?? (prefillSource?.track?.mode === 'commit' ? prefillSource.ref ?? '' : ''));
+    setSourceEdited(false);
     lastInspectedRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, manage, prefillSource, prefillUrl]);
 
   // Inspect the remote (debounced for typing; immediate for fixed URLs).
   useEffect(() => {
@@ -136,6 +146,7 @@ export function InstallFromGitModal({
   // Precedence: pinned commit > explicitly chosen branch > release > default
   // branch head.
   const resolveTarget = (): GitInstallTarget | null => {
+    if (prefillSource && !sourceEdited) return prefillSource;
     const targetUrl = effectiveUrl.trim();
     if (!targetUrl || !isValidUrl(targetUrl)) return null;
     const pinned = commit.trim();
@@ -213,7 +224,7 @@ export function InstallFromGitModal({
                 <span className="mono-data">{requiredPlugin.version}</span>
               </div>
               {requiredPlugin.source && (
-                <div className="mt-1">Source: {requiredPlugin.source}</div>
+                <div className="mt-1">Source: {sanitizeDisplayText(requiredPlugin.source)}</div>
               )}
             </div>
           )}
@@ -226,7 +237,10 @@ export function InstallFromGitModal({
               type="url"
               placeholder="https://github.com/username/plugin"
               value={effectiveUrl}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                setSourceEdited(true);
+                setUrl(e.target.value);
+              }}
               className="input-glass"
               disabled={!!manage}
               autoFocus={!manage}
@@ -261,7 +275,10 @@ export function InstallFromGitModal({
                     (manage?.currentRef === release.tag ? ' (installed)' : ''),
                 }))}
                 value={version}
-                onValueChange={setVersion}
+                onValueChange={(value) => {
+                  setSourceEdited(true);
+                  setVersion(value);
+                }}
                 anchor="left"
               />
             </div>
@@ -302,7 +319,10 @@ export function InstallFromGitModal({
                         })),
                       ]}
                       value={branch}
-                      onValueChange={setBranch}
+                      onValueChange={(value) => {
+                        setSourceEdited(true);
+                        setBranch(value);
+                      }}
                       anchor="left"
                     />
                   </div>
@@ -314,7 +334,10 @@ export function InstallFromGitModal({
                       type="text"
                       placeholder="commit sha"
                       value={commit}
-                      onChange={(e) => setCommit(e.target.value)}
+                      onChange={(e) => {
+                        setSourceEdited(true);
+                        setCommit(e.target.value);
+                      }}
                       className="input-glass font-mono text-xs"
                       spellCheck={false}
                     />
@@ -355,6 +378,8 @@ interface InstallModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   prefillPath?: string;
+  prefillDockerfile?: string;
+  manage?: ManageTarget | null;
   requiredPlugin?: { id: string; version: string; source?: string };
 }
 
@@ -362,6 +387,8 @@ export function InstallFromPathModal({
   open,
   onOpenChange,
   prefillPath,
+  prefillDockerfile,
+  manage,
   requiredPlugin,
 }: InstallModalProps) {
   const dispatch = useAppDispatch();
@@ -380,7 +407,8 @@ export function InstallFromPathModal({
 
   const handleSubmit = () => {
     if (!canSubmit) return;
-    dispatch(pluginsApi.install(path.trim()));
+    if (manage) dispatch(pluginsApi.update(manage.pluginId));
+    else dispatch(pluginsApi.install(path.trim(), prefillDockerfile));
     handleOpenChange(false);
   };
 
@@ -396,7 +424,7 @@ export function InstallFromPathModal({
           style={{ maxWidth: 720, width: '90vw', padding: 16 }}
         >
           <Dialog.Title className="text-base font-semibold mb-2">
-            Install Plugin from Local Path
+            {manage ? `Manage ${sanitizeDisplayText(manage.name)}` : 'Install Plugin from Local Path'}
           </Dialog.Title>
           <div className="text-sm opacity-80 mb-4">
             Select the plugin directory to build and install. This option is
@@ -410,7 +438,7 @@ export function InstallFromPathModal({
                 <span className="mono-data">{requiredPlugin.version}</span>
               </div>
               {requiredPlugin.source && (
-                <div className="mt-1">Source: {requiredPlugin.source}</div>
+                <div className="mt-1">Source: {sanitizeDisplayText(requiredPlugin.source)}</div>
               )}
             </div>
           )}
@@ -438,7 +466,7 @@ export function InstallFromPathModal({
               onClick={handleSubmit}
               disabled={!canSubmit}
             >
-              Install
+              {manage ? 'Apply' : 'Install'}
             </button>
           </div>
         </Dialog.Content>

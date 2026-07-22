@@ -40,6 +40,8 @@ export default function InstallPluginDialog({
         open={open}
         onOpenChange={onOpenChange}
         prefillPath={source.contextDir}
+        prefillDockerfile={source.dockerfile}
+        manage={manage}
         requiredPlugin={{
           id: sanitizeDisplayText(requiredPlugin!.id),
           version: sanitizeDisplayText(requiredPlugin!.version),
@@ -58,6 +60,7 @@ export default function InstallPluginDialog({
       open={open}
       onOpenChange={onOpenChange}
       prefillUrl={prefillUrl}
+      prefillSource={source?.kind === 'git' ? source : undefined}
       manage={manage}
       requiredPlugin={
         requiredPlugin
