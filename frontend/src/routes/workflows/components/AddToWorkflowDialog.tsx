@@ -4,6 +4,7 @@ import { Loader2, Plus, X } from 'lucide-react';
 import {
   appendSource,
   sanitizeDisplayText,
+  stripGitUrlCredentials,
   type ArtifactLocation,
   type ContractSourcePin,
   type WorkflowDocument,
@@ -60,7 +61,11 @@ export function workflowSourceFromArtifact(
 export function compilerRequiredPlugin(
   frameworkId: string,
   row: PluginRow | undefined
-): { plugin?: WorkflowRequiredPlugin; error?: string } {
+): {
+  plugin?: WorkflowRequiredPlugin;
+  error?: string;
+  credentialsRemoved?: boolean;
+} {
   if (!row)
     return {
       error: `Install and trust the ${frameworkId} compiler plugin before adding contracts to a workflow.`,
@@ -77,12 +82,20 @@ export function compilerRequiredPlugin(
     return {
       error: `The installed ${frameworkId} compiler plugin has no versioned install source to record in the workflow.`,
     };
+  const credentialsRemoved =
+    row.source.kind === 'git' &&
+    stripGitUrlCredentials(row.source.url) !== row.source.url;
+  const source =
+    row.source.kind === 'git'
+      ? { ...row.source, url: stripGitUrlCredentials(row.source.url) }
+      : { ...row.source };
   return {
     plugin: {
       id: row.pluginId,
       version: row.version,
-      source: { ...row.source },
+      source,
     },
+    credentialsRemoved,
   };
 }
 
@@ -295,6 +308,11 @@ export default function AddToWorkflowDialog({
 
           {plugin.error && (
             <div className="text-sm text-err mb-3">{plugin.error}</div>
+          )}
+          {plugin.credentialsRemoved && (
+            <div className="text-sm pill-warning mb-3">
+              Credentials removed from plugin source.
+            </div>
           )}
           {error && <div className="text-sm text-err mb-3">{error}</div>}
 

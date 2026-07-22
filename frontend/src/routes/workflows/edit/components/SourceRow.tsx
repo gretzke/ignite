@@ -25,6 +25,7 @@ export default function SourceRow({
   highlighted,
   onChange,
   onRemove,
+  onStrategyValidityChange,
 }: {
   source: RepoWorkflowSource;
   document: WorkflowDocument;
@@ -33,6 +34,7 @@ export default function SourceRow({
   highlighted?: boolean;
   onChange: (document: WorkflowDocument) => void;
   onRemove: () => void;
+  onStrategyValidityChange?: (valid: boolean) => void;
 }) {
   const dispatch = useAppDispatch();
   const [pickVersion, setPickVersion] = useState(false);
@@ -193,6 +195,7 @@ export default function SourceRow({
         sourceId={source.id}
         plugins={plugins}
         onChange={onChange}
+        onValidityChange={onStrategyValidityChange}
       />
       <AddVersionModal
         variant="pick"
@@ -200,7 +203,7 @@ export default function SourceRow({
         onOpenChange={setPickVersion}
         source={{
           sourceKey: source.id,
-          label: source.contractName,
+          label: sanitizeDisplayText(source.contractName),
           url: source.repo.url,
           local: false,
           initialCommit: source.repo.commit,

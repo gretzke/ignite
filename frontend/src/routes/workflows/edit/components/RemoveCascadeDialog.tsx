@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import type { ClearedWorkflowRef } from '@ignite/api';
+import { sanitizeDisplayText, type ClearedWorkflowRef } from '@ignite/api';
 
 export default function RemoveCascadeDialog({
   open,
@@ -32,7 +32,7 @@ export default function RemoveCascadeDialog({
               {removedStepIds.length ? (
                 <ul className="mt-1 list-disc pl-5 mono-data">
                   {removedStepIds.map((id) => (
-                    <li key={id}>{id}</li>
+                    <li key={id}>{sanitizeDisplayText(id)}</li>
                   ))}
                 </ul>
               ) : (
@@ -45,7 +45,8 @@ export default function RemoveCascadeDialog({
                 <ul className="mt-1 list-disc pl-5 mono-data break-all">
                   {clearedRefs.map((ref) => (
                     <li key={`${ref.stepId}:${ref.path}`}>
-                      {ref.stepId} · {ref.path}
+                      {sanitizeDisplayText(ref.stepId)} ·{' '}
+                      {sanitizeDisplayText(ref.path)}
                     </li>
                   ))}
                 </ul>

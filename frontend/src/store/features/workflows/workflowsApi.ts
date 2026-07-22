@@ -80,12 +80,33 @@ export const workflowsApi = {
       }),
     ];
   },
-  get: (repoPathOrUrl: string, name: string) =>
+  get: (
+    repoPathOrUrl: string,
+    name: string,
+    callbacks?: {
+      onSuccess?: (data: {
+        document: WorkflowDocument;
+        raw: string;
+        docHash: string;
+      }) => void;
+      onError?: () => void;
+    }
+  ) =>
     apiClient.dispatch.getWorkflow({
       params: { name },
       query: { pathOrUrl: repoPathOrUrl },
-      onSuccess: (data) =>
-        workflowDocumentLoaded({ repoPathOrUrl, name, ...data }),
+      onSuccess: (data) => {
+        callbacks?.onSuccess?.(data);
+        return workflowDocumentLoaded({ repoPathOrUrl, name, ...data });
+      },
+      onError: (error) => {
+        callbacks?.onError?.();
+        return triggerToast({
+          title: 'Workflow load failed',
+          description: formatApiError(error).description,
+          variant: 'error',
+        });
+      },
     }),
   saveWorkflow: ({
     repoPathOrUrl,
