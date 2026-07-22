@@ -11,6 +11,7 @@ import type {
   ArtifactData,
   ContractSource,
   ContractSourcePin,
+  RepoFrameworkState,
 } from '@ignite/api';
 import type { PathOptions } from '@ignite/plugin-types';
 import type { VerificationBundleData } from '@ignite/plugin-types/base/compiler';
@@ -22,6 +23,10 @@ import { JobManager } from '../../../jobs/JobManager.js';
 import { RepoService } from '../../../repos/RepoService.js';
 import { resolveContractWorkspace } from '../../../repos/workspaceResolver.js';
 import { VersionStore } from '../../../repos/VersionStore.js';
+import { ProfileRepoRegistry } from '../../../filesystem/ProfileRepoRegistry.js';
+import { statFingerprint } from '../../../repos/fingerprint.js';
+import { artifactCacheIdentity, artifactListingCache } from '../../../repos/ArtifactListingCache.js';
+import { finalizeCompile } from '../../../repos/finalizeCompile.js';
 import { ProfileManager } from '../../../filesystem/ProfileManager.js';
 import { getLogger } from '../../../utils/logger.js';
 import { ErrorCodes } from '../../../types/errors.js';
@@ -60,7 +65,8 @@ export interface CompilerHandlerDeps {
   executor: CompilerExecutorLike;
   registryLoader: CompilerRegistryLoaderLike;
   repos: CompilerRepoServiceLike;
-  versionStore: Pick<VersionStore, 'isCachePath' | 'checkoutPath'>;
+  versionStore: Pick<VersionStore, 'isCachePath' | 'checkoutPath' | 'get' | 'updateState'>;
+  repoRegistry: Pick<ProfileRepoRegistry, 'list' | 'updateRepoState'>;
 }
 
 type MutableCompilerOperationRequest = CompilerOperationRequest & {
@@ -167,6 +173,7 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
     registryLoader: deps?.registryLoader ?? PluginRegistryLoader.getInstance(),
     repos: deps?.repos ?? RepoService.getInstance(),
     versionStore: deps?.versionStore ?? new VersionStore(),
+    repoRegistry: deps?.repoRegistry ?? new ProfileRepoRegistry(),
   };
 
   // Returns true (and has already sent a 400) if pluginId does not resolve
@@ -280,6 +287,61 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
       return null;
     }
     return { workspacePath, pin: request.pin, profileId };
+  }
+
+  async function finalizeManualCompile(
+    workspacePath: string,
+    pathOrUrl: string,
+    pluginId: string,
+    profileId: string | undefined,
+    pin: ContractSourcePin | undefined,
+    sourceFingerprint: string | undefined,
+    log: (message: string) => void
+  ): Promise<void> {
+    const config = await d.registryLoader.getPluginConfig(pluginId);
+    let framework;
+    let persist: ((value: RepoFrameworkState) => Promise<void>) | undefined;
+    if (pin) {
+      if (typeof d.versionStore.get !== 'function' || typeof d.versionStore.updateState !== 'function') return;
+      const record = await d.versionStore.get(pin.url, pin.commit);
+      framework = record?.frameworks?.find((candidate) => candidate.id === pluginId);
+      if (framework) persist = async (value) => {
+        const frameworks = record!.frameworks!.map((candidate) => candidate.id === pluginId ? value : candidate);
+        await d.versionStore.updateState(pin.url, pin.commit, { frameworks });
+      };
+    } else if (profileId) {
+      const listed = await d.repoRegistry.list(profileId);
+      const record = [...listed.local, ...listed.cloned].find((candidate) => candidate.pathOrUrl === pathOrUrl);
+      framework = record?.frameworks?.find((candidate) => candidate.id === pluginId);
+      if (framework) persist = async (value) => {
+        const frameworks = record!.frameworks!.map((candidate) => candidate.id === pluginId ? value : candidate);
+        await d.repoRegistry.updateRepoState(profileId, pathOrUrl, { frameworks });
+      };
+    }
+    if (!framework || !persist) return;
+    await finalizeCompile({
+      workspacePath, pathOrUrl, framework,
+      identity: artifactCacheIdentity(pin?.url ?? pathOrUrl), profileId,
+      pluginId, pluginVersion: config.metadata.version,
+      sourceFingerprint, executor: d.executor, artifactCache: artifactListingCache,
+      persist, log,
+    });
+  }
+
+  async function manualFramework(
+    pathOrUrl: string,
+    pluginId: string,
+    profileId: string | undefined,
+    pin: ContractSourcePin | undefined
+  ): Promise<RepoFrameworkState | undefined> {
+    if (pin) return typeof d.versionStore.get === 'function'
+      ? (await d.versionStore.get(pin.url, pin.commit))?.frameworks?.find((candidate) => candidate.id === pluginId)
+      : undefined;
+    if (!profileId) return undefined;
+    const listed = await d.repoRegistry.list(profileId);
+    return [...listed.local, ...listed.cloned]
+      .find((candidate) => candidate.pathOrUrl === pathOrUrl)?.frameworks
+      ?.find((candidate) => candidate.id === pluginId);
   }
 
   return {
@@ -445,10 +507,22 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
         'compiler.compile',
         { pathOrUrl, pluginId, ...(resolved.pin ? { pin: resolved.pin } : {}) },
         async (ctx): Promise<null> => {
-          const execute = (workspacePath: string) => d.executor.execute(
-            pluginId, 'compile', { pathOrUrl },
-            { onOutput: (t) => ctx.log(t), workspacePath, signal: ctx.signal }
-          );
+          const framework = await manualFramework(pathOrUrl, pluginId, resolved.profileId, resolved.pin);
+          let sourceFingerprint: string | undefined;
+          let compiledWorkspace: string | undefined;
+          const execute = async (workspacePath: string) => {
+            compiledWorkspace = workspacePath;
+            if (framework?.watchPaths) {
+              sourceFingerprint = await statFingerprint(workspacePath, [
+                ...framework.watchPaths.config,
+                ...framework.watchPaths.sources,
+              ]);
+            }
+            return d.executor.execute(
+              pluginId, 'compile', { pathOrUrl },
+              { onOutput: (t) => ctx.log(t), workspacePath, signal: ctx.signal }
+            );
+          };
           const result = resolved.pin
             ? await d.repos.withVersionMaterialized(
               resolved.profileId!,
@@ -472,6 +546,12 @@ export function createCompilerHandlers(deps?: Partial<CompilerHandlerDeps>) {
               }
             );
           }
+
+          await finalizeManualCompile(
+            compiledWorkspace ?? resolved.workspacePath,
+            pathOrUrl, pluginId, resolved.profileId, resolved.pin, sourceFingerprint,
+            (message) => ctx.log(message)
+          );
 
           return null;
         }
