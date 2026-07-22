@@ -616,10 +616,12 @@ export const repositoriesApi = {
   // Fingerprint drift check (focus-triggered). Auto-recompiles surface as
   // card/job status via the subscribed lifecycle jobs — deliberately no
   // toast on failure: a background check must never interrupt the user.
-  checkRepos: () => {
+  checkRepos: (options?: { pathOrUrl: string; force?: true }) => {
     return apiDispatchAction({
       endpoint: 'checkRepos',
-      body: {},
+      body: options
+        ? { pathOrUrl: options.pathOrUrl, ...(options.force ? { force: true } : {}) }
+        : {},
       onSuccess: (data: unknown) => {
         const { started } = data as {
           started: Array<{ pathOrUrl: string; jobId: string }>;

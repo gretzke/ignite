@@ -10,7 +10,8 @@ import {
   repositoriesReducer,
   setRepositories,
 } from '../../../../store/features/repositories/repositoriesSlice';
-import { compilerReducer } from '../../../../store/features/compiler/compilerSlice';
+import { artifactListReceived, compilerReducer } from '../../../../store/features/compiler/compilerSlice';
+import { deployDraftReducer } from '../../../../store/features/deployments/deployDraftSlice';
 
 const url = 'https://example.test/contracts.git';
 const installed: RepoVersionSummary = {
@@ -21,6 +22,49 @@ const installed: RepoVersionSummary = {
 };
 
 describe('RepositoryPage version scope validation', () => {
+  it('renders compiling, ready contracts, and durable errors without assuming artifacts exist', () => {
+    const repositories: RepoList = {
+      session: null,
+      local: [{
+        pathOrUrl: '/workspace/contracts', initialized: true,
+        frameworks: [{ id: 'foundry', name: 'Foundry' }], versions: [],
+      }],
+      cloned: [], versionGroups: [], pinned: [],
+    };
+    const makeStore = () => configureStore({
+      reducer: { repositories: repositoriesReducer, compiler: compilerReducer, deployDraft: deployDraftReducer },
+    });
+    const render = (store: ReturnType<typeof makeStore>) => renderToStaticMarkup(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={[`/repositories/${encodeURIComponent('/workspace/contracts')}`]}>
+          <Routes><Route path="/repositories/:repoPath" element={<RepositoryPage />} /></Routes>
+        </MemoryRouter>
+      </Provider>
+    );
+    const pendingStore = makeStore();
+    pendingStore.dispatch(setRepositories(repositories));
+    pendingStore.dispatch(artifactListReceived({
+      repoPath: '/workspace/contracts', frameworkId: 'foundry', pathOrUrl: '/workspace/contracts',
+      result: { status: 'pending', jobId: 'job-compile' },
+    }));
+    expect(render(pendingStore)).toContain('Compiling');
+
+    const readyStore = makeStore();
+    readyStore.dispatch(setRepositories(repositories));
+    readyStore.dispatch(artifactListReceived({
+      repoPath: '/workspace/contracts', frameworkId: 'foundry', pathOrUrl: '/workspace/contracts',
+      result: { status: 'ready', artifacts: [{ contractName: 'Counter', sourcePath: 'Counter.sol', artifactPath: 'out/Counter.json' }] },
+    }));
+    expect(render(readyStore)).toContain('Counter.sol');
+
+    const failureStore = makeStore();
+    failureStore.dispatch(setRepositories({
+      ...repositories,
+      local: [{ ...repositories.local[0], lastError: { code: 'COMPILE_FAILED', message: 'compile failed', at: '2026-07-22T00:00:00.000Z' } }],
+    }));
+    expect(render(failureStore)).toContain('Retry');
+  });
+
   it('renders version-not-installed and mints no pin for an unknown version query', () => {
     const repositories: RepoList = {
       session: null,

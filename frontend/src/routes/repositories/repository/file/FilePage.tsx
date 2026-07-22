@@ -20,7 +20,8 @@ import { getRepoName } from '../../../../utils/repo';
 import type { RootState, AppDispatch } from '../../../../store/store';
 import { fileCacheKey, filesApi } from '../../../../store/features/files/filesSlice';
 import { useSelector as useCompilerSelector } from 'react-redux';
-import { compilerScopeKey, listArtifacts } from '../../../../store/features/compiler/compilerSlice';
+import { clearArtifactWait, compilerScopeKey, listArtifacts } from '../../../../store/features/compiler/compilerSlice';
+import { repositoriesApi } from '../../../../store/features/repositories/repositoriesApi';
 import { SyntaxHighlighter } from '../../../../components/SyntaxHighlighter';
 import Select from '../../../../components/Select';
 import {
@@ -182,6 +183,9 @@ export default function FilePage() {
   const repositories = useSelector(
     (state: RootState) => state.repositories.repositories
   );
+  const liveRepoData = useSelector(
+    (state: RootState) => state.repositories.repositoriesData[decodedRepoPath]
+  );
   const version = useSelector((_state: RootState) => {
     if (!versionCommit) return undefined;
     return [...(repositories?.local ?? []), ...(repositories?.cloned ?? []), ...(repositories?.session ? [repositories.session] : [])]
@@ -242,12 +246,16 @@ export default function FilePage() {
     if (
       !invalidVersion &&
       frameworkId &&
-      (!frameworkData || frameworkData.artifacts === undefined)
+      (!frameworkData || frameworkData.artifacts === undefined) &&
+      frameworkData?.status !== 'waiting'
     ) {
       dispatch(
         listArtifacts({ pathOrUrl: decodedRepoPath, pluginId: frameworkId, ...(pin ? { pin } : {}), stateKey: compilerKey })
       );
     }
+    return () => {
+      dispatch(clearArtifactWait({ repoPath: compilerKey, ...(frameworkId ? { frameworkId } : {}) }));
+    };
   }, [dispatch, decodedRepoPath, frameworkId, frameworkData, pin, compilerKey, invalidVersion]);
 
   // Fetch file content
@@ -323,6 +331,10 @@ export default function FilePage() {
   const contentLoaded = !!fileData?.content?.content;
   const artifactsLoading =
     frameworkId && frameworkData && frameworkData.artifacts === undefined;
+  const lifecycleError = pin ? version?.lastError : liveRepoData?.lastError;
+  const retryLifecycle = () => {
+    if (decodedRepoPath) dispatch(repositoriesApi.checkRepos({ pathOrUrl: decodedRepoPath, force: true }));
+  };
   const error = fileData?.error;
   const content = fileData?.content?.content;
   const artifactData = frameworkId
@@ -408,6 +420,7 @@ export default function FilePage() {
         <button onClick={() => navigate('/repositories')} className="btn btn-secondary btn-icon" aria-label="Back to repositories"><ArrowLeft size={18} /></button>
         <div className="card-milky p-6 mt-6"><h2 className="text-lg font-semibold">Version Not Installed</h2><p className="text-sm text-muted mt-2">This version is not installed for this repository.</p></div>
       </div>
+
     );
   }
 
@@ -449,6 +462,13 @@ export default function FilePage() {
           </p>
         </div>
       </div>
+
+      {lifecycleError && (
+        <div className="card-milky p-4 mb-6 flex items-center justify-between gap-3">
+          <div className="min-w-0"><div className="chip chip-err inline-flex mb-2"><span className="chip-dot" /> Compile failed</div><p className="text-sm text-muted">{lifecycleError.message}</p></div>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={retryLifecycle}>Retry</button>
+        </div>
+      )}
 
       {/* Contract Details section - show immediately if we have a framework */}
       {frameworkId && (
@@ -535,7 +555,7 @@ export default function FilePage() {
               <Loader2 size={16} className="animate-spin" />
               <span className="text-sm opacity-70">
                 {artifactsLoading
-                  ? 'Loading artifacts...'
+                  ? frameworkData?.status === 'waiting' ? 'Compiling contracts...' : 'Loading artifacts...'
                   : 'Loading contract details...'}
               </span>
             </div>

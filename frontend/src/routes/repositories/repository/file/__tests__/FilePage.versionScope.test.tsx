@@ -7,11 +7,32 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { RepoList, RepoVersionSummary } from '@ignite/api';
 import FilePage from '../FilePage';
 import { repositoriesReducer, setRepositories } from '../../../../../store/features/repositories/repositoriesSlice';
-import { compilerReducer } from '../../../../../store/features/compiler/compilerSlice';
+import { artifactListReceived, compilerReducer } from '../../../../../store/features/compiler/compilerSlice';
 import { filesReducer } from '../../../../../store/features/files/filesSlice';
 import { deployDraftReducer } from '../../../../../store/features/deployments/deployDraftSlice';
 
 describe('FilePage version scope validation', () => {
+  it('renders a compiling label while artifact serving is pending', () => {
+    const repositories: RepoList = {
+      session: null,
+      local: [{ pathOrUrl: '/workspace/contracts', initialized: true, frameworks: [{ id: 'foundry', name: 'Foundry' }], versions: [] }],
+      cloned: [], versionGroups: [], pinned: [],
+    };
+    const store = configureStore({
+      reducer: { repositories: repositoriesReducer, compiler: compilerReducer, files: filesReducer, deployDraft: deployDraftReducer },
+    });
+    store.dispatch(setRepositories(repositories));
+    store.dispatch(artifactListReceived({ repoPath: '/workspace/contracts', frameworkId: 'foundry', pathOrUrl: '/workspace/contracts', result: { status: 'busy' } }));
+    const html = renderToStaticMarkup(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={[`/repositories/${encodeURIComponent('/workspace/contracts')}/file/src%2FCounter.sol?framework=foundry`]}>
+          <Routes><Route path="/repositories/:repoPath/file/*" element={<FilePage />} /></Routes>
+        </MemoryRouter>
+      </Provider>
+    );
+    expect(html).toContain('Compiling contracts...');
+  });
+
   it('renders version-not-installed instead of reading the live file for an unknown version', () => {
     const url = 'https://example.test/contracts.git';
     const installed: RepoVersionSummary = { url, commit: 'a'.repeat(40), lastUsedAt: '2026-07-18T00:00:00.000Z' };

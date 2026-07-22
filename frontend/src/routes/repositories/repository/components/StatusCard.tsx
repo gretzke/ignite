@@ -41,6 +41,7 @@ export default function StatusCard({
       | 'ready'
       | 'installing'
       | 'compiling'
+      | 'waiting'
       | 'error'
       | 'pending'
       | 'loading'
@@ -66,6 +67,10 @@ export default function StatusCard({
     // If any framework is compiling
     if (statuses.some((s) => s === 'compiling')) {
       return { status: 'compiling', message: 'Compiling contracts...' };
+    }
+
+    if (statuses.some((s) => s === 'waiting')) {
+      return { status: 'waiting', message: 'Compiling contracts...' };
     }
 
     // Artifact listing still in flight (or effects not run yet): we don't
@@ -111,6 +116,13 @@ export default function StatusCard({
           color: 'text-warn',
           bgColor: 'bg-warn/10',
           borderColor: 'border-warn/20',
+        };
+      case 'waiting':
+        return {
+          icon: <Loader2 size={24} className="text-info animate-spin" />,
+          color: 'text-info',
+          bgColor: 'bg-info/10',
+          borderColor: 'border-info/20',
         };
       case 'loading':
         return {

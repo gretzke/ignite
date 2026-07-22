@@ -21,6 +21,16 @@ describe('repository fetch generation guard', () => {
     expect(isApiDispatchAction(actions[0])).toBe(true);
   });
 
+  it('sends Retry through checkRepos as a forced catalog recompile', () => {
+    const action = repositoriesApi.checkRepos({ pathOrUrl: '/repo', force: true });
+    expect(isApiDispatchAction(action)).toBe(true);
+    if (!isApiDispatchAction(action)) return;
+    expect(action.payload).toMatchObject({
+      endpoint: 'checkRepos',
+      body: { pathOrUrl: '/repo', force: true },
+    });
+  });
+
   it('drops an older profile response after a newer profile fetch has started', () => {
     const oldActions = repositoriesApi.fetchRepositories('old-profile');
     const newActions = repositoriesApi.fetchRepositories('new-profile');

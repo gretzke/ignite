@@ -15,7 +15,9 @@ import {
   listArtifacts,
   setCompilationStatus,
   compilerScopeKey,
+  clearArtifactWait,
 } from '../../../store/features/compiler/compilerSlice';
+import { repositoriesApi } from '../../../store/features/repositories/repositoriesApi';
 import type { ContractSourcePin, RepoVersionSummary } from '@ignite/api';
 
 export function pinForInstalledVersion(
@@ -65,7 +67,7 @@ export default function RepositoryPage() {
   const repoData = repositoriesData[decodedPath];
   const scopedFrameworks = version?.frameworks?.map(({ id, name }) => ({ id, name })) ?? [];
   const effectiveRepoData = pin
-    ? { initialized: true, frameworks: scopedFrameworks }
+    ? { initialized: true, frameworks: scopedFrameworks, lastError: version?.lastError }
     : repoData;
   const repoCompilations = useMemo(
     () => compilations[scopeKey] || {},
@@ -77,7 +79,7 @@ export default function RepositoryPage() {
       effectiveRepoData.frameworks.forEach((framework) => {
         // Check if artifacts are already loaded
         const compilationData = repoCompilations[framework.id];
-        if (!compilationData || compilationData.artifacts === undefined) {
+        if ((!compilationData || compilationData.artifacts === undefined) && compilationData?.status !== 'waiting') {
           // Spinner while we find out whether artifacts already exist
           if (!compilationData) {
             dispatch(
@@ -94,6 +96,9 @@ export default function RepositoryPage() {
         }
       });
     }
+    return () => {
+      dispatch(clearArtifactWait({ repoPath: scopeKey }));
+    };
   }, [effectiveRepoData?.frameworks, decodedPath, pin, repoCompilations, dispatch, scopeKey]);
 
   // On a fresh page load the repo list, initialization, and framework
@@ -191,6 +196,11 @@ export default function RepositoryPage() {
 
   const repoName = getRepoName(decodedPath);
   const frameworks = effectiveRepoData.frameworks ?? [];
+  const lifecycleError = effectiveRepoData.lastError;
+  const retryLifecycle = () => {
+    if (!decodedPath) return;
+    dispatch(repositoriesApi.checkRepos({ pathOrUrl: decodedPath, force: true }));
+  };
 
   // Get current framework from query params, fallback to first framework
   const currentFramework = searchParams.get('framework') || frameworks[0]?.id;
@@ -236,6 +246,16 @@ export default function RepositoryPage() {
         />
       </div>
 
+      {lifecycleError && (
+        <div className="card-milky p-4 mb-6 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="chip chip-err inline-flex mb-2"><span className="chip-dot" /> Compile failed</div>
+            <p className="text-sm text-muted">{lifecycleError.message}</p>
+          </div>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={retryLifecycle}>Retry</button>
+        </div>
+      )}
+
       {/* Framework tabs */}
       <div className="card-milky overflow-visible">
         {frameworks.length === 1 ? (
@@ -246,9 +266,12 @@ export default function RepositoryPage() {
                 {frameworks[0].name}
               </span>
               <h3 className="text-lg font-medium">Artifacts</h3>
+              {repoCompilations[frameworks[0].id]?.status === 'waiting' && (
+                <span className="chip chip-info"><span className="chip-dot pulse" /> Compiling</span>
+              )}
             </div>
             <ArtifactBrowser
-              artifacts={repoCompilations[frameworks[0].id]?.artifacts || []}
+              artifacts={repoCompilations[frameworks[0].id]?.artifacts ?? []}
               loading={
                 repoCompilations[frameworks[0].id]?.artifacts === undefined
               }
@@ -281,8 +304,11 @@ export default function RepositoryPage() {
                   <h3 className="text-lg font-medium mb-4">
                     {framework.name} Artifacts
                   </h3>
+                  {repoCompilations[framework.id]?.status === 'waiting' && (
+                    <div className="chip chip-info inline-flex mb-4"><span className="chip-dot pulse" /> Compiling</div>
+                  )}
                   <ArtifactBrowser
-                    artifacts={repoCompilations[framework.id]?.artifacts || []}
+                    artifacts={repoCompilations[framework.id]?.artifacts ?? []}
                     loading={
                       repoCompilations[framework.id]?.artifacts === undefined
                     }

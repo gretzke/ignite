@@ -13,6 +13,7 @@ import { useAppDispatch, useAppSelector } from '../store';
 import {
   compilerScopeKey,
   listArtifacts,
+  clearArtifactWait,
 } from '../store/features/compiler/compilerSlice';
 import { apiClient } from '../store/api/client';
 import { contractSourceId } from '../utils/contractSourceId';
@@ -173,10 +174,21 @@ export default function ArtifactPicker({
     : (repositoryData[repoPath]?.frameworks ?? []);
   const effectiveFramework = frameworkId || frameworks[0]?.id || '';
   const scopeKey = compilerScopeKey(repoPath, pin);
-  const artifacts = compilations[scopeKey]?.[effectiveFramework]?.artifacts;
+  const compilation = compilations[scopeKey]?.[effectiveFramework];
+  const artifacts = compilation?.artifacts;
+  const pinnedVersion = pin
+    ? [
+        ...(repositories?.local ?? []),
+        ...(repositories?.cloned ?? []),
+      ].flatMap((repo) => repo.versions).find(
+        (version) => version.url === pin.url && version.commit === pin.commit
+      ) ?? repositories?.versionGroups.find((group) => group.url === pin.url)
+        ?.versions.find((version) => version.commit === pin.commit)
+    : undefined;
+  const lifecycleError = pin ? pinnedVersion?.lastError : repositoryData[repoPath]?.lastError;
 
   useEffect(() => {
-    if (repoPath && effectiveFramework && artifacts === undefined)
+    if (repoPath && effectiveFramework && artifacts === undefined && compilation?.status !== 'waiting')
       dispatch(
         listArtifacts({
           pathOrUrl: repoPath,
@@ -185,7 +197,10 @@ export default function ArtifactPicker({
           stateKey: scopeKey,
         })
       );
-  }, [artifacts, dispatch, effectiveFramework, pin, repoPath, scopeKey]);
+    return () => {
+      dispatch(clearArtifactWait({ repoPath: scopeKey, ...(effectiveFramework ? { frameworkId: effectiveFramework } : {}) }));
+    };
+  }, [artifacts, compilation?.status, dispatch, effectiveFramework, pin, repoPath, scopeKey]);
   useEffect(() => {
     let cancelled = false;
     void apiClient.request('listContractTypes', {}).then((response) => {
@@ -292,6 +307,9 @@ export default function ArtifactPicker({
       );
     setAddVersionOpen(false);
   };
+  const retryLifecycle = () => {
+    if (repoPath) dispatch(repositoriesApi.checkRepos({ pathOrUrl: repoPath, force: true }));
+  };
 
   return (
     <div className="grid gap-3">
@@ -313,7 +331,13 @@ export default function ArtifactPicker({
         />
       )}
       {artifacts === undefined && repoPath && (
-        <p className="text-sm text-muted">Loading contracts…</p>
+        <p className="text-sm text-muted flex items-center gap-2"><span className="chip-dot pulse" />{compilation?.status === 'waiting' ? 'Compiling contracts…' : 'Loading contracts…'}</p>
+      )}
+      {lifecycleError && (
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <span className="chip chip-err">Compile failed</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={retryLifecycle}>Retry</button>
+        </div>
       )}
       {groupedArtifacts.length > 0 && (
         <div className="glass-list">
