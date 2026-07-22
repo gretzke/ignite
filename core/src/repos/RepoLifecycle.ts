@@ -450,8 +450,8 @@ export class RepoLifecycle {
     return job;
   }
 
-  // Resolve orchestration awaits this directly. It intentionally does not
-  // create or poll a nested repo.lifecycle job; the outer workflow.resolve
+  // Install orchestration awaits this directly. It intentionally does not
+  // create or poll a nested repo.lifecycle job; the outer workflow.install
   // job owns progress, cancellation, and the final readiness result.
   async runPinnedLifecycle(
     url: string,

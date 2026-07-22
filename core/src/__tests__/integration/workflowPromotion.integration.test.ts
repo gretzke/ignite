@@ -143,6 +143,7 @@ describe.skipIf(!ready)('workflow promotion integration (offline)', () => {
     const jobs = JobManager.getInstance();
     const workflowHandlers = createWorkflowHandlers({
       repos, devMode: () => true, jobs, versionStore: pins, getProfileId: async () => PROFILE,
+      registry: { list: async () => ({ session: null, local: [{ pathOrUrl: target }], cloned: [] }) } as never,
       lifecycle: { runPinnedLifecycle: async (url, sha, profileId) => {
         const clone = await repos.ensureVersion(profileId, url, sha);
         const detected = await PluginExecutor.getInstance().execute('foundry', 'detect', {}, { workspacePath: clone.checkout });
@@ -151,7 +152,7 @@ describe.skipIf(!ready)('workflow promotion integration (offline)', () => {
       } },
     });
     const resolving = reply();
-    await workflowHandlers.resolveWorkflow({ body: { repoPathOrUrl: target, name: WORKFLOW } } as never, resolving);
+    await workflowHandlers.installWorkflow({ body: { repoPathOrUrl: target, name: WORKFLOW, expectedDocHash: await workflowHash(target, WORKFLOW) } } as never, resolving);
     const job = await waitForJob(jobs, (resolving.body as { data: { jobId: string } }).data.jobId);
     expect(job).toMatchObject({ state: 'succeeded', result: { sources: [{ id: 'versionedbox-1', status: 'ready' }] } });
 
@@ -246,6 +247,10 @@ async function waitForJob(jobs: InstanceType<typeof JobManager>, id: string): Pr
 }
 
 async function exists(file: string): Promise<boolean> { try { await fs.stat(file); return true; } catch { return false; } }
+
+async function workflowHash(repoPathOrUrl: string, name: string): Promise<string> {
+  return crypto.createHash('sha256').update(await fs.readFile(path.join(repoPathOrUrl, 'ignite', 'workflows', `${name}.json`), 'utf8')).digest('hex');
+}
 
 function reply() {
   const value = { statusCode: 0, body: undefined as unknown, status(code: number) { this.statusCode = code; return this; }, send(body: unknown) { this.body = body; return this; } };

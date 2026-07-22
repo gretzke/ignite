@@ -141,6 +141,7 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
       jobs,
       versionStore: pins,
       getProfileId: async () => PROFILE,
+      registry: { list: async () => ({ session: null, local: [{ pathOrUrl: workspace }], cloned: [] }) } as never,
       lifecycle: {
         runPinnedLifecycle: async (url, commit, profileId) => {
           const clone = await repos.ensureVersion(profileId, url, commit);
@@ -152,7 +153,7 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
     });
 
     const blocked = reply();
-    await handlers.resolveWorkflow({ body: { repoPathOrUrl: workspace, name: WORKFLOW } } as never, blocked);
+    await handlers.installWorkflow({ body: { repoPathOrUrl: workspace, name: WORKFLOW, expectedDocHash: await workflowHash(workspace, WORKFLOW) } } as never, blocked);
     expect(blocked.statusCode).toBe(409);
     expect(blocked.body).toMatchObject({ code: 'PINNED_ORIGIN_UNAPPROVED', details: { origins: [pinnedOrigin(remote.url)] } });
 
@@ -167,7 +168,7 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
 
     await pins.approveOrigins(PROFILE, [remote.url]);
     const started = reply();
-    await handlers.resolveWorkflow({ body: { repoPathOrUrl: workspace, name: WORKFLOW } } as never, started);
+    await handlers.installWorkflow({ body: { repoPathOrUrl: workspace, name: WORKFLOW, expectedDocHash: await workflowHash(workspace, WORKFLOW) } } as never, started);
     expect(started.statusCode).toBe(200);
     const job = await waitForJob(jobs, (started.body as { data: { jobId: string } }).data.jobId);
     expect(job.state).toBe('succeeded');
@@ -228,6 +229,7 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
       jobs,
       versionStore: pins,
       getProfileId: async () => PROFILE,
+      registry: { list: async () => ({ session: null, local: [{ pathOrUrl: workspace }], cloned: [] }) } as never,
       lifecycle: { runPinnedLifecycle: async (url, commit, profileId) => {
         const clone = await repos.ensureVersion(profileId, url, commit);
         return { pathOrUrl: clone.checkout, frameworks: [{ id: 'foundry', state: 'ready' }] } as never;
@@ -235,9 +237,9 @@ describe.skipIf(!ready)('workflow integration (offline pins, run, chronicles, su
       artifactReadable: async () => true,
       pluginStatus: async (id, requiredVersion) => ({ id, status: 'installed', installedVersion: requiredVersion }),
     });
-    const resolveReply = reply();
-    await workflowHandlers.resolveWorkflow({ body: { repoPathOrUrl: workspace, name } } as never, resolveReply);
-    const resolved = await waitForJob(jobs, (resolveReply.body as { data: { jobId: string } }).data.jobId);
+    const installReply = reply();
+    await workflowHandlers.installWorkflow({ body: { repoPathOrUrl: workspace, name, expectedDocHash: await workflowHash(workspace, name) } } as never, installReply);
+    const resolved = await waitForJob(jobs, (installReply.body as { data: { jobId: string } }).data.jobId);
     expect(resolved).toMatchObject({ state: 'succeeded', result: { sources: [{ status: 'ready' }] } });
     expect(await fs.stat(pins.checkoutPath(retentionRemote.url, retentionRemote.v1))).toBeTruthy();
     expect((await pins.listMemberships(PROFILE))[canonicalGitUrl(retentionRemote.url)]).toEqual([
@@ -502,6 +504,10 @@ async function waitForRun(engine: InstanceType<typeof DeployEngine>, id: string,
 
 async function readTarget(rpcUrl: string, address: Hex): Promise<Hex> {
   return getAddress(await createPublicClient({ transport: http(rpcUrl) }).readContract({ address, abi: [{ type: 'function', name: 'target', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }], functionName: 'target' }));
+}
+
+async function workflowHash(repoPathOrUrl: string, name: string): Promise<string> {
+  return crypto.createHash('sha256').update(await fs.readFile(path.join(repoPathOrUrl, 'ignite', 'workflows', `${name}.json`), 'utf8')).digest('hex');
 }
 
 function reply() {

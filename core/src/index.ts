@@ -30,6 +30,15 @@ import { VerificationQueue } from './verifications/VerificationQueue.js';
 import { wireVerificationReconciliation } from './deployments/verificationIntegration.js';
 import { sweepOrphanedDockerResources } from './system/orphanSweep.js';
 import { recoverRepoVersionCache } from './repos/startupMaintenance.js';
+import { RepoService } from './repos/RepoService.js';
+import { VersionStore } from './repos/VersionStore.js';
+import { ProfileRepoRegistry } from './filesystem/ProfileRepoRegistry.js';
+import { TrustManager } from './plugins/trust/TrustManager.js';
+import { ContractTypeService } from './deployments/ContractTypeService.js';
+import { getCompilerArtifactData } from './api/plugins/compiler/index.js';
+import { readWorkflowDocument } from './api/workflows.js';
+import { InstalledWorkflowStore } from './workflows/InstalledWorkflowStore.js';
+import { WorkflowInstallService } from './workflows/WorkflowInstallService.js';
 
 async function ignite(workspacePath: string): Promise<{
   app: FastifyInstance;
@@ -59,7 +68,40 @@ async function ignite(workspacePath: string): Promise<{
   const pluginManager = PluginManager.getInstance();
   const pluginExecutor = PluginExecutor.getInstance();
   await recoverRepoVersionCache(fileSystem);
-  await JobManager.getInstance().recover();
+  const jobs = JobManager.getInstance();
+  await jobs.recover();
+  await new WorkflowInstallService({
+    readDocument: (repoPathOrUrl, name) => readWorkflowDocument(RepoService.getInstance(), repoPathOrUrl, name, process.env.NODE_ENV === 'development'),
+    jobs,
+    lifecycle: RepoLifecycle.getInstance(),
+    versionStore: new VersionStore(),
+    registry: new ProfileRepoRegistry(),
+    store: new InstalledWorkflowStore(),
+    pluginStatus: async (id, requiredVersion, requiredRoles) => {
+      const registry = PluginRegistryLoader.getInstance();
+      let config;
+      try { config = await registry.getPluginConfig(id); }
+      catch { return { id, status: 'missing' as const }; }
+      const installedVersion = config.metadata.version;
+      if ((await TrustManager.getInstance().getGrant(id)).trust === 'untrusted') return { id, status: 'untrusted' as const, installedVersion };
+      if (installedVersion !== requiredVersion) return { id, status: 'version-mismatch' as const, installedVersion };
+      return [...requiredRoles].every((role) => config.metadata.types.includes(role))
+        ? { id, status: 'installed' as const, installedVersion }
+        : { id, status: 'wrong-type' as const, installedVersion };
+    },
+    artifactReadable: async (source, profileId) => {
+      if (source.origin === 'contract-type') {
+        const frozen = await ContractTypeService.getInstance().frozenDescriptor(source.pluginId);
+        if (frozen.contentHash !== source.contentHash) throw new Error(`Contract type ${source.pluginId} no longer matches the workflow content hash`);
+        return true;
+      }
+      await getCompilerArtifactData({ executor: PluginExecutor.getInstance(), registryLoader: PluginRegistryLoader.getInstance(), repos: RepoService.getInstance() }, {
+        contract: { id: source.id, repoPathOrUrl: source.repo.url, frameworkId: source.frameworkId, artifactPath: source.artifactPath, contractName: source.contractName, sourcePath: source.sourcePath, pin: source.repo },
+        profileId,
+      });
+      return true;
+    },
+  }).reconstructInterrupted();
   let sweepDeadline: NodeJS.Timeout | undefined;
   const sweepResult = await Promise.race([
     sweepOrphanedDockerResources().then(() => 'complete' as const),
