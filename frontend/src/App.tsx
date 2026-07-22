@@ -1,10 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import TopBar from './ui/TopBar';
 import Sidebar from './ui/Sidebar';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from './store';
 import { startConnect } from './store/features/connection/connectionSlice';
 import { repositoriesApi } from './store/features/repositories/repositoriesApi';
+import { workflowsApi } from './store/features/workflows/workflowsApi';
 import PermissionApprovalDialog from './components/PermissionApprovalDialog';
 import PluginPermissionsModal from './components/PluginPermissionsModal';
 import PluginConfigModal from './components/PluginConfigModal';
@@ -58,6 +59,16 @@ export default function App() {
   const location = useLocation();
   const versionScopedRoute = location.pathname.startsWith('/repositories/') &&
     new URLSearchParams(location.search).has('version');
+  const workflowsRoute = location.pathname === '/workflows';
+  const profileId = useAppSelector((state) => state.profiles.currentId);
+  const repositories = useAppSelector((state) => state.repositories.repositories);
+  const workflowRepos = useMemo(
+    () => [
+      ...(repositories?.local ?? []),
+      ...(repositories?.cloned ?? []),
+    ],
+    [repositories]
+  );
   // Connection state used inside TopBar via its own selectors
 
   const themeClass = darkMode ? 'theme-dark' : 'theme-light';
@@ -94,6 +105,15 @@ export default function App() {
       dispatch(repositoriesApi.checkRepos());
     });
   }, [dispatch, versionScopedRoute]);
+
+  useEffect(() => {
+    if (!workflowsRoute || !profileId) return;
+    return startFocusGatedRepoPoll(() => {
+      workflowRepos.forEach((repo) => {
+        workflowsApi.getWorkflowsStatus(repo.pathOrUrl, profileId).forEach((action) => dispatch(action));
+      });
+    });
+  }, [dispatch, profileId, workflowRepos, workflowsRoute]);
 
   return (
     <div

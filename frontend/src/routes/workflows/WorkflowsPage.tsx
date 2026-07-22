@@ -16,6 +16,7 @@ export default function WorkflowsPage() {
     (state) => state.repositories.repositories
   );
   const workflowLists = useAppSelector((state) => state.workflows.byRepo);
+  const profileId = useAppSelector((state) => state.profiles.currentId);
   const originApproval = useAppSelector(
     (state) => state.workflows.originApproval
   );
@@ -28,10 +29,13 @@ export default function WorkflowsPage() {
   );
 
   useEffect(() => {
-    repos.forEach((repo) =>
-      workflowsApi.list(repo.pathOrUrl).forEach((action) => dispatch(action))
-    );
-  }, [dispatch, repos]);
+    repos.forEach((repo) => {
+      workflowsApi.list(repo.pathOrUrl).forEach((action) => dispatch(action));
+      if (profileId) {
+        workflowsApi.getWorkflowsStatus(repo.pathOrUrl, profileId).forEach((action) => dispatch(action));
+      }
+    });
+  }, [dispatch, profileId, repos]);
 
   useEffect(() => {
     pluginsApi.refresh().forEach((action) => dispatch(action));
@@ -139,7 +143,8 @@ export default function WorkflowsPage() {
                 originApproval.repoPathOrUrl,
                 originApproval.name,
                 originApproval.origins,
-                originApproval.retry
+                originApproval.retry,
+                profileId ?? undefined
               )
             );
         }}

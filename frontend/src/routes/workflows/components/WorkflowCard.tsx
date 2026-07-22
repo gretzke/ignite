@@ -20,6 +20,7 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
   const documentState = useAppSelector((state) => selectWorkflowDocument(state, repoPathOrUrl, workflow.name));
   const install = useAppSelector((state) => selectWorkflowInstall(state, repoPathOrUrl, workflow.name));
   const updates = useAppSelector((state) => selectWorkflowUpdates(state, repoPathOrUrl, workflow.name));
+  const profileId = useAppSelector((state) => state.profiles.currentId);
   const plugins = useAppSelector(selectPluginRows);
   const installJob = useAppSelector((state) => install?.jobId ? state.jobs.byId[install.jobId] : undefined);
   const readinessReady = Boolean(install?.result && install.result.sources.every((source) => source.status === 'ready') && install.result.plugins.every((plugin) => plugin.status === 'installed'));
@@ -70,7 +71,7 @@ export default function WorkflowCard({ repoPathOrUrl, workflow }: { repoPathOrUr
           )}
         </div>
         <div className="flex gap-2 shrink-0">
-          <button className="btn btn-primary" disabled={busy || !documentState} onClick={() => documentState && dispatch(workflowsApi.install(repoPathOrUrl, workflow.name, documentState.docHash))}>
+          <button className="btn btn-primary" disabled={busy || !documentState} onClick={() => documentState && dispatch(workflowsApi.installWorkflow({ repoPathOrUrl, name: workflow.name, expectedDocHash: documentState.docHash }, profileId ?? undefined))}>
             {busy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} {busy ? 'Resolving…' : 'Run'}
           </button>
           <button className="btn btn-secondary" onClick={() => navigate(`/deploy?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}&edit=true`)}><Pencil size={15} /> Edit</button>

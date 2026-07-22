@@ -3,12 +3,17 @@ import type {
   WorkflowCheckUpdatesData,
   WorkflowDocument,
   WorkflowInstallResult,
+  WorkflowStatusEntry,
   WorkflowSummary,
 } from '@ignite/api';
 import type { RootState } from '../../store';
+import { setCurrentProfile } from '../profiles/profilesSlice';
 
 export const workflowKey = (repoPathOrUrl: string, name: string) =>
   `${repoPathOrUrl}\0${name}`;
+
+export const workflowStatusKey = (profileId: string, repoPathOrUrl: string) =>
+  `${profileId}:${repoPathOrUrl}`;
 
 interface WorkflowListState {
   workflows: WorkflowSummary[];
@@ -36,6 +41,12 @@ interface UpdateState {
   error?: string;
 }
 
+interface WorkflowStatusState {
+  workflows: WorkflowStatusEntry[];
+  loading: boolean;
+  error?: string;
+}
+
 interface WorkflowOriginApproval {
   repoPathOrUrl: string;
   name: string;
@@ -48,6 +59,7 @@ export interface WorkflowsState {
   documentsByKey: Record<string, WorkflowDocumentState>;
   installByKey: Record<string, InstallState>;
   updatesByKey: Record<string, UpdateState>;
+  statusByProfileAndRepo: Record<string, WorkflowStatusState>;
   originApproval?: WorkflowOriginApproval;
 }
 
@@ -56,6 +68,7 @@ const initialState: WorkflowsState = {
   documentsByKey: {},
   installByKey: {},
   updatesByKey: {},
+  statusByProfileAndRepo: {},
 };
 
 const slice = createSlice({
@@ -82,6 +95,29 @@ const slice = createSlice({
       state.byRepo[action.payload.repoPathOrUrl] = {
         workflows: previous?.workflows ?? [],
         truncated: previous?.truncated ?? false,
+        loading: false,
+        error: action.payload.error,
+      };
+    },
+    workflowStatusRequested(state, action: PayloadAction<{ profileId: string; repoPathOrUrl: string }>) {
+      const key = workflowStatusKey(action.payload.profileId, action.payload.repoPathOrUrl);
+      const previous = state.statusByProfileAndRepo[key];
+      state.statusByProfileAndRepo[key] = {
+        workflows: previous?.workflows ?? [],
+        loading: true,
+      };
+    },
+    workflowStatusLoaded(state, action: PayloadAction<{ profileId: string; repoPathOrUrl: string; workflows: WorkflowStatusEntry[] }>) {
+      state.statusByProfileAndRepo[workflowStatusKey(action.payload.profileId, action.payload.repoPathOrUrl)] = {
+        workflows: action.payload.workflows,
+        loading: false,
+      };
+    },
+    workflowStatusFailed(state, action: PayloadAction<{ profileId: string; repoPathOrUrl: string; error: string }>) {
+      const key = workflowStatusKey(action.payload.profileId, action.payload.repoPathOrUrl);
+      const previous = state.statusByProfileAndRepo[key];
+      state.statusByProfileAndRepo[key] = {
+        workflows: previous?.workflows ?? [],
         loading: false,
         error: action.payload.error,
       };
@@ -128,10 +164,16 @@ const slice = createSlice({
       state.updatesByKey[workflowKey(action.payload.repoPathOrUrl, action.payload.name)] = { loading: false, error: action.payload.error };
     },
   },
+  extraReducers: (builder) => {
+    builder.addCase(setCurrentProfile, (state) => {
+      state.statusByProfileAndRepo = {};
+    });
+  },
 });
 
 export const {
   workflowListRequested, workflowListLoaded, workflowListFailed,
+  workflowStatusRequested, workflowStatusLoaded, workflowStatusFailed,
   workflowDocumentLoaded,
   workflowInstallStarted, workflowInstallRunning, workflowInstallSucceeded, workflowInstallFailed,
   workflowOriginsApprovalRequested, workflowOriginsApprovalCleared,
@@ -141,6 +183,12 @@ export const workflowsReducer = slice.reducer;
 
 export const selectWorkflowList = (state: RootState, repoPathOrUrl: string) =>
   state.workflows.byRepo[repoPathOrUrl];
+export const selectWorkflowStatus = (state: RootState, repoPathOrUrl: string) => {
+  const profileId = state.profiles.currentId;
+  return profileId
+    ? state.workflows.statusByProfileAndRepo[workflowStatusKey(profileId, repoPathOrUrl)]
+    : undefined;
+};
 export const selectWorkflowDocument = (state: RootState, repoPathOrUrl: string, name: string) =>
   state.workflows.documentsByKey[workflowKey(repoPathOrUrl, name)];
 export const selectWorkflowInstall = (state: RootState, repoPathOrUrl: string, name: string) =>

@@ -47,6 +47,7 @@ import {
   workflowInstallFailed,
   workflowInstallSucceeded,
 } from '../features/workflows/workflowsSlice';
+import { workflowsApi } from '../features/workflows/workflowsApi';
 
 // Job-driven compiler/plugin/repo flow. This is the sole place that turns a
 // terminal job (repo.init/detect/install/compile/plugin.install) into the
@@ -134,6 +135,7 @@ export function routeTerminalJob(
     case 'workflow.install': {
       const repoPathOrUrl = job.params.repoPathOrUrl as string;
       const name = job.params.name as string;
+      const profileId = job.params.profileId as string | undefined;
       if (succeeded) {
         dispatch(workflowInstallSucceeded({ repoPathOrUrl, name, result: job.result as import('@ignite/api').WorkflowInstallResult }));
       } else {
@@ -146,6 +148,9 @@ export function routeTerminalJob(
         } else {
           dispatch(workflowInstallFailed({ repoPathOrUrl, name, error: errorMessage }));
         }
+      }
+      if (profileId && profileId === getState().profiles.currentId) {
+        workflowsApi.getWorkflowsStatus(repoPathOrUrl, profileId).forEach((action) => dispatch(action));
       }
       break;
     }

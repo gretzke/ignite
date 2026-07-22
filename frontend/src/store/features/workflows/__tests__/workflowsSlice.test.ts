@@ -1,7 +1,12 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
 import { describe, expect, it } from 'vitest';
-import type { WorkflowCheckUpdatesData, WorkflowSummary } from '@ignite/api';
+import type { WorkflowCheckUpdatesData, WorkflowStatusEntry, WorkflowSummary } from '@ignite/api';
+import { setCurrentProfile } from '../../profiles/profilesSlice';
 import {
+  selectWorkflowStatus,
+  workflowStatusKey,
+  workflowStatusLoaded,
+  workflowStatusRequested,
   workflowsReducer,
   workflowListRequested,
   workflowListLoaded,
@@ -15,6 +20,13 @@ import {
 } from '../workflowsSlice';
 
 const summary: WorkflowSummary = { name: 'release', valid: true, sourceCount: 2 };
+const status: WorkflowStatusEntry = {
+  name: 'release',
+  valid: true,
+  docHash: 'a'.repeat(64),
+  installState: 'ready',
+  attempt: { status: 'idle' },
+};
 
 describe('workflowsSlice', () => {
   it('tracks per-repository listings including truncation and failures', () => {
@@ -42,5 +54,21 @@ describe('workflowsSlice', () => {
     const report: WorkflowCheckUpdatesData = { docHash: 'a'.repeat(64), sources: [], plugins: [] };
     const state = workflowsReducer(undefined, workflowUpdatesLoaded({ repoPathOrUrl: '/repo', name: 'release', report }));
     expect(state.updatesByKey['/repo\0release'].report).toEqual(report);
+  });
+
+  it('keeps workflow status scoped to the current profile', () => {
+    let state = workflowsReducer(undefined, workflowStatusRequested({ profileId: 'profile-a', repoPathOrUrl: '/repo' }));
+    state = workflowsReducer(state, workflowStatusLoaded({ profileId: 'profile-a', repoPathOrUrl: '/repo', workflows: [status] }));
+    state = workflowsReducer(state, workflowStatusLoaded({ profileId: 'profile-b', repoPathOrUrl: '/repo', workflows: [] }));
+
+    expect(state.statusByProfileAndRepo[workflowStatusKey('profile-a', '/repo')].workflows).toEqual([status]);
+    expect(selectWorkflowStatus({ workflows: state, profiles: { currentId: 'profile-b' } } as never, '/repo')).toMatchObject({ workflows: [] });
+  });
+
+  it('clears workflow status when switching profiles', () => {
+    let state = workflowsReducer(undefined, workflowStatusLoaded({ profileId: 'profile-a', repoPathOrUrl: '/repo', workflows: [status] }));
+    state = workflowsReducer(state, setCurrentProfile('profile-b'));
+
+    expect(state.statusByProfileAndRepo).toEqual({});
   });
 });
