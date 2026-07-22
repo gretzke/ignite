@@ -229,6 +229,21 @@ describe('workflow status', () => {
       error: 'restart',
     });
 
+    const failedNotInstalled = await statusHarness({
+      document: current,
+      record: { repoPathOrUrl: '/repo', name: 'release', lastAttempt: { docHash: currentHash, at: '2027-01-01T00:00:00.000Z', status: 'failed', error: 'first install failed', pins: [] } },
+    });
+    expect(await entry(failedNotInstalled.app)).toMatchObject({
+      installState: 'not-installed', attempt: { status: 'failed', error: 'first install failed' },
+    });
+
+    const interruptedOutOfSync = installed(doc(), 'b'.repeat(64));
+    interruptedOutOfSync.lastAttempt = { docHash: currentHash, at: '2027-01-01T00:00:00.000Z', status: 'interrupted', error: 'restart while updating', pins: [] };
+    const interruptedDrift = await statusHarness({ document: current, record: interruptedOutOfSync });
+    expect(await entry(interruptedDrift.app)).toMatchObject({
+      installState: 'out-of-sync', attempt: { status: 'interrupted', error: 'restart while updating' },
+    });
+
     const running = await statusHarness({
       document: current,
       record: interrupted,
@@ -408,7 +423,9 @@ describe('workflow status', () => {
 
   it.each([
     ['missing version', { versions: [] }, 'VERSION_MISSING'],
+    ['framework has not compiled', { versions: [{ url: 'https://example.test/box', commit: COMMIT, createdAt: '', lastUsedAt: '', frameworks: [{ id: 'foundry', name: 'Foundry' }], compiledWith: [{ pluginId: 'foundry', version: '1.0.0' }] }] }, 'FRAMEWORK_NOT_COMPILED'],
     ['missing checkout', { checkout: 'missing' as const }, 'CHECKOUT_MISSING'],
+    ['checkout is a file', { checkout: 'file' as const }, 'CHECKOUT_INVALID'],
     [
       'uninstalled plugin',
       { pluginStatus: () => ({ id: 'foundry', status: 'missing' }) },
@@ -451,6 +468,25 @@ describe('workflow status', () => {
     const value = await entry(harness.app);
     expect(value.installState).toBe('not-installed');
     expect(value.sources[0].code).toBe(code);
+  });
+
+  it('surfaces same-id semantic source changes instead of calling them formatting-only', async () => {
+    const renamed = doc({ sources: [{ ...doc().sources[0], contractName: 'RenamedBox' }] });
+    const renameHarness = await statusHarness({ document: renamed, record: installed(doc(), 'a'.repeat(64)) });
+    expect((await entry(renameHarness.app)).diff).toMatchObject({
+      sourcesModified: [{ detail: { id: 'box' }, changes: ['contractName'] }], formattingOnly: false,
+    });
+
+    const contractType = doc({
+      sources: [{ id: 'typed', origin: 'contract-type', pluginId: 'type-plugin', artifactKey: 'box', versionLabel: '1', contractName: 'Box', contentHash: 'a'.repeat(64) }],
+      steps: [{ id: 'deploy', kind: 'deploy', contractId: 'typed' }],
+      requiredPlugins: [{ id: 'type-plugin', version: '1' }],
+    });
+    const changedContractType = { ...contractType, sources: [{ ...contractType.sources[0], contentHash: 'b'.repeat(64) }] } as WorkflowDocument;
+    const contractHarness = await statusHarness({ document: changedContractType, record: installed(contractType, 'b'.repeat(64)) });
+    expect((await entry(contractHarness.app)).diff).toMatchObject({
+      sourcesModified: [{ detail: { id: 'typed' }, changes: ['contentHash'] }], formattingOnly: false,
+    });
   });
 
   it('is read-only and sanitizes all hostile document strings', async () => {

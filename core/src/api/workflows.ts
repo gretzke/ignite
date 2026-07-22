@@ -289,6 +289,7 @@ function diffFor(installed: NonNullable<InstalledWorkflowRecord['installed']>, d
   const sourcesRemoved = unmatchedOld.filter((source) => !consumedOld.has(source.id)).map((source) => detailForSource(source));
   const versionsChanged: WorkflowInstallDiff['versionsChanged'] = [];
   const artifactsChanged: WorkflowInstallDiff['artifactsChanged'] = [];
+  const sourcesModified: WorkflowInstallDiff['sourcesModified'] = [];
   let sourceChanged = sourcesAdded.length > 0 || sourcesRemoved.length > 0 || sourcesRenamed.length > 0;
   for (const source of document.sources) {
     const old = oldById.get(source.id);
@@ -298,6 +299,22 @@ function diffFor(installed: NonNullable<InstalledWorkflowRecord['installed']>, d
       const newPin = source.repo;
       if (pinIdentity(old) !== pinIdentity(source)) versionsChanged.push({ detail: detailForSource(source), from: { ...(oldPin.ref ? { ref: oldPin.ref } : {}), commit: oldPin.commit }, to: { ...(newPin.ref ? { ref: newPin.ref } : {}), commit: newPin.commit } });
       if (old.artifactPath !== source.artifactPath || old.artifactHash !== source.artifactHash) artifactsChanged.push({ detail: detailForSource(source), from: old.artifactPath, to: source.artifactPath });
+      const changes = [
+        ...(old.frameworkId !== source.frameworkId ? ['frameworkId'] : []),
+        ...(old.sourcePath !== source.sourcePath ? ['sourcePath'] : []),
+        ...(old.contractName !== source.contractName ? ['contractName'] : []),
+      ];
+      if (changes.length) sourcesModified.push({ detail: detailForSource(source), changes });
+    } else if (!isRepoSource(source) && !isRepoSource(old)) {
+      const changes = [
+        ...(old.pluginId !== source.pluginId ? ['pluginId'] : []),
+        ...(old.artifactKey !== source.artifactKey ? ['artifactKey'] : []),
+        ...(old.versionLabel !== source.versionLabel ? ['versionLabel'] : []),
+        ...(old.contentHash !== source.contentHash ? ['contentHash'] : []),
+      ];
+      if (changes.length) sourcesModified.push({ detail: detailForSource(source), changes });
+    } else {
+      sourcesModified.push({ detail: detailForSource(source), changes: ['kind'] });
     }
     if (sourceSemantic(old) !== sourceSemantic(source)) sourceChanged = true;
   }
@@ -314,7 +331,7 @@ function diffFor(installed: NonNullable<InstalledWorkflowRecord['installed']>, d
   for (const plugin of installed.plugins) if (!currentPlugins.has(plugin.id)) pluginsChanged.push({ id: plugin.id, kind: 'removed', from: plugin.version });
   const stepsChanged = installed.stepsHash !== sha256(canonicalJson(document.steps));
   const hooksChanged = installed.hooksHash !== sha256(canonicalJson(document.outputs));
-  return { sourcesAdded, sourcesRemoved, sourcesRenamed, versionsChanged, artifactsChanged, pluginsChanged, stepsChanged, hooksChanged, formattingOnly: !sourceChanged && pluginsChanged.length === 0 && !stepsChanged && !hooksChanged };
+  return { sourcesAdded, sourcesRemoved, sourcesRenamed, versionsChanged, artifactsChanged, sourcesModified, pluginsChanged, stepsChanged, hooksChanged, formattingOnly: !sourceChanged && pluginsChanged.length === 0 && !stepsChanged && !hooksChanged };
 }
 
 function runningAttempt(jobs: JobRecord[], profileId: string, repoPathOrUrl: string, name: string): WorkflowStatusEntry['attempt'] | undefined {

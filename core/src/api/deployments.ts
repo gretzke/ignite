@@ -157,10 +157,12 @@ export function createDeploymentHandlers(
       'Deployment request failed'
     );
   };
-  const workflowContext = async (workflow: WorkflowRunRequest | undefined, plan: ValidateDeploymentRequest['plan']) => {
+  // Capture the profile before this fence. RepoService.getFile still resolves its
+  // own current profile internally; that pre-existing behavior is out of scope.
+  const workflowContext = async (profile: string, workflow: WorkflowRunRequest | undefined, plan: ValidateDeploymentRequest['plan']) => {
     if (!workflow) return undefined;
     const read = await d.readWorkflow(workflow.repoPathOrUrl, workflow.name);
-    const installed = await d.installedWorkflows.get(await profileId(), workflow.repoPathOrUrl, workflow.name);
+    const installed = await d.installedWorkflows.get(profile, workflow.repoPathOrUrl, workflow.name);
     if (!installed?.installed || installed.installed.docHash !== read.docHash)
       throw new WorkflowHttpError(409, 'WORKFLOW_OUT_OF_SYNC', `Workflow ${workflow.name} is out of sync; install or update it before running`);
     const undeclared = workflow.hooks.filter((hook) => !read.document.outputs.hooks.includes(hook));
@@ -174,12 +176,13 @@ export function createDeploymentHandlers(
       reply: FastifyReply
     ): Promise<IApiResponse<ValidateDeploymentData>> => {
       try {
-        const workflow = await workflowContext(request.body.workflow, request.body.plan);
+        const currentProfileId = await profileId();
+        const workflow = await workflowContext(currentProfileId, request.body.workflow, request.body.plan);
         const result = await d.validate(
           request.body.plan,
           request.body.rpcSelection,
           {
-            profileId: await profileId(),
+            profileId: currentProfileId,
             explorerSelection: request.body.explorerSelection,
             ...(workflow ? { workflow } : {}),
           }
@@ -337,9 +340,10 @@ export function createDeploymentHandlers(
       reply: FastifyReply
     ): Promise<IApiResponse<CreateRunData>> => {
       try {
-        const workflow = await workflowContext(request.body.workflow, request.body.plan);
+        const currentProfileId = await profileId();
+        const workflow = await workflowContext(currentProfileId, request.body.workflow, request.body.plan);
         const run = await engine().launch({
-          profileId: await profileId(),
+          profileId: currentProfileId,
           plan: request.body.plan,
           rpcSelection: request.body.rpcSelection,
           explorerSelection: request.body.explorerSelection,

@@ -72,6 +72,22 @@ describe('workflow deployment binding', () => {
     expect(h.launch).toHaveBeenCalledWith(expect.objectContaining({ workflow: { ...workflow, docHash: HASH }, workflowDocument: document }));
   });
 
+  it('uses one captured profile for workflow fencing and run launch', async () => {
+    const getCurrentProfile = vi.fn()
+      .mockReturnValueOnce('profile-a')
+      .mockReturnValue('profile-b');
+    const h = handlers({
+      getProfileManager: async () => ({ getCurrentProfile }),
+    });
+    const launched = reply();
+    await h.value.createDeploymentRun({ body: { plan, rpcSelection: { '1': 'rpc' }, workflow, idempotencyKey: 'key' } } as never, launched);
+
+    expect(launched.statusCode).toBe(200);
+    expect(getCurrentProfile).toHaveBeenCalledTimes(1);
+    expect(h.installedWorkflows.get).toHaveBeenCalledWith('profile-a', '/workflow', 'release');
+    expect(h.launch).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'profile-a' }));
+  });
+
   it('rejects workflow-bound runs when no installed workflow record exists', async () => {
     const h = handlers({ installedWorkflows: { get: vi.fn(async () => undefined) } });
     const res = reply();
