@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import type {
   InstalledWorkflowRecord,
   InstalledWorkflowsFile,
@@ -116,7 +117,11 @@ export class InstalledWorkflowStore {
     const registryPath =
       this.fileSystem.getProfileInstalledWorkflowsPath(profileId);
     if (!(await this.fileSystem.fileExists(registryPath))) {
-      return { records: [], opaqueRecords: [], degraded: false };
+      return {
+        records: [],
+        opaqueRecords: [],
+        degraded: await this.hasQuarantineSibling(registryPath, profileId),
+      };
     }
 
     try {
@@ -142,6 +147,22 @@ export class InstalledWorkflowStore {
     } catch (error) {
       await this.quarantine(registryPath, profileId, error);
       return { records: [], opaqueRecords: [], degraded: true };
+    }
+  }
+
+  private async hasQuarantineSibling(
+    registryPath: string,
+    profileId: string
+  ): Promise<boolean> {
+    try {
+      const entries = await fs.readdir(path.dirname(registryPath));
+      return entries.some((entry) => /^installed\.json\.corrupt-/.test(entry));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      getLogger().warn(
+        `Failed to inspect installed workflow quarantines for ${profileId}: ${String(error)}`
+      );
+      return true;
     }
   }
 

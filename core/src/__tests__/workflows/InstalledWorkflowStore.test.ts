@@ -107,6 +107,48 @@ describe('InstalledWorkflowStore', () => {
         entry.startsWith('installed.json.corrupt-')
       )
     ).toBe(true);
+    await expect(workflows.read(profileId)).resolves.toEqual({
+      records: [],
+      degraded: true,
+    });
+  });
+
+  it('clears quarantine degradation after a successful install rewrites the registry', async () => {
+    const home = await temp('ignite-installed-workflows-rewrite-');
+    const { fileSystem, store: workflows } = await store(home);
+    const registryPath = fileSystem.getProfileInstalledWorkflowsPath(profileId);
+    await fs.mkdir(path.dirname(registryPath), { recursive: true });
+    await fs.writeFile(registryPath, '{not json', 'utf8');
+    await expect(workflows.read(profileId)).resolves.toEqual({
+      records: [],
+      degraded: true,
+    });
+    await expect(workflows.read(profileId)).resolves.toEqual({
+      records: [],
+      degraded: true,
+    });
+
+    await workflows.writeInstalled(profileId, keyA, installed());
+
+    await expect(workflows.read(profileId)).resolves.toEqual({
+      records: [{ ...keyA, installed: installed() }],
+      degraded: false,
+    });
+    expect(
+      (await fs.readdir(path.dirname(registryPath))).some((entry) =>
+        entry.startsWith('installed.json.corrupt-')
+      )
+    ).toBe(true);
+  });
+
+  it('reports a fresh profile without a registry or quarantine as healthy', async () => {
+    const home = await temp('ignite-installed-workflows-fresh-');
+    const { store: workflows } = await store(home);
+
+    await expect(workflows.read(profileId)).resolves.toEqual({
+      records: [],
+      degraded: false,
+    });
   });
 
   it('quarantines an unknown schema version', async () => {
