@@ -11,6 +11,20 @@ import {
 } from '../../../../store/features/repositories/repositoriesSlice';
 
 describe('RepoCard lifecycle failures', () => {
+  const renderCard = (store: ReturnType<typeof configureStore>) => renderToStaticMarkup(
+    <Provider store={store}>
+      <MemoryRouter>
+        <RepoCard
+          repo={{ name: 'contracts', path: '/workspace/contracts' }}
+          variant="local"
+          showPullButton={false}
+          onResetRepo={() => undefined}
+          onRetry={() => undefined}
+        />
+      </MemoryRouter>
+    </Provider>
+  );
+
   it('shows Failed and Retry instead of Ready and Detecting for a first lifecycle failure', () => {
     const store = configureStore({ reducer: { repositories: repositoriesReducer } });
     store.dispatch(setRepositories({
@@ -29,23 +43,37 @@ describe('RepoCard lifecycle failures', () => {
       cloned: [], versionGroups: [], pinned: [],
     }));
 
-    const html = renderToStaticMarkup(
-      <Provider store={store}>
-        <MemoryRouter>
-          <RepoCard
-            repo={{ name: 'contracts', path: '/workspace/contracts' }}
-            variant="local"
-            showPullButton={false}
-            onResetRepo={() => undefined}
-            onRetry={() => undefined}
-          />
-        </MemoryRouter>
-      </Provider>
-    );
+    const html = renderCard(store);
 
     expect(html).toContain('Failed');
     expect(html).toContain('Retry');
     expect(html).not.toContain('Ready');
     expect(html).not.toContain('Detecting');
+  });
+
+  it('shows Compiling instead of Failed and Retry while a retry lifecycle job is active', () => {
+    const store = configureStore({ reducer: { repositories: repositoriesReducer } });
+    store.dispatch(setRepositories({
+      session: null,
+      local: [{
+        pathOrUrl: '/workspace/contracts',
+        initialized: true,
+        activeJobId: 'job-retry',
+        frameworks: [{ id: 'foundry', name: 'Foundry' }],
+        lastError: {
+          code: 'COMPILE_FAILED',
+          message: 'previous compile failed',
+          at: '2026-07-22T00:00:00.000Z',
+        },
+        versions: [],
+      }],
+      cloned: [], versionGroups: [], pinned: [],
+    }));
+
+    const html = renderCard(store);
+
+    expect(html).toContain('Compiling');
+    expect(html).not.toContain('Failed');
+    expect(html).not.toContain('Retry');
   });
 });

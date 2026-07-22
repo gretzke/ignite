@@ -16,6 +16,7 @@ interface StatusCardProps {
   compilations: Record<string, { status: CompilationStatus; error?: string }>;
   pin?: ContractSourcePin;
   lifecycleError?: RepoRecord['lastError'];
+  lifecycleActive?: boolean;
 }
 
 export default function StatusCard({
@@ -24,6 +25,7 @@ export default function StatusCard({
   compilations,
   pin,
   lifecycleError,
+  lifecycleActive = false,
 }: StatusCardProps) {
   const dispatch = useAppDispatch();
   // Compilation error shown in the details dialog; null = closed
@@ -50,6 +52,18 @@ export default function StatusCard({
       | 'idle';
     message: string;
   } => {
+    const statuses = frameworks.map((f) => compilations[f.id]?.status);
+
+    if (
+      lifecycleActive ||
+      statuses.some(
+        (status) =>
+          status === 'installing' || status === 'compiling' || status === 'waiting'
+      )
+    ) {
+      return { status: 'compiling', message: 'Compiling contracts...' };
+    }
+
     if (lifecycleError) {
       return { status: 'error', message: 'Compilation failed' };
     }
@@ -57,25 +71,9 @@ export default function StatusCard({
       return { status: 'pending', message: 'No frameworks detected' };
     }
 
-    const statuses = frameworks.map((f) => compilations[f.id]?.status);
-
     // If any framework has an error
     if (statuses.some((s) => s === 'error')) {
       return { status: 'error', message: 'Compilation failed' };
-    }
-
-    // If any framework is still installing
-    if (statuses.some((s) => s === 'installing')) {
-      return { status: 'installing', message: 'Installing dependencies...' };
-    }
-
-    // If any framework is compiling
-    if (statuses.some((s) => s === 'compiling')) {
-      return { status: 'compiling', message: 'Compiling contracts...' };
-    }
-
-    if (statuses.some((s) => s === 'waiting')) {
-      return { status: 'waiting', message: 'Compiling contracts...' };
     }
 
     // Artifact listing still in flight (or effects not run yet): we don't

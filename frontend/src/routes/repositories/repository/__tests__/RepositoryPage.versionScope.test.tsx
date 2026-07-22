@@ -79,6 +79,43 @@ describe('RepositoryPage version scope validation', () => {
     expect(failureHtml).not.toContain('Detecting frameworks');
   });
 
+  it('transitions from Failed + Retry to Compiling when a retry lifecycle job becomes active', () => {
+    const repositories: RepoList = {
+      session: null,
+      local: [{
+        pathOrUrl: '/workspace/contracts',
+        initialized: true,
+        frameworks: [{ id: 'foundry', name: 'Foundry' }],
+        lastError: { code: 'COMPILE_FAILED', message: 'compile failed', at: '2026-07-22T00:00:00.000Z' },
+        versions: [],
+      }],
+      cloned: [], versionGroups: [], pinned: [],
+    };
+    const store = configureStore({
+      reducer: { repositories: repositoriesReducer, compiler: compilerReducer, deployDraft: deployDraftReducer },
+    });
+    const render = () => renderToStaticMarkup(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={[`/repositories/${encodeURIComponent('/workspace/contracts')}`]}>
+          <Routes><Route path="/repositories/:repoPath" element={<RepositoryPage />} /></Routes>
+        </MemoryRouter>
+      </Provider>
+    );
+
+    store.dispatch(setRepositories(repositories));
+    expect(render()).toContain('Retry');
+
+    store.dispatch(setRepositories({
+      ...repositories,
+      local: [{ ...repositories.local[0], activeJobId: 'job-retry' }],
+    }));
+    const activeHtml = render();
+
+    expect(activeHtml).toContain('Compiling');
+    expect(activeHtml).not.toContain('Compilation failed');
+    expect(activeHtml).not.toContain('Retry');
+  });
+
   it('renders version-not-installed and mints no pin for an unknown version query', () => {
     const repositories: RepoList = {
       session: null,

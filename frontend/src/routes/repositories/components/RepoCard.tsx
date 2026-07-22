@@ -68,8 +68,13 @@ function isRepoClickable(
 // Status indicator component
 function StatusIndicator({ path }: { path: string }) {
   const repositoriesData = useAppSelector(selectRepositoriesData);
-  const lifecycleError = repositoriesData[path]?.lastError;
+  const repoData = repositoriesData[path];
+  const lifecycleError = repoData?.lastError;
   const status = getRepoInitStatus(path, repositoriesData);
+
+  if (repoData?.compiling) {
+    return <span className="chip chip-info"><span className="chip-dot pulse" /> Compiling</span>;
+  }
 
   if (lifecycleError) {
     return <span className="chip chip-err"><span className="chip-dot" /> Failed</span>;
@@ -315,6 +320,8 @@ function FrameworkBadges({ path }: { path: string }) {
   // Only show framework information if repo is successfully initialized
   if (status !== 'success') return null;
 
+  if (repoData?.compiling) return null;
+
   if (repoData?.lastError) return null;
 
   return <FrameworkChips frameworks={repoData?.frameworks} />;
@@ -388,7 +395,7 @@ export default function RepoCard({
       </div>
 
       <div className="flex items-center gap-3 shrink-0">
-        {repositoriesData[repo.path]?.lastError && onRetry && (
+        {repositoriesData[repo.path]?.lastError && !repositoriesData[repo.path]?.compiling && onRetry && (
           <Tooltip label={repositoriesData[repo.path].lastError?.message ?? 'Retry lifecycle'} placement="top">
             <button type="button" className="btn btn-secondary btn-sm row-action" onClick={() => onRetry(repo.path)}>
               <RotateCcw size={14} /> Retry

@@ -68,12 +68,23 @@ export default function RepositoryPage() {
   const repoData = repositoriesData[decodedPath];
   const scopedFrameworks = version?.frameworks?.map(({ id, name }) => ({ id, name })) ?? [];
   const effectiveRepoData = pin
-    ? { initialized: true, frameworks: scopedFrameworks, lastError: version?.lastError }
+    ? {
+        initialized: true,
+        frameworks: scopedFrameworks,
+        compiling: Boolean(version?.activeJobId),
+        lastError: version?.lastError,
+      }
     : repoData;
   const repoCompilations = useMemo(
     () => compilations[scopeKey] || {},
     [compilations, scopeKey]
   );
+  const isCompilationActive =
+    Boolean(effectiveRepoData?.compiling) ||
+    Object.values(repoCompilations).some(
+      ({ status }) =>
+        status === 'installing' || status === 'compiling' || status === 'waiting'
+    );
   // Load artifacts for each framework when component mounts
   useEffect(() => {
     if (effectiveRepoData?.frameworks && effectiveRepoData.frameworks.length > 0) {
@@ -117,6 +128,8 @@ export default function RepositoryPage() {
   const loadingMessage =
     repositories === null
       ? 'Loading repositories...'
+    : isSaved && isCompilationActive && effectiveRepoData?.frameworks === undefined
+      ? 'Compiling contracts...'
     : isSaved && !effectiveRepoData?.lastError && (!effectiveRepoData || effectiveRepoData.initialized === undefined)
         ? 'Initializing repository...'
         : isSaved &&
@@ -249,10 +262,11 @@ export default function RepositoryPage() {
           compilations={repoCompilations}
           pin={pin}
           lifecycleError={lifecycleError}
+          lifecycleActive={Boolean(effectiveRepoData.compiling)}
         />
       </div>
 
-      {lifecycleError && (
+      {lifecycleError && !isCompilationActive && (
         <div className="card-milky p-4 mb-6 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="chip chip-err inline-flex mb-2"><span className="chip-dot" /> Compile failed</div>
