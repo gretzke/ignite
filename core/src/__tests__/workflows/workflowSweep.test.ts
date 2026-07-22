@@ -2,6 +2,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import { FileSystem } from '../../filesystem/FileSystem.js';
+import { RepoService } from '../../repos/RepoService.js';
+import { VersionStore } from '../../repos/VersionStore.js';
 import {
   WorkflowInstallService,
   type WorkflowInstallServiceDeps,
@@ -202,8 +205,10 @@ describe('WorkflowInstallService membership sweep', () => {
     const { service, versionStore, repos } = makeService();
     versionStore.list.mockResolvedValue([{ url: canonicalUrl, commit }]);
     versionStore.deleteIfZeroReferencesCAS.mockImplementation(
-      async (_url: string, _commit: string, remove: () => Promise<boolean>) =>
-        remove()
+      async (_url: string, _commit: string, remove: () => Promise<void>) => {
+        await remove();
+        return true;
+      }
     );
 
     await service.sweep('p1');
@@ -215,8 +220,81 @@ describe('WorkflowInstallService membership sweep', () => {
     );
     expect(repos.removeVersionCheckout).toHaveBeenCalledWith(
       canonicalUrl,
-      commit
+      commit,
+      expect.any(Function)
     );
+  });
+
+  it('skips an orphan checkout busy with lifecycle state persistence without deadlocking', async () => {
+    const home = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'ignite-workflow-sweep-lock-order-')
+    );
+    dirs.push(home);
+    FileSystem.resetInstance();
+    const fileSystem = FileSystem.getInstance(home);
+    const versions = new VersionStore(fileSystem);
+    const repos = new RepoService({ fileSystem });
+    await versions.upsert({
+      url: canonicalUrl,
+      commit,
+      createdAt: '2026-07-22T00:00:00.000Z',
+      lastUsedAt: '2026-07-22T00:00:00.000Z',
+    });
+
+    let signalRemovalAttempted!: () => void;
+    const removalAttempted = new Promise<void>((resolve) => {
+      signalRemovalAttempted = resolve;
+    });
+    const sweepRepos = {
+      removeVersionCheckout: vi.fn(
+        async (...args: Parameters<RepoService['removeVersionCheckout']>) => {
+          signalRemovalAttempted();
+          return repos.removeVersionCheckout(...args);
+        }
+      ),
+      resolveWorkspacePath: repos.resolveWorkspacePath.bind(repos),
+    };
+    const { service } = makeService({
+      versionStore: versions,
+      repos: sweepRepos,
+    });
+
+    let signalCheckoutLocked!: () => void;
+    const checkoutLocked = new Promise<void>((resolve) => {
+      signalCheckoutLocked = resolve;
+    });
+    const lifecycle = repos.withVersionLock(canonicalUrl, commit, async () => {
+      signalCheckoutLocked();
+      await removalAttempted;
+      await versions.updateState(canonicalUrl, commit, {
+        compiledWith: [{ pluginId: 'foundry', version: '1.0.0' }],
+      });
+    });
+    await checkoutLocked;
+    const sweep = service.sweep('p1');
+
+    let timeout: NodeJS.Timeout | undefined;
+    await expect(
+      Promise.race([
+        Promise.all([lifecycle, sweep]),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('sweep and lifecycle deadlocked')),
+            1_000
+          );
+        }),
+      ])
+    ).resolves.toBeDefined();
+    if (timeout) clearTimeout(timeout);
+
+    expect(sweepRepos.removeVersionCheckout).toHaveBeenCalledWith(
+      canonicalUrl,
+      commit,
+      expect.any(Function)
+    );
+    expect(await versions.get(canonicalUrl, commit)).toMatchObject({
+      compiledWith: [{ pluginId: 'foundry', version: '1.0.0' }],
+    });
   });
 
   it('retains active attempt pins while an unrelated sweep runs', async () => {

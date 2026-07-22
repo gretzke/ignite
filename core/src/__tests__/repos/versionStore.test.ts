@@ -500,7 +500,7 @@ describe('VersionStore', () => {
     const { store: versions } = await store(home);
     await versions.upsert(record());
     await versions.addMembership('p1', urlA, commitA, 'workflow');
-    const remove = vi.fn(async () => true);
+    const remove = vi.fn(async () => {});
 
     expect(
       await versions.deleteIfZeroReferencesCAS(urlA, commitA, remove)

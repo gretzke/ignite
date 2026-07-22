@@ -338,13 +338,19 @@ export class WorkflowInstallService {
 
     // A previous process can have removed the membership after deleting a
     // checkout but before removing cache.json. Reconcile those orphans on
-    // every sweep. The VersionStore CAS rechecks references under its RMW
-    // mutex, so a concurrent addMembership is never deleted from under it.
+    // every sweep. Take the best-effort group and checkout locks before the
+    // VersionStore RMW mutex so lifecycle state persistence cannot deadlock
+    // with reconciliation. The CAS still rechecks references before deleting.
     for (const record of await this.deps.versionStore.list()) {
-      await this.deps.versionStore.deleteIfZeroReferencesCAS(
+      await this.deps.repos.removeVersionCheckout(
         record.url,
         record.commit,
-        () => this.deps.repos.removeVersionCheckout(record.url, record.commit)
+        (deleteLocked) =>
+          this.deps.versionStore.deleteIfZeroReferencesCAS(
+            record.url,
+            record.commit,
+            deleteLocked
+          )
       );
     }
   }

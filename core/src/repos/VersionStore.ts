@@ -499,18 +499,19 @@ export class VersionStore {
     );
   }
 
-  // A sweep first obtains a best-effort list of zero-reference records. This
-  // CAS is the authoritative check immediately before deletion: a membership
-  // added after that listing but before this lock is acquired must win.
+  // Callers hold the version checkout lock before entering here. A sweep first
+  // obtains a best-effort list of zero-reference records; this CAS is the
+  // authoritative check immediately before deletion, so a membership added
+  // after that listing but before this lock is acquired must win.
   async deleteIfZeroReferencesCAS(
     url: string,
     commit: string,
-    deleteCheckout: () => Promise<boolean>
+    deleteCheckout: () => Promise<void>
   ): Promise<boolean> {
     const canonicalUrl = canonicalGitUrl(url);
     return this.withRmwLock(async () => {
       if (await this.referenceCountLocked(canonicalUrl, commit)) return false;
-      if (!(await deleteCheckout())) return false;
+      await deleteCheckout();
       const registry = await this.readRegistry();
       registry.versions = registry.versions.filter(
         (record) =>
