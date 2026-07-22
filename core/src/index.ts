@@ -62,7 +62,11 @@ async function ignite(workspacePath: string): Promise<{
   await recoverRepoVersionCache(fileSystem);
   const jobs = JobManager.getInstance();
   await jobs.recover();
-  await WorkflowInstallService.getInstance().reconstructInterrupted();
+  const workflowInstalls = WorkflowInstallService.getInstance();
+  await workflowInstalls.reconstructInterrupted();
+  for (const profile of await profileManager.listProfiles()) {
+    await workflowInstalls.sweepStartup(profile.id);
+  }
   let sweepDeadline: NodeJS.Timeout | undefined;
   const sweepResult = await Promise.race([
     sweepOrphanedDockerResources().then(() => 'complete' as const),
@@ -72,7 +76,9 @@ async function ignite(workspacePath: string): Promise<{
   ]);
   if (sweepDeadline) clearTimeout(sweepDeadline);
   if (sweepResult === 'deadline') {
-    app.log.warn('Orphan Docker resource sweep exceeded 15 seconds; continuing startup');
+    app.log.warn(
+      'Orphan Docker resource sweep exceeded 15 seconds; continuing startup'
+    );
   }
   await DeployEngine.getInstance().recoverOnStartup();
   const verificationQueue = VerificationQueue.getInstance();

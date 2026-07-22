@@ -28,7 +28,11 @@ import {
   pinnedOrigin,
   type VersionRecord,
 } from './VersionStore.js';
-import { artifactCacheIdentity, artifactListingCache } from './ArtifactListingCache.js';
+import {
+  artifactCacheIdentity,
+  artifactListingCache,
+} from './ArtifactListingCache.js';
+import { RepoLifecycle } from './RepoLifecycle.js';
 
 export enum RepoKind {
   LOCAL = 'local',
@@ -64,6 +68,7 @@ export interface RepoServiceDeps {
   profiles?: ProfileManager;
   run?: typeof runCommand;
   materializationTimeoutMs?: number;
+  isVersionActive?: (url: string, commit: string) => boolean;
 }
 export type RefKind = NonNullable<VersionRecord['refKind']>;
 export interface EnsureVersionOptions {
@@ -239,6 +244,7 @@ export class RepoService {
   private readonly locks = new KeyedMutex();
   private readonly versionStore: VersionStore;
   private readonly materializationTimeoutMs: number;
+  private readonly isVersionActive: (url: string, commit: string) => boolean;
   private readonly versionSourceCache = new Map<
     string,
     { source: VersionSource; expiresAt: number }
@@ -251,6 +257,14 @@ export class RepoService {
     this.versionStore = new VersionStore(this.fileSystem);
     this.materializationTimeoutMs =
       deps?.materializationTimeoutMs ?? PINNED_MATERIALIZATION_TIMEOUT_MS;
+    this.isVersionActive =
+      deps?.isVersionActive ??
+      ((url, commit) =>
+        Boolean(
+          RepoLifecycle.getInstance().activeJobFor(
+            this.versionStore.checkoutPath(url, commit)
+          )
+        ));
   }
 
   // Lock key: canonical URL for cloned repos (so https/ssh forms of the same
@@ -318,23 +332,48 @@ export class RepoService {
     commit: string,
     beforeDelete?: (deleteLocked: () => Promise<void>) => Promise<boolean>
   ): Promise<boolean> {
-    let deleted = true;
-    await this.locks.run(
-      `version-group:${this.versionStore.groupDir(url)}`,
-      async () => {
-        await this.withVersionCheckoutLock(url, commit, async () => {
-          await this.invalidateVersionArtifacts(url, commit);
-          const deleteLocked = () =>
-            fs.rm(this.versionStore.checkoutPath(url, commit), {
+    // Sweep callers supply a membership callback. They must never wait behind
+    // a live lifecycle: returning false leaves the membership durable for the
+    // next sweep. Legacy direct removal keeps its established blocking
+    // serialization contract.
+    if (!beforeDelete) {
+      let deleted = false;
+      await this.locks.run(
+        `version-group:${this.versionStore.groupDir(url)}`,
+        async () => {
+          await this.withVersionCheckoutLock(url, commit, async () => {
+            if (this.isVersionActive(url, commit)) return;
+            await this.invalidateVersionArtifacts(url, commit);
+            await fs.rm(this.versionStore.checkoutPath(url, commit), {
               recursive: true,
               force: true,
             });
-          if (beforeDelete) deleted = await beforeDelete(deleteLocked);
-          else await deleteLocked();
-        });
+            deleted = true;
+          });
+        }
+      );
+      return deleted;
+    }
+    const group = await this.locks.tryRun(
+      `version-group:${this.versionStore.groupDir(url)}`,
+      async () => {
+        const checkout = await this.locks.tryRun(
+          `version:${this.versionStore.checkoutPath(url, commit)}`,
+          async () => {
+            if (this.isVersionActive(url, commit)) return false;
+            await this.invalidateVersionArtifacts(url, commit);
+            const deleteLocked = () =>
+              fs.rm(this.versionStore.checkoutPath(url, commit), {
+                recursive: true,
+                force: true,
+              });
+            return beforeDelete(deleteLocked);
+          }
+        );
+        return checkout.acquired ? checkout.value : false;
       }
     );
-    return deleted;
+    return group.acquired ? group.value : false;
   }
 
   async withVersionMaterialized<T>(
@@ -381,24 +420,28 @@ export class RepoService {
   ): Promise<{ acquired: true; value: T } | { acquired: false }> {
     const group = await this.locks.tryRun(
       `version-group:${this.versionStore.groupDir(url)}`,
-      async () => this.locks.tryRun(
-        `version:${this.versionStore.checkoutPath(url, commit)}`,
-        async () => {
-          await this.validateVersionRequest(profileId, url, commit, opts);
-          // We already hold group -> checkout. Calling withVersionMaterialized
-          // here would re-enter KeyedMutex and deadlock.
-          const ensure = () => this.ensureVersionLocked(url, commit, opts);
-          const materialized = await ensure();
-          return fn({
-            ...materialized,
-            rematerialize: async () => {
-              await this.invalidateVersionArtifacts(url, commit);
-              await fs.rm(this.versionStore.checkoutPath(url, commit), { recursive: true, force: true });
-              return ensure();
-            },
-          });
-        }
-      )
+      async () =>
+        this.locks.tryRun(
+          `version:${this.versionStore.checkoutPath(url, commit)}`,
+          async () => {
+            await this.validateVersionRequest(profileId, url, commit, opts);
+            // We already hold group -> checkout. Calling withVersionMaterialized
+            // here would re-enter KeyedMutex and deadlock.
+            const ensure = () => this.ensureVersionLocked(url, commit, opts);
+            const materialized = await ensure();
+            return fn({
+              ...materialized,
+              rematerialize: async () => {
+                await this.invalidateVersionArtifacts(url, commit);
+                await fs.rm(this.versionStore.checkoutPath(url, commit), {
+                  recursive: true,
+                  force: true,
+                });
+                return ensure();
+              },
+            });
+          }
+        )
     );
     if (!group.acquired || !group.value.acquired) return { acquired: false };
     return { acquired: true, value: group.value.value };
@@ -529,7 +572,8 @@ export class RepoService {
         }
       }
 
-      if (!checkoutExists) await this.invalidateVersionArtifacts(url, commit, stored);
+      if (!checkoutExists)
+        await this.invalidateVersionArtifacts(url, commit, stored);
 
       await this.ensureBareVersionRepo(
         groupDir,
@@ -609,8 +653,13 @@ export class RepoService {
     known?: VersionRecord
   ): Promise<void> {
     artifactListingCache.invalidate(artifactCacheIdentity(url));
-    const record = known ?? await this.versionStore.get(url, commit);
-    if (!record?.frameworks?.some((framework) => framework.artifactGeneration !== undefined)) return;
+    const record = known ?? (await this.versionStore.get(url, commit));
+    if (
+      !record?.frameworks?.some(
+        (framework) => framework.artifactGeneration !== undefined
+      )
+    )
+      return;
     await this.versionStore.updateState(url, commit, {
       frameworks: record.frameworks.map((framework) => {
         const { artifactGeneration: _generation, ...rest } = framework;
@@ -1176,7 +1225,10 @@ export class RepoService {
   ): Promise<RepoResult<null>> {
     try {
       const kind = deriveRepoKind(pathOrUrl);
-      const workspacePath = await this.resolveWorkspacePath(pathOrUrl, profileId);
+      const workspacePath = await this.resolveWorkspacePath(
+        pathOrUrl,
+        profileId
+      );
 
       if (kind === RepoKind.LOCAL) {
         const ensured = await this.ensureGitRepo(workspacePath);
@@ -1553,7 +1605,10 @@ export class RepoService {
 
   // Destructive by design (frontend confirms before calling): discard
   // uncommitted changes and remove untracked files. Identical for both kinds.
-  async reset(pathOrUrl: string, profileId?: string): Promise<RepoResult<null>> {
+  async reset(
+    pathOrUrl: string,
+    profileId?: string
+  ): Promise<RepoResult<null>> {
     if (this.isReadOnlyWorkspace(pathOrUrl))
       return this.readOnlyWorkspaceResult(pathOrUrl);
     return this.locks.run(this.lockKey(pathOrUrl), () =>

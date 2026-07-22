@@ -4,7 +4,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { FileSystem } from '../../filesystem/FileSystem.js';
-import { assertNoUrlCredentials, canonicalGitUrl, VersionStore, pinnedOrigin, type VersionRecord } from '../../repos/VersionStore.js';
+import {
+  assertNoUrlCredentials,
+  canonicalGitUrl,
+  VersionStore,
+  pinnedOrigin,
+  type VersionRecord,
+} from '../../repos/VersionStore.js';
 import { getLogger } from '../../utils/logger.js';
 
 const dirs: string[] = [];
@@ -66,19 +72,24 @@ describe('VersionStore', () => {
     ['https://example.test/team/repo.git', 'https://example.test/team/repo'],
     ['https://example.test/team/repo.GIT/', 'https://example.test/team/repo'],
     ['git@github.com:team/repo.git', 'ssh://git@github.com/team/repo'],
-    ['ssh://git@example.test/team/repo.git', 'ssh://git@example.test/team/repo'],
+    [
+      'ssh://git@example.test/team/repo.git',
+      'ssh://git@example.test/team/repo',
+    ],
   ])('canonicalizes %s as %s', (input, expected) => {
     expect(canonicalGitUrl(input)).toBe(expected);
   });
 
   it('rejects credential-embedded HTTP URLs but accepts SSH user identities', () => {
-    expect(() => assertNoUrlCredentials('https://user:pass@example.test/repo.git')).toThrow(
-      expect.objectContaining({ code: 'VERSION_URL_CREDENTIALS' })
-    );
-    expect(() => assertNoUrlCredentials('https://token@example.test/repo.git')).toThrow(
-      expect.objectContaining({ code: 'VERSION_URL_CREDENTIALS' })
-    );
-    expect(() => assertNoUrlCredentials('ssh://git@github.com/org/repo.git')).not.toThrow();
+    expect(() =>
+      assertNoUrlCredentials('https://user:pass@example.test/repo.git')
+    ).toThrow(expect.objectContaining({ code: 'VERSION_URL_CREDENTIALS' }));
+    expect(() =>
+      assertNoUrlCredentials('https://token@example.test/repo.git')
+    ).toThrow(expect.objectContaining({ code: 'VERSION_URL_CREDENTIALS' }));
+    expect(() =>
+      assertNoUrlCredentials('ssh://git@github.com/org/repo.git')
+    ).not.toThrow();
   });
 
   it('derives global cache paths using the pinned-store slug and URL hash conventions', async () => {
@@ -136,13 +147,31 @@ describe('VersionStore', () => {
     const scp = 'git@github.com:org/repo.git';
     const ssh = 'ssh://git@github.com/org/repo.git';
 
-    await fs.mkdir(path.dirname(fileSystem.getVersionMembershipPath('p1')), { recursive: true });
-    await fs.writeFile(fileSystem.getVersionMembershipPath('p1'), JSON.stringify({
-      [scp]: [{ commit: commitA, source: 'workflow', addedAt: '2026-07-18T00:00:00.000Z' }],
-    }));
+    await fs.mkdir(path.dirname(fileSystem.getVersionMembershipPath('p1')), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      fileSystem.getVersionMembershipPath('p1'),
+      JSON.stringify({
+        [scp]: [
+          {
+            commit: commitA,
+            source: 'workflow',
+            addedAt: '2026-07-18T00:00:00.000Z',
+          },
+        ],
+      })
+    );
 
     expect(await versions.referenceCount(ssh, commitA)).toBe(1);
-    await expect(versions.removeUserMembershipAndDeleteIfUnreferenced('p2', ssh, commitA, async () => {})).resolves.toEqual({
+    await expect(
+      versions.removeUserMembershipAndDeleteIfUnreferenced(
+        'p2',
+        ssh,
+        commitA,
+        async () => {}
+      )
+    ).resolves.toEqual({
       membershipRemoved: false,
       checkoutDeleted: false,
     });
@@ -153,13 +182,21 @@ describe('VersionStore', () => {
     const { fileSystem, store: versions } = await store(home);
     const scp = 'git@github.com:org/repo.git';
     const canonical = 'ssh://git@github.com/org/repo';
-    const rawHash = crypto.createHash('sha256').update(scp).digest('hex').slice(0, 8);
+    const rawHash = crypto
+      .createHash('sha256')
+      .update(scp)
+      .digest('hex')
+      .slice(0, 8);
     const rawGroup = path.join(
       fileSystem.getVersionCachePath(),
       `github-com-org-repo-${rawHash}`
     );
-    await fs.mkdir(path.join(rawGroup, 'versions', commitA), { recursive: true });
-    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.mkdir(path.join(rawGroup, 'versions', commitA), {
+      recursive: true,
+    });
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), {
+      recursive: true,
+    });
     await fs.writeFile(
       fileSystem.getVersionRegistryPath(),
       JSON.stringify({ versions: [record(scp, commitA)] })
@@ -167,11 +204,15 @@ describe('VersionStore', () => {
 
     await versions.reconcile();
 
-    expect(await versions.list()).toEqual([expect.objectContaining({
-      ...storedRecord(canonical, commitA),
-      lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
-    })]);
-    await expect(fs.stat(versions.checkoutPath(canonical, commitA))).resolves.toMatchObject({
+    expect(await versions.list()).toEqual([
+      expect.objectContaining({
+        ...storedRecord(canonical, commitA),
+        lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
+      }),
+    ]);
+    await expect(
+      fs.stat(versions.checkoutPath(canonical, commitA))
+    ).resolves.toMatchObject({
       isDirectory: expect.any(Function),
     });
     await expect(fs.access(rawGroup)).rejects.toThrow();
@@ -197,7 +238,9 @@ describe('VersionStore', () => {
     await fs.mkdir(legacyCheckout, { recursive: true });
     await fs.writeFile(path.join(canonicalCheckout, 'winner.txt'), 'canonical');
     await fs.writeFile(path.join(legacyCheckout, 'winner.txt'), 'legacy');
-    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), {
+      recursive: true,
+    });
     await fs.writeFile(
       fileSystem.getVersionRegistryPath(),
       JSON.stringify({
@@ -230,7 +273,9 @@ describe('VersionStore', () => {
         fetchUrl: legacyUrl,
       }),
     ]);
-    await expect(fs.readFile(path.join(canonicalCheckout, 'winner.txt'), 'utf8')).resolves.toBe('legacy');
+    await expect(
+      fs.readFile(path.join(canonicalCheckout, 'winner.txt'), 'utf8')
+    ).resolves.toBe('legacy');
     await expect(fs.access(legacyGroup)).rejects.toThrow();
   });
 
@@ -254,7 +299,9 @@ describe('VersionStore', () => {
     await fs.mkdir(legacyCheckout, { recursive: true });
     await fs.writeFile(path.join(canonicalCheckout, 'winner.txt'), 'canonical');
     await fs.writeFile(path.join(legacyCheckout, 'winner.txt'), 'legacy');
-    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), {
+      recursive: true,
+    });
     await fs.writeFile(
       fileSystem.getVersionRegistryPath(),
       JSON.stringify({
@@ -273,9 +320,9 @@ describe('VersionStore', () => {
     await expect(
       fs.readFile(path.join(canonicalCheckout, 'winner.txt'), 'utf8')
     ).resolves.toBe('legacy');
-    await expect(versions.get(canonicalUrl, commitA)).resolves.not.toHaveProperty(
-      'legacySourceUrl'
-    );
+    await expect(
+      versions.get(canonicalUrl, commitA)
+    ).resolves.not.toHaveProperty('legacySourceUrl');
     await expect(fs.access(legacyGroup)).rejects.toThrow();
   });
 
@@ -299,7 +346,9 @@ describe('VersionStore', () => {
     await fs.mkdir(legacyCheckout, { recursive: true });
     await fs.writeFile(path.join(canonicalCheckout, 'winner.txt'), 'canonical');
     await fs.writeFile(path.join(legacyCheckout, 'winner.txt'), 'legacy');
-    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), {
+      recursive: true,
+    });
     await fs.writeFile(
       fileSystem.getVersionRegistryPath(),
       JSON.stringify({
@@ -314,21 +363,27 @@ describe('VersionStore', () => {
     );
     const originalRm = fs.rm;
     let failQuarantineCleanup = true;
-    const rm = vi.spyOn(fs, 'rm').mockImplementation(async (target, options) => {
-      if (failQuarantineCleanup && String(target).includes('tmp-migrate-')) {
-        failQuarantineCleanup = false;
-        throw new Error('quarantine cleanup failed');
-      }
-      return originalRm(target, options);
-    });
+    const rm = vi
+      .spyOn(fs, 'rm')
+      .mockImplementation(async (target, options) => {
+        if (failQuarantineCleanup && String(target).includes('tmp-migrate-')) {
+          failQuarantineCleanup = false;
+          throw new Error('quarantine cleanup failed');
+        }
+        return originalRm(target, options);
+      });
     try {
       await versions.reconcile();
 
-      expect(await fs.readFile(path.join(canonicalCheckout, 'winner.txt'), 'utf8')).toBe('legacy');
+      expect(
+        await fs.readFile(path.join(canonicalCheckout, 'winner.txt'), 'utf8')
+      ).toBe('legacy');
       expect(await versions.get(canonicalUrl, commitA)).toEqual(
         expect.objectContaining({ url: canonicalUrl, commit: commitA })
       );
-      expect(await versions.get(canonicalUrl, commitA)).not.toHaveProperty('legacySourceUrl');
+      expect(await versions.get(canonicalUrl, commitA)).not.toHaveProperty(
+        'legacySourceUrl'
+      );
     } finally {
       rm.mockRestore();
     }
@@ -361,7 +416,9 @@ describe('VersionStore', () => {
     await versions.addMembership('p2', urlA, commitA, 'workflow');
     await versions.addMembership('p2', urlA, commitB, 'user');
 
-    expect((await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]).toEqual([
+    expect(
+      (await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]
+    ).toEqual([
       { commit: commitA, addedAt: expect.any(String), source: 'user' },
       { commit: commitA, addedAt: expect.any(String), source: 'workflow' },
     ]);
@@ -377,7 +434,9 @@ describe('VersionStore', () => {
 
     await versions.removeMembership('p1', urlA, commitA);
 
-    expect((await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]).toEqual([
+    expect(
+      (await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]
+    ).toEqual([
       { commit: commitA, addedAt: expect.any(String), source: 'workflow' },
     ]);
     expect(await versions.referenceCount(urlA, commitA)).toBe(1);
@@ -400,7 +459,9 @@ describe('VersionStore', () => {
       )
     ).resolves.toEqual({ membershipRemoved: true, checkoutDeleted: false });
     expect(remove).not.toHaveBeenCalled();
-    expect((await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]).toBeUndefined();
+    expect(
+      (await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]
+    ).toBeUndefined();
 
     await expect(
       versions.removeUserMembershipAndDeleteIfUnreferenced(
@@ -410,6 +471,56 @@ describe('VersionStore', () => {
         remove
       )
     ).resolves.toEqual({ membershipRemoved: false, checkoutDeleted: false });
+  });
+
+  it('removes only workflow memberships using the same checkout-delete contract', async () => {
+    const home = await temp('ignite-version-workflow-remove-');
+    const { store: versions } = await store(home);
+    await versions.upsert(record());
+    await versions.addMembership('p1', urlA, commitA, 'workflow');
+    await versions.addMembership('p1', urlA, commitA, 'user');
+    const remove = vi.fn(async () => {});
+
+    await expect(
+      versions.removeWorkflowMembershipAndDeleteIfUnreferenced(
+        'p1',
+        urlA,
+        commitA,
+        remove
+      )
+    ).resolves.toEqual({ membershipRemoved: true, checkoutDeleted: false });
+    expect(
+      (await versions.listMemberships('p1'))[canonicalGitUrl(urlA)]
+    ).toEqual([expect.objectContaining({ source: 'user', commit: commitA })]);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('CAS-deletes an orphan only when it still has zero references', async () => {
+    const home = await temp('ignite-version-orphan-cas-');
+    const { store: versions } = await store(home);
+    await versions.upsert(record());
+    await versions.addMembership('p1', urlA, commitA, 'workflow');
+    const remove = vi.fn(async () => true);
+
+    expect(
+      await versions.deleteIfZeroReferencesCAS(urlA, commitA, remove)
+    ).toBe(false);
+    expect(remove).not.toHaveBeenCalled();
+
+    await versions.removeWorkflowMembershipAndDeleteIfUnreferenced(
+      'p1',
+      urlA,
+      commitA,
+      async () => {}
+    );
+    // Restore the cache record to simulate a crash after checkout deletion
+    // and before cache.json removal.
+    await versions.upsert(record());
+    expect(
+      await versions.deleteIfZeroReferencesCAS(urlA, commitA, remove)
+    ).toBe(true);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(await versions.get(urlA, commitA)).toBeUndefined();
   });
 
   it('bumps lastUsedAt without changing the original record metadata', async () => {
@@ -450,7 +561,9 @@ describe('VersionStore', () => {
   it('normalizes legacy single-compiler metadata when reading the registry', async () => {
     const home = await temp('ignite-version-legacy-compiler-');
     const { fileSystem, store: versions } = await store(home);
-    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), {
+      recursive: true,
+    });
     await fs.writeFile(
       fileSystem.getVersionRegistryPath(),
       JSON.stringify({
@@ -472,7 +585,11 @@ describe('VersionStore', () => {
     const home = await temp('ignite-version-errors-');
     const { store: versions } = await store(home);
     await versions.upsert(record());
-    const lastError = { code: 'COMPILE_FAILED', message: 'compile failed', at: '2026-07-21T00:00:00.000Z' };
+    const lastError = {
+      code: 'COMPILE_FAILED',
+      message: 'compile failed',
+      at: '2026-07-21T00:00:00.000Z',
+    };
 
     await versions.updateState(urlA, commitA, { lastError });
     expect(await versions.get(urlA, commitA)).toMatchObject({ lastError });
@@ -485,18 +602,34 @@ describe('VersionStore', () => {
     const home = await temp('ignite-version-interrupted-');
     const { store: versions } = await store(home);
     const interrupted = record(urlA, commitA);
-    const detected = { ...record(urlA, commitB), detectedAt: '2026-07-21T00:00:00.000Z' };
-    const failed = { ...record(urlA, 'c'.repeat(40)), lastError: { code: 'CANCELLED', message: 'cancelled', at: '2026-07-21T00:00:00.000Z' } };
+    const detected = {
+      ...record(urlA, commitB),
+      detectedAt: '2026-07-21T00:00:00.000Z',
+    };
+    const failed = {
+      ...record(urlA, 'c'.repeat(40)),
+      lastError: {
+        code: 'CANCELLED',
+        message: 'cancelled',
+        at: '2026-07-21T00:00:00.000Z',
+      },
+    };
     for (const entry of [interrupted, detected, failed]) {
       await versions.upsert(entry);
-      await fs.mkdir(versions.checkoutPath(entry.url, entry.commit), { recursive: true });
+      await fs.mkdir(versions.checkoutPath(entry.url, entry.commit), {
+        recursive: true,
+      });
     }
 
     await versions.reconcile();
 
-    expect((await versions.get(urlA, commitA))?.lastError).toMatchObject({ code: 'INTERRUPTED' });
+    expect((await versions.get(urlA, commitA))?.lastError).toMatchObject({
+      code: 'INTERRUPTED',
+    });
     expect((await versions.get(urlA, commitB))?.lastError).toBeUndefined();
-    expect((await versions.get(urlA, 'c'.repeat(40)))?.lastError).toMatchObject({ code: 'CANCELLED' });
+    expect((await versions.get(urlA, 'c'.repeat(40)))?.lastError).toMatchObject(
+      { code: 'CANCELLED' }
+    );
   });
 
   it('tolerates a corrupt global registry as an empty registry and warns', async () => {
@@ -524,18 +657,24 @@ describe('VersionStore', () => {
     const { fileSystem, store: versions } = await store(home);
     const valid = record();
     await fs.mkdir(versions.checkoutPath(urlA, commitA), { recursive: true });
-    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), { recursive: true });
+    await fs.mkdir(path.dirname(fileSystem.getVersionRegistryPath()), {
+      recursive: true,
+    });
     await fs.writeFile(
       fileSystem.getVersionRegistryPath(),
       JSON.stringify({ versions: [null, { nope: true }, valid] })
     );
-    const warning = vi.spyOn(getLogger(), 'warn').mockImplementation(() => undefined);
+    const warning = vi
+      .spyOn(getLogger(), 'warn')
+      .mockImplementation(() => undefined);
 
     await expect(versions.reconcile()).resolves.toBeUndefined();
-    expect(await versions.list()).toEqual([expect.objectContaining({
-      ...storedRecord(),
-      lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
-    })]);
+    expect(await versions.list()).toEqual([
+      expect.objectContaining({
+        ...storedRecord(),
+        lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
+      }),
+    ]);
     expect(warning).toHaveBeenCalledWith(
       'Ignoring invalid version cache registry record(s)'
     );
@@ -585,10 +724,12 @@ describe('VersionStore', () => {
 
     await versions.reconcile();
 
-    expect(await versions.list()).toEqual([expect.objectContaining({
-      ...storedRecord(urlA, commitA),
-      lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
-    })]);
+    expect(await versions.list()).toEqual([
+      expect.objectContaining({
+        ...storedRecord(urlA, commitA),
+        lastError: expect.objectContaining({ code: 'INTERRUPTED' }),
+      }),
+    ]);
     await expect(
       fs.access(versions.checkoutPath(urlA, orphanCommit))
     ).rejects.toThrow();

@@ -216,11 +216,16 @@ export class VersionStore {
     await this.withRmwLock(async () => {
       const registry = await this.readRegistry();
       const index = registry.versions.findIndex(
-        (entry) => canonicalGitUrl(entry.url) === canonicalUrl && entry.commit === record.commit
+        (entry) =>
+          canonicalGitUrl(entry.url) === canonicalUrl &&
+          entry.commit === record.commit
       );
       if (index === -1) registry.versions.push(canonicalRecord);
       else
-        registry.versions[index] = { ...registry.versions[index], ...canonicalRecord };
+        registry.versions[index] = {
+          ...registry.versions[index],
+          ...canonicalRecord,
+        };
       await this.fileSystem.writeJsonFile(this.registryPath(), registry);
     });
   }
@@ -228,7 +233,8 @@ export class VersionStore {
   async get(url: string, commit: string): Promise<VersionRecord | undefined> {
     const canonicalUrl = canonicalGitUrl(url);
     return (await this.list()).find(
-      (record) => canonicalGitUrl(record.url) === canonicalUrl && record.commit === commit
+      (record) =>
+        canonicalGitUrl(record.url) === canonicalUrl && record.commit === commit
     );
   }
 
@@ -241,7 +247,9 @@ export class VersionStore {
     await this.withRmwLock(async () => {
       const registry = await this.readRegistry();
       registry.versions = registry.versions.filter(
-        (record) => canonicalGitUrl(record.url) !== canonicalUrl || record.commit !== commit
+        (record) =>
+          canonicalGitUrl(record.url) !== canonicalUrl ||
+          record.commit !== commit
       );
       await this.fileSystem.writeJsonFile(this.registryPath(), registry);
     });
@@ -252,7 +260,8 @@ export class VersionStore {
     await this.withRmwLock(async () => {
       const registry = await this.readRegistry();
       const record = registry.versions.find(
-        (entry) => canonicalGitUrl(entry.url) === canonicalUrl && entry.commit === commit
+        (entry) =>
+          canonicalGitUrl(entry.url) === canonicalUrl && entry.commit === commit
       );
       if (!record) return;
       record.lastUsedAt = new Date().toISOString();
@@ -269,7 +278,8 @@ export class VersionStore {
     await this.withRmwLock(async () => {
       const registry = await this.readRegistry();
       const record = registry.versions.find(
-        (entry) => canonicalGitUrl(entry.url) === canonicalUrl && entry.commit === commit
+        (entry) =>
+          canonicalGitUrl(entry.url) === canonicalUrl && entry.commit === commit
       );
       if (!record) return;
       const { lastError, ...state } = patch;
@@ -292,7 +302,8 @@ export class VersionStore {
             if (!record.detectedAt && !record.lastError) {
               record.lastError = {
                 code: 'INTERRUPTED',
-                message: 'Version add did not complete before the last shutdown',
+                message:
+                  'Version add did not complete before the last shutdown',
                 at: new Date().toISOString(),
               };
             }
@@ -346,7 +357,8 @@ export class VersionStore {
         if (record.legacySourceUrl) {
           const legacyGroup = this.groupDirForKey(record.legacySourceUrl);
           retainedGroups.add(legacyGroup);
-          const legacyCommits = recordsByGroup.get(legacyGroup) ?? new Set<string>();
+          const legacyCommits =
+            recordsByGroup.get(legacyGroup) ?? new Set<string>();
           legacyCommits.add(record.commit);
           recordsByGroup.set(legacyGroup, legacyCommits);
         }
@@ -369,7 +381,8 @@ export class VersionStore {
           this.fileSystem.getVersionCachePath(),
           group.name
         );
-        const expectedCommits = recordsByGroup.get(groupPath) ?? new Set<string>();
+        const expectedCommits =
+          recordsByGroup.get(groupPath) ?? new Set<string>();
         // eslint-disable-next-line security/detect-non-literal-fs-filename -- group.name comes from the cache-root directory listing.
         const entries = await fs.readdir(groupPath, { withFileTypes: true });
         for (const entry of entries) {
@@ -458,36 +471,95 @@ export class VersionStore {
     commit: string,
     deleteCheckout: () => Promise<void>
   ): Promise<{ membershipRemoved: boolean; checkoutDeleted: boolean }> {
+    return this.removeMembershipAndDeleteIfUnreferenced(
+      profileId,
+      url,
+      commit,
+      'user',
+      deleteCheckout
+    );
+  }
+
+  // Callers hold the version checkout lock before entering here. Keeping the
+  // membership mutation, cross-profile refcount, checkout deletion and
+  // registry removal in one RMW critical section prevents a concurrent add
+  // from resurrecting a checkout while it is being removed.
+  async removeWorkflowMembershipAndDeleteIfUnreferenced(
+    profileId: string,
+    url: string,
+    commit: string,
+    deleteCheckout: () => Promise<void>
+  ): Promise<{ membershipRemoved: boolean; checkoutDeleted: boolean }> {
+    return this.removeMembershipAndDeleteIfUnreferenced(
+      profileId,
+      url,
+      commit,
+      'workflow',
+      deleteCheckout
+    );
+  }
+
+  // A sweep first obtains a best-effort list of zero-reference records. This
+  // CAS is the authoritative check immediately before deletion: a membership
+  // added after that listing but before this lock is acquired must win.
+  async deleteIfZeroReferencesCAS(
+    url: string,
+    commit: string,
+    deleteCheckout: () => Promise<boolean>
+  ): Promise<boolean> {
+    const canonicalUrl = canonicalGitUrl(url);
+    return this.withRmwLock(async () => {
+      if (await this.referenceCountLocked(canonicalUrl, commit)) return false;
+      if (!(await deleteCheckout())) return false;
+      const registry = await this.readRegistry();
+      registry.versions = registry.versions.filter(
+        (record) =>
+          canonicalGitUrl(record.url) !== canonicalUrl ||
+          record.commit !== commit
+      );
+      await this.fileSystem.writeJsonFile(this.registryPath(), registry);
+      return true;
+    });
+  }
+
+  private async removeMembershipAndDeleteIfUnreferenced(
+    profileId: string,
+    url: string,
+    commit: string,
+    source: VersionMembership['source'],
+    deleteCheckout: () => Promise<void>
+  ): Promise<{ membershipRemoved: boolean; checkoutDeleted: boolean }> {
     const canonicalUrl = canonicalGitUrl(url);
     return this.withRmwLock(async () => {
       const memberships = await this.readMemberships(profileId);
       const entries = memberships[canonicalUrl];
       const membershipRemoved = Boolean(
-        entries?.some((entry) => entry.commit === commit && entry.source === 'user')
+        entries?.some(
+          (entry) => entry.commit === commit && entry.source === source
+        )
       );
       if (!membershipRemoved)
         return { membershipRemoved: false, checkoutDeleted: false };
       const remaining = entries!.filter(
-        (entry) => entry.commit !== commit || entry.source !== 'user'
+        (entry) => entry.commit !== commit || entry.source !== source
       );
       if (remaining.length === 0) delete memberships[canonicalUrl];
       else memberships[canonicalUrl] = remaining;
-      await this.fileSystem.writeJsonFile(this.membershipPath(profileId), memberships);
+      await this.fileSystem.writeJsonFile(
+        this.membershipPath(profileId),
+        memberships
+      );
 
-      const profiles = await this.fileSystem.listProfiles();
-      let count = 0;
-      for (const candidateProfile of profiles) {
-        count +=
-          (await this.readMemberships(candidateProfile))[canonicalUrl]?.filter(
-            (entry) => entry.commit === commit
-          ).length ?? 0;
-      }
-      if (count !== 0) return { membershipRemoved: true, checkoutDeleted: false };
+      const count = await this.referenceCountLocked(canonicalUrl, commit);
+      if (count !== 0)
+        return { membershipRemoved: true, checkoutDeleted: false };
 
       await deleteCheckout();
       const registry = await this.readRegistry();
       registry.versions = registry.versions.filter(
-        (record) => canonicalGitUrl(record.url) !== canonicalUrl || record.commit !== commit
+        (record) =>
+          canonicalGitUrl(record.url) !== canonicalUrl ||
+          record.commit !== commit
       );
       await this.fileSystem.writeJsonFile(this.registryPath(), registry);
       return { membershipRemoved: true, checkoutDeleted: true };
@@ -502,11 +574,18 @@ export class VersionStore {
 
   async referenceCount(url: string, commit: string): Promise<number> {
     const canonicalUrl = canonicalGitUrl(url);
+    return this.referenceCountLocked(canonicalUrl, commit);
+  }
+
+  private async referenceCountLocked(
+    canonicalUrl: string,
+    commit: string
+  ): Promise<number> {
     const profiles = await this.fileSystem.listProfiles();
     let count = 0;
     for (const profileId of profiles) {
       count +=
-        (await this.listMemberships(profileId))[canonicalUrl]?.filter(
+        (await this.readMemberships(profileId))[canonicalUrl]?.filter(
           (entry) => entry.commit === commit
         ).length ?? 0;
     }
@@ -542,7 +621,11 @@ export class VersionStore {
   }
 
   private persistableRecord(record: MigrationRecord): VersionRecord {
-    const { [rawRegistryUrl]: _raw, [winnerSourceUrl]: _winner, ...stored } = record;
+    const {
+      [rawRegistryUrl]: _raw,
+      [winnerSourceUrl]: _winner,
+      ...stored
+    } = record;
     return stored;
   }
 
@@ -559,9 +642,13 @@ export class VersionStore {
   ): Promise<string | undefined> {
     const canonicalCheckout = this.checkoutPath(record.url, record.commit);
     const rawUrls = record[rawRegistryUrl] ?? [record.url];
-    const candidates = [...new Set([...rawUrls, record.legacySourceUrl].filter(
-      (value): value is string => Boolean(value)
-    ))]
+    const candidates = [
+      ...new Set(
+        [...rawUrls, record.legacySourceUrl].filter((value): value is string =>
+          Boolean(value)
+        )
+      ),
+    ]
       .map((rawUrl) => ({ rawUrl, group: this.groupDirForKey(rawUrl) }))
       .filter(({ group }) => group !== this.groupDir(record.url))
       .sort((a, b) => a.group.localeCompare(b.group));
@@ -581,8 +668,8 @@ export class VersionStore {
     }
 
     const preferred =
-      existingLegacy.find((candidate) =>
-        candidate.rawUrl === record[winnerSourceUrl]
+      existingLegacy.find(
+        (candidate) => candidate.rawUrl === record[winnerSourceUrl]
       ) ?? existingLegacy[0];
     const legacyCheckout = path.join(
       preferred.group,
@@ -601,13 +688,18 @@ export class VersionStore {
         // group. Nothing fetches from a version checkout after materialization;
         // integrity failure rebuilds it from the canonical bare cache.
         await fs.rename(legacyCheckout, canonicalCheckout);
-        if (!(await this.isDirectory(canonicalCheckout))) throw new Error('moved checkout is missing');
+        if (!(await this.isDirectory(canonicalCheckout)))
+          throw new Error('moved checkout is missing');
         delete record.legacySourceUrl;
         return canonicalCheckout;
       } catch (error) {
         record.legacySourceUrl = preferred.rawUrl;
-        getLogger().warn(`Version checkout migration will retry: ${String(error)}`);
-        return (await this.isDirectory(legacyCheckout)) ? legacyCheckout : undefined;
+        getLogger().warn(
+          `Version checkout migration will retry: ${String(error)}`
+        );
+        return (await this.isDirectory(legacyCheckout))
+          ? legacyCheckout
+          : undefined;
       }
     }
 
@@ -634,7 +726,9 @@ export class VersionStore {
       )
         await fs.rename(quarantine, canonicalCheckout).catch(() => {});
       record.legacySourceUrl = preferred.rawUrl;
-      getLogger().warn(`Version checkout replacement will retry: ${String(error)}`);
+      getLogger().warn(
+        `Version checkout replacement will retry: ${String(error)}`
+      );
       return (await this.isDirectory(canonicalCheckout))
         ? canonicalCheckout
         : (await this.isDirectory(legacyCheckout))
@@ -661,9 +755,9 @@ export class VersionStore {
       );
       if (!this.isRegistry(registry))
         throw new Error('registry does not contain a versions array');
-      const valid = registry.versions.filter((record) =>
-        this.isVersionRecord(record)
-      ).map((record) => this.normalizeLegacyRecord(record));
+      const valid = registry.versions
+        .filter((record) => this.isVersionRecord(record))
+        .map((record) => this.normalizeLegacyRecord(record));
       const byIdentity = new Map<string, VersionRecord[]>();
       for (const record of valid) {
         const key = `${canonicalGitUrl(record.url)}\u0000${record.commit}`;
@@ -700,22 +794,29 @@ export class VersionStore {
     );
     const winnerHasHumanLabel =
       winner.refKind === 'tag' || winner.refKind === 'branch';
-    const rawSpellings = [...new Set(records.map((record) => record.url))].sort();
+    const rawSpellings = [
+      ...new Set(records.map((record) => record.url)),
+    ].sort();
     const canonicalUrl = canonicalGitUrl(winner.url);
     const merged: MigrationRecord = {
       ...winner,
       url: canonicalUrl,
       createdAt: records.reduce(
         (earliest, record) =>
-          record.createdAt.localeCompare(earliest) < 0 ? record.createdAt : earliest,
+          record.createdAt.localeCompare(earliest) < 0
+            ? record.createdAt
+            : earliest,
         winner.createdAt
       ),
       lastUsedAt: records.reduce(
         (latest, record) =>
-          record.lastUsedAt.localeCompare(latest) > 0 ? record.lastUsedAt : latest,
+          record.lastUsedAt.localeCompare(latest) > 0
+            ? record.lastUsedAt
+            : latest,
         winner.lastUsedAt
       ),
-      localFallback: records.some((record) => record.localFallback) || undefined,
+      localFallback:
+        records.some((record) => record.localFallback) || undefined,
       // Preserve a verbatim fetch URL. Pre-D1 records carry no explicit
       // fetchUrl, so reconstruct from a raw spelling that differs from the
       // canonical identity (a stored `.git` suffix): that is what Git
@@ -789,7 +890,13 @@ export class VersionStore {
         const key = canonicalGitUrl(url);
         canonical[key] ??= [];
         for (const entry of entries) {
-          if (!canonical[key].some((existing) => existing.commit === entry.commit && existing.source === entry.source))
+          if (
+            !canonical[key].some(
+              (existing) =>
+                existing.commit === entry.commit &&
+                existing.source === entry.source
+            )
+          )
             canonical[key].push(entry);
         }
       }

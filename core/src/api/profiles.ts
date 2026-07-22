@@ -48,6 +48,8 @@ import { sendCaughtError } from './utils/errors.js';
 import { JobManager, type JobContext } from '../jobs/JobManager.js';
 import { inspectGitRemote } from '../plugins/install/gitRemote.js';
 import { getLogger } from '../utils/logger.js';
+import { InstalledWorkflowStore } from '../workflows/InstalledWorkflowStore.js';
+import { WorkflowInstallService } from '../workflows/WorkflowInstallService.js';
 
 // The subset of ProfileManager the handlers use (tests pass fakes).
 export interface ProfileManagerLike {
@@ -106,9 +108,13 @@ export interface ProfileHandlerDeps {
     | 'resolveCachedVersionCommit'
     | 'ensureVersion'
   > & { withVersionMaterialized?: RepoService['withVersionMaterialized'] };
-  jobs: Pick<JobManager, 'start'> & { get?: (id: string) => JobRecord | undefined };
+  jobs: Pick<JobManager, 'start'> & {
+    get?: (id: string) => JobRecord | undefined;
+  };
   inspectGitRemote: (url: string) => Promise<InspectGitRemoteData>;
   pendingVersionAdds: Map<string, PendingVersionAdd>;
+  installedWorkflows: Pick<InstalledWorkflowStore, 'removeRecordsWhere'>;
+  workflowInstall: Pick<WorkflowInstallService, 'sweep'>;
 }
 
 export interface PendingVersionAdd {
@@ -126,7 +132,12 @@ function pendingKey(profileId: string, url: string, commit: string): string {
 }
 
 function jobIsActive(record: JobRecord | undefined): boolean {
-  return Boolean(record && record.state !== 'succeeded' && record.state !== 'failed' && record.state !== 'cancelled');
+  return Boolean(
+    record &&
+      record.state !== 'succeeded' &&
+      record.state !== 'failed' &&
+      record.state !== 'cancelled'
+  );
 }
 
 function versionSummary(
@@ -150,7 +161,14 @@ function remoteRef(
   inspected: InspectGitRemoteData,
   ref: string,
   preferredKind?: 'tag' | 'branch'
-): { commit: string; refKind: 'branch' | 'tag'; refLabel: string; ambiguous?: boolean } | undefined {
+):
+  | {
+      commit: string;
+      refKind: 'branch' | 'tag';
+      refLabel: string;
+      ambiguous?: boolean;
+    }
+  | undefined {
   const branch = ref.replace(/^refs\/heads\//, '');
   const branchCommit = inspected.branchHeads?.[branch];
   const tag = ref.replace(/^refs\/tags\//, '');
@@ -161,9 +179,19 @@ function remoteRef(
   if (preferredKind === 'tag' && tagCommit)
     return { commit: tagCommit, refKind: 'tag', refLabel: tag, ambiguous };
   if (preferredKind === 'branch' && branchCommit)
-    return { commit: branchCommit, refKind: 'branch', refLabel: branch, ambiguous };
+    return {
+      commit: branchCommit,
+      refKind: 'branch',
+      refLabel: branch,
+      ambiguous,
+    };
   if (branchCommit)
-    return { commit: branchCommit, refKind: 'branch', refLabel: branch, ambiguous };
+    return {
+      commit: branchCommit,
+      refKind: 'branch',
+      refLabel: branch,
+      ambiguous,
+    };
   if (tagCommit) return { commit: tagCommit, refKind: 'tag', refLabel: tag };
   return undefined;
 }
@@ -183,6 +211,10 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     jobs: deps?.jobs ?? JobManager.getInstance(),
     inspectGitRemote: deps?.inspectGitRemote ?? inspectGitRemote,
     pendingVersionAdds: deps?.pendingVersionAdds ?? new Map(),
+    installedWorkflows:
+      deps?.installedWorkflows ?? new InstalledWorkflowStore(),
+    workflowInstall:
+      deps?.workflowInstall ?? WorkflowInstallService.getInstance(),
   };
   const originBackfillCache = new Map<string, string>();
 
@@ -194,8 +226,12 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     const cancelled = record.state === 'cancelled';
     await d.versionStore.updateState(url, commit, {
       lastError: {
-        code: cancelled ? 'CANCELLED' : record.error?.code ?? ErrorCodes.OPERATION_EXECUTION_FAILED,
-        message: cancelled ? 'Version add was cancelled' : record.error?.message ?? 'Version add failed',
+        code: cancelled
+          ? 'CANCELLED'
+          : (record.error?.code ?? ErrorCodes.OPERATION_EXECUTION_FAILED),
+        message: cancelled
+          ? 'Version add was cancelled'
+          : (record.error?.message ?? 'Version add failed'),
         at: record.finishedAt ?? new Date().toISOString(),
       },
     });
@@ -464,7 +500,9 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
                 )
               )
             );
-            projected.add(`${canonicalGitUrl(record.url)}\u0000${record.commit}`);
+            projected.add(
+              `${canonicalGitUrl(record.url)}\u0000${record.commit}`
+            );
           }
           if (summaries.length > 0) versionsByUrl.set(url, summaries);
         }
@@ -620,6 +658,11 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
     ): Promise<null> => {
       try {
         await d.repoRegistry.remove(request.params.id, request.query.pathOrUrl);
+        await d.installedWorkflows.removeRecordsWhere(
+          request.params.id,
+          (record) => record.repoPathOrUrl === request.query.pathOrUrl
+        );
+        await d.workflowInstall.sweep(request.params.id);
         d.lifecycle.removeRepository(request.query.pathOrUrl);
         return reply.status(204).send(null);
       } catch (error) {
@@ -667,7 +710,16 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
             )
             .then((result) => result.checkoutDeleted);
         });
-        if (busy) return reply.status(409).send({ statusCode: 409, error: 'Conflict', code: ErrorCodes.REPO_BUSY, message: 'Pinned repository is busy', details: { url, commit } }) as unknown as null;
+        if (busy)
+          return reply
+            .status(409)
+            .send({
+              statusCode: 409,
+              error: 'Conflict',
+              code: ErrorCodes.REPO_BUSY,
+              message: 'Pinned repository is busy',
+              details: { url, commit },
+            }) as unknown as null;
         return reply.status(204).send(null);
       } catch (error) {
         return sendCaughtError(
@@ -718,11 +770,11 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
                 )),
                 refLabel: body.ref,
               }
-          : remoteRef(
-              await d.inspectGitRemote(source.fetchUrl ?? source.url),
-              body.ref,
-              body.refKind
-            )
+            : remoteRef(
+                await d.inspectGitRemote(source.fetchUrl ?? source.url),
+                body.ref,
+                body.refKind
+              )
           : {
               commit: body.commit!,
               refKind: 'commit' as const,
@@ -741,8 +793,14 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
         // bare history for a valid historical commit.
         if (commit.length < 40) {
           const heads = await d.inspectGitRemote(source.fetchUrl ?? source.url);
-          const matches = [...Object.values(heads.branchHeads ?? {}), ...Object.values(heads.tagHeads ?? {})]
-            .filter((sha, index, all) => sha.toLowerCase().startsWith(commit.toLowerCase()) && all.indexOf(sha) === index);
+          const matches = [
+            ...Object.values(heads.branchHeads ?? {}),
+            ...Object.values(heads.tagHeads ?? {}),
+          ].filter(
+            (sha, index, all) =>
+              sha.toLowerCase().startsWith(commit.toLowerCase()) &&
+              all.indexOf(sha) === index
+          );
           if (matches.length === 1) {
             const cached = await d.repos.resolveCachedVersionCommit(
               source.fetchUrl ?? source.url,
@@ -757,14 +815,20 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
               }) as unknown as IApiResponse<AddRepoVersionStartedData>;
             }
             commit = matches[0];
-          }
-          else {
+          } else {
             const cached = await d.repos.resolveCachedVersionCommit(
               source.fetchUrl ?? source.url,
               commit
             );
             if (!cached) {
-              return reply.status(400).send({ statusCode: 400, error: 'Bad Request', code: 'VERSION_COMMIT_NOT_RESOLVABLE', message: `Commit prefix '${commit}' is not available in cached history. Provide the full 40-hex commit for commits not at a ref head.` }) as unknown as IApiResponse<AddRepoVersionStartedData>;
+              return reply
+                .status(400)
+                .send({
+                  statusCode: 400,
+                  error: 'Bad Request',
+                  code: 'VERSION_COMMIT_NOT_RESOLVABLE',
+                  message: `Commit prefix '${commit}' is not available in cached history. Provide the full 40-hex commit for commits not at a ref head.`,
+                }) as unknown as IApiResponse<AddRepoVersionStartedData>;
             }
             commit = cached;
           }
@@ -784,15 +848,45 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
           async (ctx: JobContext) => {
             try {
               return await withLifecyclePermit(async () => {
-                if ('ambiguous' in resolved && resolved.ambiguous && !body.refKind)
-                  ctx.log(`warning: ref '${body.ref}' matches both a branch and tag; using branch\n`);
-                const withMaterialized = d.repos.withVersionMaterialized?.bind(d.repos) ?? (async <T>(profileId: string, url: string, versionCommit: string, opts: Parameters<RepoService['withVersionMaterialized']>[3], fn: Parameters<RepoService['withVersionMaterialized']>[4]): Promise<T> => {
-                  await d.repos.ensureVersion(profileId, url, versionCommit, opts);
-                  return fn({ checkout: d.versionStore.checkoutPath(url, versionCommit), rematerialize: () => d.repos.ensureVersion(profileId, url, versionCommit, opts) }) as Promise<T>;
-                });
+                if (
+                  'ambiguous' in resolved &&
+                  resolved.ambiguous &&
+                  !body.refKind
+                )
+                  ctx.log(
+                    `warning: ref '${body.ref}' matches both a branch and tag; using branch\n`
+                  );
+                const withMaterialized =
+                  d.repos.withVersionMaterialized?.bind(d.repos) ??
+                  (async <T>(
+                    profileId: string,
+                    url: string,
+                    versionCommit: string,
+                    opts: Parameters<RepoService['withVersionMaterialized']>[3],
+                    fn: Parameters<RepoService['withVersionMaterialized']>[4]
+                  ): Promise<T> => {
+                    await d.repos.ensureVersion(
+                      profileId,
+                      url,
+                      versionCommit,
+                      opts
+                    );
+                    return fn({
+                      checkout: d.versionStore.checkoutPath(url, versionCommit),
+                      rematerialize: () =>
+                        d.repos.ensureVersion(
+                          profileId,
+                          url,
+                          versionCommit,
+                          opts
+                        ),
+                    }) as Promise<T>;
+                  });
                 ctx.log('phase: materialize\n');
                 return withMaterialized(
-                  id, source.url, commit,
+                  id,
+                  source.url,
+                  commit,
                   {
                     ...(body.ref ? { ref: body.ref, refLabel, refKind } : {}),
                     ...(source.fetchUrl ? { fetchUrl: source.fetchUrl } : {}),
@@ -805,9 +899,21 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
                   async (materialized) => {
                     if (ctx.signal.aborted) throw ctx.signal.reason;
                     ctx.log('phase: add user membership\n');
-                    await d.versionStore.addMembership(id, source.url, commit, 'user');
+                    await d.versionStore.addMembership(
+                      id,
+                      source.url,
+                      commit,
+                      'user'
+                    );
                     ctx.log('phase: detect and compile\n');
-                    return d.lifecycle.runPinnedLifecycle(source.url, commit, id, ctx, materialized, true);
+                    return d.lifecycle.runPinnedLifecycle(
+                      source.url,
+                      commit,
+                      id,
+                      ctx,
+                      materialized,
+                      true
+                    );
                   }
                 );
               });
@@ -820,14 +926,21 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
               d.pendingVersionAdds.delete(key);
               if (!record.startedAt) releaseActivity();
               if (record.state === 'failed' || record.state === 'cancelled') {
-                return markVersionFailure(source.url, commit, record).catch((error) =>
-                  getLogger().warn(`version failure persist: ${String(error)}`)
+                return markVersionFailure(source.url, commit, record).catch(
+                  (error) =>
+                    getLogger().warn(
+                      `version failure persist: ${String(error)}`
+                    )
                 );
               }
             },
           }
         );
-        releaseActivity = d.lifecycle.beginPinnedActivity(source.url, commit, job.id);
+        releaseActivity = d.lifecycle.beginPinnedActivity(
+          source.url,
+          commit,
+          job.id
+        );
         d.pendingVersionAdds.set(key, {
           jobId: job.id,
           url: canonicalGitUrl(source.url),
@@ -879,26 +992,30 @@ export function createProfileHandlers(deps?: Partial<ProfileHandlerDeps>) {
       }
       try {
         let busy = false;
-        await d.repos.removeVersionCheckout(
-          url,
-          commit,
-          (deleteLocked) => {
-            if (d.lifecycle.activeJobFor(checkout)) {
-              busy = true;
-              return Promise.resolve(false);
-            }
-            return d.versionStore
-              .removeUserMembershipAndDeleteIfUnreferenced(
-                id,
-                url,
-                commit,
-                deleteLocked
-              )
-              .then((result) => result.checkoutDeleted);
+        await d.repos.removeVersionCheckout(url, commit, (deleteLocked) => {
+          if (d.lifecycle.activeJobFor(checkout)) {
+            busy = true;
+            return Promise.resolve(false);
           }
-        );
+          return d.versionStore
+            .removeUserMembershipAndDeleteIfUnreferenced(
+              id,
+              url,
+              commit,
+              deleteLocked
+            )
+            .then((result) => result.checkoutDeleted);
+        });
         if (busy) {
-          return reply.status(409).send({ statusCode: 409, error: 'Conflict', code: ErrorCodes.REPO_BUSY, message: 'Repository version is busy', details: { url, commit } }) as unknown as null;
+          return reply
+            .status(409)
+            .send({
+              statusCode: 409,
+              error: 'Conflict',
+              code: ErrorCodes.REPO_BUSY,
+              message: 'Repository version is busy',
+              details: { url, commit },
+            }) as unknown as null;
         }
         return reply.status(204).send(null);
       } catch (error) {
