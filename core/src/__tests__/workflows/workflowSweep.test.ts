@@ -174,6 +174,17 @@ describe('WorkflowInstallService membership sweep', () => {
     expect(versionStore.list).not.toHaveBeenCalled();
   });
 
+  it('refuses the sweep when the membership registry is unreadable', async () => {
+    const { service, versionStore, repos } = makeService();
+    versionStore.listMemberships.mockRejectedValue(
+      new Error('Membership registry for p1 is unreadable: parse error')
+    );
+
+    await expect(service.sweep('p1')).resolves.toBeUndefined();
+    expect(repos.removeVersionCheckout).not.toHaveBeenCalled();
+    expect(versionStore.deleteIfZeroReferencesCAS).not.toHaveBeenCalled();
+  });
+
   it('skips a busy checkout and converges on the next sweep', async () => {
     const { service, versionStore, repos } = makeService();
     versionStore.listMemberships.mockResolvedValue({

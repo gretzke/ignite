@@ -361,7 +361,17 @@ export class WorkflowInstallService {
       this.addDesiredPin(desired, pin);
     }
 
-    const memberships = await this.deps.versionStore.listMemberships(profileId);
+    let memberships;
+    try {
+      memberships = await this.deps.versionStore.listMemberships(profileId);
+    } catch (error) {
+      // An unreadable membership registry must not fail the install that
+      // triggered the sweep, and sweeping without it would be guesswork.
+      getLogger().warn(
+        `Refusing workflow membership sweep for ${profileId}: ${errorMessage(error)}`
+      );
+      return;
+    }
     for (const [url, entries] of Object.entries(memberships)) {
       for (const entry of entries) {
         if (
