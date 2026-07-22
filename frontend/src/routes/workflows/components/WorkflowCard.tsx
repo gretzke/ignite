@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -20,7 +20,7 @@ import {
   selectWorkflowUpdates,
   workflowOriginsApprovalRequested,
 } from '../../../store/features/workflows/workflowsSlice';
-import { selectPluginRows } from '../../../store/features/plugins/pluginsSlice';
+import { selectPluginRows, type PluginRow } from '../../../store/features/plugins/pluginsSlice';
 import {
   acceptWorkflowPinUpdate,
   hydrateWorkflowDraft,
@@ -57,12 +57,20 @@ export default function WorkflowCard({
   );
   const [diffOpen, setDiffOpen] = useState(false);
   const [pluginId, setPluginId] = useState<string | null>(null);
+  const installRequested = useRef(false);
+  const [installPending, setInstallPending] = useState(false);
 
   useEffect(() => {
     if (workflow.valid && !documentState) {
       dispatch(workflowsApi.get(repoPathOrUrl, workflow.name));
     }
   }, [dispatch, documentState, repoPathOrUrl, workflow.name, workflow.valid]);
+
+  useEffect(() => {
+    if (install?.status === 'queued' || install?.status === 'running') return;
+    installRequested.current = false;
+    setInstallPending(false);
+  }, [install?.status]);
 
   if (!workflow.valid) {
     return (
@@ -80,26 +88,27 @@ export default function WorkflowCard({
     );
   }
 
-  const busy = entry?.attempt?.status === 'running';
+  const busy = entry?.attempt?.status === 'running' || installPending || install?.status === 'queued' || install?.status === 'running';
   const selectedPlugin = documentState?.document.requiredPlugins.find(
     (plugin) => plugin.id === pluginId
   );
-  const openInstall = () => {
-    if (!entry?.docHash) return;
-    dispatch(
-      workflowsApi.installWorkflow(
-        {
-          repoPathOrUrl,
-          name: workflow.name,
-          expectedDocHash: entry.docHash,
-        },
-        profileId ?? undefined
-      )
-    );
+  const selectedInstalledPlugin = plugins.find((plugin) => plugin.pluginId === pluginId);
+  const managePlugin = (plugin: PluginRow | undefined) => {
+    if (!plugin) return undefined;
+    return {
+      pluginId: plugin.pluginId,
+      name: plugin.name ?? plugin.pluginId,
+      ...(selectedPlugin?.source?.kind === 'git' ? { url: selectedPlugin.source.url } : {}),
+      currentRef: selectedPlugin?.source?.kind === 'git' && selectedPlugin.source.track?.mode === 'release'
+        ? selectedPlugin.source.track.version
+        : undefined,
+    };
   };
-  const confirmUpdate = () => {
-    if (!entry?.docHash) return;
-    setDiffOpen(false);
+  const suppressStateAction = status?.loading && !entry;
+  const startInstall = (onDocumentChanged?: () => void) => {
+    if (!entry?.docHash || installRequested.current) return;
+    installRequested.current = true;
+    setInstallPending(true);
     dispatch(
       workflowsApi.installWorkflow(
         {
@@ -108,9 +117,14 @@ export default function WorkflowCard({
           expectedDocHash: entry.docHash,
         },
         profileId ?? undefined,
-        () => setDiffOpen(false)
+        onDocumentChanged
       )
     );
+  };
+  const openInstall = () => startInstall();
+  const confirmUpdate = () => {
+    setDiffOpen(false);
+    startInstall(() => setDiffOpen(false));
   };
 
   return (
@@ -198,7 +212,7 @@ export default function WorkflowCard({
               ))}
         </div>
         <div className="flex gap-2 shrink-0">
-          {entry?.attempt?.status !== 'running' &&
+          {!busy && !suppressStateAction &&
             entry?.installState === 'not-installed' && (
               <button
                 className="btn btn-primary"
@@ -208,7 +222,7 @@ export default function WorkflowCard({
                 <Download size={15} /> Install
               </button>
             )}
-          {entry?.attempt?.status !== 'running' &&
+          {!busy && !suppressStateAction &&
             entry?.installState === 'out-of-sync' && (
               <button
                 className="btn btn-primary"
@@ -218,7 +232,7 @@ export default function WorkflowCard({
                 <RefreshCw size={15} /> Update
               </button>
             )}
-          {entry?.attempt?.status !== 'running' &&
+          {!busy && !suppressStateAction &&
             entry?.installState === 'ready' && (
               <button
                 className="btn btn-primary"
@@ -233,6 +247,7 @@ export default function WorkflowCard({
             )}
           <button
             className="btn btn-secondary"
+            disabled={busy}
             onClick={() =>
               navigate(
                 `/workflows/edit?workflowRepo=${encodeURIComponent(repoPathOrUrl)}&workflow=${encodeURIComponent(workflow.name)}`
@@ -243,7 +258,7 @@ export default function WorkflowCard({
           </button>
           <button
             className="btn btn-secondary"
-            disabled={updates?.loading}
+            disabled={busy || updates?.loading}
             onClick={() =>
               workflowsApi
                 .checkUpdates(repoPathOrUrl, workflow.name)
@@ -258,7 +273,7 @@ export default function WorkflowCard({
           </button>
         </div>
       </div>
-      {(busy || entry?.attempt?.status === 'running') && (
+      {busy && (
         <div className="text-sm text-muted mt-3 flex items-center gap-2">
           <Loader2 size={15} className="animate-spin" /> Installing…
           {installJob?.logTail.at(-1) && (
@@ -282,6 +297,9 @@ export default function WorkflowCard({
             </div>
           ))}
         </div>
+      )}
+      {install?.error && (
+        <div className="mt-3 text-sm text-err">{sanitizeDisplayText(install.error)}</div>
       )}
       {updates?.report && (
         <div className="mt-4 card-milky p-3 text-sm space-y-2">
@@ -428,6 +446,7 @@ export default function WorkflowCard({
         open={pluginId !== null}
         onOpenChange={(open) => !open && setPluginId(null)}
         requiredPlugin={selectedPlugin}
+        manage={managePlugin(selectedInstalledPlugin)}
       />
     </div>
   );

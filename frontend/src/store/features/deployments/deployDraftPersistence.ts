@@ -128,6 +128,7 @@ const PersistedDraftSchema = z.object({
       repoPathOrUrl: z.string(),
       name: z.string(),
       baseDocHash: z.string(),
+      docHash: z.string(),
     })
     .optional(),
   workflowDocument: makeWorkflowDocumentSchema({

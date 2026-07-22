@@ -45,6 +45,7 @@ interface WorkflowStatusState {
   workflows: WorkflowStatusEntry[];
   loading: boolean;
   error?: string;
+  generation: number;
 }
 
 interface WorkflowOriginApproval {
@@ -99,27 +100,33 @@ const slice = createSlice({
         error: action.payload.error,
       };
     },
-    workflowStatusRequested(state, action: PayloadAction<{ profileId: string; repoPathOrUrl: string }>) {
+    workflowStatusRequested(state, action: PayloadAction<{ profileId: string; repoPathOrUrl: string; generation: number }>) {
       const key = workflowStatusKey(action.payload.profileId, action.payload.repoPathOrUrl);
       const previous = state.statusByProfileAndRepo[key];
       state.statusByProfileAndRepo[key] = {
         workflows: previous?.workflows ?? [],
         loading: true,
+        generation: action.payload.generation,
       };
     },
-    workflowStatusLoaded(state, action: PayloadAction<{ profileId: string; repoPathOrUrl: string; workflows: WorkflowStatusEntry[] }>) {
-      state.statusByProfileAndRepo[workflowStatusKey(action.payload.profileId, action.payload.repoPathOrUrl)] = {
+    workflowStatusLoaded(state, action: PayloadAction<{ profileId: string; repoPathOrUrl: string; workflows: WorkflowStatusEntry[]; generation: number }>) {
+      const key = workflowStatusKey(action.payload.profileId, action.payload.repoPathOrUrl);
+      if (state.statusByProfileAndRepo[key]?.generation !== action.payload.generation) return;
+      state.statusByProfileAndRepo[key] = {
         workflows: action.payload.workflows,
         loading: false,
+        generation: action.payload.generation,
       };
     },
-    workflowStatusFailed(state, action: PayloadAction<{ profileId: string; repoPathOrUrl: string; error: string }>) {
+    workflowStatusFailed(state, action: PayloadAction<{ profileId: string; repoPathOrUrl: string; error: string; generation: number }>) {
       const key = workflowStatusKey(action.payload.profileId, action.payload.repoPathOrUrl);
       const previous = state.statusByProfileAndRepo[key];
+      if (previous?.generation !== action.payload.generation) return;
       state.statusByProfileAndRepo[key] = {
         workflows: previous?.workflows ?? [],
         loading: false,
         error: action.payload.error,
+        generation: action.payload.generation,
       };
     },
     workflowDocumentLoaded(state, action: PayloadAction<{ repoPathOrUrl: string; name: string; document: WorkflowDocument; raw: string; docHash: string }>) {
@@ -167,6 +174,8 @@ const slice = createSlice({
   extraReducers: (builder) => {
     builder.addCase(setCurrentProfile, (state) => {
       state.statusByProfileAndRepo = {};
+      state.installByKey = {};
+      delete state.originApproval;
     });
   },
 });

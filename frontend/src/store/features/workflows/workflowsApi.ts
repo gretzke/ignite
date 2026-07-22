@@ -30,6 +30,8 @@ function originDetails(error: { body?: { code?: string; details?: unknown } }): 
 
 const installDocHashes = new Map<string, string>();
 const installKey = (repoPathOrUrl: string, name: string) => `${repoPathOrUrl}\0${name}`;
+const statusGenerations = new Map<string, number>();
+const statusKey = (profileId: string, repoPathOrUrl: string) => `${profileId}\0${repoPathOrUrl}`;
 
 export const workflowsApi = {
   list: (repoPathOrUrl: string) => [
@@ -40,14 +42,19 @@ export const workflowsApi = {
       onError: (error) => workflowListFailed({ repoPathOrUrl, error: formatApiError(error).description }),
     }),
   ],
-  getWorkflowsStatus: (repoPathOrUrl: string, profileId: string) => [
-    workflowStatusRequested({ profileId, repoPathOrUrl }),
+  getWorkflowsStatus: (repoPathOrUrl: string, profileId: string) => {
+    const key = statusKey(profileId, repoPathOrUrl);
+    const generation = (statusGenerations.get(key) ?? 0) + 1;
+    statusGenerations.set(key, generation);
+    return [
+    workflowStatusRequested({ profileId, repoPathOrUrl, generation }),
     apiClient.dispatch.getWorkflowsStatus({
       query: { pathOrUrl: repoPathOrUrl },
-      onSuccess: ({ workflows }) => workflowStatusLoaded({ profileId, repoPathOrUrl, workflows }),
-      onError: (error) => workflowStatusFailed({ profileId, repoPathOrUrl, error: formatApiError(error).description }),
+      onSuccess: ({ workflows }) => workflowStatusLoaded({ profileId, repoPathOrUrl, workflows, generation }),
+      onError: (error) => workflowStatusFailed({ profileId, repoPathOrUrl, error: formatApiError(error).description, generation }),
     }),
-  ],
+  ];
+  },
   get: (repoPathOrUrl: string, name: string) => apiClient.dispatch.getWorkflow({
     params: { name }, query: { pathOrUrl: repoPathOrUrl },
     onSuccess: (data) => workflowDocumentLoaded({ repoPathOrUrl, name, ...data }),
@@ -65,7 +72,7 @@ export const workflowsApi = {
     },
   }),
   installWorkflow: ({ repoPathOrUrl, name, expectedDocHash }: { repoPathOrUrl: string; name: string; expectedDocHash: string }, profileId?: string, onDocumentChanged?: () => void) => {
-    installDocHashes.set(installKey(repoPathOrUrl, name), expectedDocHash);
+    installDocHashes.set(`${profileId ?? ''}\0${installKey(repoPathOrUrl, name)}`, expectedDocHash);
     return apiClient.dispatch.installWorkflow({
     body: { repoPathOrUrl, name, expectedDocHash },
     onSuccess: ({ jobId }) => [
@@ -87,7 +94,7 @@ export const workflowsApi = {
   },
   approveOrigins: (repoPathOrUrl: string, name: string, origins: string[], retry: 'install' | 'updates' = 'install', profileId?: string) => apiClient.dispatch.approveWorkflowOrigins({
     body: { origins },
-    onSuccess: () => [workflowOriginsApprovalCleared(), ...(retry === 'updates' ? workflowsApi.checkUpdates(repoPathOrUrl, name) : [workflowsApi.installWorkflow({ repoPathOrUrl, name, expectedDocHash: installDocHashes.get(installKey(repoPathOrUrl, name)) ?? '' }, profileId)])],
+    onSuccess: () => [workflowOriginsApprovalCleared(), ...(retry === 'updates' ? workflowsApi.checkUpdates(repoPathOrUrl, name) : [workflowsApi.installWorkflow({ repoPathOrUrl, name, expectedDocHash: installDocHashes.get(`${profileId ?? ''}\0${installKey(repoPathOrUrl, name)}`) ?? '' }, profileId)])],
   }),
   checkUpdates: (repoPathOrUrl: string, name: string) => [
     workflowUpdatesRequested({ repoPathOrUrl, name }),

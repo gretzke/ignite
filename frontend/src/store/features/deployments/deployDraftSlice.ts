@@ -317,7 +317,7 @@ const deployDraftSlice = createSlice({
         chains: [],
         steps,
         deployExtras,
-        workflowRef: { repoPathOrUrl, name, baseDocHash: docHash },
+        workflowRef: { repoPathOrUrl, name, baseDocHash: docHash, docHash },
         workflowDocument: cloneJson(document),
         workflowSources: cloneJson(document.sources),
         workflowIncludedStepIds: Object.fromEntries(
@@ -360,6 +360,7 @@ const deployDraftSlice = createSlice({
     ) {
       if (!state.workflowRef) return;
       state.workflowRef.baseDocHash = action.payload.docHash;
+      state.workflowRef.docHash = action.payload.docHash;
       state.workflowDocument = cloneJson(action.payload.document);
       state.workflowSources = cloneJson(action.payload.document.sources);
     },

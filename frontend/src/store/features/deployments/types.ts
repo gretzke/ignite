@@ -96,7 +96,12 @@ export interface DeployDraftState {
   unseenIds: string[];
   name?: string;
   idempotencyKey?: string;
-  workflowRef?: { repoPathOrUrl: string; name: string; baseDocHash: string };
+  workflowRef?: {
+    repoPathOrUrl: string;
+    name: string;
+    baseDocHash: string;
+    docHash: string;
+  };
   workflowDocument?: WorkflowDocument;
   // Editable source pins are detached from workflowDocument, which remains
   // the immutable loaded/saved baseline for dirty checks.

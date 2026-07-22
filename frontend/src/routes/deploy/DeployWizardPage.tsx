@@ -28,6 +28,7 @@ import {
 import { collectUnboundWorkflowSlots, projectWorkflowPlan } from './projection';
 import { cloneJson } from '../../utils/cloneJson';
 import PromoteWorkflowDialog from '../../components/PromoteWorkflowDialog';
+import { triggerToast } from '../../store/middleware/toastListener';
 
 const STEPS = [
   { id: 'contracts', label: 'Contracts' },
@@ -65,14 +66,15 @@ export function needsWorkflowDraftHydration(
   workflowRepo: string | null,
   workflowName: string | null,
   workflowState: unknown,
-  workflowRef?: { repoPathOrUrl: string; name: string }
+  workflowRef?: { repoPathOrUrl: string; name: string; docHash?: string }
 ): boolean {
   return Boolean(
     workflowRepo &&
       workflowName &&
       workflowState &&
       (workflowRef?.repoPathOrUrl !== workflowRepo ||
-        workflowRef.name !== workflowName)
+        workflowRef.name !== workflowName ||
+        workflowRef.docHash !== (workflowState as { docHash?: string }).docHash)
   );
 }
 
@@ -153,7 +155,7 @@ export default function DeployWizardPage() {
   }, [dispatch]);
   useEnsureChainMetadata(draft.chains);
   useEffect(() => {
-    if (workflowRepo && workflowName && !workflowState)
+    if (workflowRepo && workflowName)
       dispatch(workflowsApi.get(workflowRepo, workflowName));
   }, [dispatch, workflowName, workflowRepo, workflowState]);
   useEffect(() => {
@@ -167,6 +169,10 @@ export default function DeployWizardPage() {
     )
       return;
     if (!workflowRepo || !workflowName || !workflowState) return;
+    const changed =
+      draft.workflowRef?.repoPathOrUrl === workflowRepo &&
+      draft.workflowRef.name === workflowName &&
+      draft.workflowRef.docHash !== workflowState.docHash;
     dispatch(
       hydrateWorkflowDraft({
         repoPathOrUrl: workflowRepo,
@@ -175,6 +181,16 @@ export default function DeployWizardPage() {
         document: workflowState.document,
       })
     );
+    if (changed) {
+      dispatch(
+        triggerToast({
+          title: 'Workflow changed',
+          description: 'The workflow changed on disk, so its deployment draft was rebuilt.',
+          variant: 'warning',
+          duration: 8000,
+        })
+      );
+    }
   }, [
     dispatch,
     draft.workflowRef?.name,

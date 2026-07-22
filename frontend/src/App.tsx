@@ -47,6 +47,16 @@ export function startFocusGatedRepoPoll(
   };
 }
 
+export function startFocusRefetch(
+  refetch: () => void,
+  target: FocusEventTarget = window,
+  isFocused: () => boolean = () => document.hasFocus()
+): () => void {
+  target.addEventListener('focus', refetch);
+  if (isFocused()) refetch();
+  return () => target.removeEventListener('focus', refetch);
+}
+
 export default function App() {
   // Read current theme from Redux and provide an explicit dispatcher
   const dispatch = useAppDispatch();
@@ -101,7 +111,7 @@ export default function App() {
   // quiet-pause debounce and per-repo cooldown before starting recompiles.
   useEffect(() => {
     if (versionScopedRoute) return;
-    return startFocusGatedRepoPoll(() => {
+    return startFocusRefetch(() => {
       dispatch(repositoriesApi.checkRepos());
     });
   }, [dispatch, versionScopedRoute]);

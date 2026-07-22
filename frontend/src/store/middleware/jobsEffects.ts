@@ -136,6 +136,8 @@ export function routeTerminalJob(
       const repoPathOrUrl = job.params.repoPathOrUrl as string;
       const name = job.params.name as string;
       const profileId = job.params.profileId as string | undefined;
+      dispatch(wsSend({ type: 'unsubscribe', jobId: job.id }));
+      if (!profileId || profileId !== getState().profiles.currentId) break;
       if (succeeded) {
         dispatch(workflowInstallSucceeded({ repoPathOrUrl, name, result: job.result as import('@ignite/api').WorkflowInstallResult }));
       } else {
@@ -149,9 +151,7 @@ export function routeTerminalJob(
           dispatch(workflowInstallFailed({ repoPathOrUrl, name, error: errorMessage }));
         }
       }
-      if (profileId && profileId === getState().profiles.currentId) {
-        workflowsApi.getWorkflowsStatus(repoPathOrUrl, profileId).forEach((action) => dispatch(action));
-      }
+      workflowsApi.getWorkflowsStatus(repoPathOrUrl, profileId).forEach((action) => dispatch(action));
       break;
     }
     case 'repo.init': {
