@@ -72,13 +72,16 @@ describe('compiler terminal routing preserves version pins', () => {
 
     routeTerminalJob(record, dispatch as never, (() => ({})) as never);
 
-    expect(dispatch).toHaveBeenCalledWith(
-      setCompilationStatus({
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: setCompilationStatus.type,
+      payload: expect.objectContaining({
         repoPath: compilerScopeKey('/workspace/contracts', pin),
         frameworkId: 'foundry',
         status: 'ready',
-      })
-    );
+        pathOrUrl: '/workspace/contracts',
+        pin,
+      }),
+    }));
   });
 
   it('includes the pin in a permission retry for a failed compiler job', () => {

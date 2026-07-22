@@ -30,7 +30,7 @@ import {
   repositoriesApi,
   hydrateRepoGitState,
 } from '../features/repositories/repositoriesApi';
-import { setCompilationStatus, compilerScopeKey } from '../features/compiler/compilerSlice';
+import { artifactListingJobSettled, setCompilationStatus, compilerScopeKey } from '../features/compiler/compilerSlice';
 import {
   permissionRequired,
   approvalCancelled,
@@ -126,6 +126,7 @@ export function routeTerminalJob(
   const succeeded = job.state === 'succeeded';
   const errorMessage =
     job.error?.message ?? 'Operation did not complete successfully';
+  dispatch(artifactListingJobSettled({ jobId: job.id }));
 
   switch (job.type) {
     case 'workflow.resolve': {
@@ -327,7 +328,7 @@ export function routeTerminalJob(
       const scopeKey = compilerScopeKey(repoPath, pin);
       if (succeeded) {
         dispatch(
-          setCompilationStatus({ repoPath: scopeKey, frameworkId, status: 'compiling' })
+          setCompilationStatus({ repoPath: scopeKey, frameworkId, status: 'compiling', pathOrUrl: repoPath, ...(pin ? { pin } : {}) })
         );
         break;
       }
@@ -378,7 +379,7 @@ export function routeTerminalJob(
       const scopeKey = compilerScopeKey(repoPath, pin);
       if (succeeded) {
         dispatch(
-          setCompilationStatus({ repoPath: scopeKey, frameworkId, status: 'ready' })
+          setCompilationStatus({ repoPath: scopeKey, frameworkId, status: 'ready', pathOrUrl: repoPath, ...(pin ? { pin } : {}) })
         );
         break;
       }
