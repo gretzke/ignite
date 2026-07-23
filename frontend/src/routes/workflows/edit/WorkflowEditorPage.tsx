@@ -298,7 +298,7 @@ export default function WorkflowEditorPage() {
       </div>
     );
   return (
-    <div className="max-w-5xl text-[var(--text)]">
+    <div className="text-[var(--text)]">
       <header className="mb-6 flex flex-wrap justify-between gap-4">
         <div>
           <h1 className="page-title">Edit {sanitizeDisplayText(name)}</h1>
@@ -307,7 +307,7 @@ export default function WorkflowEditorPage() {
           </p>
         </div>
         {repository?.initialized && repository.info?.dirty && (
-          <span className="pill pill-warning rounded-full px-3 py-1 mono-data">
+          <span className="pill pill-warning rounded-full px-3 py-1 mono-data shrink-0 self-start">
             dirty
           </span>
         )}
