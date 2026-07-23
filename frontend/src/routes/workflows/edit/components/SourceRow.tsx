@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Pencil, Trash2 } from 'lucide-react';
 import type {
+  ArtifactData,
   ArtifactLocation,
   RepoWorkflowSource,
   WorkflowDocument,
@@ -15,7 +16,74 @@ import AddVersionModal from '../../../repositories/components/AddVersionModal';
 import { listArtifacts } from '../../../../store/features/compiler/compilerSlice';
 import { useAppDispatch, useAppSelector } from '../../../../store/hooks';
 import type { PluginRow } from '../../../../store/features/plugins/pluginsSlice';
+import { apiClient } from '../../../../store/api/client';
+import AbiArgField, {
+  type AbiInput,
+} from '../../../deploy/components/AbiArgField';
+import type { PointerOption } from '../../../deploy/components/PointerValue';
 import DeployConfigPanel from './DeployConfigPanel';
+
+type ConstructorAbi = { type?: string; inputs?: AbiInput[] };
+
+function sourceVersionLabel(source: RepoWorkflowSource): string {
+  return `${source.repo.ref ?? 'commit'}@${source.repo.commit.slice(0, 7)}`;
+}
+
+function isEmptyArgument(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === '' ||
+    (typeof value === 'object' &&
+      value !== null &&
+      '$ref' in value &&
+      (value as { $ref?: { stepId?: unknown } }).$ref?.stepId === '')
+  );
+}
+
+export function setConstructorArgument(
+  document: WorkflowDocument,
+  stepId: string,
+  key: string,
+  value: unknown
+): WorkflowDocument {
+  const next = globalThis.structuredClone(document);
+  const step = next.steps.find((item) => item.id === stepId);
+  if (!step || step.kind !== 'deploy') return document;
+  const args = { ...step.args };
+  if (isEmptyArgument(value)) delete args[key];
+  else args[key] = value;
+  if (Object.keys(args).length) step.args = args;
+  else delete step.args;
+  return next;
+}
+
+export function constructorPointerOptions(
+  document: WorkflowDocument,
+  stepId: string,
+  removingSourceIds: readonly string[] = []
+): PointerOption[] {
+  const removing = new Set(removingSourceIds);
+  return document.steps.flatMap((step) => {
+    if (step.kind !== 'deploy' || step.id === stepId) return [];
+    const target = document.sources.find(
+      (source) => source.id === step.contractId
+    );
+    const label = target
+      ? target.origin === 'contract-type'
+        ? `${sanitizeDisplayText(target.contractName)} · ${sanitizeDisplayText(target.versionLabel)}`
+        : `${sanitizeDisplayText(target.contractName)} · ${sanitizeDisplayText(sourceVersionLabel(target))}`
+      : sanitizeDisplayText(step.contractId);
+    return [
+      {
+        stepId: step.id,
+        label,
+        ...(removing.has(step.contractId)
+          ? { disabledReason: 'Source is being removed' }
+          : {}),
+      },
+    ];
+  });
+}
 
 export default function SourceRow({
   source,
@@ -26,6 +94,7 @@ export default function SourceRow({
   onChange,
   onRemove,
   onStrategyValidityChange,
+  removingSourceIds,
 }: {
   source: RepoWorkflowSource;
   document: WorkflowDocument;
@@ -35,15 +104,26 @@ export default function SourceRow({
   onChange: (document: WorkflowDocument) => void;
   onRemove: () => void;
   onStrategyValidityChange?: (valid: boolean) => void;
+  removingSourceIds?: readonly string[];
 }) {
   const dispatch = useAppDispatch();
   const [pickVersion, setPickVersion] = useState(false);
   const [pickArtifact, setPickArtifact] = useState(false);
+  const [artifactData, setArtifactData] = useState<
+    Record<string, ArtifactData | null>
+  >({});
   const stateKey = `workflow-artifacts:${source.id}`;
   const artifactsState = useAppSelector(
     (state) => state.compiler.compilations[stateKey]?.[source.frameworkId]
   );
   const sourceStatus = status?.sources?.find((item) => item.id === source.id);
+  const deployStep = document.steps.find(
+    (step) => step.kind === 'deploy' && step.contractId === source.id
+  );
+  const artifactKey = `${source.id}\0${source.repo.commit}\0${source.artifactPath}`;
+  const canEditArguments =
+    status?.installState === 'ready' && sourceStatus?.ready === true;
+  const artifact = artifactData[artifactKey];
   const artifactFailure =
     status?.attempt?.status === 'failed' ||
     status?.attempt?.status === 'interrupted'
@@ -87,6 +167,47 @@ export default function SourceRow({
     onChange(next);
     setPickArtifact(false);
   };
+  useEffect(() => {
+    if (!canEditArguments || !deployStep || artifactKey in artifactData) return;
+    let cancelled = false;
+    void apiClient
+      .request('getArtifactData', {
+        body: {
+          pathOrUrl: source.repo.url,
+          pluginId: source.frameworkId,
+          artifactPath: source.artifactPath,
+          pin: source.repo,
+        },
+      })
+      .then((response) => {
+        if (!cancelled)
+          setArtifactData((current) => ({
+            ...current,
+            [artifactKey]: 'data' in response ? response.data : null,
+          }));
+      })
+      .catch(() => {
+        if (!cancelled)
+          setArtifactData((current) => ({ ...current, [artifactKey]: null }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [artifactData, artifactKey, canEditArguments, deployStep, source]);
+  const constructorInputs =
+    (artifact?.abi as ConstructorAbi[] | undefined)?.find(
+      (entry) => entry.type === 'constructor'
+    )?.inputs ?? [];
+  const pointerOptions = useMemo(
+    () =>
+      deployStep
+        ? constructorPointerOptions(document, deployStep.id, removingSourceIds)
+        : [],
+    [deployStep, document, removingSourceIds]
+  );
+  const hasArguments = Boolean(
+    deployStep?.args && Object.keys(deployStep.args).length
+  );
   return (
     <article
       id={`workflow-source-${source.id}`}
@@ -200,6 +321,57 @@ export default function SourceRow({
         onChange={onChange}
         onValidityChange={onStrategyValidityChange}
       />
+      {deployStep &&
+        (canEditArguments ? (
+          <details className="mt-4 grid gap-3" open={hasArguments}>
+            <summary className="cursor-pointer font-medium">Arguments</summary>
+            <div className="grid gap-3 mt-2">
+              {artifact === undefined ? (
+                <p className="flex items-center gap-2 text-sm text-muted">
+                  <Loader2 size={14} className="animate-spin" /> Loading
+                  artifact…
+                </p>
+              ) : artifact === null ? (
+                <p className="text-sm text-err">
+                  Artifact details could not be loaded.
+                </p>
+              ) : constructorInputs.length ? (
+                constructorInputs.map((input, index) => {
+                  const key = input.name || `arg${index}`;
+                  return (
+                    <AbiArgField
+                      key={key}
+                      input={input}
+                      fieldKey={key}
+                      value={deployStep.args?.[key]}
+                      eligibleSteps={
+                        input.type === 'address' ? pointerOptions : undefined
+                      }
+                      onChange={(value) =>
+                        onChange(
+                          setConstructorArgument(
+                            document,
+                            deployStep.id,
+                            key,
+                            value
+                          )
+                        )
+                      }
+                    />
+                  );
+                })
+              ) : (
+                <p className="text-sm text-muted">
+                  This contract has no constructor arguments.
+                </p>
+              )}
+            </div>
+          </details>
+        ) : (
+          <p className="mt-4 text-sm text-muted">
+            Install the workflow to edit arguments.
+          </p>
+        ))}
       <AddVersionModal
         variant="pick"
         open={pickVersion}

@@ -55,6 +55,12 @@ function pendingEditSummary(
       JSON.stringify(step.strategy) !== JSON.stringify(prior.strategy)
     )
       edits.push(`Changed deploy config for ${step.id}`);
+    else if (
+      step.kind === 'deploy' &&
+      prior?.kind === 'deploy' &&
+      JSON.stringify(step.args) !== JSON.stringify(prior.args)
+    )
+      edits.push(`Changed constructor arguments for ${step.id}`);
   }
   return edits.length ? edits : ['Edited workflow document'];
 }
@@ -83,6 +89,7 @@ export default function WorkflowEditorPage() {
   const [draft, setDraft] = useState<WorkflowDocument>();
   const [baseHash, setBaseHash] = useState('');
   const [pendingRemove, setPendingRemove] = useState<PendingRemove>(null);
+  const [removingSourceId, setRemovingSourceId] = useState<string>();
   const [conflict, setConflict] = useState<
     'WORKFLOW_DOC_CONFLICT' | 'WORKFLOW_DELETED' | null
   >(null);
@@ -162,6 +169,7 @@ export default function WorkflowEditorPage() {
     setBaseHash('');
     setLoadedEditorKey('');
     setPendingRemove(null);
+    setRemovingSourceId(undefined);
     setConflict(null);
     setStaleReport(false);
     setStrategyValidity({});
@@ -345,9 +353,11 @@ export default function WorkflowEditorPage() {
                     : { ...current, [source.id]: valid }
                 )
               }
-              onRemove={() =>
-                setPendingRemove(cascadeRemoveSource(draft, source.id))
-              }
+              removingSourceIds={removingSourceId ? [removingSourceId] : []}
+              onRemove={() => {
+                setRemovingSourceId(source.id);
+                setPendingRemove(cascadeRemoveSource(draft, source.id));
+              }}
             />
           )
         )}
@@ -386,12 +396,18 @@ export default function WorkflowEditorPage() {
       </div>
       <RemoveCascadeDialog
         open={pendingRemove !== null}
-        onOpenChange={(open) => !open && setPendingRemove(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingRemove(null);
+            setRemovingSourceId(undefined);
+          }
+        }}
         removedStepIds={pendingRemove?.removedStepIds ?? []}
         clearedRefs={pendingRemove?.clearedRefs ?? []}
         onConfirm={() => {
           if (pendingRemove) setDraft(pendingRemove.doc);
           setPendingRemove(null);
+          setRemovingSourceId(undefined);
         }}
       />
       <Dialog.Root
