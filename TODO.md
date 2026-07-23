@@ -280,6 +280,14 @@ dispatch, `operationPermissions` hints unioned with host minimums, and the
   future builtins whose bundles exceed `MAX_ARG_STRLEN`; the hook deployer is
   now an external third-party plugin. Remaining: consider migrating future
   eligible builtins off argv injection for uniformity.
+- **Foundry install mutates LOCAL repos' submodules** (field diagnosis 2026-07-23):
+  the foundry plugin's install op runs `git submodule update --init --recursive`
+  unconditionally, so a live local-repo lifecycle recompile (repoWrite granted)
+  rewrites the user's working-tree submodules (plugins/src/compiler/foundry/index.ts
+  ~L183). Pre-existing, unchanged by the lifecycle work — but it is exactly the
+  local-dir interference the pinned-clone design exists to avoid. Decide: skip
+  submodule update for LOCAL repos (fail compile with a "sync your submodules" hint)
+  or keep with an explicit consent surface.
 - **Anvil cannot simulate creation calls via eth_simulateV1** — tier 1 falls
   through to the fork tier on anvil by design; revisit if anvil gains create
   support (would speed up validation against local chains).
