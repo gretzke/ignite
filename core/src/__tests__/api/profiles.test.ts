@@ -8,12 +8,7 @@ import { KeyedMutex } from '../../utils/KeyedMutex.js';
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
-  return {
-    promise: new Promise<void>((done) => {
-      resolve = done;
-    }),
-    resolve,
-  };
+  return { promise: new Promise<void>((done) => { resolve = done; }), resolve };
 }
 
 function makeReply() {
@@ -80,29 +75,13 @@ function makeDeps(): any {
       ),
       ensureProfileSwept: vi.fn(),
       sessionState: vi.fn((): RepoRecord | null => null),
-      runPinnedLifecycle: vi.fn(async () => ({
-        pathOrUrl: '/versions/version',
-        frameworks: [],
-      })),
+      runPinnedLifecycle: vi.fn(async () => ({ pathOrUrl: '/versions/version', frameworks: [] })),
       beginPinnedActivity: vi.fn(() => () => {}),
       removeRepository: vi.fn(),
     },
     versionStore: {
-      removeUserMembershipAndDeleteIfUnreferenced: vi.fn(
-        async (
-          _profileId: string,
-          _url: string,
-          _commit: string,
-          remove: () => Promise<void>
-        ) => {
-          await remove();
-          return { membershipRemoved: true, checkoutDeleted: true };
-        }
-      ),
-      checkoutPath: vi.fn(
-        (url: string, commit: string) =>
-          `/versions/${encodeURIComponent(url)}/${commit}`
-      ),
+      removeUserMembershipAndDeleteIfUnreferenced: vi.fn(async (_profileId: string, _url: string, _commit: string, remove: () => Promise<void>) => { await remove(); return { membershipRemoved: true, checkoutDeleted: true }; }),
+      checkoutPath: vi.fn((url: string, commit: string) => `/versions/${encodeURIComponent(url)}/${commit}`),
       list: vi.fn(async () => []),
       listMemberships: vi.fn(async () => ({})),
       isOriginApproved: vi.fn(async () => true),
@@ -110,122 +89,53 @@ function makeDeps(): any {
       updateState: vi.fn(async () => {}),
     },
     repos: {
-      removeVersionCheckout: vi.fn(
-        async (
-          _url: string,
-          _commit: string,
-          beforeDelete: (remove: () => Promise<void>) => Promise<boolean>
-        ) => beforeDelete(async () => {})
-      ),
-      getVersionSource: vi.fn(async (pathOrUrl: string) => ({
-        url: `file://${pathOrUrl}`,
-        workspacePath: pathOrUrl,
-        localFallbackPath: pathOrUrl,
-      })),
-      resolveLocalVersionCommit: vi.fn(async () => ({
-        commit: 'a'.repeat(40),
-        refKind: 'branch' as 'branch' | 'tag' | 'commit',
-      })),
+      removeVersionCheckout: vi.fn(async (_url: string, _commit: string, beforeDelete: (remove: () => Promise<void>) => Promise<boolean>) => beforeDelete(async () => {})),
+      getVersionSource: vi.fn(async (pathOrUrl: string) => ({ url: `file://${pathOrUrl}`, workspacePath: pathOrUrl, localFallbackPath: pathOrUrl })),
+      resolveLocalVersionCommit: vi.fn(async () => ({ commit: 'a'.repeat(40), refKind: 'branch' as 'branch' | 'tag' | 'commit' })),
       resolveCachedVersionCommit: vi.fn(async () => undefined),
       ensureVersion: vi.fn(async () => ({ checkout: '/versions/version' })),
     },
     jobs: {
-      start: vi.fn((type: string, params: Record<string, unknown>) => ({
-        id: 'job-version-0',
-        type,
-        params,
-        state: 'queued' as const,
-        createdAt: new Date().toISOString(),
-        events: [],
-      })),
+      start: vi.fn((type: string, params: Record<string, unknown>) => ({ id: 'job-version-0', type, params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] })),
       get: vi.fn(() => undefined),
     },
-    inspectGitRemote: vi.fn(async () => ({
-      defaultBranch: 'main',
-      branches: ['main'],
-      branchHeads: { main: 'a'.repeat(40) },
-      tagHeads: {},
-      releases: [],
-    })),
+    inspectGitRemote: vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: 'a'.repeat(40) }, tagHeads: {}, releases: [] })),
     hasWorkspace: vi.fn(async () => true),
-    installedWorkflows: {
-      removeRecordsWhere: vi.fn(async () => {}),
-    },
-    workflowInstall: {
-      sweep: vi.fn(async () => {}),
-    },
+    installedWorkflows: { removeRecordsWhere: vi.fn(async () => {}) },
+    workflowInstall: { sweep: vi.fn(async () => {}) },
   };
 }
 
 describe('profile handlers', () => {
   it('bounds concurrent repo.version.add runners to three lifecycle permits', async () => {
     const deps = makeDeps();
-    const runners: Array<
-      (ctx: {
-        log: (line: string) => void;
-        signal: AbortSignal;
-      }) => Promise<unknown>
-    > = [];
+    const runners: Array<(ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>> = [];
     const materialized = deferred();
     let running = 0;
     let peak = 0;
     deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          runner: (typeof runners)[number]
-        ) => {
-          runners.push(runner);
-          return {
-            id: `job-${runners.length}`,
-            type: 'repo.version.add',
-            params: {},
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
+      start: vi.fn((_type: string, _params: Record<string, unknown>, runner: typeof runners[number]) => {
+        runners.push(runner);
+        return { id: `job-${runners.length}`, type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
       get: vi.fn(() => undefined),
     };
-    (
-      deps.repos as typeof deps.repos & { withVersionMaterialized: Function }
-    ).withVersionMaterialized = vi.fn(
-      async (
-        _profileId: string,
-        _url: string,
-        _commit: string,
-        _opts: object,
-        fn: Function
-      ) => {
-        running += 1;
-        peak = Math.max(peak, running);
-        await materialized.promise;
-        running -= 1;
-        return fn({
-          checkout: '/versions/version',
-          rematerialize: async () => ({ checkout: '/versions/version' }),
-        });
-      }
-    );
+    (deps.repos as typeof deps.repos & { withVersionMaterialized: Function }).withVersionMaterialized = vi.fn(async (_profileId: string, _url: string, _commit: string, _opts: object, fn: Function) => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await materialized.promise;
+      running -= 1;
+      return fn({ checkout: '/versions/version', rematerialize: async () => ({ checkout: '/versions/version' }) });
+    });
 
     const handlers = createProfileHandlers(deps);
     for (let index = 0; index < 4; index += 1) {
       await handlers.addRepoVersion(
-        {
-          params: { id: 'p1' },
-          body: {
-            url: `https://example.test/repo-${index}.git`,
-            commit: `${index}`.repeat(40),
-          },
-        } as never,
+        { params: { id: 'p1' }, body: { url: `https://example.test/repo-${index}.git`, commit: `${index}`.repeat(40) } } as never,
         makeReply() as never
       );
     }
-    const runningJobs = runners.map((runner) =>
-      runner({ log: () => {}, signal: new AbortController().signal })
-    );
+    const runningJobs = runners.map((runner) => runner({ log: () => {}, signal: new AbortController().signal }));
     await vi.waitFor(() => expect(peak).toBe(3));
     materialized.resolve();
     await Promise.all(runningJobs);
@@ -242,64 +152,30 @@ describe('profile handlers', () => {
     const checkoutHeld = deferred();
     const lifecycleHeld = deferred();
     const permitsHeld = deferred();
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
     deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          value: typeof runner
-        ) => {
-          runner = value;
-          return {
-            id: 'job-contention',
-            type: 'repo.version.add',
-            params: {},
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
+      start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => {
+        runner = value;
+        return { id: 'job-contention', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
       get: vi.fn(() => undefined),
     };
-    deps.lifecycle.runPinnedLifecycle = vi.fn(
-      async () => lifecycleHeld.promise
-    );
-    (
-      deps.repos as typeof deps.repos & { withVersionMaterialized: Function }
-    ).withVersionMaterialized = async (
-      _profileId: string,
-      versionUrl: string,
-      versionCommit: string,
-      _opts: object,
-      fn: Function
-    ) =>
+    deps.lifecycle.runPinnedLifecycle = vi.fn(async () => lifecycleHeld.promise);
+    (deps.repos as typeof deps.repos & { withVersionMaterialized: Function }).withVersionMaterialized = async (_profileId: string, versionUrl: string, versionCommit: string, _opts: object, fn: Function) =>
       locks.run(`version-group:${versionUrl}`, () =>
         locks.run(`version:${versionUrl}/${versionCommit}`, () =>
-          fn({
-            checkout: '/versions/version',
-            rematerialize: async () => ({ checkout: '/versions/version' }),
-          })
+          fn({ checkout: '/versions/version', rematerialize: async () => ({ checkout: '/versions/version' }) })
         )
       );
 
     const holdingCheckout = locks.run(checkoutKey, () => checkoutHeld.promise);
-    const heldPermits = [0, 1, 2].map(() =>
-      withLifecyclePermit(() => permitsHeld.promise)
-    );
+    const heldPermits = [0, 1, 2].map(() => withLifecyclePermit(() => permitsHeld.promise));
     await vi.waitFor(() => expect(locks.isBusy(checkoutKey)).toBe(true));
     await createProfileHandlers(deps).addRepoVersion(
       { params: { id: 'p1' }, body: { url, commit } } as never,
       makeReply() as never
     );
-    const adding = runner({
-      log: () => {},
-      signal: new AbortController().signal,
-    });
+    const adding = runner({ log: () => {}, signal: new AbortController().signal });
 
     await Promise.resolve();
     expect(locks.isBusy(groupKey)).toBe(false);
@@ -371,6 +247,19 @@ describe('profile handlers', () => {
     );
   });
 
+  it('removes installed workflow records and sweeps memberships with a deleted repository', async () => {
+    const deps = makeDeps();
+    const handlers = createProfileHandlers(deps);
+    const reply = makeReply();
+    await handlers.deleteRepo(
+      { params: { id: 'p1' }, query: { pathOrUrl: '/repo' } } as never,
+      reply as never
+    );
+    expect(reply.statusCode).toBe(204);
+    expect(deps.installedWorkflows.removeRecordsWhere).toHaveBeenCalledWith('p1', expect.any(Function));
+    expect(deps.workflowInstall.sweep).toHaveBeenCalledWith('p1');
+  });
+
   it('listRepos returns enriched entries with initialized, cached frameworks and activeJobId', async () => {
     const deps = makeDeps();
     deps.repoRegistry.list = async () => ({
@@ -425,27 +314,13 @@ describe('profile handlers', () => {
 
   it('listRepos exposes a local repository origin for remote version pickers', async () => {
     const deps = makeDeps();
-    deps.repoRegistry.list = async () => ({
-      session: null,
-      local: [{ pathOrUrl: '/repo-a' }],
-      cloned: [],
-    });
-    deps.repos.getVersionSource = vi.fn(async () => ({
-      url: 'https://example.test/contracts.git',
-      workspacePath: '/repo-a',
-      localFallbackPath: '/repo-a',
-    }));
+    deps.repoRegistry.list = async () => ({ session: null, local: [{ pathOrUrl: '/repo-a' }], cloned: [] });
+    deps.repos.getVersionSource = vi.fn(async () => ({ url: 'https://example.test/contracts.git', workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
 
     const reply = makeReply();
-    await createProfileHandlers(deps).listRepos(
-      { params: { id: 'p1' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
-    expect(
-      (reply.body as { data: { local: Array<{ originUrl?: string }> } }).data
-        .local[0].originUrl
-    ).toBe('https://example.test/contracts');
+    expect((reply.body as { data: { local: Array<{ originUrl?: string }> } }).data.local[0].originUrl).toBe('https://example.test/contracts');
   });
 
   it('groups from a persisted origin without probing live git', async () => {
@@ -461,37 +336,19 @@ describe('profile handlers', () => {
       throw new Error('must not probe persisted origins');
     });
     deps.versionStore.listMemberships = vi.fn(async () => ({
-      [url]: [
-        {
-          commit,
-          addedAt: '2026-07-18T00:00:00.000Z',
-          source: 'user' as const,
-        },
-      ],
+      [url]: [{ commit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' as const }],
     }));
     deps.versionStore.list = vi.fn(async () => [
-      {
-        url,
-        commit,
-        createdAt: '2026-07-18T00:00:00.000Z',
-        lastUsedAt: '2026-07-18T00:00:00.000Z',
-      },
+      { url, commit, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' },
     ]);
 
     const reply = makeReply();
-    await createProfileHandlers(deps).listRepos(
-      { params: { id: 'p1' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
     expect(deps.repos.getVersionSource).not.toHaveBeenCalled();
-    expect(
-      (
-        reply.body as {
-          data: { local: Array<{ versions: Array<{ commit: string }> }> };
-        }
-      ).data.local[0].versions
-    ).toEqual([expect.objectContaining({ commit })]);
+    expect((reply.body as { data: { local: Array<{ versions: Array<{ commit: string }> }> } }).data.local[0].versions).toEqual([
+      expect.objectContaining({ commit }),
+    ]);
   });
 
   it('backfills a cloned record from its path when its live origin cannot be read', async () => {
@@ -507,15 +364,9 @@ describe('profile handlers', () => {
     });
 
     const reply = makeReply();
-    await createProfileHandlers(deps).listRepos(
-      { params: { id: 'p1' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
-    expect(
-      (reply.body as { data: { cloned: Array<{ originUrl?: string }> } }).data
-        .cloned[0].originUrl
-    ).toBe(canonicalGitUrl(url));
+    expect((reply.body as { data: { cloned: Array<{ originUrl?: string }> } }).data.cloned[0].originUrl).toBe(canonicalGitUrl(url));
   });
 
   it('attaches file-origin versions to a local record without exposing the file origin', async () => {
@@ -528,39 +379,16 @@ describe('profile handlers', () => {
       cloned: [],
     });
     deps.versionStore.listMemberships = vi.fn(async () => ({
-      [url]: [
-        {
-          commit,
-          addedAt: '2026-07-18T00:00:00.000Z',
-          source: 'user' as const,
-        },
-      ],
+      [url]: [{ commit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' as const }],
     }));
     deps.versionStore.list = vi.fn(async () => [
-      {
-        url,
-        commit,
-        createdAt: '2026-07-18T00:00:00.000Z',
-        lastUsedAt: '2026-07-18T00:00:00.000Z',
-      },
+      { url, commit, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' },
     ]);
 
     const reply = makeReply();
-    await createProfileHandlers(deps).listRepos(
-      { params: { id: 'p1' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
-    const local = (
-      reply.body as {
-        data: {
-          local: Array<{
-            originUrl?: string;
-            versions: Array<{ commit: string }>;
-          }>;
-        };
-      }
-    ).data.local[0];
+    const local = (reply.body as { data: { local: Array<{ originUrl?: string; versions: Array<{ commit: string }> }> } }).data.local[0];
     expect(local.originUrl).toBeUndefined();
     expect(local.versions).toEqual([expect.objectContaining({ commit })]);
   });
@@ -586,9 +414,7 @@ describe('profile handlers', () => {
     const handlers = createProfileHandlers(deps);
     const reply = makeReply();
     await handlers.listRepos({ params: { id: 'p1' } } as never, reply as never);
-    expect((reply.body as { data: { pinned: unknown[] } }).data.pinned).toEqual(
-      []
-    );
+    expect((reply.body as { data: { pinned: unknown[] } }).data.pinned).toEqual([]);
   });
 
   it.each([
@@ -618,10 +444,7 @@ describe('profile handlers', () => {
     const reply = makeReply();
 
     await createProfileHandlers(deps).addRepoVersion(
-      {
-        params: { id: 'p1' },
-        body: { repoPathOrUrl: '/repo-a', ref: 'main' },
-      } as never,
+      { params: { id: 'p1' }, body: { repoPathOrUrl: '/repo-a', ref: 'main' } } as never,
       reply as never
     );
 
@@ -632,117 +455,26 @@ describe('profile handlers', () => {
 
   it('adds a remote ref version through a job, then lists it under its matching repository', async () => {
     const deps = makeDeps();
-    const url = 'https://example.com/contracts.git';
-    const commit = 'a'.repeat(40);
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
-    deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          value: typeof runner
-        ) => {
-          runner = value;
-          return {
-            id: 'job-version-1',
-            type: 'repo.version.add',
-            params: {},
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
-    };
-    deps.inspectGitRemote = vi.fn(async () => ({
-      defaultBranch: 'main',
-      branches: ['main'],
-      branchHeads: { main: commit },
-      tagHeads: {},
-      releases: [],
-    }));
-    deps.repoRegistry.list = async () => ({
-      session: null,
-      local: [{ pathOrUrl: '/repo-a' }],
-      cloned: [],
-    });
-    deps.repos.getVersionSource = vi.fn(async () => ({
-      url: canonicalGitUrl(url),
-      fetchUrl: url,
-      workspacePath: '/repo-a',
-      localFallbackPath: '/repo-a',
-    }));
-    const memberships: Record<
-      string,
-      Array<{ commit: string; addedAt: string; source: 'user' | 'workflow' }>
-    > = {};
-    deps.versionStore.addMembership = vi.fn(
-      async (
-        _profileId: string,
-        membershipUrl: string,
-        membershipCommit: string
-      ) => {
-        memberships[membershipUrl] = [
-          {
-            commit: membershipCommit,
-            addedAt: '2026-07-18T00:00:00.000Z',
-            source: 'user',
-          },
-        ];
-      }
-    );
+    const url = 'https://example.com/contracts.git'; const commit = 'a'.repeat(40);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => { runner = value; return { id: 'job-version-1', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] }; }) };
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: commit }, tagHeads: {}, releases: [] }));
+    deps.repoRegistry.list = async () => ({ session: null, local: [{ pathOrUrl: '/repo-a' }], cloned: [] });
+    deps.repos.getVersionSource = vi.fn(async () => ({ url: canonicalGitUrl(url), fetchUrl: url, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
+    const memberships: Record<string, Array<{ commit: string; addedAt: string; source: 'user' | 'workflow' }>> = {};
+    deps.versionStore.addMembership = vi.fn(async (_profileId: string, membershipUrl: string, membershipCommit: string) => { memberships[membershipUrl] = [{ commit: membershipCommit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' }]; });
     deps.versionStore.listMemberships = vi.fn(async () => memberships);
-    deps.versionStore.list = vi.fn(async () => [
-      {
-        url: canonicalGitUrl(url),
-        fetchUrl: url,
-        commit,
-        refLabel: 'main',
-        refKind: 'branch' as const,
-        frameworks: [{ id: 'foundry', name: 'Foundry' }],
-        createdAt: '2026-07-18T00:00:00.000Z',
-        lastUsedAt: '2026-07-18T00:00:00.000Z',
-      },
-    ]);
-    const handlers = createProfileHandlers(deps);
-    const addReply = makeReply();
-    await handlers.addRepoVersion(
-      { params: { id: 'p1' }, body: { url, ref: 'main' } } as never,
-      addReply as never
-    );
+    deps.versionStore.list = vi.fn(async () => [{ url: canonicalGitUrl(url), fetchUrl: url, commit, refLabel: 'main', refKind: 'branch' as const, frameworks: [{ id: 'foundry', name: 'Foundry' }], createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
+    const handlers = createProfileHandlers(deps); const addReply = makeReply();
+    await handlers.addRepoVersion({ params: { id: 'p1' }, body: { url, ref: 'main' } } as never, addReply as never);
     expect(addReply.body).toEqual({
       data: { jobId: 'job-version-1', url: canonicalGitUrl(url), commit },
     });
     await runner({ log: () => {}, signal: new AbortController().signal });
-    expect(deps.repos.ensureVersion).toHaveBeenCalledWith(
-      'p1',
-      canonicalGitUrl(url),
-      commit,
-      expect.objectContaining({ fetchUrl: url, ref: 'main', refKind: 'branch' })
-    );
-    expect(deps.lifecycle.runPinnedLifecycle).toHaveBeenCalledWith(
-      canonicalGitUrl(url),
-      commit,
-      'p1',
-      expect.any(Object),
-      expect.any(Object),
-      true
-    );
-    const listReply = makeReply();
-    await handlers.listRepos(
-      { params: { id: 'p1' } } as never,
-      listReply as never
-    );
-    expect(
-      (
-        listReply.body as {
-          data: { local: Array<{ versions: Array<{ commit: string }> }> };
-        }
-      ).data.local[0].versions
-    ).toEqual([expect.objectContaining({ commit })]);
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', canonicalGitUrl(url), commit, expect.objectContaining({ fetchUrl: url, ref: 'main', refKind: 'branch' }));
+    expect(deps.lifecycle.runPinnedLifecycle).toHaveBeenCalledWith(canonicalGitUrl(url), commit, 'p1', expect.any(Object), expect.any(Object), true);
+    const listReply = makeReply(); await handlers.listRepos({ params: { id: 'p1' } } as never, listReply as never);
+    expect((listReply.body as { data: { local: Array<{ versions: Array<{ commit: string }> }> } }).data.local[0].versions).toEqual([expect.objectContaining({ commit })]);
   });
 
   it('keeps direct .git adds canonical while inspecting and fetching the verbatim URL', async () => {
@@ -779,144 +511,43 @@ describe('profile handlers', () => {
     const scp = 'git@example.com:team/contracts.git';
     const canonical = 'ssh://git@example.com/team/contracts';
     const commit = 'd'.repeat(40);
-    deps.repoRegistry.list = async () => ({
-      session: null,
-      local: [{ pathOrUrl: '/repo-a' }],
-      cloned: [],
-    });
-    deps.repos.getVersionSource = vi.fn(async () => ({
-      url: canonicalGitUrl(scp),
-      fetchUrl: scp,
-      workspacePath: '/repo-a',
-      localFallbackPath: '/repo-a',
-    }));
-    deps.versionStore.listMemberships = vi.fn(async () => ({
-      [canonical]: [
-        {
-          commit,
-          addedAt: '2026-07-18T00:00:00.000Z',
-          source: 'user' as const,
-        },
-      ],
-    }));
-    deps.versionStore.list = vi.fn(async () => [
-      {
-        url: canonical,
-        commit,
-        createdAt: '2026-07-18T00:00:00.000Z',
-        lastUsedAt: '2026-07-18T00:00:00.000Z',
-      },
-    ]);
+    deps.repoRegistry.list = async () => ({ session: null, local: [{ pathOrUrl: '/repo-a' }], cloned: [] });
+    deps.repos.getVersionSource = vi.fn(async () => ({ url: canonicalGitUrl(scp), fetchUrl: scp, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
+    deps.versionStore.listMemberships = vi.fn(async () => ({ [canonical]: [{ commit, addedAt: '2026-07-18T00:00:00.000Z', source: 'user' as const }] }));
+    deps.versionStore.list = vi.fn(async () => [{ url: canonical, commit, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
 
     const reply = makeReply();
-    await createProfileHandlers(deps).listRepos(
-      { params: { id: 'p1' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
-    expect(
-      (
-        reply.body as {
-          data: {
-            local: Array<{ versions: Array<{ commit: string }> }>;
-            versionGroups: unknown[];
-          };
-        }
-      ).data
-    ).toMatchObject({
+    expect((reply.body as { data: { local: Array<{ versions: Array<{ commit: string }> }>; versionGroups: unknown[] } }).data).toMatchObject({
       local: [{ versions: [{ commit }] }],
       versionGroups: [],
     });
   });
 
   it('resolves a local ref through RepoService and keeps the local fallback path', async () => {
-    const deps = makeDeps();
-    const url = 'https://example.com/contracts.git';
-    const commit = 'b'.repeat(40);
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
-    deps.repos.getVersionSource = vi.fn(async () => ({
-      url,
-      workspacePath: '/repo-a',
-      localFallbackPath: '/repo-a',
-    }));
-    deps.repos.resolveLocalVersionCommit = vi.fn(async () => ({
-      commit,
-      refKind: 'tag' as const,
-    }));
-    deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          value: typeof runner
-        ) => {
-          runner = value;
-          return {
-            id: 'job-local',
-            type: 'repo.version.add',
-            params: {},
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
-    };
+    const deps = makeDeps(); const url = 'https://example.com/contracts.git'; const commit = 'b'.repeat(40);
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.repos.getVersionSource = vi.fn(async () => ({ url, workspacePath: '/repo-a', localFallbackPath: '/repo-a' }));
+    deps.repos.resolveLocalVersionCommit = vi.fn(async () => ({ commit, refKind: 'tag' as const }));
+    deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => { runner = value; return { id: 'job-local', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] }; }) };
     const handlers = createProfileHandlers(deps);
-    await handlers.addRepoVersion(
-      {
-        params: { id: 'p1' },
-        body: { repoPathOrUrl: '/repo-a', ref: 'feature' },
-      } as never,
-      makeReply() as never
-    );
+    await handlers.addRepoVersion({ params: { id: 'p1' }, body: { repoPathOrUrl: '/repo-a', ref: 'feature' } } as never, makeReply() as never);
     await runner({ log: () => {}, signal: new AbortController().signal });
-    expect(deps.repos.resolveLocalVersionCommit).toHaveBeenCalledWith(
-      '/repo-a',
-      'feature',
-      'p1'
-    );
-    expect(deps.repos.ensureVersion).toHaveBeenCalledWith(
-      'p1',
-      url,
-      commit,
-      expect.objectContaining({
-        localFallbackPath: '/repo-a',
-        refKind: 'tag',
-        refLabel: 'feature',
-      })
-    );
+    expect(deps.repos.resolveLocalVersionCommit).toHaveBeenCalledWith('/repo-a', 'feature', 'p1');
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', url, commit, expect.objectContaining({ localFallbackPath: '/repo-a', refKind: 'tag', refLabel: 'feature' }));
   });
 
   it('adds user membership before lifecycle failure so the version remains visible', async () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
     const commit = 'c'.repeat(40);
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
     deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          value: typeof runner
-        ) => {
-          runner = value;
-          return {
-            id: 'job-fail',
-            type: 'repo.version.add',
-            params: {},
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
+      start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => {
+        runner = value;
+        return { id: 'job-fail', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
     };
     deps.lifecycle.runPinnedLifecycle = vi.fn(async () => {
       throw new Error('compile failed');
@@ -926,28 +557,13 @@ describe('profile handlers', () => {
       { params: { id: 'p1' }, body: { url, commit } } as never,
       makeReply() as never
     );
-    await expect(
-      runner({ log: () => {}, signal: new AbortController().signal })
-    ).rejects.toThrow('compile failed');
-    expect(deps.versionStore.addMembership).toHaveBeenCalledWith(
-      'p1',
-      canonicalGitUrl(url),
-      commit,
-      'user'
+    await expect(runner({ log: () => {}, signal: new AbortController().signal })).rejects.toThrow('compile failed');
+    expect(deps.versionStore.addMembership).toHaveBeenCalledWith('p1', canonicalGitUrl(url), commit, 'user');
+    expect((deps.repos.ensureVersion as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
+      (deps.versionStore.addMembership as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
     );
-    expect(
-      (deps.repos.ensureVersion as ReturnType<typeof vi.fn>).mock
-        .invocationCallOrder[0]
-    ).toBeLessThan(
-      (deps.versionStore.addMembership as ReturnType<typeof vi.fn>).mock
-        .invocationCallOrder[0]
-    );
-    expect(
-      (deps.versionStore.addMembership as ReturnType<typeof vi.fn>).mock
-        .invocationCallOrder[0]
-    ).toBeLessThan(
-      (deps.lifecycle.runPinnedLifecycle as ReturnType<typeof vi.fn>).mock
-        .invocationCallOrder[0]
+    expect((deps.versionStore.addMembership as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
+      (deps.lifecycle.runPinnedLifecycle as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
     );
   });
 
@@ -955,28 +571,12 @@ describe('profile handlers', () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
     const commit = 'e'.repeat(40);
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
     deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          value: typeof runner
-        ) => {
-          runner = value;
-          return {
-            id: 'job-commit-only',
-            type: 'repo.version.add',
-            params: {},
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
+      start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => {
+        runner = value;
+        return { id: 'job-commit-only', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
     };
 
     await createProfileHandlers(deps).addRepoVersion(
@@ -997,66 +597,25 @@ describe('profile handlers', () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
     const commit = 'd'.repeat(40);
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
     let onSettled!: (record: { state: 'succeeded' }) => void;
     let active = false;
-    deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          value: typeof runner,
-          opts: { onSettled: typeof onSettled }
-        ) => {
-          runner = value;
-          onSettled = opts.onSettled;
-          return {
-            id: 'job-activity',
-            type: 'repo.version.add',
-            params: {},
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
-      get: vi.fn(() => undefined),
-    };
+    deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner, opts: { onSettled: typeof onSettled }) => {
+      runner = value;
+      onSettled = opts.onSettled;
+      return { id: 'job-activity', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+    }), get: vi.fn(() => undefined) };
     deps.lifecycle.beginPinnedActivity = vi.fn(() => {
       active = true;
-      return () => {
-        active = false;
-      };
+      return () => { active = false; };
     });
-    (
-      deps.repos as typeof deps.repos & { withVersionMaterialized: Function }
-    ).withVersionMaterialized = vi.fn(
-      async (
-        _profileId: string,
-        _url: string,
-        _commit: string,
-        _opts: object,
-        fn: (materialized: {
-          checkout: string;
-          rematerialize: () => Promise<{ checkout: string }>;
-        }) => Promise<unknown>
-      ) => {
-        const result = await fn({
-          checkout: '/versions/version',
-          rematerialize: async () => ({ checkout: '/versions/version' }),
-        });
-        expect(active).toBe(true);
-        return result;
-      }
-    );
+    (deps.repos as typeof deps.repos & { withVersionMaterialized: Function }).withVersionMaterialized = vi.fn(async (_profileId: string, _url: string, _commit: string, _opts: object, fn: (materialized: { checkout: string; rematerialize: () => Promise<{ checkout: string }> }) => Promise<unknown>) => {
+      const result = await fn({ checkout: '/versions/version', rematerialize: async () => ({ checkout: '/versions/version' }) });
+      expect(active).toBe(true);
+      return result;
+    });
 
-    await createProfileHandlers(deps).addRepoVersion(
-      { params: { id: 'p1' }, body: { url, commit } } as never,
-      makeReply() as never
-    );
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit } } as never, makeReply() as never);
     await runner({ log: () => {}, signal: new AbortController().signal });
     onSettled({ state: 'succeeded' });
 
@@ -1067,62 +626,27 @@ describe('profile handlers', () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
     const commit = 'c'.repeat(40);
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
-    let onSettled!: (record: {
-      state: 'cancelled';
-      startedAt?: string;
-    }) => void;
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    let onSettled!: (record: { state: 'cancelled'; startedAt?: string }) => void;
     let active = false;
     deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          value: typeof runner,
-          opts: { onSettled: typeof onSettled }
-        ) => {
-          runner = value;
-          onSettled = opts.onSettled;
-          return {
-            id: 'job-cancel-running',
-            type: 'repo.version.add',
-            params: {},
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
+      start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner, opts: { onSettled: typeof onSettled }) => {
+        runner = value;
+        onSettled = opts.onSettled;
+        return { id: 'job-cancel-running', type: 'repo.version.add', params: {}, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+      }),
       get: vi.fn(() => undefined),
     };
     deps.lifecycle.beginPinnedActivity = vi.fn(() => {
       active = true;
-      return () => {
-        active = false;
-      };
+      return () => { active = false; };
     });
-    const materialization = vi.fn(
-      async (
-        _profileId: string,
-        _url: string,
-        _commit: string,
-        opts: { signal?: AbortSignal }
-      ) => {
-        return new Promise<never>((_resolve, reject) => {
-          opts.signal?.addEventListener(
-            'abort',
-            () => reject(opts.signal?.reason),
-            { once: true }
-          );
-        });
-      }
-    );
-    (
-      deps.repos as typeof deps.repos & { withVersionMaterialized: Function }
-    ).withVersionMaterialized = materialization;
+    const materialization = vi.fn(async (_profileId: string, _url: string, _commit: string, opts: { signal?: AbortSignal }) => {
+      return new Promise<never>((_resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => reject(opts.signal?.reason), { once: true });
+      });
+    });
+    (deps.repos as typeof deps.repos & { withVersionMaterialized: Function }).withVersionMaterialized = materialization;
 
     await createProfileHandlers(deps).addRepoVersion(
       { params: { id: 'p1' }, body: { url, commit } } as never,
@@ -1141,11 +665,7 @@ describe('profile handlers', () => {
     expect(active).toBe(false);
     expect(deps.versionStore.addMembership).not.toHaveBeenCalled();
     expect(materialization).toHaveBeenCalledWith(
-      'p1',
-      canonicalGitUrl(url),
-      commit,
-      expect.objectContaining({ fetchUrl: url, signal: controller.signal }),
-      expect.any(Function)
+      'p1', canonicalGitUrl(url), commit, expect.objectContaining({ fetchUrl: url, signal: controller.signal }), expect.any(Function)
     );
   });
 
@@ -1157,49 +677,24 @@ describe('profile handlers', () => {
       start: vi.fn((_type: string, _params: Record<string, unknown>) => {
         const record = { id: `job-${next++}`, state: 'queued' as const };
         records.set(record.id, record);
-        return {
-          ...record,
-          type: 'repo.version.add',
-          params: {},
-          createdAt: new Date().toISOString(),
-          events: [],
-        };
+        return { ...record, type: 'repo.version.add', params: {}, createdAt: new Date().toISOString(), events: [] };
       }),
       get: vi.fn((jobId: string) => records.get(jobId)),
     };
     const handlers = createProfileHandlers(deps);
-    const request = {
-      body: {
-        url: 'https://example.com/contracts.git',
-        commit: 'a'.repeat(40),
-      },
-    };
+    const request = { body: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } };
     const first = makeReply();
-    await handlers.addRepoVersion(
-      { ...request, params: { id: 'p1' } } as never,
-      first as never
-    );
+    await handlers.addRepoVersion({ ...request, params: { id: 'p1' } } as never, first as never);
     const duplicate = makeReply();
-    await handlers.addRepoVersion(
-      { ...request, params: { id: 'p1' } } as never,
-      duplicate as never
-    );
+    await handlers.addRepoVersion({ ...request, params: { id: 'p1' } } as never, duplicate as never);
     const otherProfile = makeReply();
-    await handlers.addRepoVersion(
-      { ...request, params: { id: 'p2' } } as never,
-      otherProfile as never
-    );
+    await handlers.addRepoVersion({ ...request, params: { id: 'p2' } } as never, otherProfile as never);
 
     expect(first.body).toMatchObject({ data: { jobId: 'job-0' } });
     expect(duplicate.body).toMatchObject({ data: { jobId: 'job-0' } });
     expect(otherProfile.body).toMatchObject({ data: { jobId: 'job-1' } });
     expect(deps.jobs.start).toHaveBeenCalledTimes(2);
-    expect(deps.lifecycle.beginPinnedActivity).toHaveBeenNthCalledWith(
-      1,
-      'https://example.com/contracts',
-      'a'.repeat(40),
-      'job-0'
-    );
+    expect(deps.lifecycle.beginPinnedActivity).toHaveBeenNthCalledWith(1, 'https://example.com/contracts', 'a'.repeat(40), 'job-0');
   });
 
   it('cleans pending state and activity when a queued version add settles cancelled', async () => {
@@ -1211,48 +706,24 @@ describe('profile handlers', () => {
     deps.pendingVersionAdds = pending;
     deps.lifecycle.beginPinnedActivity = vi.fn(() => release);
     deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          _runner: unknown,
-          opts: { onSettled: typeof onSettled }
-        ) => {
-          onSettled = opts.onSettled;
-          return {
-            id: 'job-cancelled',
-            type: 'repo.version.add',
-            params: {},
-            state: 'queued',
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
+      start: vi.fn((_type: string, _params: Record<string, unknown>, _runner: unknown, opts: { onSettled: typeof onSettled }) => {
+        onSettled = opts.onSettled;
+        return { id: 'job-cancelled', type: 'repo.version.add', params: {}, state: 'queued', createdAt: new Date().toISOString(), events: [] };
+      }),
       get: vi.fn(() => ({ state: 'queued' })),
     };
 
     await createProfileHandlers(deps).addRepoVersion(
-      {
-        params: { id: 'p1' },
-        body: {
-          url: 'https://example.com/contracts.git',
-          commit: 'a'.repeat(40),
-        },
-      } as never,
+      { params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } } as never,
       makeReply() as never
     );
     expect(pending.size).toBe(1);
     onSettled({ state: 'cancelled' });
-    await vi.waitFor(() =>
-      expect(deps.versionStore.updateState).toHaveBeenCalledWith(
-        'https://example.com/contracts',
-        'a'.repeat(40),
-        expect.objectContaining({
-          lastError: expect.objectContaining({ code: 'CANCELLED' }),
-        })
-      )
-    );
+    await vi.waitFor(() => expect(deps.versionStore.updateState).toHaveBeenCalledWith(
+      'https://example.com/contracts',
+      'a'.repeat(40),
+      expect.objectContaining({ lastError: expect.objectContaining({ code: 'CANCELLED' }) })
+    ));
 
     expect(pending.size).toBe(0);
     expect(release).toHaveBeenCalledOnce();
@@ -1263,57 +734,16 @@ describe('profile handlers', () => {
     const url = 'https://example.com/contracts.git';
     const commit = 'a'.repeat(40);
     deps.pendingVersionAdds = new Map([
-      [
-        `p1\u0000${url}\u0000${commit}`,
-        {
-          jobId: 'job-pending',
-          url,
-          commit,
-          refLabel: 'main',
-          refKind: 'branch',
-          startedAt: '2026-07-21T00:00:00.000Z',
-        },
-      ],
-      [
-        `p2\u0000${url}\u0000${'b'.repeat(40)}`,
-        {
-          jobId: 'job-other-profile',
-          url,
-          commit: 'b'.repeat(40),
-          startedAt: '2026-07-21T00:00:00.000Z',
-        },
-      ],
+      [`p1\u0000${url}\u0000${commit}`, { jobId: 'job-pending', url, commit, refLabel: 'main', refKind: 'branch', startedAt: '2026-07-21T00:00:00.000Z' }],
+      [`p2\u0000${url}\u0000${'b'.repeat(40)}`, { jobId: 'job-other-profile', url, commit: 'b'.repeat(40), startedAt: '2026-07-21T00:00:00.000Z' }],
     ]);
     deps.jobs.get = vi.fn((jobId: string) => ({ id: jobId, state: 'queued' }));
 
     const reply = makeReply();
-    await createProfileHandlers(deps).listRepos(
-      { params: { id: 'p1' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
-    expect(
-      (
-        reply.body as {
-          data: {
-            versionGroups: Array<{
-              url: string;
-              versions: Array<Record<string, unknown>>;
-            }>;
-          };
-        }
-      ).data.versionGroups
-    ).toEqual([
-      {
-        url: canonicalGitUrl(url),
-        versions: [
-          expect.objectContaining({
-            commit,
-            refLabel: 'main',
-            activeJobId: 'job-pending',
-          }),
-        ],
-      },
+    expect((reply.body as { data: { versionGroups: Array<{ url: string; versions: Array<Record<string, unknown>> }> } }).data.versionGroups).toEqual([
+      { url: canonicalGitUrl(url), versions: [expect.objectContaining({ commit, refLabel: 'main', activeJobId: 'job-pending' })] },
     ]);
   });
 
@@ -1321,116 +751,45 @@ describe('profile handlers', () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
     const commit = 'a'.repeat(40);
-    const lastError = {
-      code: 'COMPILE_FAILED',
-      message: 'compiler failed',
-      at: '2026-07-21T00:00:00.000Z',
-    };
-    deps.versionStore.listMemberships = vi.fn(async () => ({
-      [url]: [{ commit, source: 'user', addedAt: '2026-07-21T00:00:00.000Z' }],
-    }));
-    deps.versionStore.list = vi.fn(async () => [
-      {
-        url,
-        commit,
-        createdAt: '2026-07-21T00:00:00.000Z',
-        lastUsedAt: '2026-07-21T00:00:00.000Z',
-        lastError,
-      },
-    ]);
+    const lastError = { code: 'COMPILE_FAILED', message: 'compiler failed', at: '2026-07-21T00:00:00.000Z' };
+    deps.versionStore.listMemberships = vi.fn(async () => ({ [url]: [{ commit, source: 'user', addedAt: '2026-07-21T00:00:00.000Z' }] }));
+    deps.versionStore.list = vi.fn(async () => [{ url, commit, createdAt: '2026-07-21T00:00:00.000Z', lastUsedAt: '2026-07-21T00:00:00.000Z', lastError }]);
 
     const reply = makeReply();
-    await createProfileHandlers(deps).listRepos(
-      { params: { id: 'p1' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
 
-    expect(
-      (
-        reply.body as {
-          data: {
-            versionGroups: Array<{ versions: Array<{ lastError?: unknown }> }>;
-          };
-        }
-      ).data.versionGroups[0].versions[0].lastError
-    ).toEqual(lastError);
+    expect((reply.body as { data: { versionGroups: Array<{ versions: Array<{ lastError?: unknown }> }> } }).data.versionGroups[0].versions[0].lastError).toEqual(lastError);
   });
 
   it('resolves a seven-character commit prefix to the full remote commit before materialization', async () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
     const commit = 'abcdef0' + '1'.repeat(33);
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
-    deps.inspectGitRemote = vi.fn(async () => ({
-      defaultBranch: 'main',
-      branches: ['main'],
-      branchHeads: { main: commit },
-      tagHeads: {},
-      releases: [],
-    }));
-    deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          _params: Record<string, unknown>,
-          value: typeof runner
-        ) => {
-          runner = value;
-          return {
-            id: 'job-short',
-            type: 'repo.version.add',
-            params: _params,
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
-    };
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: commit }, tagHeads: {}, releases: [] }));
+    deps.jobs = { start: vi.fn((_type: string, _params: Record<string, unknown>, value: typeof runner) => {
+      runner = value;
+      return { id: 'job-short', type: 'repo.version.add', params: _params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+    }) };
     const reply = makeReply();
 
-    await createProfileHandlers(deps).addRepoVersion(
-      { params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never, reply as never);
     await runner({ log: () => {}, signal: new AbortController().signal });
 
     expect(reply.statusCode).toBe(200);
-    expect(deps.repos.ensureVersion).toHaveBeenCalledWith(
-      'p1',
-      canonicalGitUrl(url),
-      commit,
-      expect.objectContaining({ fetchUrl: url })
-    );
-    expect(deps.versionStore.addMembership).toHaveBeenCalledWith(
-      'p1',
-      canonicalGitUrl(url),
-      commit,
-      'user'
-    );
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', canonicalGitUrl(url), commit, expect.objectContaining({ fetchUrl: url }));
+    expect(deps.versionStore.addMembership).toHaveBeenCalledWith('p1', canonicalGitUrl(url), commit, 'user');
   });
 
   it('accepts a head prefix when cached history resolves to that same commit', async () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
     const commit = 'abcdef0' + '3'.repeat(33);
-    deps.inspectGitRemote = vi.fn(async () => ({
-      defaultBranch: 'main',
-      branches: ['main'],
-      branchHeads: { main: commit },
-      tagHeads: {},
-      releases: [],
-    }));
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: commit }, tagHeads: {}, releases: [] }));
     deps.repos.resolveCachedVersionCommit = vi.fn(async () => commit) as never;
 
     const reply = makeReply();
-    await createProfileHandlers(deps).addRepoVersion(
-      { params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never, reply as never);
 
     expect(reply.statusCode).toBe(200);
   });
@@ -1440,22 +799,11 @@ describe('profile handlers', () => {
     const url = 'https://example.com/contracts.git';
     const headCommit = 'abcdef0' + '4'.repeat(33);
     const cachedCommit = 'abcdef0' + '5'.repeat(33);
-    deps.inspectGitRemote = vi.fn(async () => ({
-      defaultBranch: 'main',
-      branches: ['main'],
-      branchHeads: { main: headCommit },
-      tagHeads: {},
-      releases: [],
-    }));
-    deps.repos.resolveCachedVersionCommit = vi.fn(
-      async () => cachedCommit
-    ) as never;
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: headCommit }, tagHeads: {}, releases: [] }));
+    deps.repos.resolveCachedVersionCommit = vi.fn(async () => cachedCommit) as never;
 
     const reply = makeReply();
-    await createProfileHandlers(deps).addRepoVersion(
-      { params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never, reply as never);
 
     expect(reply.statusCode).toBe(400);
     expect(reply.body).toMatchObject({
@@ -1468,25 +816,13 @@ describe('profile handlers', () => {
   it('rejects an unresolvable short commit with a typed error before materialization', async () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
-    deps.inspectGitRemote = vi.fn(async () => ({
-      defaultBranch: 'main',
-      branches: ['main'],
-      branchHeads: { main: 'b'.repeat(40) },
-      tagHeads: {},
-      releases: [],
-    }));
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: { main: 'b'.repeat(40) }, tagHeads: {}, releases: [] }));
     const reply = makeReply();
 
-    await createProfileHandlers(deps).addRepoVersion(
-      { params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never, reply as never);
 
     expect(reply.statusCode).toBe(400);
-    expect(reply.body).toMatchObject({
-      code: 'VERSION_COMMIT_NOT_RESOLVABLE',
-      message: expect.stringContaining('abcdef0'),
-    });
+    expect(reply.body).toMatchObject({ code: 'VERSION_COMMIT_NOT_RESOLVABLE', message: expect.stringContaining('abcdef0') });
     expect(deps.jobs.start).not.toHaveBeenCalled();
     expect(deps.repos.ensureVersion).not.toHaveBeenCalled();
   });
@@ -1495,26 +831,14 @@ describe('profile handlers', () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
     const commit = 'abcdef0' + '2'.repeat(33);
-    deps.inspectGitRemote = vi.fn(async () => ({
-      defaultBranch: 'main',
-      branches: ['main'],
-      branchHeads: {},
-      tagHeads: {},
-      releases: [],
-    }));
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main'], branchHeads: {}, tagHeads: {}, releases: [] }));
     deps.repos.resolveCachedVersionCommit = vi.fn(async () => commit) as never;
     const reply = makeReply();
 
-    await createProfileHandlers(deps).addRepoVersion(
-      { params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, commit: 'abcdef0' } } as never, reply as never);
 
     expect(reply.statusCode).toBe(200);
-    expect(deps.repos.resolveCachedVersionCommit).toHaveBeenCalledWith(
-      url,
-      'abcdef0'
-    );
+    expect(deps.repos.resolveCachedVersionCommit).toHaveBeenCalledWith(url, 'abcdef0');
   });
 
   it('uses the tag commit when refKind=tag and a branch has the same name', async () => {
@@ -1522,113 +846,45 @@ describe('profile handlers', () => {
     const url = 'https://example.com/contracts.git';
     const branchCommit = 'a'.repeat(40);
     const tagCommit = 'b'.repeat(40);
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
-    deps.inspectGitRemote = vi.fn(async () => ({
-      defaultBranch: 'main',
-      branches: ['main', 'release'],
-      branchHeads: { main: branchCommit, release: branchCommit },
-      tagHeads: { release: tagCommit },
-      releases: [],
-    }));
-    deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          params: Record<string, unknown>,
-          value: typeof runner
-        ) => {
-          runner = value;
-          return {
-            id: 'job-tag',
-            type: 'repo.version.add',
-            params,
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
-    };
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
+    deps.inspectGitRemote = vi.fn(async () => ({ defaultBranch: 'main', branches: ['main', 'release'], branchHeads: { main: branchCommit, release: branchCommit }, tagHeads: { release: tagCommit }, releases: [] }));
+    deps.jobs = { start: vi.fn((_type: string, params: Record<string, unknown>, value: typeof runner) => {
+      runner = value;
+      return { id: 'job-tag', type: 'repo.version.add', params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+    }) };
 
-    await createProfileHandlers(deps).addRepoVersion(
-      {
-        params: { id: 'p1' },
-        body: { url, ref: 'release', refKind: 'tag' },
-      } as never,
-      makeReply() as never
-    );
+    await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url, ref: 'release', refKind: 'tag' } } as never, makeReply() as never);
     await runner({ log: () => {}, signal: new AbortController().signal });
 
-    expect(deps.repos.ensureVersion).toHaveBeenCalledWith(
-      'p1',
-      canonicalGitUrl(url),
-      tagCommit,
-      expect.objectContaining({ fetchUrl: url, ref: 'release', refKind: 'tag' })
-    );
-    expect(deps.repos.ensureVersion).not.toHaveBeenCalledWith(
-      'p1',
-      canonicalGitUrl(url),
-      branchCommit,
-      expect.any(Object)
-    );
+    expect(deps.repos.ensureVersion).toHaveBeenCalledWith('p1', canonicalGitUrl(url), tagCommit, expect.objectContaining({ fetchUrl: url, ref: 'release', refKind: 'tag' }));
+    expect(deps.repos.ensureVersion).not.toHaveBeenCalledWith('p1', canonicalGitUrl(url), branchCommit, expect.any(Object));
   });
 
   it('rechecks REPO_BUSY under the delete lock while a version-add lifecycle is mid-flight', async () => {
     const deps = makeDeps();
     const url = 'https://example.com/contracts.git';
     const commit = 'c'.repeat(40);
-    let runner!: (ctx: {
-      log: (line: string) => void;
-      signal: AbortSignal;
-    }) => Promise<unknown>;
+    let runner!: (ctx: { log: (line: string) => void; signal: AbortSignal }) => Promise<unknown>;
     let releaseMembership!: () => void;
     let releaseLifecycle!: () => void;
     let membershipAdded!: () => void;
     let lifecycleStarted!: () => void;
-    const membershipAddedPromise = new Promise<void>((resolve) => {
-      membershipAdded = resolve;
-    });
-    const lifecycleStartedPromise = new Promise<void>((resolve) => {
-      lifecycleStarted = resolve;
-    });
-    const membershipGate = new Promise<void>((resolve) => {
-      releaseMembership = resolve;
-    });
-    const lifecycleGate = new Promise<void>((resolve) => {
-      releaseLifecycle = resolve;
-    });
+    const membershipAddedPromise = new Promise<void>((resolve) => { membershipAdded = resolve; });
+    const lifecycleStartedPromise = new Promise<void>((resolve) => { lifecycleStarted = resolve; });
+    const membershipGate = new Promise<void>((resolve) => { releaseMembership = resolve; });
+    const lifecycleGate = new Promise<void>((resolve) => { releaseLifecycle = resolve; });
     let active = false;
     let membershipPresent = false;
-    deps.jobs = {
-      start: vi.fn(
-        (
-          _type: string,
-          params: Record<string, unknown>,
-          value: typeof runner
-        ) => {
-          runner = value;
-          return {
-            id: 'job-race',
-            type: 'repo.version.add',
-            params,
-            state: 'queued' as const,
-            createdAt: new Date().toISOString(),
-            events: [],
-          };
-        }
-      ),
-    };
+    deps.jobs = { start: vi.fn((_type: string, params: Record<string, unknown>, value: typeof runner) => {
+      runner = value;
+      return { id: 'job-race', type: 'repo.version.add', params, state: 'queued' as const, createdAt: new Date().toISOString(), events: [] };
+    }) };
     deps.versionStore.addMembership = vi.fn(async () => {
       membershipPresent = true;
       membershipAdded();
       await membershipGate;
     });
-    deps.lifecycle.activeJobFor = vi.fn(() =>
-      active ? 'direct:version' : undefined
-    );
+    deps.lifecycle.activeJobFor = vi.fn(() => active ? 'direct:version' : undefined);
     deps.lifecycle.runPinnedLifecycle = vi.fn(async () => {
       active = true;
       lifecycleStarted();
@@ -1636,48 +892,18 @@ describe('profile handlers', () => {
       active = false;
       return { pathOrUrl: '/versions/version', frameworks: [] };
     });
-    (
-      deps.repos as typeof deps.repos & { withVersionMaterialized: Function }
-    ).withVersionMaterialized = vi.fn(
-      async (
-        _profileId: string,
-        _url: string,
-        _commit: string,
-        _opts: object,
-        fn: (materialized: {
-          checkout: string;
-          rematerialize: () => Promise<{ checkout: string }>;
-        }) => Promise<unknown>
-      ) =>
-        fn({
-          checkout: '/versions/version',
-          rematerialize: async () => ({ checkout: '/versions/version' }),
-        })
-    );
-    deps.repos.removeVersionCheckout = vi.fn(
-      async (_url, _commit, beforeDelete) => {
-        await lifecycleStartedPromise;
-        return beforeDelete(async () => {
-          membershipPresent = false;
-        });
-      }
-    );
-    const handlers = createProfileHandlers(deps);
-    await handlers.addRepoVersion(
-      { params: { id: 'p1' }, body: { url, commit } } as never,
-      makeReply() as never
-    );
-    const runningAdd = runner({
-      log: () => {},
-      signal: new AbortController().signal,
+    (deps.repos as typeof deps.repos & { withVersionMaterialized: Function }).withVersionMaterialized = vi.fn(async (_profileId: string, _url: string, _commit: string, _opts: object, fn: (materialized: { checkout: string; rematerialize: () => Promise<{ checkout: string }> }) => Promise<unknown>) => fn({ checkout: '/versions/version', rematerialize: async () => ({ checkout: '/versions/version' }) }));
+    deps.repos.removeVersionCheckout = vi.fn(async (_url, _commit, beforeDelete) => {
+      await lifecycleStartedPromise;
+      return beforeDelete(async () => { membershipPresent = false; });
     });
+    const handlers = createProfileHandlers(deps);
+    await handlers.addRepoVersion({ params: { id: 'p1' }, body: { url, commit } } as never, makeReply() as never);
+    const runningAdd = runner({ log: () => {}, signal: new AbortController().signal });
     await membershipAddedPromise;
 
     const deleteReply = makeReply();
-    const deleting = handlers.removeRepoVersion(
-      { params: { id: 'p1' }, body: { url, commit } } as never,
-      deleteReply as never
-    );
+    const deleting = handlers.removeRepoVersion({ params: { id: 'p1' }, body: { url, commit } } as never, deleteReply as never);
     releaseMembership();
     await lifecycleStartedPromise;
     await deleting;
@@ -1685,135 +911,49 @@ describe('profile handlers', () => {
     expect(deleteReply.statusCode).toBe(409);
     expect(deleteReply.body).toMatchObject({ code: 'REPO_BUSY' });
     expect(membershipPresent).toBe(true);
-    expect(
-      deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced
-    ).not.toHaveBeenCalled();
+    expect(deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced).not.toHaveBeenCalled();
 
     releaseLifecycle();
     await runningAdd;
   });
 
   it('returns the reusable origin-approval error shape before starting a version job', async () => {
-    const deps = makeDeps();
-    deps.versionStore.isOriginApproved = vi.fn(async () => false);
-    const reply = makeReply();
-    await createProfileHandlers(deps).addRepoVersion(
-      {
-        params: { id: 'p1' },
-        body: {
-          url: 'https://example.com/contracts.git',
-          commit: 'c'.repeat(40),
-        },
-      } as never,
-      reply as never
-    );
+    const deps = makeDeps(); deps.versionStore.isOriginApproved = vi.fn(async () => false);
+    const reply = makeReply(); await createProfileHandlers(deps).addRepoVersion({ params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'c'.repeat(40) } } as never, reply as never);
     expect(reply.statusCode).toBe(409);
-    expect(reply.body).toMatchObject({
-      code: 'VERSION_ORIGIN_UNAPPROVED',
-      details: { origins: ['https://example.com'] },
-    });
+    expect(reply.body).toMatchObject({ code: 'VERSION_ORIGIN_UNAPPROVED', details: { origins: ['https://example.com'] } });
     expect(deps.jobs.start).not.toHaveBeenCalled();
   });
 
   it('removes the last user reference and its checkout through the atomic version path', async () => {
-    const deps = makeDeps();
-    const reply = makeReply();
-    await createProfileHandlers(deps).removeRepoVersion(
-      {
-        params: { id: 'p1' },
-        body: {
-          url: 'https://example.com/contracts.git',
-          commit: 'd'.repeat(40),
-        },
-      } as never,
-      reply as never
-    );
+    const deps = makeDeps(); const reply = makeReply();
+    await createProfileHandlers(deps).removeRepoVersion({ params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'd'.repeat(40) } } as never, reply as never);
     expect(reply.statusCode).toBe(204);
-    expect(deps.repos.removeVersionCheckout).toHaveBeenCalledWith(
-      'https://example.com/contracts.git',
-      'd'.repeat(40),
-      expect.any(Function)
-    );
+    expect(deps.repos.removeVersionCheckout).toHaveBeenCalledWith('https://example.com/contracts.git', 'd'.repeat(40), expect.any(Function));
   });
 
   it('returns 204 after removing the user membership when another reference retains the checkout', async () => {
-    const deps = makeDeps();
-    deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced = vi.fn(
-      async () => ({ membershipRemoved: true, checkoutDeleted: false })
-    );
-    const reply = makeReply();
-    await createProfileHandlers(deps).removeRepoVersion(
-      {
-        params: { id: 'p1' },
-        body: {
-          url: 'https://example.com/contracts.git',
-          commit: 'e'.repeat(40),
-        },
-      } as never,
-      reply as never
-    );
+    const deps = makeDeps(); deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced = vi.fn(async () => ({ membershipRemoved: true, checkoutDeleted: false }));
+    const reply = makeReply(); await createProfileHandlers(deps).removeRepoVersion({ params: { id: 'p1' }, body: { url: 'https://example.com/contracts.git', commit: 'e'.repeat(40) } } as never, reply as never);
     expect(reply.statusCode).toBe(204);
   });
 
   it('returns memberships without a registered-origin match as orphan version groups', async () => {
-    const deps = makeDeps();
-    const url = 'https://orphan.example/contracts.git';
-    const commit = 'f'.repeat(40);
-    deps.versionStore.listMemberships = vi.fn(async () => ({
-      [url]: [
-        {
-          commit,
-          addedAt: '2026-07-18T00:00:00.000Z',
-          source: 'workflow' as const,
-        },
-      ],
-    }));
-    deps.versionStore.list = vi.fn(async () => [
-      {
-        url,
-        commit,
-        createdAt: '2026-07-18T00:00:00.000Z',
-        lastUsedAt: '2026-07-18T00:00:00.000Z',
-      },
-    ]);
-    const reply = makeReply();
-    await createProfileHandlers(deps).listRepos(
-      { params: { id: 'p1' } } as never,
-      reply as never
-    );
-    expect(
-      (reply.body as { data: { versionGroups: unknown[] } }).data.versionGroups
-    ).toEqual([{ url, versions: [expect.objectContaining({ commit })] }]);
+    const deps = makeDeps(); const url = 'https://orphan.example/contracts.git'; const commit = 'f'.repeat(40);
+    deps.versionStore.listMemberships = vi.fn(async () => ({ [url]: [{ commit, addedAt: '2026-07-18T00:00:00.000Z', source: 'workflow' as const }] }));
+    deps.versionStore.list = vi.fn(async () => [{ url, commit, createdAt: '2026-07-18T00:00:00.000Z', lastUsedAt: '2026-07-18T00:00:00.000Z' }]);
+    const reply = makeReply(); await createProfileHandlers(deps).listRepos({ params: { id: 'p1' } } as never, reply as never);
+    expect((reply.body as { data: { versionGroups: unknown[] } }).data.versionGroups).toEqual([{ url, versions: [expect.objectContaining({ commit })] }]);
   });
 
   it('deletePinnedRepo removes the checkout and registry entry under the version lock', async () => {
     const deps = makeDeps();
     const handlers = createProfileHandlers(deps);
     const reply = makeReply();
-    await handlers.deletePinnedRepo(
-      {
-        params: { id: 'p1' },
-        query: {
-          url: 'https://example.com/contracts.git',
-          commit: 'a'.repeat(40),
-        },
-      } as never,
-      reply as never
-    );
+    await handlers.deletePinnedRepo({ params: { id: 'p1' }, query: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } } as never, reply as never);
     expect(reply.statusCode).toBe(204);
-    expect(deps.repos.removeVersionCheckout).toHaveBeenCalledWith(
-      'https://example.com/contracts.git',
-      'a'.repeat(40),
-      expect.any(Function)
-    );
-    expect(
-      deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced
-    ).toHaveBeenCalledWith(
-      'p1',
-      'https://example.com/contracts.git',
-      'a'.repeat(40),
-      expect.any(Function)
-    );
+    expect(deps.repos.removeVersionCheckout).toHaveBeenCalledWith('https://example.com/contracts.git', 'a'.repeat(40), expect.any(Function));
+    expect(deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced).toHaveBeenCalledWith('p1', 'https://example.com/contracts.git', 'a'.repeat(40), expect.any(Function));
   });
 
   it('deletePinnedRepo returns REPO_BUSY while its lifecycle job is active', async () => {
@@ -1821,28 +961,16 @@ describe('profile handlers', () => {
     deps.lifecycle.activeJobFor = vi.fn(() => 'job-pinned');
     const handlers = createProfileHandlers(deps);
     const reply = makeReply();
-    await handlers.deletePinnedRepo(
-      {
-        params: { id: 'p1' },
-        query: {
-          url: 'https://example.com/contracts.git',
-          commit: 'a'.repeat(40),
-        },
-      } as never,
-      reply as never
-    );
+    await handlers.deletePinnedRepo({ params: { id: 'p1' }, query: { url: 'https://example.com/contracts.git', commit: 'a'.repeat(40) } } as never, reply as never);
     expect(reply.statusCode).toBe(409);
     expect(reply.body).toMatchObject({ code: 'REPO_BUSY' });
     expect(deps.repos.removeVersionCheckout).not.toHaveBeenCalled();
-    expect(
-      deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced
-    ).not.toHaveBeenCalled();
+    expect(deps.versionStore.removeUserMembershipAndDeleteIfUnreferenced).not.toHaveBeenCalled();
   });
 
   it('deletePinnedRepo returns 409 during an awaitable workflow-resolve lifecycle', async () => {
     const deps = makeDeps();
-    const url = 'https://example.com/contracts.git';
-    const commit = 'a'.repeat(40);
+    const url = 'https://example.com/contracts.git'; const commit = 'a'.repeat(40);
     const worktree = deps.versionStore.checkoutPath(url, commit);
     let release!: () => void;
     const lifecycle = new RepoLifecycle({
@@ -1850,39 +978,17 @@ describe('profile handlers', () => {
       executor: { execute: vi.fn() } as never,
       registryLoader: { getPluginsByType: vi.fn(async () => []) } as never,
       repos: {
-        init: vi.fn(),
-        resolveWorkspacePath: vi.fn(async () => worktree),
-        withVersionMaterialized: vi.fn(
-          (_profileId, _url, _commit, _opts, fn) =>
-            new Promise((resolve) => {
-              release = () =>
-                resolve(
-                  fn({
-                    checkout: worktree,
-                    rematerialize: async () => ({ checkout: worktree }),
-                  })
-                );
-            })
-        ),
+        init: vi.fn(), resolveWorkspacePath: vi.fn(async () => worktree),
+        withVersionMaterialized: vi.fn((_profileId, _url, _commit, _opts, fn) => new Promise((resolve) => { release = () => resolve(fn({ checkout: worktree, rematerialize: async () => ({ checkout: worktree }) })); })),
       } as never,
       registry: { list: vi.fn(), updateRepoState: vi.fn() } as never,
       sessionPath: () => null,
-      versionStore: {
-        checkoutPath: () => worktree,
-        get: vi.fn(),
-        updateState: vi.fn(),
-      } as never,
+      versionStore: { checkoutPath: () => worktree, get: vi.fn(), updateState: vi.fn() } as never,
     });
     deps.lifecycle.activeJobFor = vi.fn(lifecycle.activeJobFor.bind(lifecycle));
-    const resolving = lifecycle.runPinnedLifecycle(url, commit, 'p1', {
-      log: () => {},
-      signal: new AbortController().signal,
-    });
+    const resolving = lifecycle.runPinnedLifecycle(url, commit, 'p1', { log: () => {}, signal: new AbortController().signal });
     const reply = makeReply();
-    await createProfileHandlers(deps).deletePinnedRepo(
-      { params: { id: 'p1' }, query: { url, commit } } as never,
-      reply as never
-    );
+    await createProfileHandlers(deps).deletePinnedRepo({ params: { id: 'p1' }, query: { url, commit } } as never, reply as never);
     expect(reply.statusCode).toBe(409);
     expect(deps.repos.removeVersionCheckout).not.toHaveBeenCalled();
     release();
