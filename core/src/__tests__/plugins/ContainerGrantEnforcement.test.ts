@@ -32,6 +32,7 @@ describe('ContainerOrchestrator grant enforcement', () => {
     return createContainerMock.mock.calls[0][0] as {
       HostConfig: {
         NetworkMode?: string;
+        Ulimits?: Array<{ Name: string; Soft: number; Hard: number }>;
       };
       Labels: Record<string, string>;
     };
@@ -45,6 +46,13 @@ describe('ContainerOrchestrator grant enforcement', () => {
   it('grants bridge network to native plugins', async () => {
     const opts = await createWith(NATIVE_GRANT);
     expect(opts.HostConfig.NetworkMode).toBe('bridge');
+  });
+
+  it('raises the container stack limit for deep solc recursion', async () => {
+    const opts = await createWith(NATIVE_GRANT);
+    expect(opts.HostConfig.Ulimits).toEqual([
+      { Name: 'stack', Soft: 67108864, Hard: 67108864 },
+    ]);
   });
 
   it('adds owner labels to managed containers', async () => {

@@ -102,6 +102,10 @@ export class ContainerOrchestrator {
         Binds: allBinds.length > 0 ? allBinds : undefined,
         // Without net, the container gets no network stack at all.
         NetworkMode: grant.net ? 'bridge' : 'none',
+        // Linux's default 8 MiB stack is too small for solc's recursion on
+        // large multi-profile builds (SIGSEGV mid-compile); macOS hosts pass
+        // the same builds, so raise the limit instead of trusting defaults.
+        Ulimits: [{ Name: 'stack', Soft: 67108864, Hard: 67108864 }],
       },
     };
 
