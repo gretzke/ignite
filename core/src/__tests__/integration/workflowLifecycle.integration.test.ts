@@ -36,6 +36,7 @@ const { createWorkflowPromotionHandlers } = await import('../../api/workflowProm
 const { createCompilerHandlers } = await import('../../api/plugins/compiler/index.js');
 const { createDeploymentHandlers } = await import('../../api/deployments.js');
 const { createJobsHandlers } = await import('../../api/jobs.js');
+const { validatePlan } = await import('../../deployments/validation.js');
 
 type Remote = { url: string; source: string; v1: string; v2: string };
 
@@ -45,7 +46,7 @@ try {
   await docker.getImage(FOUNDRY_IMAGE).inspect();
   ready = true;
 } catch {
-  /* Docker-gated, like the multi-version integration suite. */
+  /* Docker-gated */
 }
 
 describe.skipIf(!ready)('workflow lifecycle integration (HTTP, offline fixture)', () => {
@@ -80,11 +81,6 @@ describe.skipIf(!ready)('workflow lifecycle integration (HTTP, offline fixture)'
           return lifecycle.runPinnedLifecycle(...args);
         },
       },
-      pluginStatus: async (id, requiredVersion) => ({
-        id,
-        status: 'installed',
-        installedVersion: requiredVersion,
-      }),
     });
     const profiles = createProfileHandlers({ workflowInstall: installService });
     const workflows = createWorkflowHandlers({
@@ -92,11 +88,6 @@ describe.skipIf(!ready)('workflow lifecycle integration (HTTP, offline fixture)'
       devMode: () => true,
       versionStore: versions,
       installService,
-      pluginStatus: async (id, requiredVersion) => ({
-        id,
-        status: 'installed',
-        installedVersion: requiredVersion,
-      }),
     });
     const deployments = createDeploymentHandlers({
       engine: {
@@ -105,7 +96,7 @@ describe.skipIf(!ready)('workflow lifecycle integration (HTTP, offline fixture)'
         resume: async () => { throw new Error('not used'); },
         abort: async () => { throw new Error('not used'); },
       } as never,
-      validate: async () => ({ report: { chains: {}, run: { workflow: { ok: true, blocking: false, message: 'bound' } } }, frozen: {} }),
+      validate: validatePlan,
     });
     const jobs = createJobsHandlers();
     const compiler = createCompilerHandlers();
@@ -394,7 +385,7 @@ async function writeBox(source: string, version: number): Promise<void> {
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
-  return (await exec('git', args, { cwd, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } })).stdout;
+  return (await exec('git', args, { cwd, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } })).stdout;
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
