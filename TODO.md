@@ -314,7 +314,19 @@ dispatch, `operationPermissions` hints unioned with host minimums, and the
   sidebar tab lists persisted workflows across all registered repos; the
   per-repo Deployments section on the repository page was removed and
   post-promotion navigation now lands on /workflows.
-- **Blank-slate workflow editor** (creation = promotion or hand-written JSON).
+- **Workflow lifecycle (install/update/edit/run)** — DONE (2026-07-23, feat/workflow-lifecycle):
+  per-profile installed-workflow registry (fail-closed corruption handling), fenced
+  single-flight `workflow.install` job with membership sweeps + CAS orphan
+  reconciliation, pure status endpoint with composition diffs, state-driven cards
+  (Install/Update/Run), dedicated editor (versions, cascade removal, deploy config),
+  add-to-workflow from version-scoped browsing, server-side run fence
+  (WORKFLOW_OUT_OF_SYNC), "Check for new versions" rename. Deferred from its spec:
+  uninstall button (rides GC work; = drop record + memberships, sweep frees clones),
+  Option B upstream-fetch notifications, step-args editing in the editor (wizard/run
+  scope), archived-profile membership refcount residual (restore may need reinstall).
+- **Blank-slate workflow editor** — narrowed (2026-07-23): a composition editor now
+  exists; still no from-scratch creation (creation = promotion, add-to-workflow, or
+  hand-written JSON).
 - **Signer roles in workflow files** — revisit if a consumer appears
   (deliberately excluded; spec §0.1.1).
 - **Clone object/byte ceilings** — materialization has a wall-clock deadline
