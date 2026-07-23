@@ -89,6 +89,16 @@ describe('AddToWorkflowDialog helpers', () => {
     expect(required.credentialsRemoved).toBe(true);
   });
 
+  it('accepts builtin compilers that have no install source', () => {
+    const required = compilerRequiredPlugin(
+      'foundry',
+      pluginRow({ source: undefined })
+    );
+    expect(required.error).toBeUndefined();
+    expect(required.plugin).toEqual({ id: 'foundry', version: '1.2.3' });
+    expect(required.credentialsRemoved).toBe(false);
+  });
+
   it('blocks missing, untrusted, and non-compiler framework plugins', () => {
     expect(compilerRequiredPlugin('foundry', undefined).error).toContain(
       'Install and trust'

@@ -78,22 +78,26 @@ export function compilerRequiredPlugin(
     return {
       error: `${frameworkId} is installed but does not provide the compiler capability required by this contract.`,
     };
-  if (!row.version || !row.source)
+  if (!row.version)
     return {
-      error: `The installed ${frameworkId} compiler plugin has no versioned install source to record in the workflow.`,
+      error: `The installed ${frameworkId} compiler plugin reports no version to record in the workflow.`,
     };
+  // Builtin plugins have no install source; promotion records them as
+  // {id, version} only, and the closure check accepts that.
   const credentialsRemoved =
-    row.source.kind === 'git' &&
+    row.source?.kind === 'git' &&
     stripGitUrlCredentials(row.source.url) !== row.source.url;
   const source =
-    row.source.kind === 'git'
-      ? { ...row.source, url: stripGitUrlCredentials(row.source.url) }
-      : { ...row.source };
+    row.source === undefined
+      ? undefined
+      : row.source.kind === 'git'
+        ? { ...row.source, url: stripGitUrlCredentials(row.source.url) }
+        : { ...row.source };
   return {
     plugin: {
       id: row.pluginId,
       version: row.version,
-      source,
+      ...(source ? { source } : {}),
     },
     credentialsRemoved,
   };
