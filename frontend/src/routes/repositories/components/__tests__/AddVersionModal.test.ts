@@ -6,6 +6,7 @@ import {
   versionSubmitPayload,
   versionPickPayload,
   versionPickerSections,
+  versionPickerSourceKey,
   versionSwitchTarget,
   existingVersionHint,
   type VersionSource,
@@ -30,6 +31,15 @@ const inspected = {
 };
 
 describe('AddVersionModal picker behavior', () => {
+  it('keeps the picker source stable across parent re-renders while remote inspection loads', () => {
+    expect(versionPickerSourceKey({ ...source })).toBe(
+      versionPickerSourceKey(source)
+    );
+    expect(
+      versionPickerSourceKey({ ...source, initialCommit: 'b'.repeat(40) })
+    ).not.toBe(versionPickerSourceKey(source));
+  });
+
   it('warns for an existing release or commit-prefix selection without blocking submit', () => {
     const withExisting: VersionSource = {
       ...source,

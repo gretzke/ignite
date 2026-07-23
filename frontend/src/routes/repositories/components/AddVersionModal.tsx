@@ -29,6 +29,17 @@ export type WorkspaceSwitchTarget =
   | { kind: 'branch'; branch: string }
   | { kind: 'commit'; commit: string };
 
+export function versionPickerSourceKey(source: VersionSource | null): string {
+  if (!source) return '';
+  return [
+    source.sourceKey,
+    source.url ?? '',
+    source.repoPathOrUrl ?? '',
+    source.initialBranch ?? '',
+    source.initialCommit ?? '',
+  ].join('\0');
+}
+
 type AddVersionModalProps =
   | {
       variant: 'add';
@@ -204,30 +215,35 @@ export default function AddVersionModal(props: AddVersionModalProps) {
     value: '',
   });
   const [mode, setMode] = useState<'copy' | 'switch'>('copy');
+  const pickerSourceKey = versionPickerSourceKey(source);
+  const sourceUrl = source?.url;
+  const sourceRepoPathOrUrl = source?.repoPathOrUrl;
+  const sourceInitialBranch = source?.initialBranch;
+  const sourceInitialCommit = source?.initialCommit;
 
   useEffect(() => {
     const generation = ++inspectGeneration.current;
-    if (!open || !source) return;
-    const initialTab: VersionTab = source.initialCommit ? 'commit' : 'branches';
-    const initialValue = source.initialCommit ?? source.initialBranch ?? '';
+    if (!open || !pickerSourceKey) return;
+    const initialTab: VersionTab = sourceInitialCommit ? 'commit' : 'branches';
+    const initialValue = sourceInitialCommit ?? sourceInitialBranch ?? '';
     setInspect(null);
     setInspectError('');
     setSwitchError('');
     setSwitching(false);
-    setInspecting(Boolean(source.url));
+    setInspecting(Boolean(sourceUrl));
     setWorkspaceBranches([]);
     setActiveTab(initialTab);
     setSelection({ tab: initialTab, value: initialValue });
     setMode('copy');
 
-    if (variant === 'add' && source.repoPathOrUrl) {
+    if (variant === 'add' && sourceRepoPathOrUrl) {
       dispatch(
         apiClient.dispatch.getBranches({
-          body: { pathOrUrl: source.repoPathOrUrl },
+          body: { pathOrUrl: sourceRepoPathOrUrl },
           onSuccess: ({ branches }) => {
             if (generation !== inspectGeneration.current) return;
             setWorkspaceBranches(branches);
-            if (!source.initialBranch && !source.initialCommit && !source.url) {
+            if (!sourceInitialBranch && !sourceInitialCommit && !sourceUrl) {
               setSelection((current) =>
                 current.tab === 'branches' && !current.value
                   ? { tab: 'branches', value: branches[0] ?? '' }
@@ -239,15 +255,15 @@ export default function AddVersionModal(props: AddVersionModalProps) {
       );
     }
 
-    if (!source.url) return;
+    if (!sourceUrl) return;
     dispatch(
       apiClient.dispatch.inspectGitRemote({
-        body: { url: source.url },
+        body: { url: sourceUrl },
         onSuccess: (data) => {
           if (generation !== inspectGeneration.current) return;
           setInspect(data);
           setInspecting(false);
-          if (!source.initialBranch && !source.initialCommit) {
+          if (!sourceInitialBranch && !sourceInitialCommit) {
             const release = data.releases.find((item) => !item.prerelease);
             const tag = Object.keys(data.tagHeads ?? {})
               .filter(
@@ -279,11 +295,20 @@ export default function AddVersionModal(props: AddVersionModalProps) {
     return () => {
       inspectGeneration.current += 1;
     };
-  }, [dispatch, open, source, variant]);
+  }, [
+    dispatch,
+    open,
+    sourceInitialBranch,
+    sourceInitialCommit,
+    pickerSourceKey,
+    sourceRepoPathOrUrl,
+    sourceUrl,
+    variant,
+  ]);
 
   useEffect(() => {
-    if (open && source?.initialCommit) commitInput.current?.focus();
-  }, [open, source?.initialCommit]);
+    if (open && sourceInitialCommit) commitInput.current?.focus();
+  }, [open, sourceInitialCommit]);
 
   const { releases, tags, branches } = versionPickerSections(
     source,
