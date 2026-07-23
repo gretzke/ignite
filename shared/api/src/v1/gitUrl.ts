@@ -1,6 +1,6 @@
 /** Convert Git's scp shorthand into a WHATWG-parsable SSH URL. */
 function normalizeForCanonicalUrl(url: string): string {
-  if (url.includes("://")) return url;
+  if (url.includes('://')) return url;
   const scp = url.match(/^(git@)([^\s/:]+):(.+)$/);
   return scp ? `ssh://${scp[1]}${scp[2]}/${scp[3]}` : url;
 }
@@ -10,9 +10,9 @@ export function canonicalGitUrl(url: string): string {
   try {
     const parsed = new URL(normalizeForCanonicalUrl(url));
     parsed.pathname = parsed.pathname
-      .replace(/\/+$/, "")
-      .replace(/\.git$/i, "");
-    return parsed.toString().replace(/\/$/, "");
+      .replace(/\/+$/, '')
+      .replace(/\.git$/i, '');
+    return parsed.toString().replace(/\/$/, '');
   } catch {
     return normalizeForCanonicalUrl(url);
   }
@@ -23,10 +23,10 @@ export function stripGitUrlCredentials(url: string): string {
   try {
     const parsed = new URL(normalizeForCanonicalUrl(url));
     if (!parsed.username && !parsed.password) return url;
-    parsed.username = "";
-    parsed.password = "";
+    parsed.username = '';
+    parsed.password = '';
     return parsed.toString();
   } catch {
-    return url.replace(/^(\w+:\/\/)[^/@\s]+@/, "$1");
+    return url.replace(/^(\w+:\/\/)[^/@\s]+@/, '$1');
   }
 }

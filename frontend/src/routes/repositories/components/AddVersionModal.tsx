@@ -26,7 +26,8 @@ type VersionTab = 'releases' | 'branches' | 'commit';
 
 export type VersionSelection = { tab: VersionTab; value: string };
 export type WorkspaceSwitchTarget =
-  { kind: 'branch'; branch: string } | { kind: 'commit'; commit: string };
+  | { kind: 'branch'; branch: string }
+  | { kind: 'commit'; commit: string };
 
 type AddVersionModalProps =
   | {
@@ -53,10 +54,7 @@ type AddVersionModalProps =
       }) => void;
     };
 
-type AddVersionModalAddProps = Extract<
-  AddVersionModalProps,
-  { variant: 'add' }
->;
+type AddVersionModalAddProps = Extract<AddVersionModalProps, { variant: 'add' }>;
 
 export function versionPickerSections(
   source: VersionSource | null,
@@ -132,30 +130,18 @@ export function versionPickPayload(
   source: VersionSource,
   selection: VersionSelection,
   inspect: InspectGitRemoteData | null
-): {
-  url: string;
-  commit: string;
-  ref?: string;
-  refKind?: 'tag' | 'branch';
-} | null {
+): { url: string; commit: string; ref?: string; refKind?: 'tag' | 'branch' } | null {
   if (!source.url) return null;
   const value = selection.value.trim();
   if (selection.tab === 'commit')
     return /^[0-9a-f]{40}$/i.test(value)
       ? { url: source.url, commit: value }
       : null;
-  const commit =
-    selection.tab === 'releases'
-      ? (inspect?.releases.find((release) => release.tag === value)?.sha ??
-        inspect?.tagHeads?.[value])
-      : inspect?.branchHeads?.[value];
+  const commit = selection.tab === 'releases'
+    ? inspect?.releases.find((release) => release.tag === value)?.sha ?? inspect?.tagHeads?.[value]
+    : inspect?.branchHeads?.[value];
   return commit && /^[0-9a-f]{40}$/i.test(commit)
-    ? {
-        url: source.url,
-        commit,
-        ref: value,
-        refKind: selection.tab === 'releases' ? 'tag' : 'branch',
-      }
+    ? { url: source.url, commit, ref: value, refKind: selection.tab === 'releases' ? 'tag' : 'branch' }
     : null;
 }
 
@@ -307,17 +293,9 @@ export default function AddVersionModal(props: AddVersionModalProps) {
   const showReleasesTab = Boolean(source?.url);
   const hasWorkspace = Boolean(source?.repoPathOrUrl);
   const commitValid =
-    activeTab !== 'commit' ||
-    (variant === 'pick'
-      ? /^[0-9a-f]{40}$/i.test(selection.value.trim())
-      : /^[0-9a-f]{7,40}$/i.test(selection.value.trim()));
+    activeTab !== 'commit' || (variant === 'pick' ? /^[0-9a-f]{40}$/i.test(selection.value.trim()) : /^[0-9a-f]{7,40}$/i.test(selection.value.trim()));
   const pick = source ? versionPickPayload(source, selection, inspect) : null;
-  const canSubmit = Boolean(
-    source &&
-    selection.value.trim() &&
-    commitValid &&
-    (variant === 'add' || pick)
-  );
+  const canSubmit = Boolean(source && selection.value.trim() && commitValid && (variant === 'add' || pick));
   const switchTarget = versionSwitchTarget(selection, inspect);
   const canSwitch = canSwitchWorkspaceVersion({
     hasWorkspace,
@@ -343,12 +321,7 @@ export default function AddVersionModal(props: AddVersionModalProps) {
       return;
     }
     const { onSubmit, onSwitchWorkspace } = props as AddVersionModalAddProps;
-    if (
-      mode === 'switch' &&
-      canSwitch &&
-      source.repoPathOrUrl &&
-      switchTarget
-    ) {
+    if (mode === 'switch' && canSwitch && source.repoPathOrUrl && switchTarget) {
       setSwitching(true);
       setSwitchError('');
       try {
@@ -456,7 +429,9 @@ export default function AddVersionModal(props: AddVersionModalProps) {
                       { value: '', label: 'Choose a branch' },
                       ...branches.map((name) => ({ value: name, label: name })),
                     ]}
-                    value={selection.tab === 'branches' ? selection.value : ''}
+                    value={
+                      selection.tab === 'branches' ? selection.value : ''
+                    }
                     onValueChange={(value) =>
                       setSelection({ tab: 'branches', value })
                     }
@@ -473,11 +448,7 @@ export default function AddVersionModal(props: AddVersionModalProps) {
               <input
                 ref={commitInput}
                 type="text"
-                placeholder={
-                  variant === 'pick'
-                    ? 'Full commit hash'
-                    : 'Full or short commit hash'
-                }
+                placeholder={variant === 'pick' ? 'Full commit hash' : 'Full or short commit hash'}
                 value={selection.tab === 'commit' ? selection.value : ''}
                 onChange={(event) =>
                   setSelection({ tab: 'commit', value: event.target.value })
@@ -555,20 +526,18 @@ export default function AddVersionModal(props: AddVersionModalProps) {
               className="btn btn-primary"
               onClick={() => void handleSubmit()}
               disabled={
-                !canSubmit ||
-                switching ||
-                (variant === 'add' && mode === 'switch' && !canSwitch)
+                !canSubmit || switching || (variant === 'add' && mode === 'switch' && !canSwitch)
               }
             >
               {variant === 'pick'
                 ? 'Use version'
                 : switching
-                  ? 'Switching…'
-                  : mode === 'switch' && canSwitch
-                    ? activeTab === 'branches'
-                      ? 'Switch branch'
-                      : 'Switch working copy'
-                    : 'Add version'}
+                ? 'Switching…'
+                : mode === 'switch' && canSwitch
+                  ? activeTab === 'branches'
+                    ? 'Switch branch'
+                    : 'Switch working copy'
+                  : 'Add version'}
             </button>
           </div>
         </Dialog.Content>
