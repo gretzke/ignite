@@ -138,6 +138,11 @@ export default function DeployConfigPanel({
   );
   const descriptor =
     strategy.kind === 'plugin' ? descriptors.get(strategy.pluginId) : undefined;
+  const candidates = deployStrategyPlugins(plugins);
+  const selectedPlugin =
+    strategy.kind === 'plugin'
+      ? candidates.find((plugin) => plugin.pluginId === strategy.pluginId)
+      : undefined;
   const params = useMemo(
     () => (strategy.kind === 'plugin' ? (strategy.params ?? {}) : {}),
     [strategy]
@@ -165,13 +170,10 @@ export default function DeployConfigPanel({
     if (!step || step.kind !== 'deploy') return;
     onValidityChange?.(
       strategy.kind !== 'plugin' ||
-        (Boolean(descriptor) && Object.keys(paramErrors).length === 0)
+        (Boolean(selectedPlugin) && Object.keys(paramErrors).length === 0)
     );
-  }, [descriptor, onValidityChange, paramErrors, step, strategy.kind]);
+  }, [onValidityChange, paramErrors, selectedPlugin, step, strategy.kind]);
   if (!step || step.kind !== 'deploy') return null;
-  const candidates = deployStrategyPlugins(plugins).filter((plugin) =>
-    descriptors.has(plugin.pluginId)
-  );
   const selected =
     strategy.kind === 'plugin' ? `plugin:${strategy.pluginId}` : strategy.kind;
   const write = (next: WorkflowDeployStrategy, plugin?: PluginRow) =>
@@ -262,8 +264,9 @@ export default function DeployConfigPanel({
         <>
           {!descriptor && (
             <span className="text-xs text-err">
-              This deployment type is unavailable; choose a descriptor-backed
-              type before saving.
+              Deployment type parameters could not be loaded. This workflow
+              can still use the installed deployment type without local
+              parameter validation.
             </span>
           )}
           {descriptor?.params.map((field) => (

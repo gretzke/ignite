@@ -54,6 +54,46 @@ const row = (overrides: Partial<PluginRow>): PluginRow => ({
 });
 
 describe('DeployConfigPanel helpers', () => {
+  it('keeps an installed deployment-type plugin selectable when descriptors fail to load', async () => {
+    const request = vi
+      .spyOn(apiClient, 'request')
+      .mockRejectedValue(new Error('offline'));
+    const onChange = vi.fn();
+    let panel: ReturnType<typeof create>;
+
+    await act(async () => {
+      panel = create(
+        <DeployConfigPanel
+          document={document}
+          sourceId="token"
+          plugins={[
+            row({
+              pluginId: 'hook-deployer',
+              name: 'Hook deployer',
+              version: '1.4.0',
+              types: ['deployment-type'],
+              trust: 'trusted',
+              source: {
+                kind: 'git',
+                url: 'https://example.test/hook-deployer.git',
+                commit: 'c'.repeat(40),
+              },
+            }),
+          ]}
+          onChange={onChange}
+        />
+      );
+    });
+
+    const options = panel!.root
+      .findByType('select')
+      .findAllByType('option')
+      .map((option) => option.children.join(''));
+
+    expect(options).toContain('Hook deployer');
+    request.mockRestore();
+  });
+
   it('excludes untrusted and non-strategy plugins', () => {
     expect(
       deployStrategyPlugins([
