@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData, type AbiParameter } from 'viem';
-import type { DeploymentPlan, DeployStep } from '@ignite/api';
+import type { CallStep, DeploymentPlan, DeployStep } from '@ignite/api';
 import {
   argKeysForAbi,
+  callAbiItem,
   effectiveValue,
   mergeArgs,
   mergeGas,
@@ -77,6 +78,30 @@ describe('deployment resolver', () => {
     const values = resolveStepValues(step, 1, () => address, [{ name: 'data', type: 'bytes' }], { contracts: [{ id: 'impl', repoPathOrUrl: '/r', frameworkId: 'f', artifactPath: 'a', contractName: 'Impl', sourcePath: 'I.sol' }], frozen: { impl: { abi: [fn], creationBytecode: '0x00', compiler: { pluginId: 'f', version: '1', settingsHash: 'a'.repeat(64) }, artifactHash: 'a'.repeat(64), repoDirty: false } } });
     expect(values.args.data).toBe(encodeFunctionData({ abi: [fn], functionName: 'initialize', args: [address, 7n] }));
     expect(values.pointers).toEqual({ 'args.data.$encode.owner': address });
+  });
+
+  it('allows an omitted payable declaration for a nonpayable frozen ABI call', () => {
+    const item = { type: 'function' as const, name: 'poke', stateMutability: 'nonpayable' as const, inputs: [], outputs: [] };
+    const step: CallStep = { id: 'poke', kind: 'call', target: { kind: 'step', stepId: 'target' }, signature: 'poke()' };
+    expect(callAbiItem(step, 1, [item])).toBe(item);
+  });
+
+  it('rejects a payable declaration for a nonpayable frozen ABI call', () => {
+    const item = { type: 'function' as const, name: 'poke', stateMutability: 'nonpayable' as const, inputs: [], outputs: [] };
+    const step: CallStep = { id: 'poke', kind: 'call', target: { kind: 'step', stepId: 'target' }, signature: 'poke()', payable: true };
+    expect(() => callAbiItem(step, 1, [item])).toThrowError(expect.objectContaining({ code: 'PAYABILITY_MISMATCH' }));
+  });
+
+  it('rejects an omitted payable declaration for a payable frozen ABI call', () => {
+    const item = { type: 'function' as const, name: 'fund', stateMutability: 'payable' as const, inputs: [], outputs: [] };
+    const step: CallStep = { id: 'fund', kind: 'call', target: { kind: 'step', stepId: 'target' }, signature: 'fund()' };
+    expect(() => callAbiItem(step, 1, [item])).toThrowError(expect.objectContaining({ code: 'PAYABILITY_MISMATCH' }));
+  });
+
+  it('allows a payable declaration for a payable frozen ABI call', () => {
+    const item = { type: 'function' as const, name: 'fund', stateMutability: 'payable' as const, inputs: [], outputs: [] };
+    const step: CallStep = { id: 'fund', kind: 'call', target: { kind: 'step', stepId: 'target' }, signature: 'fund()', payable: true };
+    expect(callAbiItem(step, 1, [item])).toBe(item);
   });
 
   it('replaces a per-chain $encode wrapper wholesale and rejects invalid encode markers', () => {

@@ -192,7 +192,7 @@ export function callAbiItem(step: CallStep, chainId: number, frozenAbi?: unknown
         })
       : undefined;
     if (!item) throw new IgniteError(`Call signature ${step.signature} is not in the frozen ABI`, 'SIGNATURE_NOT_IN_ABI');
-    if (step.payable !== (item.stateMutability === 'payable')) throw new IgniteError('Call payable declaration does not match the frozen ABI', 'PAYABILITY_MISMATCH');
+    if ((step.payable ?? false) !== (item.stateMutability === 'payable')) throw new IgniteError('Call payable declaration does not match the frozen ABI', 'PAYABILITY_MISMATCH');
     return item;
   }
   try { item = parseAbiItem(`function ${step.signature}`) as AbiFunction; }
