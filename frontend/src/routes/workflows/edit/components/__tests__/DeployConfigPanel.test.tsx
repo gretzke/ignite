@@ -1,5 +1,6 @@
 // @ts-expect-error Vitest is supplied by the repository test command via npx.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { act, create } from 'react-test-renderer';
 import {
   makeWorkflowDocumentSchema,
   validateWorkflowClosure,
@@ -10,6 +11,8 @@ import {
   deployStrategyPlugins,
   validateStrategyParams,
 } from '../DeployConfigPanel';
+import DeployConfigPanel from '../DeployConfigPanel';
+import { apiClient } from '../../../../../store/api/client';
 import type { PluginRow } from '../../../../../store/features/plugins/pluginsSlice';
 
 const document: WorkflowDocument = {
@@ -110,5 +113,48 @@ describe('DeployConfigPanel helpers', () => {
       retries: 'Use a number value.',
       old: 'This parameter is not supported by the selected deployment type.',
     });
+  });
+
+  it('keeps hook order stable when a source gains and loses its deploy step', async () => {
+    const request = vi
+      .spyOn(apiClient, 'request')
+      .mockResolvedValue({ data: { deploymentTypes: [] } } as never);
+    const onChange = vi.fn();
+    const withoutDeploy = { ...document, steps: [] };
+    let panel: ReturnType<typeof create>;
+
+    await act(async () => {
+      panel = create(
+        <DeployConfigPanel
+          document={document}
+          sourceId="token"
+          plugins={[]}
+          onChange={onChange}
+        />
+      );
+    });
+    await act(async () => {
+      panel!.update(
+        <DeployConfigPanel
+          document={withoutDeploy}
+          sourceId="token"
+          plugins={[]}
+          onChange={onChange}
+        />
+      );
+    });
+    await act(async () => {
+      panel!.update(
+        <DeployConfigPanel
+          document={document}
+          sourceId="token"
+          plugins={[]}
+          onChange={onChange}
+        />
+      );
+    });
+
+    expect(panel!.toJSON()).not.toBeNull();
+    request.mockRestore();
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type {
   DeploymentTypeInfo,
   WorkflowDeployStrategy,
@@ -64,7 +64,7 @@ function addRequiredPlugin(
   doc: WorkflowDocument,
   plugin: PluginRow
 ): WorkflowDocument {
-  const next = structuredClone(doc);
+  const next = globalThis.structuredClone(doc);
   if (!next.requiredPlugins.some((item) => item.id === plugin.pluginId)) {
     const source =
       plugin.source?.kind === 'git'
@@ -90,7 +90,7 @@ export function applyDeployStrategy(
   strategy: WorkflowDeployStrategy,
   plugin?: PluginRow
 ): WorkflowDocument {
-  let next = structuredClone(document);
+  let next = globalThis.structuredClone(document);
   const step = next.steps.find(
     (item) => item.id === stepId && item.kind === 'deploy'
   );
@@ -122,13 +122,30 @@ export default function DeployConfigPanel({
   const step = document.steps.find(
     (item) => item.kind === 'deploy' && item.contractId === sourceId
   );
-  const strategy =
-    step?.kind === 'deploy'
-      ? (step.strategy ?? { kind: 'create' as const })
-      : { kind: 'create' as const };
+  const strategy = useMemo(
+    () =>
+      step?.kind === 'deploy'
+        ? (step.strategy ?? { kind: 'create' as const })
+        : { kind: 'create' as const },
+    [step]
+  );
   const [types, setTypes] = useState<DeploymentTypeInfo[]>([]);
   const [typesError, setTypesError] = useState('');
   const [credentialsRemoved, setCredentialsRemoved] = useState(false);
+  const descriptors = useMemo(
+    () => new Map(types.map((item) => [item.pluginId, item])),
+    [types]
+  );
+  const descriptor =
+    strategy.kind === 'plugin' ? descriptors.get(strategy.pluginId) : undefined;
+  const params = useMemo(
+    () => (strategy.kind === 'plugin' ? (strategy.params ?? {}) : {}),
+    [strategy]
+  );
+  const paramErrors = useMemo(
+    () => (descriptor ? validateStrategyParams(params, descriptor) : {}),
+    [descriptor, params]
+  );
   useEffect(() => {
     let live = true;
     void apiClient
@@ -144,8 +161,14 @@ export default function DeployConfigPanel({
       live = false;
     };
   }, []);
+  useEffect(() => {
+    if (!step || step.kind !== 'deploy') return;
+    onValidityChange?.(
+      strategy.kind !== 'plugin' ||
+        (Boolean(descriptor) && Object.keys(paramErrors).length === 0)
+    );
+  }, [descriptor, onValidityChange, paramErrors, step, strategy.kind]);
   if (!step || step.kind !== 'deploy') return null;
-  const descriptors = new Map(types.map((item) => [item.pluginId, item]));
   const candidates = deployStrategyPlugins(plugins).filter((plugin) =>
     descriptors.has(plugin.pluginId)
   );
@@ -193,18 +216,6 @@ export default function DeployConfigPanel({
       ...(salt ? { salt } : {}),
     } as WorkflowDeployStrategy);
   };
-  const descriptor =
-    strategy.kind === 'plugin' ? descriptors.get(strategy.pluginId) : undefined;
-  const params = strategy.kind === 'plugin' ? (strategy.params ?? {}) : {};
-  const paramErrors = descriptor
-    ? validateStrategyParams(params, descriptor)
-    : {};
-  useEffect(() => {
-    onValidityChange?.(
-      strategy.kind !== 'plugin' ||
-        (Boolean(descriptor) && Object.keys(paramErrors).length === 0)
-    );
-  }, [descriptor, onValidityChange, paramErrors, strategy.kind]);
   const changeParam = (key: string, value: unknown) => {
     if (strategy.kind !== 'plugin' || !descriptor) return;
     const next = { ...params };

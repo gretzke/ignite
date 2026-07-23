@@ -9,6 +9,7 @@ import type {
   ExternalResolution,
   WorkflowDocument,
 } from '@ignite/api';
+import { sanitizeDisplayText } from '@ignite/api';
 import type {
   DraftCallStep,
   DraftDeployExtras,
@@ -305,13 +306,13 @@ const deployDraftSlice = createSlice({
         ...initialState,
         contracts: document.sources.map((source) => {
           if (source.origin === 'contract-type') return {
-            id: source.id, origin: 'contract-type' as const, contractName: source.contractName,
+            id: source.id, origin: 'contract-type' as const, contractName: sanitizeDisplayText(source.contractName),
             pluginId: source.pluginId, artifactKey: source.artifactKey,
             versionLabel: source.versionLabel, contentHash: source.contentHash,
           };
           return {
             id: source.id, repoPathOrUrl: source.repo.url, frameworkId: source.frameworkId,
-            artifactPath: source.artifactPath, contractName: source.contractName, sourcePath: source.sourcePath, pin: { ...source.repo },
+            artifactPath: source.artifactPath, contractName: sanitizeDisplayText(source.contractName), sourcePath: source.sourcePath, pin: { ...source.repo },
           };
         }),
         chains: [],

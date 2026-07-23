@@ -42,7 +42,7 @@ function assertClosed(doc: WorkflowDocument): void {
 describe('workflow edit utilities', () => {
   it('cascades required references to a fixed point and clears every optional reference form', () => {
     const doc = fixture();
-    const before = structuredClone(doc);
+    const before = globalThis.structuredClone(doc);
     const result = cascadeRemoveSource(doc, 'remove');
 
     expect(result.removedStepIds).toEqual(['remove-deploy', 'remove-wrapper', 'required-call', 'required-per-chain-call']);
@@ -83,7 +83,7 @@ describe('workflow edit utilities', () => {
 
   it('mints source and deploy ids without collisions and appends a closed document', () => {
     const doc = fixture();
-    const before = structuredClone(doc);
+    const before = globalThis.structuredClone(doc);
     expect(mintSourceId(doc, 'My Contract')).toBe('my-contract-3');
     const result = appendSource(doc, { id: 'ignored', repo: { url: 'https://example.test/new.git', commit: 'c'.repeat(40), ref: 'v2', refKind: 'tag' }, frameworkId: 'compiler-new', sourcePath: 'src/New.sol', contractName: 'My Contract', artifactPath: 'New.json' }, { id: 'compiler-new', version: '2' });
     expect(result.sourceId).toBe('my-contract-3');
@@ -97,7 +97,7 @@ describe('workflow edit utilities', () => {
 
   it('changes only a repo source pin and drops its artifact hash', () => {
     const doc = fixture();
-    const before = structuredClone(doc);
+    const before = globalThis.structuredClone(doc);
     const result = changeSourceVersion(doc, 'remove', { url: 'https://example.test/updated.git', commit: 'd'.repeat(40), ref: 'main', refKind: 'branch' });
     expect(result.sources.find((source) => source.id === 'remove')).toMatchObject({ id: 'remove', repo: { url: 'https://example.test/updated.git', commit: 'd'.repeat(40), ref: 'main', refKind: 'branch' } });
     expect(result.sources.find((source) => source.id === 'remove')).not.toHaveProperty('artifactHash');

@@ -111,8 +111,18 @@ export function isWorkflowDocumentConflict(error: unknown): boolean {
   };
   return (
     candidate.status === 409 &&
-    (candidate.body?.code === 'WORKFLOW_DOC_CONFLICT' ||
-      candidate.body?.code === 'WORKFLOW_DELETED')
+    candidate.body?.code === 'WORKFLOW_DOC_CONFLICT'
+  );
+}
+
+function isWorkflowDeleted(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      (error as { status?: unknown; body?: { code?: unknown } }).status ===
+        409 &&
+      (error as { body?: { code?: unknown } }).body?.code ===
+        'WORKFLOW_DELETED'
   );
 }
 
@@ -170,7 +180,9 @@ export async function appendArtifactsToWorkflow(
   throw new Error('Workflow could not be updated.');
 }
 
-function errorMessage(error: unknown): string {
+export function workflowUpdateErrorMessage(error: unknown): string {
+  if (isWorkflowDeleted(error))
+    return 'This workflow was deleted (and possibly recreated) — reload the list and pick it again.';
   if (error && typeof error === 'object') {
     const candidate = error as { body?: { message?: unknown } };
     if (typeof candidate.body?.message === 'string')
@@ -269,7 +281,7 @@ export default function AddToWorkflowDialog({
       onOpenChange(false);
       navigate(workflowEditorPath(target, result.sourceIds[0]));
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(workflowUpdateErrorMessage(cause));
     } finally {
       setSavingTarget(undefined);
     }

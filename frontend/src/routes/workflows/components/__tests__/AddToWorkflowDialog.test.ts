@@ -5,6 +5,7 @@ import {
   appendArtifactsToWorkflow,
   canAddToWorkflow,
   compilerRequiredPlugin,
+  workflowUpdateErrorMessage,
   workflowEditorPath,
   workflowSourceFromArtifact,
 } from '../AddToWorkflowDialog';
@@ -222,6 +223,44 @@ describe('AddToWorkflowDialog helpers', () => {
     expect(gets).toBe(2);
     expect(puts).toBe(2);
     expect(result.docHash).toBe('e'.repeat(64));
+  });
+
+  it('does not retry a deleted workflow and tells the user to reload the list', async () => {
+    const plugin = compilerRequiredPlugin('foundry', pluginRow()).plugin!;
+    let gets = 0;
+    let puts = 0;
+    const deleted = {
+      status: 409,
+      body: { code: 'WORKFLOW_DELETED' },
+    };
+
+    await expect(
+      appendArtifactsToWorkflow(
+        {
+          getWorkflow: async () => {
+            gets += 1;
+            return { document, docHash: 'c'.repeat(64) };
+          },
+          putWorkflow: async () => {
+            puts += 1;
+            throw deleted;
+          },
+        },
+        {
+          target: { repoPathOrUrl: '/workflows', name: 'release' },
+          artifacts: [artifact],
+          pin,
+          frameworkId: 'foundry',
+          requiredPlugin: plugin,
+        }
+      )
+    ).rejects.toBe(deleted);
+
+    expect(gets).toBe(1);
+    expect(puts).toBe(1);
+    expect(workflowUpdateErrorMessage(deleted)).toBe(
+      'This workflow was deleted (and possibly recreated) — reload the list and pick it again.'
+    );
   });
 
   it('navigates to the editor with the new source highlighted', () => {

@@ -17,6 +17,10 @@ import {
   workflowDraftIsDirty,
   workflowRunRequestFromDraft,
 } from '../workflowDraft';
+import {
+  workflowDefaultRunName,
+  workflowStepLabels,
+} from '../../../../routes/deploy/steps/ReviewStep';
 
 const document: WorkflowDocument = {
   schemaVersion: 1,
@@ -112,6 +116,32 @@ describe('workflow deploy drafts', () => {
     expect(state.contracts.find((source) => source.id === 'proxy')).toMatchObject({ origin: 'contract-type', contentHash: 'a'.repeat(64) });
     expect(state.steps.find((step) => step.id === 'deploy-proxy')).toMatchObject({ wraps: { stepId: 'deploy-impl' }, args: contractTypeDocument.steps[1].args });
     expect(workflowDocumentFromDraft(state).steps[1]).toMatchObject(contractTypeDocument.steps[1]);
+  });
+
+  it('sanitizes workflow contract names before they reach review labels and default run names', () => {
+    const hostile = '\u202eTreasury\u0000\u2066';
+    const hostileDocument: WorkflowDocument = {
+      ...document,
+      sources: document.sources.map((source) => ({
+        ...source,
+        contractName: hostile,
+      })),
+    };
+    const state = deployDraftReducer(
+      undefined,
+      hydrateWorkflowDraft({
+        repoPathOrUrl: '/workspace',
+        name: 'release',
+        docHash: 'b'.repeat(64),
+        document: hostileDocument,
+      })
+    );
+
+    expect(state.contracts[0]?.contractName).toBe('Treasury');
+    expect(workflowStepLabels(document, state.contracts)['deploy-a']).toBe(
+      'Treasury'
+    );
+    expect(workflowDefaultRunName(state.contracts)).toBe('Deploy Treasury');
   });
 
   it('toggles inclusion by step id and records a confirmed external resolution', () => {

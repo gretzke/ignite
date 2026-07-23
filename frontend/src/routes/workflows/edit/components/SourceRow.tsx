@@ -61,7 +61,10 @@ export default function SourceRow({
         stateKey,
       })
     );
-  const artifacts = artifactsState?.artifacts ?? [];
+  const artifacts = useMemo(
+    () => artifactsState?.artifacts ?? [],
+    [artifactsState?.artifacts]
+  );
   const version = `${source.repo.ref ?? 'commit'}@${source.repo.commit.slice(0, 7)}`;
   const chip = sourceStatus?.ready
     ? 'Ready'
@@ -76,7 +79,7 @@ export default function SourceRow({
     [artifacts, source.contractName, source.sourcePath]
   );
   const chooseArtifact = (artifact: ArtifactLocation) => {
-    const next = structuredClone(document);
+    const next = globalThis.structuredClone(document);
     const current = next.sources.find((item) => item.id === source.id);
     if (!current || current.origin === 'contract-type') return;
     current.artifactPath = artifact.artifactPath;

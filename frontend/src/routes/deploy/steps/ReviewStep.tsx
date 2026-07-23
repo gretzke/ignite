@@ -69,6 +69,34 @@ interface ReviewStepProps {
   plan: DeploymentPlan;
 }
 
+export function workflowDefaultRunName(
+  contracts: Array<{ contractName: string }>
+): string {
+  return `Deploy ${contracts.map((item) => item.contractName).join(', ')}`;
+}
+
+export function workflowStepLabels(
+  plan: {
+    steps: Array<
+      | { id: string; kind: 'deploy'; contractId: string }
+      | { id: string; kind: 'call'; signature?: string }
+    >;
+  },
+  contracts: Array<{ id: string; contractName: string }>
+): Record<string, string> {
+  return Object.fromEntries(
+    plan.steps.map((step, index) => [
+      step.id,
+      step.kind === 'deploy'
+        ? (contracts.find((contract) => contract.id === step.contractId)
+            ?.contractName ?? decodeUrlEncodingForDisplay(step.id))
+        : step.signature
+          ? `Call ${step.signature}`
+          : `Call #${index + 1}`,
+    ])
+  );
+}
+
 export default function ReviewStep({ plan }: ReviewStepProps) {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
@@ -94,24 +122,10 @@ export default function ReviewStep({ plan }: ReviewStepProps) {
   );
   const [hooksLoaded, setHooksLoaded] = useState(false);
   const [pluginId, setPluginId] = useState<string | null>(null);
-  const defaultName = `Deploy ${draft.contracts
-    .map((item) => item.contractName)
-    .join(', ')}`;
+  const defaultName = workflowDefaultRunName(draft.contracts);
   const stepLabels = useMemo(
-    () =>
-      Object.fromEntries(
-        plan.steps.map((step, index) => [
-          step.id,
-          step.kind === 'deploy'
-            ? (draft.contracts.find(
-                (contract) => contract.id === step.contractId
-              )?.contractName ?? decodeUrlEncodingForDisplay(step.id))
-            : step.signature
-              ? `Call ${step.signature}`
-              : `Call #${index + 1}`,
-        ])
-      ),
-    [draft.contracts, plan.steps]
+    () => workflowStepLabels(plan, draft.contracts),
+    [draft.contracts, plan]
   );
   const wrapperStepIds = useMemo(
     () => new Set(draft.steps.filter((step) => step.kind === 'deploy' && step.wraps).map((step) => step.id)),
