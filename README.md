@@ -1,3 +1,10 @@
+> [!IMPORTANT]
+> **This repository has moved to [Uniswap/ignite](https://github.com/Uniswap/ignite).**
+>
+> This personal copy is archived and no longer maintained. Please head to the Uniswap repository for the latest code, issues, and pull requests.
+
+---
+
 # 🚀 Ignite - Smart Contract Deployment Tool
 
 A secure, modular smart-contract deployer with a visual workflow interface and container-based plugin system.
